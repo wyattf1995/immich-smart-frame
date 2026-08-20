@@ -1,0 +1,259 @@
+diff --git a/config.schema.json b/config.schema.json
+index 59f16eb..03cddea 100644
+--- a/config.schema.json
++++ b/config.schema.json
+@@ -151,6 +151,49 @@
+     "memory_weight": {
+       "type": "number"
+     },
++    "curation_profile": {
++      "type": "string",
++      "description": "Name of the explicitly weighted curation profile to use instead of normal source buckets"
++    },
++    "curation": {
++      "type": "object",
++      "additionalProperties": false,
++      "properties": {
++        "profiles": {
++          "type": "object",
++          "additionalProperties": {
++            "type": "object",
++            "additionalProperties": false,
++            "properties": {
++              "sources": {
++                "type": "array",
++                "minItems": 1,
++                "items": {
++                  "type": "object",
++                  "additionalProperties": false,
++                  "properties": {
++                    "type": {
++                      "type": "string",
++                      "enum": ["album", "person", "tag", "date", "memories", "random"]
++                    },
++                    "value": {
++                      "type": "string"
++                    },
++                    "weight": {
++                      "type": "number",
++                      "exclusiveMinimum": 0
++                    }
++                  },
++                  "required": ["type", "weight"]
++                }
++              }
++            },
++            "required": ["sources"]
++          }
++        }
++      },
++      "required": ["profiles"]
++    },
+     "filter_date": {
+       "type": "string",
+       "description": "Filter to limit assets to a certain date range"
+diff --git a/internal/config/config.go b/internal/config/config.go
+index e4e58a6..786207c 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -195,6 +195,24 @@ func (w Webhooks) ContainsEvent(event string) bool {
+ 	return false
+ }
+ 
++// CuratedSource describes one selectable Immich source inside a curation
++// profile. Weight is relative to the other sources in the same profile.
++type CuratedSource struct {
++	Type   string  `json:"type" yaml:"type" mapstructure:"type"`
++	Value  string  `json:"value" yaml:"value" mapstructure:"value"`
++	Weight float64 `json:"weight" yaml:"weight" mapstructure:"weight"`
++}
++
++// CurationProfile is an explicitly weighted mix of Immich sources.
++type CurationProfile struct {
++	Sources []CuratedSource `json:"sources" yaml:"sources" mapstructure:"sources" default:"[]"`
++}
++
++// CurationSettings contains reusable profiles addressable by name from a URL.
++type CurationSettings struct {
++	Profiles map[string]CurationProfile `json:"profiles" yaml:"profiles" mapstructure:"profiles" default:"{}"`
++}
++
+ // ClientData represents the client-specific dimensions received from the frontend.
+ type ClientData struct {
+ 	// FullyVersion stores the version info for Fully Kiosk Browser
+@@ -343,6 +361,11 @@ type Config struct {
+ 	PastMemoryDays int     `json:"pastMemoryDays" yaml:"past_memory_days" mapstructure:"past_memory_days" query:"past_memory_days" form:"past_memory_days" default:"0"`
+ 	MemoryWeight   float64 `json:"memoryWeight" yaml:"memory_weight" mapstructure:"memory_weight" default:"1.0"`
+ 
++	// CurationProfile selects an explicitly weighted source mix. When set, the
++	// profile replaces the normal URL album/person/tag/date source buckets.
++	CurationProfile string           `json:"curationProfile" yaml:"curation_profile" mapstructure:"curation_profile" query:"curation_profile" form:"curation_profile" default:"" lowercase:"true"`
++	Curation        CurationSettings `json:"curation" yaml:"curation" mapstructure:"curation"`
++
+ 	// FilterDate filter certain asset bucket assets by date range
+ 	FilterDate string `json:"filterDate" yaml:"filter_date" mapstructure:"filter_date" query:"filter_date" form:"filter_date" default:""`
+ 	// FilterNewest filter certain asset bucket assets by the newest X assets
+diff --git a/internal/routes/routes_asset_helpers.go b/internal/routes/routes_asset_helpers.go
+index 4d6c405..a9a2c41 100644
+--- a/internal/routes/routes_asset_helpers.go
++++ b/internal/routes/routes_asset_helpers.go
+@@ -60,6 +60,10 @@ var errVideoNotReady = errors.New("video not ready")
+ //   - A slice of AssetWithWeighting containing the weightings for each asset source
+ //   - An error if any database queries fail
+ func gatherAssetBuckets(immichAsset *immich.Asset, requestConfig config.Config, requestID, deviceID string) ([]utils.AssetWithWeighting, error) {
++	if requestConfig.CurationProfile != "" {
++		return gatherCuratedAssetBuckets(immichAsset, requestConfig, requestID, deviceID)
++	}
++
+ 	assets := []utils.AssetWithWeighting{}
+ 
+ 	filterNewest := requestConfig.FilterNewest > 0
+@@ -403,7 +407,8 @@ func processAsset(asset *immich.Asset, requestConfig config.Config, requestID st
+ 
+ 	for range maxProcessAssetRetries {
+ 
+-		pickedAsset := utils.PickRandomImageType(requestConfig.Kiosk.AssetWeighting, assets)
++		useWeighting := requestConfig.Kiosk.AssetWeighting || requestConfig.CurationProfile != ""
++		pickedAsset := utils.PickRandomImageType(useWeighting, assets)
+ 
+ 		pickedAsset.ID, _ = asset.ApplyUserFromAssetID(pickedAsset.ID)
+ 
+diff --git a/internal/routes/routes_curation.go b/internal/routes/routes_curation.go
+new file mode 100644
+index 0000000..9be189a
+--- /dev/null
++++ b/internal/routes/routes_curation.go
+@@ -0,0 +1,104 @@
++package routes
++
++import (
++	"fmt"
++	"strings"
++
++	"charm.land/log/v2"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/damongolding/immich-kiosk/internal/kiosk"
++	"github.com/damongolding/immich-kiosk/internal/utils"
++)
++
++// gatherCuratedAssetBuckets turns a named curation profile into the same
++// weighted source buckets used by Kiosk's normal asset selection path. It does
++// not write anything to Immich; it only resolves source names to read-only API
++// queries.
++func gatherCuratedAssetBuckets(immichAsset *immich.Asset, requestConfig config.Config, requestID, deviceID string) ([]utils.AssetWithWeighting, error) {
++	profile, ok := findCurationProfile(requestConfig.Curation.Profiles, requestConfig.CurationProfile)
++	if !ok {
++		return nil, fmt.Errorf("curation profile %q was not found", requestConfig.CurationProfile)
++	}
++
++	assets := make([]utils.AssetWithWeighting, 0, len(profile.Sources))
++	var allTags immich.Tags
++
++	for _, source := range profile.Sources {
++		if source.Weight <= 0 {
++			log.Warn("Skipping curated source with non-positive weight", "profile", requestConfig.CurationProfile, "type", source.Type, "value", source.Value)
++			continue
++		}
++
++		asset := utils.AssetWithWeighting{ConfiguredWeight: source.Weight}
++		switch strings.ToLower(strings.TrimSpace(source.Type)) {
++		case "album":
++			if strings.TrimSpace(source.Value) == "" {
++				return nil, fmt.Errorf("curation profile %q contains an album source without a value", requestConfig.CurationProfile)
++			}
++			asset.Asset = utils.WeightedAsset{Type: kiosk.SourceAlbum, ID: source.Value, Name: source.Value}
++
++		case "person":
++			if strings.TrimSpace(source.Value) == "" {
++				return nil, fmt.Errorf("curation profile %q contains a person source without a value", requestConfig.CurationProfile)
++			}
++			asset.Asset = utils.WeightedAsset{Type: kiosk.SourcePerson, ID: source.Value, Name: source.Value}
++
++		case "tag":
++			if strings.TrimSpace(source.Value) == "" {
++				return nil, fmt.Errorf("curation profile %q contains a tag source without a value", requestConfig.CurationProfile)
++			}
++			if allTags == nil {
++				immichAsset.ApplyDefaultUser()
++				var err error
++				allTags, _, err = immichAsset.AllTags(requestID, deviceID)
++				if err != nil {
++					return nil, fmt.Errorf("getting tags for curation profile %q: %w", requestConfig.CurationProfile, err)
++				}
++			}
++			tag, err := allTags.Get(source.Value)
++			if err != nil {
++				return nil, fmt.Errorf("curation profile %q references unknown tag %q: %w", requestConfig.CurationProfile, source.Value, err)
++			}
++			asset.Asset = utils.WeightedAsset{Type: kiosk.SourceTag, ID: tag.ID, Name: tag.Value}
++
++		case "date":
++			if strings.TrimSpace(source.Value) == "" {
++				return nil, fmt.Errorf("curation profile %q contains a date source without a value", requestConfig.CurationProfile)
++			}
++			asset.Asset = utils.WeightedAsset{Type: kiosk.SourceDateRange, ID: source.Value, Name: source.Value}
++
++		case "memories":
++			immichAsset.ApplyDefaultUser()
++			if immichAsset.MemoriesAssetsCount(requestID, deviceID) == 0 {
++				log.Warn("Skipping curated memories source because no memories are currently available", "profile", requestConfig.CurationProfile)
++				continue
++			}
++			asset.Asset = utils.WeightedAsset{Type: kiosk.SourceMemories, ID: string(kiosk.SourceMemories), Name: "memories"}
++
++		case "random":
++			asset.Asset = utils.WeightedAsset{Type: kiosk.SourceRandom, ID: string(kiosk.SourceRandom), Name: "random"}
++
++		default:
++			return nil, fmt.Errorf("curation profile %q contains unsupported source type %q", requestConfig.CurationProfile, source.Type)
++		}
++
++		assets = append(assets, asset)
++	}
++
++	if len(assets) == 0 {
++		return nil, fmt.Errorf("curation profile %q has no usable sources", requestConfig.CurationProfile)
++	}
++
++	return assets, nil
++}
++
++func findCurationProfile(profiles map[string]config.CurationProfile, wanted string) (config.CurationProfile, bool) {
++	for name, profile := range profiles {
++		if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(wanted)) {
++			return profile, true
++		}
++	}
++
++	return config.CurationProfile{}, false
++}
+diff --git a/internal/utils/utils.go b/internal/utils/utils.go
+index c288686..85ee347 100644
+--- a/internal/utils/utils.go
++++ b/internal/utils/utils.go
+@@ -77,9 +77,10 @@ type WeightedAsset struct {
+ 
+ // AssetWithWeighting represents a WeightedAsset with an associated weight value
+ type AssetWithWeighting struct {
+-	Asset   WeightedAsset
+-	Weight  int     // base weight
+-	Penalty float64 // penalty for weight. 1.0 = no penalty, 0.5 = 50% penalty.
++	Asset            WeightedAsset
++	Weight           int     // base weight
++	Penalty          float64 // penalty for weight. 1.0 = no penalty, 0.5 = 50% penalty.
++	ConfiguredWeight float64 // explicit relative weight; 0 uses the calculated weight above.
+ }
+ 
+ // GenerateUUID generates a new random UUID string
+@@ -470,6 +471,10 @@ func RandomItem[T any](s []T) T {
+ }
+ 
+ func assetWeight(a AssetWithWeighting) float64 {
++	if a.ConfiguredWeight > 0 {
++		return a.ConfiguredWeight
++	}
++
+ 	weight := max(0, a.Weight)
+ 
+ 	// Base logarithmic weight

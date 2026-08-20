@@ -1,0 +1,20 @@
+diff --git a/frontend/src/ts/fullykiosk.ts b/frontend/src/ts/fullykiosk.ts
+index e2390dc..3c297fc 100644
+--- a/frontend/src/ts/fullykiosk.ts
++++ b/frontend/src/ts/fullykiosk.ts
+@@ -61,9 +61,13 @@ class FullyKiosk {
+ 
+     public getDisplayDimensions(): { width: number; height: number } {
+         if (this.fully === undefined) {
++            // WebView reports its viewport in CSS pixels. Request physical pixels so
++            // high-density displays are not sent an image that Android must upscale.
++            const pixelRatio = window.devicePixelRatio || 1;
++
+             return {
+-                width: window.innerWidth,
+-                height: window.innerHeight,
++                width: Math.round(window.innerWidth * pixelRatio),
++                height: Math.round(window.innerHeight * pixelRatio),
+             };
+         }
+         return {

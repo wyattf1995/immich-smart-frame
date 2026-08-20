@@ -1,0 +1,17 @@
+/* Give the lower-left year/location metadata a comfortable display-safe edge. */
+.asset-metadata-container {
+    padding: 1.5rem;
+}
+
+.asset--metadata {
+    gap: 0.65rem;
+}
+
+.asset--metadata--has-icon {
+    gap: 0.65rem;
+}
+
+.asset--metadata--icon {
+    box-sizing: content-box;
+    padding: 0.2rem;
+}

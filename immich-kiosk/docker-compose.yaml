@@ -1,0 +1,33 @@
+name: lenovo-smart-frame
+
+services:
+  immich-kiosk:
+    # Pinned upstream Kiosk plus a two-line DPR-aware browser fallback so the
+    # 1920x1080 frame is not served a 960x540 image.
+    build:
+      context: ./custom-image
+      args:
+        KIOSK_UPSTREAM_REF: v0.42.0
+        KIOSK_VERSION: 0.42.0-lenovo-curation1
+    image: local/immich-kiosk:0.42.0-lenovo-curation1
+    container_name: immich-kiosk
+    restart: unless-stopped
+    tty: true
+    environment:
+      LANG: en_US.UTF-8
+      TZ: Etc/UTC
+      KIOSK_IMMICH_API_KEY_FILE: /run/secrets/immich_api_key
+      KIOSK_LOG_LEVEL: info
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config:/config:ro
+      - ./custom.css:/custom.css:ro
+    secrets:
+      - immich_api_key
+    security_opt:
+      - no-new-privileges:true
+
+secrets:
+  immich_api_key:
+    file: ./secrets/immich_api_key
