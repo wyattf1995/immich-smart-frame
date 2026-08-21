@@ -1,5 +1,8 @@
 # Blog outline: rescuing a discontinued Lenovo Smart Frame
 
+> Maintainer writing notes, not installation documentation. All measurements
+> are from one private deployment and should be re-verified before publication.
+
 ## Thesis
 
 The useful part of a digital frame is not the panel; it is the policy that
@@ -95,4 +98,5 @@ consumer-facing payoff for building a local photo archive around Immich.
 - Add a simple architecture diagram and before/after DPR crop.
 - Link the exact upstream Kiosk release and both local patches.
 - Re-run the measurements immediately before publication and date them.
-- Choose a repository license before making a public release.
+- Confirm the repository's AGPL-3.0 attribution remains aligned with the pinned
+  Immich Kiosk release.

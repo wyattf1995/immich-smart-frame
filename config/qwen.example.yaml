@@ -1,0 +1,128 @@
+# Optional advanced example for libraries tagged with the Qwen taxonomy
+# described in docs/curation.md. The Immich URL comes from KIOSK_IMMICH_URL in
+# docker-compose.yaml; the API key is mounted as a Docker secret.
+
+# Frame-friendly defaults. Photo sources remain URL-selectable so each frame
+# can have several mixes without rebuilding this container.
+duration: 30
+disable_screensaver: true
+optimize_images: true
+use_gpu: true
+show_archived: false
+album_order: random
+
+# Optional hard exclusions from the example Qwen taxonomy. Remove or rename
+# these paths to match the tags that exist in your Immich library.
+excluded_tags:
+  - "Things/ProductListing"
+  - "Things/Electronics"
+  - "Things/Book"
+  - "Things/Sign"
+  - "Activity/DIYProject"
+  - "Style/Timelapse"
+  - "Skip/**"
+
+# Keep "on this day" in the mix without letting memories overwhelm the curated
+# family/travel/animal pools.
+memory_weight: 0.15
+
+# Positive-source curation. The selected profile replaces album=all and other
+# source buckets. In balanced, half of the selections come from overlapping
+# recent-date pools and half retain the evergreen Qwen/face mix. The overlap is
+# intentional: a photo from the last 30 days is eligible through all three date
+# pools, producing a steep recency boost that decays over two years. Hard tag
+# exclusions still apply to every source. Weights are direct relative
+# probabilities and intentionally sum to 100 per profile.
+curation_profile: balanced
+curation:
+  profiles:
+    balanced:
+      sources:
+        # Explicit recency ladder (50%). These dynamic ranges overlap.
+        - { type: date, value: "last-30", weight: 25 }
+        - { type: date, value: "last-180", weight: 15 }
+        - { type: date, value: "last-730", weight: 10 }
+
+        # Evergreen curated mix (50%).
+        - { type: person, value: all, weight: 11 }
+        - { type: tag, value: "People/Family", weight: 7 }
+        - { type: tag, value: "People/Candid", weight: 2 }
+        - { type: tag, value: "People/Portrait", weight: 2 }
+        - { type: tag, value: "Animals/Dog", weight: 6 }
+        - { type: tag, value: "Activity/Travel", weight: 4 }
+        - { type: tag, value: "Event/Wedding", weight: 2 }
+        - { type: tag, value: "Event/Holiday", weight: 2 }
+        - { type: tag, value: "Event/Birthday", weight: 1 }
+        - { type: tag, value: "Style/Landscape", weight: 3 }
+        - { type: tag, value: "Light/Sunset", weight: 2 }
+        - { type: tag, value: "Light/GoldenHour", weight: 1 }
+        - { type: tag, value: "Style/Macro", weight: 1 }
+        - { type: tag, value: "Animals/Wildlife", weight: 1 }
+        - { type: tag, value: "Scene/PublicAquarium", weight: 1 }
+        - { type: memories, weight: 4 }
+
+    family:
+      sources:
+        - { type: person, value: all, weight: 35 }
+        - { type: tag, value: "People/Family", weight: 25 }
+        - { type: tag, value: "People/Child", weight: 10 }
+        - { type: tag, value: "People/Baby", weight: 10 }
+        - { type: tag, value: "Animals/Dog", weight: 10 }
+        - { type: tag, value: "Event/Holiday", weight: 5 }
+        - { type: memories, weight: 5 }
+
+    photography:
+      sources:
+        - { type: tag, value: "Style/Landscape", weight: 20 }
+        - { type: tag, value: "Light/Sunset", weight: 15 }
+        - { type: tag, value: "Light/GoldenHour", weight: 10 }
+        - { type: tag, value: "Style/Macro", weight: 15 }
+        - { type: tag, value: "Style/Astrophotography", weight: 15 }
+        - { type: tag, value: "Style/LongExposure", weight: 10 }
+        - { type: tag, value: "Animals/Wildlife", weight: 10 }
+        - { type: tag, value: "Scene/Ocean", weight: 5 }
+
+frameless: true
+hide_cursor: true
+background_blur: true
+background_blur_amount: 10
+layout: single
+transition: fade
+fade_transition_duration: 1
+
+image_fit: contain
+image_effect: none
+# Fetch the original on the NAS, then optimize_images downsamples it to the
+# Fully Kiosk-reported physical display size before sending it to the frame.
+use_original_image: true
+show_videos: false
+live_photos: false
+show_animated_gifs: false
+
+show_more_info: false
+show_more_info_image_link: false
+show_more_info_qr_code: false
+
+# Show the exact capture year plus location in the lower-left metadata. Country
+# is redundant for this library; city and state remain visible when available.
+show_image_date: true
+image_date_format: YYYY
+show_image_location: true
+image_location:
+  hide_city: false
+  hide_state: false
+  hide_country: true
+
+kiosk:
+  port: 3000
+  behind_proxy: false
+  disable_url_queries: false
+  disable_config_endpoint: true
+  enable_url_builder: false
+  watch_config: true
+  fetched_assets_size: 1000
+  http_timeout: 20
+  cache: true
+  prefetch: true
+  asset_weighting: true
+  debug_verbose: false

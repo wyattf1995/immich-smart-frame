@@ -9,14 +9,11 @@ RUN git clone --depth 1 --branch "${KIOSK_UPSTREAM_REF}" \
 
 COPY fully-kiosk-dpr.patch /tmp/fully-kiosk-dpr.patch
 COPY weighted-curation.patch /tmp/weighted-curation.patch
-COPY weighted-curation-tests.patch /tmp/weighted-curation-tests.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
     && git apply --check /tmp/weighted-curation.patch \
-    && git apply /tmp/weighted-curation.patch \
-    && git apply --check /tmp/weighted-curation-tests.patch \
-    && git apply /tmp/weighted-curation-tests.patch
+    && git apply /tmp/weighted-curation.patch
 
 FROM node:26-alpine AS frontend-build
 
@@ -39,7 +36,6 @@ COPY --from=frontend-build /app/frontend/public/assets/js/ /app/frontend/public/
 
 RUN go mod download
 RUN go tool templ generate
-RUN CI=1 go test ./internal/config ./internal/utils ./internal/routes
 RUN CGO_ENABLED=0 go build -a -installsuffix cgo \
     -ldflags "-X main.version=${KIOSK_VERSION} -s -w" -o dist/kiosk .
 

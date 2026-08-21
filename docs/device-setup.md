@@ -1,0 +1,112 @@
+# Lenovo CD-3L501F device setup
+
+This procedure was verified on the Lenovo Smart Frame CD-3L501F (`Walnut`)
+running the stock Android 10 production build. Other firmware may differ.
+
+## What you need
+
+- a USB-C OTG adapter;
+- a USB mouse;
+- Android platform tools (`adb`) on another computer;
+- a kiosk-browser APK obtained from its publisher;
+- the frame and Docker host on the same trusted network.
+
+The frame has no touchscreen. Keep the OTG mouse nearby as recovery input even
+after wireless control works.
+
+## Enable USB debugging
+
+1. Open Android Settings with the mouse.
+2. Open **About** and activate Developer Options by clicking the build number
+   repeatedly.
+3. In **Developer options**, enable **USB debugging**.
+4. Connect the frame to the computer and approve the debugging prompt.
+5. Confirm that ADB sees it:
+
+   ```sh
+   adb devices
+   ```
+
+If the dialog cannot be approved with the mouse, the hardware star button can
+be mapped to a screen tap with an accessibility key-mapping app. On the tested
+unit the star button reported scan code 255; this is a recovery technique, not
+a runtime dependency.
+
+## Use explicit ADB targets
+
+Developer workstations often have emulators connected. Resolve the frame's
+serial first and use `-s` on every command:
+
+```sh
+adb devices -l
+adb -s FRAME_SERIAL shell getprop ro.product.model
+```
+
+Do not run untargeted install, reboot, or settings commands when more than one
+ADB transport is listed.
+
+## Optional wireless ADB
+
+With USB debugging already authorized:
+
+```sh
+adb -s FRAME_SERIAL tcpip 5555
+adb connect FRAME_IP:5555
+adb -s FRAME_IP:5555 get-state
+```
+
+The stock build is locked (`ro.debuggable=0`), so TCP ADB does not survive a
+normal reboot. It is also unauthenticated network-level shell access after the
+host key is approved. Use it only on a trusted LAN and do not port-forward 5555.
+
+## Install and configure the browser
+
+Install the APK with the explicit serial:
+
+```sh
+adb -s FRAME_IP:5555 install path/to/browser.apk
+```
+
+The tested renderer is Fully Kiosk Browser 1.61.2. Configure:
+
+- Start URL: `http://DOCKER_HOST:3000/`
+- fullscreen: on;
+- action bar: off;
+- address bar: off;
+- screen saver: off;
+- JavaScript: on;
+- Fully's privileged JavaScript device interface: off.
+
+The DPR patch in this project does not require Fully's privileged JavaScript
+interface or its broad device permissions.
+
+## Model-specific stability settings
+
+### Keep Bluetooth off after a failed pairing
+
+On the tested frame, a failed Bluetooth-mouse pairing left SystemUI retrying
+the bond continuously and starved the browser. Turning Bluetooth off stopped
+the loop immediately. Prefer the OTG mouse for recovery.
+
+### Disable MediaTek DuraSpeed if services are suppressed
+
+If Android repeatedly logs `bringUpServiceLocked, suppress to start service!`
+while the browser waits for its foreground service, disable DuraSpeed on this
+dedicated, always-powered kiosk:
+
+```sh
+adb -s FRAME_IP:5555 shell settings put global setting.duraspeed.enabled 0
+adb -s FRAME_IP:5555 shell am force-stop de.ozerov.fully
+adb -s FRAME_IP:5555 shell am start -n de.ozerov.fully/.FullyActivity
+```
+
+Do not clear the browser's application or WebView data unless you intend to
+repeat onboarding and restore all settings.
+
+## Android upgrades
+
+The device has an unlockable bootloader and an A/B layout, but replacing the
+stock OS is not required for this project. The 2 GB system partition and lack
+of vendor support make a GSI upgrade a separate recovery-risk decision. The
+server-rendered architecture keeps Android 10 out of the photo-selection and
+image-processing path.

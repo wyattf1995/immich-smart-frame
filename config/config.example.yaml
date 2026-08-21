@@ -1,0 +1,64 @@
+# Starter configuration with no dependency on custom albums, tags, or named
+# people. The Immich URL and API key are supplied by Docker Compose.
+
+duration: 30
+disable_screensaver: true
+optimize_images: true
+use_gpu: true
+show_archived: false
+album_order: random
+
+# This starter profile favors recent captures while retaining an all-time path.
+# The ranges overlap intentionally, so the effective boost decays with age.
+curation_profile: recent
+curation:
+  profiles:
+    recent:
+      sources:
+        - { type: date, value: "last-30", weight: 40 }
+        - { type: date, value: "last-180", weight: 25 }
+        - { type: date, value: "last-730", weight: 15 }
+        - { type: date, value: "1900-01-01_to_today", weight: 10 }
+        - { type: memories, weight: 10 }
+
+frameless: true
+hide_cursor: true
+background_blur: true
+background_blur_amount: 10
+layout: single
+transition: fade
+fade_transition_duration: 1
+
+image_fit: contain
+image_effect: none
+use_original_image: true
+show_videos: false
+live_photos: false
+show_animated_gifs: false
+
+show_more_info: false
+show_more_info_image_link: false
+show_more_info_qr_code: false
+
+# Exact capture year plus city/state when Immich has location metadata.
+show_image_date: true
+image_date_format: YYYY
+show_image_location: true
+image_location:
+  hide_city: false
+  hide_state: false
+  hide_country: true
+
+kiosk:
+  port: 3000
+  behind_proxy: false
+  disable_url_queries: false
+  disable_config_endpoint: true
+  enable_url_builder: false
+  watch_config: true
+  fetched_assets_size: 1000
+  http_timeout: 20
+  cache: true
+  prefetch: true
+  asset_weighting: true
+  debug_verbose: false
