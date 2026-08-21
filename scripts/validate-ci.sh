@@ -133,6 +133,11 @@ unless File.read("scripts/audit-licenses.sh").include?('--user "$(id -u):$(id -g
   warn "Node license audit must not leave root-owned files in the CI workspace"
   exit 1
 end
+
+unless File.read("scripts/run-gitleaks.sh").include?("grep -Eq '(^|[^[:digit:]])0 commits scanned([^[:digit:]]|$)'")
+  warn "Gitleaks zero-history guard must not reject multi-digit commit counts ending in zero"
+  exit 1
+end
 RUBY
 
 printf 'ci static validation passed\n'
