@@ -14,6 +14,12 @@ Local modifications are applied as reviewable patch files during the Docker
 build. The patched binary identifies its custom version through the
 `KIOSK_VERSION` build argument.
 
+The CI audit also fetches this same pinned upstream tree, reapplies the local
+patches, and checks the resulting Go and Node dependency licenses before each
+scheduled review. One Go module, `github.com/golang/freetype`, is manually
+classified as `FTL OR GPL-2.0-or-later` because the automated reporter does not
+emit a usable SPDX identifier for it.
+
 This repository is independent from the Immich Kiosk project. Upstream
 maintainers are not responsible for these patches, hardware instructions, or
 support.

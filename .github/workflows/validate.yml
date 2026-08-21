@@ -5,12 +5,14 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '21 7 * * 1'
 
 permissions:
   contents: read
 
 jobs:
-  validate:
+  static-validation:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -18,5 +20,46 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Validate examples and CI configuration
+        run: ./scripts/validate.sh --static
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Scan full Git history for secrets
+        run: ./scripts/run-gitleaks.sh
+
+  patched-upstream-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Audit patched upstream dependency licenses
+        run: ./scripts/audit-licenses.sh
+
+      - name: Run govulncheck against the patched upstream tree
+        run: ./scripts/run-govulncheck.sh
+
+  image-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Validate examples, patches, tests, and build
         run: ./scripts/validate.sh
+
+      - name: Scan the built image with Trivy
+        run: ./scripts/run-trivy.sh
