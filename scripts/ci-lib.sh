@@ -11,6 +11,14 @@ ci_dockerfile() {
 }
 
 ci_upstream_ref() {
+  local upstream_commit
+  upstream_commit="$(sed -n 's/^ARG KIOSK_UPSTREAM_COMMIT=//p' "$(ci_dockerfile)")"
+
+  if [[ "$upstream_commit" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '%s\n' "$upstream_commit"
+    return
+  fi
+
   sed -n 's/^ARG KIOSK_UPSTREAM_REF=//p' "$(ci_dockerfile)"
 }
 
@@ -78,8 +86,8 @@ ci_prepare_upstream_source() {
       printf 'missing Dockerfile patch: %s\n' "$patch_file" >&2
       return 1
     fi
-    git -C "$target_dir" apply --check "$patch_file"
-    git -C "$target_dir" apply "$patch_file"
+    git -C "$target_dir" apply --check --unidiff-zero "$patch_file"
+    git -C "$target_dir" apply --unidiff-zero "$patch_file"
     patch_count=$((patch_count + 1))
   done < <(ci_patch_files)
 
