@@ -5,6 +5,8 @@ require "yaml"
 ALLOWED_SOURCE_TYPES = %w[album person tag date memories random].freeze
 VALUE_REQUIRED_TYPES = %w[album person tag date].freeze
 DATE_VALUE = /\A(?:today|last-\d+|\d{4}-\d{2}-\d{2}_to_(?:today|\d{4}-\d{2}-\d{2}))\z/i
+EXPECTED_SLIDE_DURATION = 45
+EXPECTED_IMAGE_DATE_FORMAT = "YYYY-MM-DD"
 
 def fail_config(file, message)
   warn "#{file}: #{message}"
@@ -13,6 +15,13 @@ end
 
 ARGV.each do |file|
   config = YAML.load_file(file)
+  unless config["duration"] == EXPECTED_SLIDE_DURATION
+    fail_config(file, "duration must be #{EXPECTED_SLIDE_DURATION} seconds")
+  end
+  unless config["image_date_format"] == EXPECTED_IMAGE_DATE_FORMAT
+    fail_config(file, "image_date_format must be #{EXPECTED_IMAGE_DATE_FORMAT.inspect}")
+  end
+
   profiles = config.dig("curation", "profiles")
   fail_config(file, "curation.profiles must be a non-empty map") unless profiles.is_a?(Hash) && !profiles.empty?
 
