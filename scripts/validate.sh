@@ -13,6 +13,8 @@ elif [[ $# -gt 0 ]]; then
 fi
 
 required_files=(
+  .github/dependabot.yml
+  .github/workflows/release.yml
   .env.example
   LICENSE
   README.md
@@ -24,6 +26,12 @@ required_files=(
   custom-image/weighted-curation.patch
   custom-image/weighted-curation-tests.patch
   docker-compose.yaml
+  scripts/audit-licenses.sh
+  scripts/ci-lib.sh
+  scripts/run-gitleaks.sh
+  scripts/run-govulncheck.sh
+  scripts/run-trivy.sh
+  scripts/validate-ci.sh
 )
 
 for required_file in "${required_files[@]}"; do
@@ -62,6 +70,8 @@ else
   docker run --rm -v "$repo_root:/work:ro" -w /work ruby:3.4-alpine \
     ruby scripts/validate-config.rb config/config.example.yaml config/qwen.example.yaml
 fi
+
+./scripts/validate-ci.sh
 
 docker compose --env-file .env.example config --quiet
 
