@@ -116,6 +116,18 @@ end
   warn "#{file} must pin its scanner container by digest"
   exit 1
 end
+
+dockerfile = File.read("custom-image/Dockerfile")
+from_lines = dockerfile.lines.grep(/^FROM /)
+unless from_lines.length == 4 && from_lines.all? { |line| line.match?(/@sha256:[0-9a-f]{64}(?:\s|$)/) }
+  warn "every Dockerfile base image must be pinned by sha256 digest"
+  exit 1
+end
+
+unless dockerfile.match?(/^ARG GO_TASK_VERSION=\d+\.\d+\.\d+$/)
+  warn "GO_TASK_VERSION must remain exactly pinned"
+  exit 1
+end
 RUBY
 
 printf 'ci static validation passed\n'
