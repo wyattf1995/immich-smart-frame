@@ -51,10 +51,11 @@ online or offline event.
 
 ## Enforcement
 
-Report abusive, harassing, or otherwise unacceptable behavior to the maintainer
-privately through GitHub. Reports will be reviewed and investigated promptly
-and fairly within the limits of a solo-maintainer project. Privacy will be
-respected for the reporter to the extent practical.
+Report abusive, harassing, or otherwise unacceptable behavior through the
+[private report form](https://github.com/wyattf1995/immich-smart-frame/security/advisories/new)
+and begin the title with `Code of Conduct`. Reports will be reviewed and
+investigated fairly within the limits of a solo-maintainer project. Privacy
+will be respected for the reporter to the extent practical.
 
 The maintainer may adapt the response to the specific case, including no
 response when a report cannot be verified from the available evidence. This

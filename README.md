@@ -85,16 +85,17 @@ git clone https://github.com/wyattf1995/immich-smart-frame.git
 cd immich-smart-frame
 cp .env.example .env
 cp config/config.example.yaml config/config.yaml
-mkdir -p secrets
-read -r -s -p "Enter the read-only Immich API key: " IMMICH_API_KEY
-printf '\n'
-printf '%s' "$IMMICH_API_KEY" > secrets/immich_api_key
-unset IMMICH_API_KEY
-chmod 600 .env secrets/immich_api_key
+install -d -m 700 secrets
+install -m 600 /dev/null secrets/immich_api_key
+mkdir -p offline-assets
+${EDITOR:-vi} secrets/immich_api_key
+chmod 600 .env
 ```
 
 Edit `.env` and set at least `IMMICH_URL` and `TZ`. Neither `.env`, the active
-configuration, nor `secrets/` is tracked by Git.
+configuration, nor `secrets/` is tracked by Git. Paste only the API-key value
+into the secret file—without quotes—and save it. This editor-based flow keeps
+the key out of shell history.
 
 Build and start the service:
 
@@ -228,29 +229,6 @@ runs the same checks for pushes and pull requests. Use
 See [SECURITY.md](SECURITY.md) for reporting and deployment guidance and
 [Device setup](docs/device-setup.md#lock-down-the-frame-network) for Android
 network isolation.
-
-## API permissions and hardening
-
-Grant only the permissions required by the active sources. This project is
-designed to work with these minimum API rights:
-
-- `asset.download`
-- `asset.read`
-- `asset.view`
-- `album.read`
-- `album.statistics`
-- `archive.read`
-- `face.read`
-- `memory.read`
-- `person.read`
-- `tag.read`
-- `user.read`
-
-Do not grant write or delete permissions to the display key. Keep wireless ADB
-disabled outside provisioning windows, and disconnect after setup is complete.
-
-The frame section should be isolated from general LAN trust boundaries where
-possible (for example, via a dedicated VLAN and firewall allowlist).
 
 ## Release and version policy
 

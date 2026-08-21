@@ -36,6 +36,9 @@ The maintainer will generally prefer changes that:
   [CHANGELOG.md](CHANGELOG.md).
 - A release tag covers the repository as a whole: docs, patch set, tested
   upstream pin, and validation expectations.
+- Breaking changes may use a `vMAJOR.MINOR.PATCH-rc.N` release candidate once
+  outside users depend on the project. A formal RC cycle is intentionally not
+  required while the project has no external release consumers.
 - `main` is the active development branch and may move ahead of the latest tag.
 
 ## Support expectations
@@ -44,6 +47,13 @@ The maintainer will generally prefer changes that:
 - Older tags may not receive backported fixes.
 - The maintainer may pause work, archive the repository, or decline features
   that increase long-term maintenance burden.
+
+## Issue triage
+
+Issues are reviewed on a best-effort basis. The maintainer may close an issue
+that cannot be reproduced, is outside project scope, or has been waiting on
+requested information. Automated stale closure is intentionally disabled while
+issue volume is low.
 
 ## Contribution boundaries
 

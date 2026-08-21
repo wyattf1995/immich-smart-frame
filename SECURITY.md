@@ -9,14 +9,10 @@ backports, and there is no long-term-support window or response SLA.
 ## Reporting a vulnerability
 
 Do not include API keys, private photo URLs, LAN details, asset IDs, or
-personal images in a public issue.
-
-- If GitHub private vulnerability reporting is enabled for this repository, use
-  it.
-- Otherwise, contact the maintainer privately through GitHub before publishing
-  details.
-- If you are not sure whether something is sensitive, default to private
-  disclosure.
+personal images in a public issue. Submit the report through
+[GitHub private vulnerability reporting](https://github.com/wyattf1995/immich-smart-frame/security/advisories/new).
+If you are not sure whether something is sensitive, default to that private
+channel.
 
 Please include:
 
