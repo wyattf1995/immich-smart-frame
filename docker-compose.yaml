@@ -24,10 +24,16 @@ services:
     volumes:
       - ${KIOSK_CONFIG_FILE:-./config/config.yaml}:/config/config.yaml:ro
       - ./custom.css:/custom.css:ro
+      - ./offline-assets:/offline-assets
     secrets:
       - immich_api_key
+    cap_drop:
+      - ALL
+    read_only: true
     security_opt:
       - no-new-privileges:true
+    tmpfs:
+      - /tmp:mode=1777,noexec,nosuid,nodev
     healthcheck:
       test: ["CMD", "/kiosk", "--healthcheck"]
       interval: 30s
