@@ -20,13 +20,17 @@ shellcheck -x "${sh_files[@]}"
 ruby <<'RUBY'
 require "yaml"
 
+def load_trusted_yaml(file)
+  YAML.load_file(file)
+end
+
 workflow_files = Dir[".github/workflows/*.yml"].sort
 files = workflow_files + [".github/dependabot.yml"]
 files.each do |file|
-  YAML.load_file(file, aliases: true)
+  load_trusted_yaml(file)
 end
 
-dependabot = YAML.load_file(".github/dependabot.yml", aliases: true)
+dependabot = load_trusted_yaml(".github/dependabot.yml")
 updates = dependabot.fetch("updates")
 ecosystems = updates.map { |entry| entry.fetch("package-ecosystem") }
 %w[docker github-actions].each do |ecosystem|
@@ -49,7 +53,7 @@ def each_uses(node, &block)
 end
 
 workflow_files.each do |file|
-  workflow = YAML.load_file(file, aliases: true)
+  workflow = load_trusted_yaml(file)
   permissions = workflow.fetch("permissions")
   workflow_on = workflow["on"] || workflow[true]
   unless permissions.is_a?(Hash)
@@ -80,6 +84,16 @@ workflow_files.each do |file|
     warn "#{file} has an unpinned action reference: #{uses_value}"
     exit 1
   end
+end
+
+{
+  "scripts/run-trivy.sh" => /aquasec\/trivy:0\.74\.0@sha256:[0-9a-f]{64}/,
+  "scripts/run-gitleaks.sh" => /zricethezav\/gitleaks:v8\.30\.1@sha256:[0-9a-f]{64}/
+}.each do |file, pattern|
+  next if File.read(file).match?(pattern)
+
+  warn "#{file} must pin its scanner container by digest"
+  exit 1
 end
 RUBY
 

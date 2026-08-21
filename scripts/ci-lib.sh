@@ -26,6 +26,15 @@ ci_go_version() {
   ci_go_image | sed 's/-.*//'
 }
 
+ci_patch_files() {
+  local repo_root
+  repo_root="$(ci_repo_root)"
+
+  awk '/^COPY[[:space:]]+[^[:space:]]+\.patch[[:space:]]/ { print $2 }' "$(ci_dockerfile)" | while IFS= read -r patch_name; do
+    printf '%s/custom-image/%s\n' "$repo_root" "$patch_name"
+  done
+}
+
 ci_prepare_upstream_source() {
   if [[ $# -ne 1 ]]; then
     printf 'usage: ci_prepare_upstream_source <target-dir>\n' >&2
@@ -34,19 +43,48 @@ ci_prepare_upstream_source() {
 
   local target_dir="$1"
   local repo_root
+  local upstream_ref
+  local patch_count
   repo_root="$(ci_repo_root)"
+  upstream_ref="$(ci_upstream_ref)"
 
-  rm -rf "$target_dir"
-  git clone --depth 1 --branch "$(ci_upstream_ref)" \
-    https://github.com/damongolding/immich-kiosk.git "$target_dir"
+  if [[ -z "$upstream_ref" ]]; then
+    printf 'missing KIOSK_UPSTREAM_REF in %s\n' "$(ci_dockerfile)" >&2
+    return 1
+  fi
+
+  if [[ -e "$target_dir" ]]; then
+    if [[ ! -d "$target_dir" ]]; then
+      printf 'target path is not a directory: %s\n' "$target_dir" >&2
+      return 1
+    fi
+    if [[ -n "$(find "$target_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+      printf 'target directory must be empty: %s\n' "$target_dir" >&2
+      return 1
+    fi
+  else
+    mkdir -p "$(dirname "$target_dir")"
+  fi
+
+  git -C "$(dirname "$target_dir")" init --quiet "$target_dir"
+  git -C "$target_dir" remote add origin https://github.com/damongolding/immich-kiosk.git
+  git -C "$target_dir" fetch --depth 1 origin "$upstream_ref"
+  git -C "$target_dir" checkout --quiet --detach FETCH_HEAD
 
   local patch_file
-  for patch_file in \
-    "$repo_root/custom-image/fully-kiosk-dpr.patch" \
-    "$repo_root/custom-image/weighted-curation.patch" \
-    "$repo_root/custom-image/weighted-curation-tests.patch"
-  do
+  patch_count=0
+  while IFS= read -r patch_file; do
+    if [[ ! -f "$patch_file" ]]; then
+      printf 'missing Dockerfile patch: %s\n' "$patch_file" >&2
+      return 1
+    fi
     git -C "$target_dir" apply --check "$patch_file"
     git -C "$target_dir" apply "$patch_file"
-  done
+    patch_count=$((patch_count + 1))
+  done < <(ci_patch_files)
+
+  if [[ "$patch_count" -eq 0 ]]; then
+    printf 'no local .patch files declared in %s\n' "$(ci_dockerfile)" >&2
+    return 1
+  fi
 }
