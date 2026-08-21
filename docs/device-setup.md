@@ -7,8 +7,10 @@ running the stock Android 10 production build. Other firmware may differ.
 
 - a USB-C OTG adapter;
 - a USB mouse;
-- Android platform tools (`adb`) on another computer;
-- a kiosk-browser APK obtained from its publisher;
+- [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools)
+  (`adb`) on another computer;
+- a kiosk-browser APK obtained from its publisher, such as
+  [Fully Kiosk Browser](https://www.fully-kiosk.com/);
 - the frame and Docker host on the same trusted network.
 
 The frame has no touchscreen. Keep the OTG mouse nearby as recovery input even
@@ -79,6 +81,28 @@ The tested renderer is Fully Kiosk Browser 1.61.2. Configure:
 
 The DPR patch in this project does not require Fully's privileged JavaScript
 interface or its broad device permissions.
+
+## Lock down the frame network
+
+After provisioning, treat the frame like a single-purpose appliance rather than
+a general Android tablet:
+
+1. Place it on a dedicated VLAN or isolated SSID if your network supports it.
+2. Allow outbound access only to the Docker host's slideshow port and whatever
+   DNS/NTP services your network requires.
+3. Deny inbound connections from the rest of the LAN except temporary ADB from
+   a trusted workstation during maintenance.
+4. Do not leave TCP/5555 reachable after setup.
+
+When you are done with wireless ADB, disable it immediately:
+
+```sh
+adb -s FRAME_IP:5555 usb
+adb disconnect FRAME_IP:5555
+```
+
+If you do not expect to debug again soon, also turn off **USB debugging** in
+Developer Options.
 
 ## Model-specific stability settings
 

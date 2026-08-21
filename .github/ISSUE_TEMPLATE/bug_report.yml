@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a reproducible problem with the frame deployment, docs, or pinned patches.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include API keys, private photo URLs, LAN hostnames, asset IDs, or personal-family images.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the actual behavior and the expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: List the exact steps or commands needed to trigger the issue.
+      placeholder: |
+        1. Start from ...
+        2. Open ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: Tested versions
+      description: Include the exact environment.
+      placeholder: |
+        Frame model:
+        Android version:
+        Browser version:
+        Immich version:
+        Immich Kiosk upstream pin:
+        Repository commit or tag:
+    validations:
+      required: true
+  - type: dropdown
+    id: source_scope
+    attributes:
+      label: Does this reproduce against upstream Immich Kiosk without local patches?
+      options:
+        - I have not checked
+        - Yes
+        - No
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or screenshots
+      description: Remove credentials, hostnames, and personal images before pasting anything here.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Include anything else that narrows the problem.
