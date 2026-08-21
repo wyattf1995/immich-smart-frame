@@ -8,6 +8,7 @@ services:
       context: ./custom-image
       args:
         KIOSK_UPSTREAM_REF: ${KIOSK_UPSTREAM_REF:-v0.42.0}
+        KIOSK_UPSTREAM_COMMIT: ${KIOSK_UPSTREAM_COMMIT:-2fc02e0573444de60beff43e33b93f73cf25c2af}
         KIOSK_VERSION: ${KIOSK_VERSION:-0.42.0-lenovo-curation1}
     image: ${KIOSK_IMAGE:-local/immich-kiosk:0.42.0-lenovo-curation1}
     container_name: ${KIOSK_CONTAINER_NAME:-immich-kiosk}

@@ -2,10 +2,7 @@ diff --git a/internal/config/config_test.go b/internal/config/config_test.go
 index c46c46f..b4473f0 100644
 --- a/internal/config/config_test.go
 +++ b/internal/config/config_test.go
-@@ -101,6 +101,91 @@ func TestMalformedURLs(t *testing.T) {
- 	}
- }
- 
+@@ -103,0 +104,85 @@ func TestMalformedURLs(t *testing.T) {
 +func TestCheckCurationNormalizesProfilesAndSources(t *testing.T) {
 +	c := &Config{
 +		CurationProfile: "  Family Mix  ",
@@ -91,9 +88,6 @@ index c46c46f..b4473f0 100644
 +	assert.LessOrEqual(t, int64(c.ClientData.Width)*int64(c.ClientData.Height), int64(maxClientImageTotalPixels))
 +}
 +
- // TestImmichURLImmichMultipleAlbum tests the addition and overriding of multiple albums in the config
- func TestImmichURLImmichMultipleAlbum(t *testing.T) {
- 	// configWithBase
 diff --git a/internal/routes/routes_curation_test.go b/internal/routes/routes_curation_test.go
 new file mode 100644
 index 0000000..f420311
@@ -130,10 +124,7 @@ diff --git a/internal/utils/utils_test.go b/internal/utils/utils_test.go
 index d415b11..7a10497 100644
 --- a/internal/utils/utils_test.go
 +++ b/internal/utils/utils_test.go
-@@ -504,6 +504,16 @@ func TestAssetWeight(t *testing.T) {
- 	}
- }
- 
+@@ -506,0 +507,10 @@ func TestAssetWeight(t *testing.T) {
 +func TestConfiguredAssetWeightOverridesCalculatedWeight(t *testing.T) {
 +	asset := AssetWithWeighting{
 +		Weight:           100_000,
@@ -144,6 +135,3 @@ index d415b11..7a10497 100644
 +	assert.InDelta(t, 7.5, assetWeight(asset), 0.0001)
 +}
 +
- func TestCalculateTotalWeight(t *testing.T) {
- 	tests := []struct {
- 		name   string

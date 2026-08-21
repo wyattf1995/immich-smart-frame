@@ -2,118 +2,57 @@ diff --git a/go.mod b/go.mod
 index 6db3cf6..24dc24b 100644
 --- a/go.mod
 +++ b/go.mod
-@@ -1,6 +1,6 @@
- module github.com/damongolding/immich-kiosk
- 
+@@ -3 +3 @@ module github.com/damongolding/immich-kiosk
 -go 1.26.5
 +go 1.26.6
- 
- require (
- 	charm.land/lipgloss/v2 v2.0.5
-@@ -26,9 +26,9 @@ require (
- 	github.com/vmihailenco/msgpack/v5 v5.4.1
- 	github.com/xeipuuv/gojsonschema v1.2.0
- 	go.yaml.in/yaml/v3 v3.0.5
+@@ -29 +29 @@ require (
 -	golang.org/x/image v0.44.0
 +	golang.org/x/image v0.45.0
- 	golang.org/x/sync v0.22.0
+@@ -31 +31 @@ require (
 -	golang.org/x/text v0.40.0
 +	golang.org/x/text v0.41.0
- 	golang.org/x/time v0.15.0
- )
- 
-@@ -95,10 +95,10 @@ require (
- 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
- 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
- 	golang.org/x/exp v0.0.0-20251113190631-e25ba8c21ef6 // indirect
+@@ -98 +98 @@ require (
 -	golang.org/x/mod v0.37.0 // indirect
 +	golang.org/x/mod v0.38.0 // indirect
- 	golang.org/x/net v0.57.0 // indirect
- 	golang.org/x/sys v0.47.0 // indirect
+@@ -101 +101 @@ require (
 -	golang.org/x/tools v0.47.0 // indirect
 +	golang.org/x/tools v0.48.0 // indirect
- 	google.golang.org/protobuf v1.36.10 // indirect
- 	gopkg.in/yaml.v2 v2.4.0 // indirect
- 	gopkg.in/yaml.v3 v3.0.1 // indirect
 diff --git a/go.sum b/go.sum
 index 3cf7928..5064f4a 100644
 --- a/go.sum
 +++ b/go.sum
-@@ -331,8 +331,12 @@ golang.org/x/exp v0.0.0-20251113190631-e25ba8c21ef6/go.mod h1:46edojNIoXTNOhySWI
- golang.org/x/image v0.0.0-20191009234506-e7c1f5e7dbb8/go.mod h1:FeLwcggjj3mMvU+oOTbSwawSJRM1uh48EjtB4UJZlP0=
- golang.org/x/image v0.44.0 h1:+tDekMZED9+LrtB3G5xzRggpVh9CARjZqROla3R3R+I=
- golang.org/x/image v0.44.0/go.mod h1:V8K3KE9KKKE+pLpQDOeN18w9oacNSvy1tDOirTu4xtY=
+@@ -333,0 +334,2 @@ golang.org/x/image v0.44.0/go.mod h1:V8K3KE9KKKE+pLpQDOeN18w9oacNSvy1tDOirTu4xtY
 +golang.org/x/image v0.45.0 h1:FMb1nTbH5H9vF55SriQHgFw5GnNL9Jg6L25BwXKzhB0=
 +golang.org/x/image v0.45.0/go.mod h1:n62x/7RqlwXDvGsSU4u6IUTUf6KghUZ9Bt7cG/T9Fx4=
- golang.org/x/mod v0.37.0 h1:vF1DjpVEshcIqoEaauuHebaLk1O1forxjxBaVn884JQ=
- golang.org/x/mod v0.37.0/go.mod h1:m8S8VeM9r4dzDwjrKO0a1sZP3YjeMamRRlD+fmR2Q/0=
+@@ -335,0 +338,2 @@ golang.org/x/mod v0.37.0/go.mod h1:m8S8VeM9r4dzDwjrKO0a1sZP3YjeMamRRlD+fmR2Q/0=
 +golang.org/x/mod v0.38.0 h1:MECBjubtXD7yj4HrhIUcywNaGeNVUdfVnxmPajOk4yk=
 +golang.org/x/mod v0.38.0/go.mod h1:V6Xz0pq8TQ3dGqVQ1FVHuelZpAL0uNhSkk9ogYP3c40=
- golang.org/x/net v0.0.0-20180906233101-161cd47e91fd/go.mod h1:mL1N/T3taQHkDXs73rZJwtUhF3w3ftmwwsq0BUmARs4=
- golang.org/x/net v0.57.0 h1:K5+3DljvIuDG9/Jv9rvyMywYNFCQ9RSUY6OOTTkT+tE=
- golang.org/x/net v0.57.0/go.mod h1:KpXc8iv+r3XplLAG/f7Jsf9RPszJzdR0f58q9vGOuEU=
-@@ -346,10 +350,14 @@ golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
- golang.org/x/text v0.3.0/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=
- golang.org/x/text v0.40.0 h1:Ub2Z6/xjgF1WrYQz2nuITOEegKFtiIy+rieRJ5lHZKs=
- golang.org/x/text v0.40.0/go.mod h1:hpnzDAfGV753zIKo+wk3u1bVKCGPbrnF7+7LBF/UHVY=
+@@ -348,0 +353,2 @@ golang.org/x/text v0.40.0/go.mod h1:hpnzDAfGV753zIKo+wk3u1bVKCGPbrnF7+7LBF/UHVY=
 +golang.org/x/text v0.41.0 h1:vz/seA0lnX87Othu2f/0L24RcgrXD9/YFTSuGjj3rH8=
 +golang.org/x/text v0.41.0/go.mod h1:jvf1O8ajNzZqhSrQBPbutR/EB83Cc0CFrezNQIwbb5M=
- golang.org/x/time v0.15.0 h1:bbrp8t3bGUeFOx08pvsMYRTCVSMk89u4tKbNOZbp88U=
- golang.org/x/time v0.15.0/go.mod h1:Y4YMaQmXwGQZoFaVFk4YpCt4FLQMYKZe9oeV/f4MSno=
- golang.org/x/tools v0.47.0 h1:7Kn5x/d1svx/PzryTsqeoZN4TZwqeH5pGWjefhLi/1Q=
- golang.org/x/tools v0.47.0/go.mod h1:dFHnyTvFWY212G+h7ZY4Vsp/K3U4/7W9TyVaAul8uCA=
+@@ -352,0 +359,2 @@ golang.org/x/tools v0.47.0/go.mod h1:dFHnyTvFWY212G+h7ZY4Vsp/K3U4/7W9TyVaAul8uCA
 +golang.org/x/tools v0.48.0 h1:3+hClM1aLL5mjMKm5ovokw9epgRXPuu2tILgismM6RE=
 +golang.org/x/tools v0.48.0/go.mod h1:08xX0orndb/F7jJxGDicx061tyd5pcMto75YMAXr6lk=
- google.golang.org/protobuf v1.36.10 h1:AYd7cD/uASjIL6Q9LiTjz8JLcrh/88q5UObnmY3aOOE=
- google.golang.org/protobuf v1.36.10/go.mod h1:HTf+CrKn2C3g5S8VImy6tdcUvCska2kB7j23XfzDpco=
- gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 diff --git a/internal/config/config.go b/internal/config/config.go
 index 786207c..4daa8cf 100644
 --- a/internal/config/config.go
 +++ b/internal/config/config.go
-@@ -46,6 +46,8 @@ import (
- const (
- 	defaultScheme     = "http://"
- 	DefaultDateLayout = "02/01/2006"
+@@ -48,0 +49,2 @@ const (
 +	maxClientImageDimension   = 7680
 +	maxClientImageTotalPixels = 7680 * 4320
- 
- 	AlbumOrderRandom     = "random"
- 	AlbumOrderAscending  = "ascending"
-@@ -715,6 +717,9 @@ func (c *Config) Load() error {
- 	c.checkUsersAPIKeys()
- 	c.checkLowercaseTaggedFields()
- 	c.checkAssetBuckets()
+@@ -717,0 +720,3 @@ func (c *Config) Load() error {
 +	if err := c.checkCuration(); err != nil {
 +		return err
 +	}
- 	c.checkAlbumOrder()
- 	c.checkExcludedAlbums()
- 	c.checkTags()
-@@ -789,6 +794,7 @@ func (c *Config) ConfigWithOverrides(queries url.Values, e *echo.Context) error
- 		return err
- 	}
- 
+@@ -791,0 +797 @@ func (c *Config) ConfigWithOverrides(queries url.Values, e *echo.Context) error
 +	c.sanitizeClientData()
- 	c.checkFilterNewest()
- 	c.checkExcludedAlbums()
- 
 diff --git a/internal/config/config_validation.go b/internal/config/config_validation.go
 index 6982118..7219ee2 100644
 --- a/internal/config/config_validation.go
 +++ b/internal/config/config_validation.go
-@@ -2,6 +2,7 @@ package config
- 
- import (
- 	"fmt"
+@@ -4,0 +5 @@ import (
 +	"math"
- 	"net/url"
- 	"os"
- 	"path/filepath"
-@@ -209,6 +210,73 @@ func (c *Config) cleanupSlice(slice []string, placeholders ...string) []string {
- 	return cleaned
- }
- 
+@@ -211,0 +213,67 @@ func (c *Config) cleanupSlice(slice []string, placeholders ...string) []string {
 +func normalizeCurationProfileLookup(name string) string {
 +	return strings.ToLower(strings.TrimSpace(name))
 +}
@@ -181,6 +120,3 @@ index 6982118..7219ee2 100644
 +	c.ClientData.Height = max(1, int(math.Floor(float64(c.ClientData.Height)*scale)))
 +}
 +
- // checkAssetBuckets validates and cleans up various asset filter lists in the Config.
- // It processes Album, ExcludedAlbums, Person, and Date slices by:
- // - Removing empty strings and placeholder values like "ALBUM_ID", "PERSON_ID", etc.
