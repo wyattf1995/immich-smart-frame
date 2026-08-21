@@ -1,16 +1,25 @@
 # Lenovo Smart Frame + Immich
 
+[![CI](https://github.com/wyattf1995/immich-smart-frame/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/wyattf1995/immich-smart-frame/actions/workflows/validate.yml)
+[![License](https://img.shields.io/github/license/wyattf1995/immich-smart-frame)](./LICENSE)
+
 Turn a discontinued Lenovo Smart Frame into a fullscreen, native-resolution
 Immich display with a photo-selection algorithm you control.
 
 This project keeps the frame deliberately simple: an Android kiosk browser
-renders the slideshow while a Docker host runs a pinned, lightly patched build
-of [Immich Kiosk](https://github.com/damongolding/immich-kiosk). It does not
+([Fully Kiosk Browser](https://www.fully-kiosk.com/)) renders the slideshow
+while a Docker host runs a pinned, lightly patched build of
+[Immich Kiosk](https://github.com/damongolding/immich-kiosk). It does not
 modify Immich originals, ratings, albums, tags, or sidecars.
 
 > [!IMPORTANT]
 > This is an experimental community project, not a Lenovo, Immich, or Immich
 > Kiosk product. It is tested on one Lenovo CD-3L501F running stock Android 10.
+
+![Synthetic privacy-safe demo of the frame UI](docs/images/demo-frame.webp)
+
+_Synthetic, privacy-safe demo image. It does not contain a real family photo or
+live deployment metadata._
 
 ## Why this exists
 
@@ -72,10 +81,15 @@ Prerequisites:
 Clone the repository and create local deployment files:
 
 ```sh
+git clone https://github.com/wyattf1995/immich-smart-frame.git
+cd immich-smart-frame
 cp .env.example .env
 cp config/config.example.yaml config/config.yaml
 mkdir -p secrets
-printf '%s' 'YOUR_READ_ONLY_IMMICH_API_KEY' > secrets/immich_api_key
+read -r -s -p "Enter the read-only Immich API key: " IMMICH_API_KEY
+printf '\n'
+printf '%s' "$IMMICH_API_KEY" > secrets/immich_api_key
+unset IMMICH_API_KEY
 chmod 600 .env secrets/immich_api_key
 ```
 
@@ -101,8 +115,9 @@ The starter profile requires no custom tags or albums. It favors the last 30,
 
 ### API-key permissions
 
-Grant only the read permissions needed by the sources you enable. The tested
-configuration uses:
+In Immich Web, create a dedicated API key from the user settings panel and
+enable only the read permissions required by your active sources. The tested
+starter configuration uses:
 
 - asset download, read, and view;
 - album read and statistics;
@@ -111,6 +126,8 @@ configuration uses:
 
 Do not give the display key write permissions. `asset.download` is needed
 because Kiosk starts with the original before resizing it on the Docker host.
+See [API-key permissions](docs/api-key-permissions.md) for the exact permission
+set and when each toggle is needed.
 
 ## Curation profiles
 
@@ -174,13 +191,16 @@ upgrades should be reviewed rather than following `latest`.
 ## Frame setup
 
 The Lenovo frame has no touchscreen. Initial provisioning uses a USB-C OTG
-mouse, Android Developer Options, and one USB-debugging authorization. Wireless
-ADB can simplify setup, but it does not survive reboot on the locked stock
-firmware and should never be exposed to an untrusted network.
+mouse, Android Developer Options, one USB-debugging authorization, the official
+[Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools),
+and a kiosk-browser APK obtained from the browser publisher. Wireless ADB can
+simplify setup, but it does not survive reboot on the locked stock firmware and
+should never be left enabled on a general-purpose LAN.
 
 See [Device setup](docs/device-setup.md) and
 [Troubleshooting](docs/troubleshooting.md) for the exact process and the two
-MediaTek-specific service failures encountered during testing.
+MediaTek-specific service failures encountered during testing. The device guide
+also covers VLAN and firewall isolation for a dedicated Android 10 frame.
 
 ## Validation
 
@@ -201,10 +221,50 @@ runs the same checks for pushes and pull requests. Use
   reverse proxy.
 - Never commit `.env`, `config/config.yaml`, or `secrets/`.
 - Use a dedicated read-only Immich key.
-- Treat wireless ADB as privileged shell access.
+- Treat wireless ADB as privileged shell access and disable it after
+  provisioning.
 - Do not publish screenshots containing personal photos by default.
 
-See [SECURITY.md](SECURITY.md) for reporting and deployment guidance.
+See [SECURITY.md](SECURITY.md) for reporting and deployment guidance and
+[Device setup](docs/device-setup.md#lock-down-the-frame-network) for Android
+network isolation.
+
+## API permissions and hardening
+
+Grant only the permissions required by the active sources. This project is
+designed to work with these minimum API rights:
+
+- `asset.download`
+- `asset.read`
+- `asset.view`
+- `album.read`
+- `album.statistics`
+- `archive.read`
+- `face.read`
+- `memory.read`
+- `person.read`
+- `tag.read`
+- `user.read`
+
+Do not grant write or delete permissions to the display key. Keep wireless ADB
+disabled outside provisioning windows, and disconnect after setup is complete.
+
+The frame section should be isolated from general LAN trust boundaries where
+possible (for example, via a dedicated VLAN and firewall allowlist).
+
+## Release and version policy
+
+Tagged releases follow [Semantic Versioning](https://semver.org/). Before
+`1.0.0`, configuration and deployment behavior may still change faster, but any
+breaking change will be called out in the changelog and release notes.
+
+Use repository tags, not arbitrary upstream versions, for upgrades and
+rollbacks. Each tag identifies the exact upstream Immich Kiosk pin, local
+patches, and documentation state that were validated together.
+
+See [CHANGELOG.md](CHANGELOG.md), [Upgrade and rollback](docs/upgrade-rollback.md),
+and [GOVERNANCE.md](GOVERNANCE.md) for the release process and support
+expectations.
 
 ## Project status
 
@@ -217,8 +277,12 @@ near-duplicate suppression, and a read-only-display-safe rejection workflow.
 
 This project modifies and builds Immich Kiosk, which is licensed under the GNU
 Affero General Public License v3.0. This repository is distributed under the
-same license. See [LICENSE](LICENSE) and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+same license. Contributions are accepted on an inbound-equals-outbound basis:
+by submitting code or documentation, you agree that it is licensed under this
+repository's AGPL-3.0 terms.
+
+See [LICENSE](LICENSE), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 The upstream project is not responsible for these device-specific patches or
 support requests. Please reproduce problems against upstream before filing an

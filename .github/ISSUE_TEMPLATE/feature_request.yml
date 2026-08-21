@@ -1,0 +1,35 @@
+name: Feature request
+description: Propose a scoped enhancement that fits the project's display-only goals.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the operator or viewer problem first.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the smallest useful change.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and constraints
+      description: Call out privacy, credential, Android-version, or upstream-patch constraints.
+  - type: dropdown
+    id: willingness
+    attributes:
+      label: Are you willing to help implement or validate this?
+      options:
+        - Yes
+        - No
+        - Maybe, with guidance
+    validations:
+      required: true
