@@ -17,6 +17,13 @@ sh_files=(
 bash -n "${sh_files[@]}"
 shellcheck -x "${sh_files[@]}"
 
+# shellcheck source=scripts/ci-lib.sh
+source scripts/ci-lib.sh
+if [[ ! "$(ci_upstream_ref)" =~ ^[0-9a-f]{40}$ ]]; then
+  printf 'CI audits must fetch the exact KIOSK_UPSTREAM_COMMIT\n' >&2
+  exit 1
+fi
+
 ruby <<'RUBY'
 require "yaml"
 
