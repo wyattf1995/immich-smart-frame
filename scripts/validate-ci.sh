@@ -128,6 +128,11 @@ unless dockerfile.match?(/^ARG GO_TASK_VERSION=\d+\.\d+\.\d+$/)
   warn "GO_TASK_VERSION must remain exactly pinned"
   exit 1
 end
+
+unless File.read("scripts/audit-licenses.sh").include?('--user "$(id -u):$(id -g)"')
+  warn "Node license audit must not leave root-owned files in the CI workspace"
+  exit 1
+end
 RUBY
 
 printf 'ci static validation passed\n'
