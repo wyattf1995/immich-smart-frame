@@ -24,6 +24,20 @@ if [[ ! "$(ci_upstream_ref)" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 
+expected_project_version=0.1.0
+declared_versions=(
+  "$(sed -n 's/^KIOSK_VERSION=//p' .env.example)"
+  "$(sed -n 's/^ARG KIOSK_VERSION=//p' custom-image/Dockerfile)"
+  "$(sed -n 's/.*KIOSK_VERSION:-\([^}]*\).*/\1/p' docker-compose.yaml)"
+)
+for declared_version in "${declared_versions[@]}"; do
+  if [[ "$declared_version" != "$expected_project_version" ]]; then
+    printf 'project version mismatch: expected %s, found %s\n' \
+      "$expected_project_version" "$declared_version" >&2
+    exit 1
+  fi
+done
+
 ruby <<'RUBY'
 require "yaml"
 
