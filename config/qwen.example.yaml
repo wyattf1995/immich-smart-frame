@@ -103,7 +103,7 @@ show_more_info: false
 show_more_info_image_link: false
 show_more_info_qr_code: false
 
-# Show the exact capture year plus location in the lower-left metadata. Country
+# Show the exact capture date plus location in the lower-left metadata. Country
 # is redundant for this library; city and state remain visible when available.
 show_image_date: true
 image_date_format: YYYY-MM-DD

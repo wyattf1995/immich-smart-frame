@@ -32,7 +32,7 @@ experience. This one adds:
 - server-side resizing, caching, and prefetch for low-memory hardware;
 - named, explicitly weighted curation profiles;
 - recency ladders, Immich memories, people, albums, tags, and date ranges;
-- exact capture year and optional city/state metadata;
+- exact capture date and optional city/state metadata;
 - reviewable patches against a pinned upstream release.
 
 ## Architecture
@@ -252,7 +252,7 @@ for the release process and support expectations.
 ## Project status
 
 The core slideshow, native-resolution path, weighted profiles, recency bias,
-year/location metadata, and low-memory performance tuning are working. Known
+exact-date/location metadata, and low-memory performance tuning are working. Known
 future work includes persistent per-display “already shown” history,
 near-duplicate suppression, and a read-only-display-safe rejection workflow.
 
