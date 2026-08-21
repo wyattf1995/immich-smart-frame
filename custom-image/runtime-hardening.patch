@@ -1,0 +1,122 @@
+diff --git a/go.mod b/go.mod
+index 6db3cf6..24dc24b 100644
+--- a/go.mod
++++ b/go.mod
+@@ -3 +3 @@ module github.com/damongolding/immich-kiosk
+-go 1.26.5
++go 1.26.6
+@@ -29 +29 @@ require (
+-	golang.org/x/image v0.44.0
++	golang.org/x/image v0.45.0
+@@ -31 +31 @@ require (
+-	golang.org/x/text v0.40.0
++	golang.org/x/text v0.41.0
+@@ -98 +98 @@ require (
+-	golang.org/x/mod v0.37.0 // indirect
++	golang.org/x/mod v0.38.0 // indirect
+@@ -101 +101 @@ require (
+-	golang.org/x/tools v0.47.0 // indirect
++	golang.org/x/tools v0.48.0 // indirect
+diff --git a/go.sum b/go.sum
+index 3cf7928..5064f4a 100644
+--- a/go.sum
++++ b/go.sum
+@@ -333,0 +334,2 @@ golang.org/x/image v0.44.0/go.mod h1:V8K3KE9KKKE+pLpQDOeN18w9oacNSvy1tDOirTu4xtY
++golang.org/x/image v0.45.0 h1:FMb1nTbH5H9vF55SriQHgFw5GnNL9Jg6L25BwXKzhB0=
++golang.org/x/image v0.45.0/go.mod h1:n62x/7RqlwXDvGsSU4u6IUTUf6KghUZ9Bt7cG/T9Fx4=
+@@ -335,0 +338,2 @@ golang.org/x/mod v0.37.0/go.mod h1:m8S8VeM9r4dzDwjrKO0a1sZP3YjeMamRRlD+fmR2Q/0=
++golang.org/x/mod v0.38.0 h1:MECBjubtXD7yj4HrhIUcywNaGeNVUdfVnxmPajOk4yk=
++golang.org/x/mod v0.38.0/go.mod h1:V6Xz0pq8TQ3dGqVQ1FVHuelZpAL0uNhSkk9ogYP3c40=
+@@ -348,0 +353,2 @@ golang.org/x/text v0.40.0/go.mod h1:hpnzDAfGV753zIKo+wk3u1bVKCGPbrnF7+7LBF/UHVY=
++golang.org/x/text v0.41.0 h1:vz/seA0lnX87Othu2f/0L24RcgrXD9/YFTSuGjj3rH8=
++golang.org/x/text v0.41.0/go.mod h1:jvf1O8ajNzZqhSrQBPbutR/EB83Cc0CFrezNQIwbb5M=
+@@ -352,0 +359,2 @@ golang.org/x/tools v0.47.0/go.mod h1:dFHnyTvFWY212G+h7ZY4Vsp/K3U4/7W9TyVaAul8uCA
++golang.org/x/tools v0.48.0 h1:3+hClM1aLL5mjMKm5ovokw9epgRXPuu2tILgismM6RE=
++golang.org/x/tools v0.48.0/go.mod h1:08xX0orndb/F7jJxGDicx061tyd5pcMto75YMAXr6lk=
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 786207c..4daa8cf 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -48,0 +49,2 @@ const (
++	maxClientImageDimension   = 7680
++	maxClientImageTotalPixels = 7680 * 4320
+@@ -717,0 +720,3 @@ func (c *Config) Load() error {
++	if err := c.checkCuration(); err != nil {
++		return err
++	}
+@@ -791,0 +797 @@ func (c *Config) ConfigWithOverrides(queries url.Values, e *echo.Context) error
++	c.sanitizeClientData()
+diff --git a/internal/config/config_validation.go b/internal/config/config_validation.go
+index 6982118..7219ee2 100644
+--- a/internal/config/config_validation.go
++++ b/internal/config/config_validation.go
+@@ -4,0 +5 @@ import (
++	"math"
+@@ -211,0 +213,67 @@ func (c *Config) cleanupSlice(slice []string, placeholders ...string) []string {
++func normalizeCurationProfileLookup(name string) string {
++	return strings.ToLower(strings.TrimSpace(name))
++}
++
++func (c *Config) checkCuration() error {
++	c.CurationProfile = strings.TrimSpace(c.CurationProfile)
++	if len(c.Curation.Profiles) == 0 {
++		return nil
++	}
++
++	normalizedProfiles := make(map[string]CurationProfile, len(c.Curation.Profiles))
++	canonicalNames := make(map[string]string, len(c.Curation.Profiles))
++
++	for name, profile := range c.Curation.Profiles {
++		trimmedName := strings.TrimSpace(name)
++		if trimmedName == "" {
++			return fmt.Errorf("curation profile names must not be empty")
++		}
++
++		lookupName := normalizeCurationProfileLookup(trimmedName)
++		if existingName, exists := canonicalNames[lookupName]; exists {
++			return fmt.Errorf("curation profiles %q and %q collide after trim+casefold", existingName, trimmedName)
++		}
++		canonicalNames[lookupName] = trimmedName
++
++		for i := range profile.Sources {
++			profile.Sources[i].Type = strings.TrimSpace(profile.Sources[i].Type)
++			profile.Sources[i].Value = strings.TrimSpace(profile.Sources[i].Value)
++		}
++
++		normalizedProfiles[trimmedName] = profile
++	}
++
++	c.Curation.Profiles = normalizedProfiles
++	return nil
++}
++
++func clampClientImageDimension(dimension int) int {
++	switch {
++	case dimension <= 0:
++		return 0
++	case dimension > maxClientImageDimension:
++		return maxClientImageDimension
++	default:
++		return dimension
++	}
++}
++
++func (c *Config) sanitizeClientData() {
++	c.ClientData.Width = clampClientImageDimension(c.ClientData.Width)
++	c.ClientData.Height = clampClientImageDimension(c.ClientData.Height)
++	c.CurationProfile = strings.TrimSpace(c.CurationProfile)
++
++	if c.ClientData.Width == 0 || c.ClientData.Height == 0 {
++		return
++	}
++
++	totalPixels := int64(c.ClientData.Width) * int64(c.ClientData.Height)
++	if totalPixels <= maxClientImageTotalPixels {
++		return
++	}
++
++	scale := math.Sqrt(float64(maxClientImageTotalPixels) / float64(totalPixels))
++	c.ClientData.Width = max(1, int(math.Floor(float64(c.ClientData.Width)*scale)))
++	c.ClientData.Height = max(1, int(math.Floor(float64(c.ClientData.Height)*scale)))
++}
++
