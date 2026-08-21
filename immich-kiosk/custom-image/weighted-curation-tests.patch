@@ -1,0 +1,53 @@
+diff --git a/internal/routes/routes_curation_test.go b/internal/routes/routes_curation_test.go
+new file mode 100644
+index 0000000..f420311
+--- /dev/null
++++ b/internal/routes/routes_curation_test.go
+@@ -0,0 +1,26 @@
++package routes
++
++import (
++	"testing"
++
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/stretchr/testify/assert"
++)
++
++func TestFindCurationProfileCaseInsensitive(t *testing.T) {
++	want := config.CurationProfile{
++		Sources: []config.CuratedSource{{Type: "tag", Value: "People/Family", Weight: 25}},
++	}
++	profiles := map[string]config.CurationProfile{"Family Mix": want}
++
++	got, ok := findCurationProfile(profiles, "  family mix ")
++
++	assert.True(t, ok)
++	assert.Equal(t, want, got)
++}
++
++func TestFindCurationProfileMissing(t *testing.T) {
++	_, ok := findCurationProfile(map[string]config.CurationProfile{}, "missing")
++
++	assert.False(t, ok)
++}
+diff --git a/internal/utils/utils_test.go b/internal/utils/utils_test.go
+index d415b11..7a10497 100644
+--- a/internal/utils/utils_test.go
++++ b/internal/utils/utils_test.go
+@@ -504,6 +504,16 @@ func TestAssetWeight(t *testing.T) {
+ 	}
+ }
+ 
++func TestConfiguredAssetWeightOverridesCalculatedWeight(t *testing.T) {
++	asset := AssetWithWeighting{
++		Weight:           100_000,
++		Penalty:          25,
++		ConfiguredWeight: 7.5,
++	}
++
++	assert.InDelta(t, 7.5, assetWeight(asset), 0.0001)
++}
++
+ func TestCalculateTotalWeight(t *testing.T) {
+ 	tests := []struct {
+ 		name   string
