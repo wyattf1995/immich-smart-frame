@@ -32,9 +32,16 @@ consumer-facing payoff for building a local photo archive around Immich.
    listing appeared. Excluding `Things/ProductListing` helped, but a Dodge
    service-manual photo then appeared because it was one of the approximately
    0.5% of archive photos with no Qwen caption or tags.
-8. That failure motivated the durable design: select only from positively
-   weighted Qwen/face sources, then apply hard exclusions. Unknowns are excluded
-   by construction.
+8. That failure motivated the durable baseline: select from positively weighted
+   Qwen/face sources, then apply hard exclusions. Unknown older assets are
+   excluded by construction.
+9. A live sample then exposed a different archive-size bias: 15 of 16 balanced
+   selections were from 2022 or earlier even though thousands of recent photos
+   were available. An overlapping 30/180/730-day ladder now reserves 50% of the
+   balanced profile for recency while retaining the curated evergreen mix.
+   Those recent windows intentionally allow not-yet-tagged photos that still
+   pass the hard exclusions; this is a narrow freshness exception rather than a
+   return to archive-wide random selection.
 
 ## Verified technical facts (2026-08-20)
 
@@ -45,6 +52,9 @@ consumer-facing payoff for building a local photo archive around Immich.
 - Custom image: `0.42.0-lenovo-curation1`.
 - Qwen model used by the earlier archive pass: `qwen3-vl:8b-instruct`.
 - Qwen coverage: approximately 90,822 of 91,236 timeline photos (~99.5%).
+- Recency inventory at rollout: 2,872 images from the last 30 days, 8,110 from
+  the last 180 days, and 19,110 from the last 730 days. These are overlapping
+  counts from the active Immich timeline.
 - Live browser request after the DPR fix: `client_width=1920`,
   `client_height=1080`.
 - Lower-left metadata was verified on the physical frame at 1920x1080 with an

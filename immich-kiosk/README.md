@@ -26,19 +26,32 @@ is run during every image build.
 
 ## Selection model
 
-The active `balanced` profile uses tags produced by a local Qwen VLM pass plus
-Immich's recognized-face data. Its weights total 100:
+The active `balanced` profile uses tags produced by a local Qwen VLM pass,
+Immich's recognized-face data, and an explicit recency ladder. Its weights
+total 100:
 
-- 44% people/faces
-- 12% dogs
-- 18% travel and family events
-- 19% photography-oriented tags
-- 7% Immich memories
+- 25% photos captured in the last 30 days
+- 15% photos captured in the last 180 days
+- 10% photos captured in the last 730 days
+- 22% people/faces
+- 6% dogs
+- 9% travel and family events
+- 9% photography-oriented tags
+- 4% Immich memories
 
-This is a positive-source model. An asset must enter through one of those
-sources; an untagged archive straggler is not eligible. Hard exclusions then
-remove known classes such as documents, screenshots, product listings,
-electronics, DIY documentation, and timelapse frames.
+The three date ranges intentionally overlap. A photo from the last month can
+enter through all three recent pools (and through a matching curated tag), a
+six-month-old photo through the two wider pools, and a two-year-old photo only
+through the widest. This creates a strong recency bias without imposing a hard
+cutoff on older family and photography selections.
+
+Outside the explicit recent-date pools, this remains a positive-source model:
+an asset must enter through a selected Qwen tag, recognized person, or memory.
+The recent pools deliberately admit any new asset that passes the hard
+exclusions so recently captured photos are not hidden merely because tagging
+lags behind ingestion. Known classes such as documents, screenshots, product
+listings, electronics, DIY documentation, and timelapse frames remain excluded
+from every source.
 
 Two additional profiles are included:
 
