@@ -61,10 +61,10 @@ consumer-facing payoff for building a local photo archive around Immich.
 - Live browser request after the DPR fix: `client_width=1920`,
   `client_height=1080`.
 - Lower-left metadata was verified on the physical frame at 1920x1080 with an
-  exact capture year and city/state; photos lacking location data render no
+  exact capture date and city/state; photos lacking location data render no
   empty location icon.
 - Typical NAS original fetch/resize was well under one second after warm-up;
-  prefetch hid it from the 30-second slide interval.
+  prefetch hid it from the 45-second slide interval.
 - Docker build runs config, weighting, and route tests before compiling the
   final binary.
 
@@ -78,7 +78,7 @@ consumer-facing payoff for building a local photo archive around Immich.
 - Make weights human-readable YAML and profile-selectable by URL.
 - Treat Qwen labels as useful retrieval signals, not aesthetic truth.
 - Keep memories as a bounded minority source.
-- Keep optional metadata useful but quiet: exact year on every photo, location
+- Keep optional metadata useful but quiet: exact date on every photo, location
   only when present, country omitted, and simple CSS spacing rather than a
   GPU-heavy overlay effect.
 

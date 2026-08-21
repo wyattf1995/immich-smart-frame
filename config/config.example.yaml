@@ -40,7 +40,7 @@ show_more_info: false
 show_more_info_image_link: false
 show_more_info_qr_code: false
 
-# Exact capture year plus city/state when Immich has location metadata.
+# Exact capture date plus city/state when Immich has location metadata.
 show_image_date: true
 image_date_format: YYYY-MM-DD
 show_image_location: true
