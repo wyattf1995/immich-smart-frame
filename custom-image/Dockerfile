@@ -1,6 +1,6 @@
 # Keep the upstream release pinned, then apply the reviewable display,
 # curation, dependency-security, input-hardening, and regression-test patches.
-FROM alpine/git:2.49.1@sha256:c0280cf9572316299b08544065d3bf35db65043d5e3963982ec50647d2746e26 AS source
+FROM alpine/git:v2.54.0@sha256:a299a963fbe31628ab481ca42907bcf0691d004f86734c02638abdf513691d42 AS source
 
 ARG KIOSK_UPSTREAM_REF=v0.42.0
 ARG KIOSK_UPSTREAM_COMMIT=2fc02e0573444de60beff43e33b93f73cf25c2af
