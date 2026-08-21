@@ -42,7 +42,8 @@ while IFS= read -r tracked_file; do
   esac
 done < <(git ls-files)
 
-private_pattern='192\.168\.|/Users/|BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY|[[:alnum:]_.+-]+@gmail\.com'
+# Bracketed characters keep this pattern from matching its own source line.
+private_pattern='192[.]168[.]|/Us[e]rs/|BEGIN (RSA |OPENSSH |EC )?PRIVATE[ ]KEY|[[:alnum:]_.+-]+@gmail[.]com'
 if git grep -n -E "$private_pattern" -- . ':!LICENSE'; then
   printf 'possible private deployment value found in tracked files\n' >&2
   exit 1
