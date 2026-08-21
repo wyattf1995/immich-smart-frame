@@ -43,12 +43,17 @@ done
 
 while IFS= read -r tracked_file; do
   case "$tracked_file" in
-    .env|config/config.yaml|secrets/*|screenshots/*)
+    .env|config/config.yaml|secrets/*|screenshots/*|offline-assets/*)
       printf 'private deployment artifact is tracked: %s\n' "$tracked_file" >&2
       exit 1
       ;;
   esac
 done < <(git ls-files)
+
+if ! grep -Fxq 'offline-assets/' .gitignore; then
+  printf 'offline-assets/ must remain ignored because it can contain private photos\n' >&2
+  exit 1
+fi
 
 # Bracketed characters keep this pattern from matching its own source line.
 private_pattern='192[.]168[.]|/Us[e]rs/|BEGIN (RSA |OPENSSH |EC )?PRIVATE[ ]KEY|[[:alnum:]_.+-]+@gmail[.]com'
