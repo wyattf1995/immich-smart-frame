@@ -34,6 +34,8 @@ docker run --rm \
   '
 
 docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -e HOME=/tmp/npm-home \
   --entrypoint /bin/sh \
   -v "$source_dir:/src" \
   -v "$report_dir:/reports" \
