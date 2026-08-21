@@ -4,7 +4,7 @@
 
 # Frame-friendly defaults. Photo sources remain URL-selectable so each frame
 # can have several mixes without rebuilding this container.
-duration: 30
+duration: 45
 disable_screensaver: true
 optimize_images: true
 use_gpu: true
@@ -106,7 +106,7 @@ show_more_info_qr_code: false
 # Show the exact capture year plus location in the lower-left metadata. Country
 # is redundant for this library; city and state remain visible when available.
 show_image_date: true
-image_date_format: YYYY
+image_date_format: YYYY-MM-DD
 show_image_location: true
 image_location:
   hide_city: false
