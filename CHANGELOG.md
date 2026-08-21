@@ -7,14 +7,37 @@ formatting and [Semantic Versioning](https://semver.org/) for tagged releases.
 Until `1.0.0`, releases remain pre-stable; breaking deployment or configuration
 changes will still be called out explicitly.
 
-No public release tags have been cut yet. `main` is the active development
-branch.
-
 ## [Unreleased]
+
+No unreleased changes yet.
+
+## [0.1.0] - 2026-08-21
 
 ### Added
 
-- Open-source project metadata and contribution policy.
-- Security hardening guidance for API keys, VLAN isolation, and wireless ADB.
-- Upgrade and rollback documentation tied to repository tags and the pinned
-  upstream Immich Kiosk release.
+- Native-resolution requests for high-density Android WebViews.
+- Named weighted curation profiles, overlapping recency pools, Qwen-tag
+  examples, memories, people, albums, tags, and date sources.
+- Full capture-date and optional city/state metadata with a 45-second default
+  slide duration.
+- Open-source contributor, governance, security, upgrade/rollback, and release
+  documentation plus privacy-safe issue and pull-request templates.
+- Fork-safe CI for static validation, full history secret scanning, dependency
+  license auditing, Govulncheck, complete upstream tests, and Trivy scanning.
+- Tag-only multi-architecture GHCR publishing with SBOM and provenance.
+
+### Changed
+
+- Pinned Immich Kiosk v0.42.0 to its exact commit and pinned all container base
+  images and build tools.
+- Raised Go to 1.26.6 and `golang.org/x/image` to 0.45.0.
+- Added non-root read-only container hardening, dropped capabilities, and
+  bounded client-requested image dimensions to an 8K-safe pixel budget.
+
+### Security
+
+- Added a working private vulnerability-reporting path, dedicated secret-file
+  setup, offline-photo-cache exclusions, Android VLAN guidance, and wireless
+  ADB shutdown instructions.
+- Removed personal commit metadata and private deployment configuration from
+  reachable public history before tagging this release.

@@ -2,15 +2,15 @@ name: lenovo-smart-frame
 
 services:
   immich-kiosk:
-    # Pinned upstream Kiosk plus a two-line DPR-aware browser fallback so the
-    # 1920x1080 frame is not served a 960x540 image.
+    # Pinned upstream Kiosk plus the reviewable curation, display, dependency,
+    # and runtime-hardening patches in custom-image/.
     build:
       context: ./custom-image
       args:
         KIOSK_UPSTREAM_REF: ${KIOSK_UPSTREAM_REF:-v0.42.0}
         KIOSK_UPSTREAM_COMMIT: ${KIOSK_UPSTREAM_COMMIT:-2fc02e0573444de60beff43e33b93f73cf25c2af}
-        KIOSK_VERSION: ${KIOSK_VERSION:-0.42.0-lenovo-curation1}
-    image: ${KIOSK_IMAGE:-local/immich-kiosk:0.42.0-lenovo-curation1}
+        KIOSK_VERSION: ${KIOSK_VERSION:-0.1.0}
+    image: ${KIOSK_IMAGE:-local/immich-smart-frame:0.1.0}
     container_name: ${KIOSK_CONTAINER_NAME:-immich-kiosk}
     restart: unless-stopped
     tty: true

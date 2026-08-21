@@ -64,6 +64,7 @@ read-only API key and keep it in the Compose secret described below.
 | Browser | Fully Kiosk Browser 1.61.2 |
 | Immich | 3.0.3 |
 | Immich Kiosk base | 0.42.0 |
+| This project | 0.1.0 |
 | Docker | Compose v2 |
 
 Other Android displays may work, especially when their browser reports a CSS
@@ -179,15 +180,19 @@ This avoids both visible 2x upscaling and sending full camera originals to a
 
 ## What the custom image changes
 
-The Dockerfile pins Immich Kiosk `v0.42.0` and applies three files:
+The Dockerfile pins the exact Immich Kiosk `v0.42.0` commit and applies four
+reviewable patch files:
 
 1. `fully-kiosk-dpr.patch` requests physical pixels from ordinary WebViews.
 2. `weighted-curation.patch` adds named, directly weighted source profiles.
-3. `weighted-curation-tests.patch` guards profile lookup and exact weights.
+3. `runtime-hardening.patch` updates vulnerable Go dependencies, bounds client
+   image dimensions, and normalizes curation input.
+4. `weighted-curation-tests.patch` guards curation, normalization, dimensions,
+   and exact weights.
 
-The build checks that every patch still applies, runs the targeted upstream Go
-test packages, then compiles the binary. Upstream is intentionally pinned;
-upgrades should be reviewed rather than following `latest`.
+The build asserts the tag's expected commit, checks that every patch still
+applies, runs the complete upstream Go test suite, then compiles the binary.
+Upgrades are reviewed rather than following `latest`.
 
 ## Frame setup
 
@@ -241,8 +246,8 @@ rollbacks. Each tag identifies the exact upstream Immich Kiosk pin, local
 patches, and documentation state that were validated together.
 
 See [CHANGELOG.md](CHANGELOG.md), [Upgrade and rollback](docs/upgrade-rollback.md),
-and [GOVERNANCE.md](GOVERNANCE.md) for the release process and support
-expectations.
+[Maintainer releases](docs/releasing.md), and [GOVERNANCE.md](GOVERNANCE.md)
+for the release process and support expectations.
 
 ## Project status
 

@@ -1,6 +1,5 @@
-# Keep the upstream release pinned, then apply the two narrow local features:
-# physical-pixel reporting for high-density Android WebViews and named,
-# explicitly weighted source profiles for photo curation.
+# Keep the upstream release pinned, then apply the reviewable display,
+# curation, dependency-security, input-hardening, and regression-test patches.
 FROM alpine/git:2.49.1@sha256:c0280cf9572316299b08544065d3bf35db65043d5e3963982ec50647d2746e26 AS source
 
 ARG KIOSK_UPSTREAM_REF=v0.42.0
@@ -36,7 +35,7 @@ RUN task frontend
 
 FROM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS build
 
-ARG KIOSK_VERSION=0.42.0-lenovo-curation1
+ARG KIOSK_VERSION=0.1.0
 
 WORKDIR /app
 
