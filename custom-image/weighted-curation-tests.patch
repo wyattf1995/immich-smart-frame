@@ -1,3 +1,99 @@
+diff --git a/internal/config/config_test.go b/internal/config/config_test.go
+index c46c46f..b4473f0 100644
+--- a/internal/config/config_test.go
++++ b/internal/config/config_test.go
+@@ -101,6 +101,91 @@ func TestMalformedURLs(t *testing.T) {
+ 	}
+ }
+ 
++func TestCheckCurationNormalizesProfilesAndSources(t *testing.T) {
++	c := &Config{
++		CurationProfile: "  Family Mix  ",
++		Curation: CurationSettings{
++			Profiles: map[string]CurationProfile{
++				" Family Mix ": {
++					Sources: []CuratedSource{
++						{Type: " tag ", Value: "  People/Family  ", Weight: 25},
++					},
++				},
++			},
++		},
++	}
++
++	err := c.checkCuration()
++
++	assert.NoError(t, err)
++	assert.Equal(t, "Family Mix", c.CurationProfile)
++
++	profile, ok := c.Curation.Profiles["Family Mix"]
++	assert.True(t, ok)
++	assert.Len(t, profile.Sources, 1)
++	assert.Equal(t, "tag", profile.Sources[0].Type)
++	assert.Equal(t, "People/Family", profile.Sources[0].Value)
++}
++
++func TestCheckCurationRejectsCollidingProfiles(t *testing.T) {
++	c := &Config{
++		Curation: CurationSettings{
++			Profiles: map[string]CurationProfile{
++				" Family Mix ": {},
++				"family mix":   {},
++			},
++		},
++	}
++
++	err := c.checkCuration()
++
++	assert.ErrorContains(t, err, "collide after trim+casefold")
++}
++
++func TestSanitizeClientDataSupports8KLandscapeAndPortrait(t *testing.T) {
++	tests := []struct {
++		name   string
++		width  int
++		height int
++	}{
++		{name: "landscape 8k", width: 7680, height: 4320},
++		{name: "portrait 8k", width: 4320, height: 7680},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			c := &Config{ClientData: ClientData{Width: tt.width, Height: tt.height}}
++
++			c.sanitizeClientData()
++
++			assert.Equal(t, tt.width, c.ClientData.Width)
++			assert.Equal(t, tt.height, c.ClientData.Height)
++		})
++	}
++}
++
++func TestConfigWithOverridesSanitizesClientData(t *testing.T) {
++	c := New()
++
++	e := echo.New()
++	q := make(url.Values)
++	q.Set("client_width", "99999")
++	q.Set("client_height", "99999")
++	q.Set("curation_profile", "  Family Mix  ")
++
++	req := httptest.NewRequest(http.MethodGet, "/?"+q.Encode(), nil)
++	rec := httptest.NewRecorder()
++	echoContext := e.NewContext(req, rec)
++
++	err := c.ConfigWithOverrides(echoContext.QueryParams(), echoContext)
++
++	assert.NoError(t, err)
++	assert.Equal(t, "Family Mix", c.CurationProfile)
++	assert.LessOrEqual(t, c.ClientData.Width, maxClientImageDimension)
++	assert.LessOrEqual(t, c.ClientData.Height, maxClientImageDimension)
++	assert.LessOrEqual(t, int64(c.ClientData.Width)*int64(c.ClientData.Height), int64(maxClientImageTotalPixels))
++}
++
+ // TestImmichURLImmichMultipleAlbum tests the addition and overriding of multiple albums in the config
+ func TestImmichURLImmichMultipleAlbum(t *testing.T) {
+ 	// configWithBase
 diff --git a/internal/routes/routes_curation_test.go b/internal/routes/routes_curation_test.go
 new file mode 100644
 index 0000000..f420311
