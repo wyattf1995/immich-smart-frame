@@ -11,6 +11,6 @@ The generation prompt was:
 > Create a polished 16:9 fullscreen digital photo-frame display containing a
 > completely synthetic, natural editorial photograph of a golden retriever on
 > a windswept coastal overlook at golden hour. Place a small white calendar icon
-> and the exact text “2026 · Big Sur, California” in a padded translucent panel
+> and the exact text “2026-08-21 · Big Sur, California” in a padded translucent panel
 > at the bottom left. Show no browser chrome, logos, watermark, identifiable
 > person, or device bezel.
