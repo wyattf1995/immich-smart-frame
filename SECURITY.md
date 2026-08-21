@@ -27,6 +27,8 @@ Please include:
 - Use a dedicated Immich API key with read-only permissions only.
 - Keep the key in `secrets/immich_api_key`; never place it in YAML, `.env`, a
   browser URL, screenshot, shell history example, issue, or log excerpt.
+- Treat `offline-assets/` as private photo data. It is ignored by Git and must
+  not be attached to issues, build artifacts, or releases.
 - Keep Kiosk on a trusted network or behind an authenticated reverse proxy. The
   slideshow endpoint itself does not add user authentication.
 - Put the Android frame on a dedicated VLAN or isolated SSID when practical.

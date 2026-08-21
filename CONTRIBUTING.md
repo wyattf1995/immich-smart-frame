@@ -43,8 +43,8 @@ without these local patches before filing them against upstream maintainers.
 
 ## Documentation and privacy rules
 
-- Do not commit `.env`, `config/config.yaml`, `secrets/`, screenshots, or any
-  other local deployment artifact.
+- Do not commit `.env`, `config/config.yaml`, `secrets/`, `offline-assets/`,
+  screenshots, or any other local deployment artifact.
 - Use synthetic, public-domain, or explicitly approved images in issues and
   pull requests.
 - Scrub API keys, asset IDs, names, addresses, LAN hostnames, and private photo
