@@ -182,6 +182,19 @@ See [Device setup](docs/device-setup.md) and
 [Troubleshooting](docs/troubleshooting.md) for the exact process and the two
 MediaTek-specific service failures encountered during testing.
 
+## Validation
+
+After setup, run:
+
+```sh
+./scripts/validate.sh
+```
+
+The validator checks public-repository hygiene, configuration/profile weights,
+Compose rendering, patch applicability, and the patched Go tests. GitHub Actions
+runs the same checks for pushes and pull requests. Use
+`./scripts/validate.sh --static` to skip the Docker image build.
+
 ## Security
 
 - Keep Immich and Kiosk on a trusted LAN or protect them with an authenticated

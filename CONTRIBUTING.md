@@ -9,8 +9,7 @@ Android frame or Immich release.
 1. Fork and clone the repository.
 2. Copy `.env.example` and `config/config.example.yaml` as described in the
    README.
-3. Render the Compose file and build the custom image before opening a pull
-   request.
+3. Run `./scripts/validate.sh` before opening a pull request.
 4. Explain the tested frame/browser/Immich versions in the pull request.
 
 ## Patch discipline
