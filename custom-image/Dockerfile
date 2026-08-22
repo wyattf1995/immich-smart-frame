@@ -11,6 +11,7 @@ RUN git clone --depth 1 --branch "${KIOSK_UPSTREAM_REF}" \
 COPY fully-kiosk-dpr.patch /tmp/fully-kiosk-dpr.patch
 COPY weighted-curation.patch /tmp/weighted-curation.patch
 COPY runtime-hardening.patch /tmp/runtime-hardening.patch
+COPY album-penalties.patch /tmp/album-penalties.patch
 COPY weighted-curation-tests.patch /tmp/weighted-curation-tests.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
@@ -19,6 +20,8 @@ RUN cd /src \
     && git apply /tmp/weighted-curation.patch \
     && git apply --check --unidiff-zero /tmp/runtime-hardening.patch \
     && git apply --unidiff-zero /tmp/runtime-hardening.patch \
+    && git apply --check /tmp/album-penalties.patch \
+    && git apply /tmp/album-penalties.patch \
     && git apply --check --unidiff-zero /tmp/weighted-curation-tests.patch \
     && git apply --unidiff-zero /tmp/weighted-curation-tests.patch
 
