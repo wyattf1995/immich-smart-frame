@@ -135,3 +135,136 @@ index d415b11..7a10497 100644
 +	assert.InDelta(t, 7.5, assetWeight(asset), 0.0001)
 +}
 +
+diff --git a/internal/config/config_album_penalty_test.go b/internal/config/config_album_penalty_test.go
+new file mode 100644
+index 0000000..e14ef9a
+--- /dev/null
++++ b/internal/config/config_album_penalty_test.go
+@@ -0,0 +1,77 @@
++package config
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++)
++
++func TestCheckCurationNormalizesAlbumPenalties(t *testing.T) {
++	c := &Config{
++		CurationProfile: " balanced ",
++		Curation: CurationSettings{
++			Profiles: map[string]CurationProfile{
++				" balanced ": {
++					AlbumPenalties: []AlbumPenalty{
++						{Album: " overrepresented-album ", Factor: 0.2},
++					},
++				},
++			},
++		},
++	}
++
++	err := c.checkCuration()
++
++	assert.NoError(t, err)
++	profile := c.Curation.Profiles["balanced"]
++	assert.Equal(t, "overrepresented-album", profile.AlbumPenalties[0].Album)
++	assert.InDelta(t, 0.2, profile.AlbumPenalties[0].Factor, 0.0001)
++}
++
++func TestCheckCurationRejectsInvalidAlbumPenalties(t *testing.T) {
++	tests := []struct {
++		name      string
++		penalties []AlbumPenalty
++		wantError string
++	}{
++		{
++			name:      "empty album",
++			penalties: []AlbumPenalty{{Factor: 0.2}},
++			wantError: "album must not be empty",
++		},
++		{
++			name:      "zero factor",
++			penalties: []AlbumPenalty{{Album: "album-a", Factor: 0}},
++			wantError: "factor must be greater than 0 and at most 1",
++		},
++		{
++			name:      "factor above one",
++			penalties: []AlbumPenalty{{Album: "album-a", Factor: 1.1}},
++			wantError: "factor must be greater than 0 and at most 1",
++		},
++		{
++			name: "duplicate album",
++			penalties: []AlbumPenalty{
++				{Album: "album-a", Factor: 0.5},
++				{Album: " album-a ", Factor: 0.2},
++			},
++			wantError: "duplicates album",
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			c := &Config{
++				Curation: CurationSettings{
++					Profiles: map[string]CurationProfile{
++						"balanced": {AlbumPenalties: tt.penalties},
++					},
++				},
++			}
++
++			err := c.checkCuration()
++
++			assert.ErrorContains(t, err, tt.wantError)
++		})
++	}
++}
+diff --git a/internal/immich/immich_album_penalty_test.go b/internal/immich/immich_album_penalty_test.go
+new file mode 100644
+index 0000000..b270d5c
+--- /dev/null
++++ b/internal/immich/immich_album_penalty_test.go
+@@ -0,0 +1,44 @@
++package immich
++
++import (
++	"testing"
++
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/stretchr/testify/assert"
++)
++
++func TestAlbumPenaltyFactorUsesStrongestMatchingPenalty(t *testing.T) {
++	albums := Albums{{ID: "casual-album"}, {ID: "overrepresented-album"}}
++	penalties := []config.AlbumPenalty{
++		{Album: "casual-album", Factor: 0.6},
++		{Album: "overrepresented-album", Factor: 0.2},
++	}
++
++	factor := albumPenaltyFactor(albums, penalties)
++
++	assert.InDelta(t, 0.2, factor, 0.0001)
++}
++
++func TestAlbumPenaltyFactorDefaultsToOne(t *testing.T) {
++	albums := Albums{{ID: "unmatched-album"}}
++	penalties := []config.AlbumPenalty{{Album: "other-album", Factor: 0.2}}
++
++	factor := albumPenaltyFactor(albums, penalties)
++
++	assert.InDelta(t, 1.0, factor, 0.0001)
++}
++
++func TestAcceptsAlbumPenaltyAtConfiguredRateBoundary(t *testing.T) {
++	albums := Albums{{ID: "overrepresented-album"}}
++	penalties := []config.AlbumPenalty{{Album: "overrepresented-album", Factor: 0.2}}
++
++	assert.True(t, acceptsAlbumPenalty(albums, penalties, 0.1999))
++	assert.False(t, acceptsAlbumPenalty(albums, penalties, 0.2))
++}
++
++func TestAcceptsAlbumPenaltyWithoutMatchingAlbum(t *testing.T) {
++	albums := Albums{{ID: "unmatched-album"}}
++	penalties := []config.AlbumPenalty{{Album: "other-album", Factor: 0.2}}
++
++	assert.True(t, acceptsAlbumPenalty(albums, penalties, 0.9999))
++}
