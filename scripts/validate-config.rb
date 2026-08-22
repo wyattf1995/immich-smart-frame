@@ -7,6 +7,11 @@ VALUE_REQUIRED_TYPES = %w[album person tag date].freeze
 DATE_VALUE = /\A(?:today|last-\d+|\d{4}-\d{2}-\d{2}_to_(?:today|\d{4}-\d{2}-\d{2}))\z/i
 EXPECTED_SLIDE_DURATION = 45
 EXPECTED_IMAGE_DATE_FORMAT = "YYYY-MM-DD"
+EXPECTED_QWEN_BALANCED_RECENCY = {
+  "last-30" => 35,
+  "last-180" => 20,
+  "last-730" => 10
+}.freeze
 
 def fail_config(file, message)
   warn "#{file}: #{message}"
@@ -58,5 +63,24 @@ ARGV.each do |file|
 
     fail_config(file, "profile #{name.inspect} weights total #{total}, expected 100") unless total == 100
     puts "#{file}: #{name}=#{total}"
+  end
+
+  next unless File.basename(file) == "qwen.example.yaml"
+
+  balanced_sources = profiles.dig("balanced", "sources")
+  recency_sources = balanced_sources&.select do |source|
+    source["type"].to_s.strip.casecmp?("date") &&
+      EXPECTED_QWEN_BALANCED_RECENCY.key?(source["value"].to_s.strip)
+  end
+  actual_recency = recency_sources&.to_h do |source|
+    [source["value"].to_s.strip, source["weight"]]
+  end
+
+  unless recency_sources&.length == EXPECTED_QWEN_BALANCED_RECENCY.length &&
+         actual_recency == EXPECTED_QWEN_BALANCED_RECENCY
+    fail_config(
+      file,
+      "balanced recency ladder #{actual_recency.inspect}, expected #{EXPECTED_QWEN_BALANCED_RECENCY.inspect}"
+    )
   end
 end

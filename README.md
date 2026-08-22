@@ -32,6 +32,7 @@ experience. This one adds:
 - server-side resizing, caching, and prefetch for low-memory hardware;
 - named, explicitly weighted curation profiles;
 - recency ladders, Immich memories, people, albums, tags, and date ranges;
+- per-profile album penalties for soft de-ranking without exclusion;
 - exact capture date and optional city/state metadata;
 - reviewable patches against a pinned upstream release.
 
@@ -180,14 +181,15 @@ This avoids both visible 2x upscaling and sending full camera originals to a
 
 ## What the custom image changes
 
-The Dockerfile pins the exact Immich Kiosk `v0.42.0` commit and applies four
+The Dockerfile pins the exact Immich Kiosk `v0.42.0` commit and applies five
 reviewable patch files:
 
 1. `fully-kiosk-dpr.patch` requests physical pixels from ordinary WebViews.
 2. `weighted-curation.patch` adds named, directly weighted source profiles.
 3. `runtime-hardening.patch` updates vulnerable Go dependencies, bounds client
    image dimensions, and normalizes curation input.
-4. `weighted-curation-tests.patch` guards curation, normalization, dimensions,
+4. `album-penalties.patch` adds validated, profile-specific soft de-ranking.
+5. `weighted-curation-tests.patch` guards curation, normalization, dimensions,
    and exact weights.
 
 The build asserts the tag's expected commit, checks that every patch still

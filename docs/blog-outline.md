@@ -40,11 +40,15 @@ consumer-facing payoff for building a local photo archive around Immich.
    excluded by construction.
 9. A live sample then exposed a different archive-size bias: 15 of 16 balanced
    selections were from 2022 or earlier even though thousands of recent photos
-   were available. An overlapping 30/180/730-day ladder now reserves 50% of the
+   were available. An overlapping 30/180/730-day ladder now reserves 65% of the
    balanced profile for recency while retaining the curated evergreen mix.
    Those recent windows intentionally allow not-yet-tagged photos that still
    pass the hard exclusions; this is a narrow freshness exception rather than a
    return to archive-wide random selection.
+10. A later personalization added one important album as a direct, local-only
+    source and softly de-ranked an overrepresented album without excluding it.
+    The public repository documents both patterns but never contains the
+    private Immich album IDs.
 
 ## Verified technical facts (2026-08-20)
 

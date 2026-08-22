@@ -27,8 +27,8 @@ excluded_tags:
 memory_weight: 0.15
 
 # Positive-source curation. The selected profile replaces album=all and other
-# source buckets. In balanced, half of the selections come from overlapping
-# recent-date pools and half retain the evergreen Qwen/face mix. The overlap is
+# source buckets. In balanced, 65% of selections come from overlapping
+# recent-date pools and 35% retain the evergreen Qwen/face mix. The overlap is
 # intentional: a photo from the last 30 days is eligible through all three date
 # pools, producing a steep recency boost that decays over two years. Hard tag
 # exclusions still apply to every source. Weights are direct relative
@@ -38,28 +38,33 @@ curation:
   profiles:
     balanced:
       sources:
-        # Explicit recency ladder (50%). These dynamic ranges overlap.
-        - { type: date, value: "last-30", weight: 25 }
-        - { type: date, value: "last-180", weight: 15 }
+        # Explicit recency ladder (65%). These dynamic ranges overlap.
+        - { type: date, value: "last-30", weight: 35 }
+        - { type: date, value: "last-180", weight: 20 }
         - { type: date, value: "last-730", weight: 10 }
 
-        # Evergreen curated mix (50%).
-        - { type: person, value: all, weight: 11 }
-        - { type: tag, value: "People/Family", weight: 7 }
+        # Evergreen curated mix (35%).
+        - { type: person, value: all, weight: 6 }
+        - { type: tag, value: "People/Family", weight: 4 }
         - { type: tag, value: "People/Candid", weight: 2 }
         - { type: tag, value: "People/Portrait", weight: 2 }
-        - { type: tag, value: "Animals/Dog", weight: 6 }
-        - { type: tag, value: "Activity/Travel", weight: 4 }
+        - { type: tag, value: "Animals/Dog", weight: 3 }
+        - { type: tag, value: "Activity/Travel", weight: 3 }
         - { type: tag, value: "Event/Wedding", weight: 2 }
         - { type: tag, value: "Event/Holiday", weight: 2 }
         - { type: tag, value: "Event/Birthday", weight: 1 }
-        - { type: tag, value: "Style/Landscape", weight: 3 }
-        - { type: tag, value: "Light/Sunset", weight: 2 }
+        - { type: tag, value: "Style/Landscape", weight: 2 }
+        - { type: tag, value: "Light/Sunset", weight: 1 }
         - { type: tag, value: "Light/GoldenHour", weight: 1 }
         - { type: tag, value: "Style/Macro", weight: 1 }
         - { type: tag, value: "Animals/Wildlife", weight: 1 }
         - { type: tag, value: "Scene/PublicAquarium", weight: 1 }
-        - { type: memories, weight: 4 }
+        - { type: memories, weight: 3 }
+
+      # Optional soft de-ranking keeps an album eligible but accepts matching
+      # candidates less often. Keep real album IDs only in config/config.yaml.
+      # album_penalties:
+      #   - { album: "replace-with-your-private-album-id", factor: 0.20 }
 
     family:
       sources:

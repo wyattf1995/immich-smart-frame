@@ -9,7 +9,17 @@ changes will still be called out explicitly.
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Added
+
+- Added validated, per-profile album penalty factors so an overrepresented
+  album can remain eligible while being selected less often through any source.
+
+### Changed
+
+- Increased the advanced Qwen `balanced` example's overlapping recency share
+  from 50% to 65%, with an explicit validation guard for the 35/20/10 ladder.
+- Documented how to boost a private milestone album without publishing its
+  Immich identifier or reducing the slideshow to one album.
 
 ## [0.1.0] - 2026-08-21
 

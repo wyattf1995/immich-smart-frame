@@ -1,0 +1,130 @@
+diff --git a/config.schema.json b/config.schema.json
+index 03cddea0..e9d7bcdf 100644
+--- a/config.schema.json
++++ b/config.schema.json
+@@ -186,6 +186,26 @@
+                   },
+                   "required": ["type", "weight"]
+                 }
++              },
++              "album_penalties": {
++                "type": "array",
++                "uniqueItems": true,
++                "items": {
++                  "type": "object",
++                  "additionalProperties": false,
++                  "properties": {
++                    "album": {
++                      "type": "string",
++                      "minLength": 1
++                    },
++                    "factor": {
++                      "type": "number",
++                      "exclusiveMinimum": 0,
++                      "maximum": 1
++                    }
++                  },
++                  "required": ["album", "factor"]
++                }
+               }
+             },
+             "required": ["sources"]
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 4daa8cfc..8d211420 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -205,9 +205,17 @@ type CuratedSource struct {
+ 	Weight float64 `json:"weight" yaml:"weight" mapstructure:"weight"`
+ }
+ 
++// AlbumPenalty reduces, without excluding, assets that belong to an album.
++// Factor is the probability of accepting a matching candidate (0 < factor <= 1).
++type AlbumPenalty struct {
++	Album  string  `json:"album" yaml:"album" mapstructure:"album" redact:"true"`
++	Factor float64 `json:"factor" yaml:"factor" mapstructure:"factor"`
++}
++
+ // CurationProfile is an explicitly weighted mix of Immich sources.
+ type CurationProfile struct {
+-	Sources []CuratedSource `json:"sources" yaml:"sources" mapstructure:"sources" default:"[]"`
++	Sources        []CuratedSource `json:"sources" yaml:"sources" mapstructure:"sources" default:"[]"`
++	AlbumPenalties []AlbumPenalty  `json:"albumPenalties" yaml:"album_penalties" mapstructure:"album_penalties" default:"[]"`
+ }
+ 
+ // CurationSettings contains reusable profiles addressable by name from a URL.
+diff --git a/internal/config/config_validation.go b/internal/config/config_validation.go
+index 7219ee2d..03217e57 100644
+--- a/internal/config/config_validation.go
++++ b/internal/config/config_validation.go
+@@ -240,6 +240,24 @@ func (c *Config) checkCuration() error {
+ 			profile.Sources[i].Value = strings.TrimSpace(profile.Sources[i].Value)
+ 		}
+ 
++		seenPenaltyAlbums := make(map[string]struct{}, len(profile.AlbumPenalties))
++		for i := range profile.AlbumPenalties {
++			penalty := &profile.AlbumPenalties[i]
++			penalty.Album = strings.TrimSpace(penalty.Album)
++			if penalty.Album == "" {
++				return fmt.Errorf("curation profile %q album penalty %d album must not be empty", trimmedName, i)
++			}
++			if penalty.Factor <= 0 || penalty.Factor > 1 {
++				return fmt.Errorf("curation profile %q album penalty %d factor must be greater than 0 and at most 1", trimmedName, i)
++			}
++
++			lookupAlbum := strings.ToLower(penalty.Album)
++			if _, exists := seenPenaltyAlbums[lookupAlbum]; exists {
++				return fmt.Errorf("curation profile %q album penalty %d duplicates album %q", trimmedName, i, penalty.Album)
++			}
++			seenPenaltyAlbums[lookupAlbum] = struct{}{}
++		}
++
+ 		normalizedProfiles[trimmedName] = profile
+ 	}
+ 
+diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
+index 3883f1ca..7e89d955 100644
+--- a/internal/immich/immich_helpers.go
++++ b/internal/immich/immich_helpers.go
+@@ -747,9 +747,40 @@ func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
+ 		a.AlbumsThatContainAsset(requestID, deviceID)
+ 	}
+ 
+-	return !slices.ContainsFunc(a.AppearsIn, func(album Album) bool {
++	if slices.ContainsFunc(a.AppearsIn, func(album Album) bool {
+ 		return slices.Contains(a.requestConfig.ExcludedAlbums, album.ID)
+-	})
++	}) {
++		return false
++	}
++
++	var penalties []config.AlbumPenalty
++	for name, profile := range a.requestConfig.Curation.Profiles {
++		if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(a.requestConfig.CurationProfile)) {
++			penalties = profile.AlbumPenalties
++			break
++		}
++	}
++
++	return acceptsAlbumPenalty(a.AppearsIn, penalties, rand.Float64())
++}
++
++func albumPenaltyFactor(albums Albums, penalties []config.AlbumPenalty) float64 {
++	factor := 1.0
++	for _, penalty := range penalties {
++		if penalty.Factor <= 0 || penalty.Factor > factor {
++			continue
++		}
++		if slices.ContainsFunc(albums, func(album Album) bool {
++			return strings.EqualFold(album.ID, penalty.Album)
++		}) {
++			factor = penalty.Factor
++		}
++	}
++	return factor
++}
++
++func acceptsAlbumPenalty(albums Albums, penalties []config.AlbumPenalty, roll float64) bool {
++	return roll < albumPenaltyFactor(albums, penalties)
+ }
+ 
+ // hasValidPeople checks if the asset contains any excluded people.

@@ -22,6 +22,7 @@ required_files=(
   THIRD_PARTY_NOTICES.md
   config/config.example.yaml
   config/qwen.example.yaml
+  custom-image/album-penalties.patch
   custom-image/fully-kiosk-dpr.patch
   custom-image/weighted-curation.patch
   custom-image/weighted-curation-tests.patch
