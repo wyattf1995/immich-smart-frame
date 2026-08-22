@@ -223,7 +223,7 @@ new file mode 100644
 index 0000000..b270d5c
 --- /dev/null
 +++ b/internal/immich/immich_album_penalty_test.go
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,70 @@
 +package immich
 +
 +import (
@@ -267,4 +267,30 @@ index 0000000..b270d5c
 +	penalties := []config.AlbumPenalty{{Album: "other-album", Factor: 0.2}}
 +
 +	assert.True(t, acceptsAlbumPenalty(albums, penalties, 0.9999))
++}
++
++func TestAlbumPenaltyRollStableForAssetWithinRequest(t *testing.T) {
++	want := albumPenaltyRoll("asset-a", "request-a")
++
++	for range 20 {
++		assert.Equal(t, want, albumPenaltyRoll("asset-a", "request-a"))
++	}
++	assert.GreaterOrEqual(t, want, 0.0)
++	assert.Less(t, want, 1.0)
++	assert.NotEqual(t, want, albumPenaltyRoll("asset-a", "request-b"))
++	assert.NotEqual(t, want, albumPenaltyRoll("asset-b", "request-a"))
++}
++
++func TestAcceptsAlbumPenaltyForAssetIsStableWithinRequest(t *testing.T) {
++	albums := Albums{{ID: "overrepresented-album"}}
++	penalties := []config.AlbumPenalty{{Album: "overrepresented-album", Factor: 0.5}}
++	want := acceptsAlbumPenaltyForAsset(albums, penalties, "asset-a", "request-a")
++
++	for range 20 {
++		assert.Equal(
++			t,
++			want,
++			acceptsAlbumPenaltyForAsset(albums, penalties, "asset-a", "request-a"),
++		)
++	}
 +}

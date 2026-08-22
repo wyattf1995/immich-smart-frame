@@ -85,7 +85,7 @@ diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.
 index 3883f1ca..7e89d955 100644
 --- a/internal/immich/immich_helpers.go
 +++ b/internal/immich/immich_helpers.go
-@@ -747,9 +747,40 @@ func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
+@@ -747,9 +747,56 @@ func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
  		a.AlbumsThatContainAsset(requestID, deviceID)
  	}
  
@@ -105,7 +105,7 @@ index 3883f1ca..7e89d955 100644
 +		}
 +	}
 +
-+	return acceptsAlbumPenalty(a.AppearsIn, penalties, rand.Float64())
++	return acceptsAlbumPenaltyForAsset(a.AppearsIn, penalties, a.ID, requestID)
 +}
 +
 +func albumPenaltyFactor(albums Albums, penalties []config.AlbumPenalty) float64 {
@@ -126,5 +126,21 @@ index 3883f1ca..7e89d955 100644
 +func acceptsAlbumPenalty(albums Albums, penalties []config.AlbumPenalty, roll float64) bool {
 +	return roll < albumPenaltyFactor(albums, penalties)
  }
++
++func albumPenaltyRoll(assetID, requestID string) float64 {
++	digest := sha256.Sum256([]byte(requestID + "\x00" + assetID))
++	numerator := uint64(digest[0])<<40 |
++		uint64(digest[1])<<32 |
++		uint64(digest[2])<<24 |
++		uint64(digest[3])<<16 |
++		uint64(digest[4])<<8 |
++		uint64(digest[5])
++	const denominator uint64 = 1 << 48
++	return float64(numerator) / float64(denominator)
++}
++
++func acceptsAlbumPenaltyForAsset(albums Albums, penalties []config.AlbumPenalty, assetID, requestID string) bool {
++	return acceptsAlbumPenalty(albums, penalties, albumPenaltyRoll(assetID, requestID))
++}
  
  // hasValidPeople checks if the asset contains any excluded people.

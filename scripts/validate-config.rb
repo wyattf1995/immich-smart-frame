@@ -69,8 +69,7 @@ ARGV.each do |file|
 
   balanced_sources = profiles.dig("balanced", "sources")
   recency_sources = balanced_sources&.select do |source|
-    source["type"].to_s.strip.casecmp?("date") &&
-      EXPECTED_QWEN_BALANCED_RECENCY.key?(source["value"].to_s.strip)
+    source["type"].to_s.strip.casecmp?("date")
   end
   actual_recency = recency_sources&.to_h do |source|
     [source["value"].to_s.strip, source["weight"]]

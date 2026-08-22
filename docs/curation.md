@@ -90,6 +90,8 @@ of `0.20` accepts roughly one in five matching candidates; use
 in multiple penalized albums, the strongest (lowest) matching factor wins.
 Penalties are profile-specific, do not consume source weight, and apply whether
 the candidate arrived through a date, person, tag, memory, or album source.
+The accept/reject decision is stable for an asset within one slide request, so
+selection retries cannot repeatedly re-roll a rejected candidate.
 
 ## Positive sources versus fresh untagged photos
 
