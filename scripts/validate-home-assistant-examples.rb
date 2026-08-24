@@ -56,7 +56,7 @@ EXPECTED_WEATHER_STATES = Set[
 ].freeze
 PRIVATE_PATTERNS = {
   "RFC1918 address" => /\b(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\./,
-  "absolute macOS user path" => %r{/Users/},
+  "absolute macOS user path" => %r{/Us[e]rs/},
   "personal Gmail address" => /[[:alnum:]_.+-]+@gmail\.com/i,
   "private Tailscale hostname" => /tail[[:alnum:]-]+\.ts\.net/i,
   "OAuth or API credential field" => /(?:access_token|client_secret|refresh_token)\s*[:=]/i
