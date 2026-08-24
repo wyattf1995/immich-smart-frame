@@ -228,8 +228,9 @@ After setup, run:
 
 The validator checks public-repository hygiene, configuration/profile weights,
 the Home Assistant companion examples, Compose rendering, patch applicability,
-and the patched Go tests. GitHub Actions runs the same checks for pushes and
-pull requests. Use
+and the patched Go tests. This repository intentionally runs its release gates
+locally; the checked-in GitHub Actions workflow remains inert while repository
+Actions are disabled. Use
 `./scripts/validate.sh --static` to skip the Docker image build.
 
 ## Security
