@@ -36,7 +36,7 @@ RUN npm install -g "@go-task/cli@${GO_TASK_VERSION}"
 RUN npm ci
 RUN task frontend
 
-FROM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS build
+FROM golang:1.27.0-bookworm@sha256:484ef6066fa69acb059fdfeda7ba2b8f7391f2ef6abc6f9b8411e669ebd56466 AS build
 
 ARG KIOSK_VERSION=0.1.0
 
