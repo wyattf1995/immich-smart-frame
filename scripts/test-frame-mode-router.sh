@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 router="$repo_root/examples/frame-mode-router/frame-mode-router.sh"
+router_shell="${FRAME_ROUTER_SHELL:-sh}"
 
 fail() {
   printf 'frame-mode-router contract failed: %s\n' "$*" >&2
@@ -109,17 +110,17 @@ EOF
 
 run_router() {
   if [[ "$1" == show ]]; then
-    FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router" show "$2" "$config" \
+    FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router_shell" "$router" show "$2" "$config" \
       >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
   else
-    FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router" "$1" "$config" \
+    FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router_shell" "$router" "$1" "$config" \
       >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
   fi
 }
 
 run_router_expect_failure() {
   set +e
-  FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router" "$@" \
+  FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router_shell" "$router" "$@" \
     >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
   local result=$?
   set -e
@@ -208,7 +209,7 @@ run_router_expect_failure status "$tmp_dir/missing.conf"
 rm -f "$state" "$tmp_dir/am-started" "$tmp_dir/release-am"
 FRAME_ROUTER_FOREGROUND=firefox FRAME_ROUTER_BLOCK_AM=1 \
   FRAME_ROUTER_AM_STARTED="$tmp_dir/am-started" FRAME_ROUTER_RELEASE_AM="$tmp_dir/release-am" \
-  FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router" show home "$config" \
+  FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router_shell" "$router" show home "$config" \
   >"$tmp_dir/first.stdout" 2>"$tmp_dir/first.stderr" &
 first_pid=$!
 for _ in $(seq 1 50); do
