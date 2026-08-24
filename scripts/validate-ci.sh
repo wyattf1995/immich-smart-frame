@@ -158,9 +158,35 @@ router_example_files.each do |file|
 end
 
 keymapper = JSON.parse(File.read("examples/frame-mode-router/keymapper-mode-router.example.json"))
-uids = keymapper.to_s.scan(/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}/i)
-unless uids.length == uids.uniq.length
-  warn "frame-mode-router Key Mapper UUIDs must be unique"
+unless keymapper["keymap_db_version"] == 22 && keymapper["app_version"] == 259
+  warn "frame-mode-router Key Mapper export must use database version 22 and app version 259"
+  exit 1
+end
+
+keymaps = keymapper.fetch("keymap_list")
+unless keymaps.is_a?(Array) && keymaps.length == 2 && keymaps.all? { |keymap| keymap["isEnabled"] == false }
+  warn "frame-mode-router Key Mapper export must contain exactly two disabled key maps"
+  exit 1
+end
+
+def values_for_key(node, expected_key)
+  case node
+  when Hash
+    node.each_with_object([]) do |(key, value), values|
+      values.concat([value]) if key == expected_key
+      values.concat(values_for_key(value, expected_key))
+    end
+  when Array
+    node.flat_map { |value| values_for_key(value, expected_key) }
+  else
+    []
+  end
+end
+
+uids = values_for_key(keymapper, "uid")
+unless uids.length == 6 && uids.all? { |uid| uid.is_a?(String) && uid.match?(/\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i) } &&
+       uids.length == uids.uniq.length
+  warn "frame-mode-router Key Mapper export must contain exactly six valid unique UUIDs"
   exit 1
 end
 
@@ -177,23 +203,28 @@ def contains_scan_code?(node, code)
   end
 end
 
-def decoded_command_for(rule)
-  JSON.generate(rule).scan(/[A-Za-z0-9+\/]{16,}={0,2}/).each do |candidate|
-    decoded = Base64.strict_decode64(candidate)
-    return decoded if decoded.match?(/frame-mode-router/) && decoded.match?(/\b(?:next|prev)\b/)
-  rescue ArgumentError
-    next
-  end
-  nil
-end
-
-keymaps = keymapper.fetch("keymap_list")
-%w[251 252].each do |scan_code|
+expected_commands = {
+  251 => "sh /data/local/tmp/frame-mode-router.sh next",
+  252 => "sh /data/local/tmp/frame-mode-router.sh prev"
+}
+expected_commands.each do |scan_code, expected_command|
   rule = keymaps.find do |candidate|
     candidate["isEnabled"] == false && contains_scan_code?(candidate, scan_code.to_i)
   end
-  unless rule && JSON.generate(rule).include?("30000") && decoded_command_for(rule)
-    warn "Key Mapper gesture #{scan_code} must be disabled, timed 30000ms, and run a base64 router command"
+  action = rule&.fetch("actionList", nil)&.yield_self { |actions| actions.length == 1 ? actions.first : nil }
+  trigger_key = rule&.dig("trigger", "keys")&.yield_self { |keys| keys.length == 1 ? keys.first : nil }
+  timeout_extras = action ? action.fetch("extras", []).select { |extra| extra["id"] == "extra_shell_command_timeout" } : []
+  decoded_command = begin
+    Base64.strict_decode64(action.fetch("data"))
+  rescue ArgumentError, KeyError, NoMethodError
+    nil
+  end
+  unless trigger_key&.fetch("deviceName", nil).is_a?(String) && !trigger_key["deviceName"].empty? &&
+         trigger_key["keyCode"] == 0 && trigger_key["scanCode"] == scan_code &&
+         action&.fetch("type", nil) == "SHELL_COMMAND" && action["flags"] == 32 &&
+         timeout_extras.length == 1 && timeout_extras.first["data"] == "30000" &&
+         decoded_command == expected_command
+    warn "Key Mapper gesture #{scan_code} must have the expected deviceName/keyCode shape and exact ADB shell action"
     exit 1
   end
 end

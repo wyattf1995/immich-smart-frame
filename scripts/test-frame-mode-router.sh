@@ -30,6 +30,16 @@ assert_file_not_contains() {
   ! grep -Fq -- "$needle" "$file" || fail "$description (found '$needle')"
 }
 
+assert_file_count() {
+  local needle="$1"
+  local file="$2"
+  local expected="$3"
+  local description="$4"
+  local actual
+  actual="$(grep -Fxc -- "$needle" "$file" || true)"
+  [[ "$actual" == "$expected" ]] || fail "$description (expected $expected, got $actual)"
+}
+
 [[ -f "$router" ]] || fail "missing $router"
 [[ -x "$router" ]] || fail "$router must be executable"
 
@@ -144,6 +154,8 @@ assert_file_contains 'am start --activity-reorder-to-front -a android.intent.act
   'next must advance photos to home using the configured URL'
 assert_file_contains 'input swipe 100 1000 100 500 100' "$log" \
   'Firefox navigation must perform exactly the required swipe'
+assert_file_count 'input swipe 100 1000 100 500 100' "$log" 1 \
+  'each Firefox launch must perform exactly one swipe'
 assert_eq home "$(tr -d '\r\n' < "$state")" 'next must persist the selected mode'
 
 : > "$log"
@@ -151,12 +163,16 @@ printf 'home\n' > "$state"
 FRAME_ROUTER_FOREGROUND=firefox run_router next
 assert_file_contains 'am start --activity-reorder-to-front -a android.intent.action.VIEW -d https://home.test.invalid/lovelace/cameras -p org.mozilla.firefox' "$log" \
   'next must advance home to cameras'
+assert_file_count 'input swipe 100 1000 100 500 100' "$log" 1 \
+  'home-to-cameras Firefox launch must perform exactly one swipe'
 
 : > "$log"
 printf 'cameras\n' > "$state"
 FRAME_ROUTER_FOREGROUND=firefox run_router next
 assert_file_contains 'am start --activity-reorder-to-front -a android.intent.action.VIEW -d https://home.test.invalid/lovelace/calendar -p org.mozilla.firefox' "$log" \
   'next must advance cameras to calendar'
+assert_file_count 'input swipe 100 1000 100 500 100' "$log" 1 \
+  'cameras-to-calendar Firefox launch must perform exactly one swipe'
 
 : > "$log"
 printf 'calendar\n' > "$state"
@@ -169,6 +185,8 @@ printf 'photos\n' > "$state"
 FRAME_ROUTER_FOREGROUND=firefox run_router prev
 assert_file_contains 'am start --activity-reorder-to-front -a android.intent.action.VIEW -d https://home.test.invalid/lovelace/calendar -p org.mozilla.firefox' "$log" \
   'prev must wrap photos to calendar'
+assert_file_count 'input swipe 100 1000 100 500 100' "$log" 1 \
+  'photos-to-calendar Firefox launch must perform exactly one swipe'
 
 : > "$log"
 FRAME_ROUTER_FOREGROUND=unknown run_router show photos
@@ -180,6 +198,8 @@ assert_file_not_contains 'org.mozilla.firefox' "$log" 'photos must not launch Fi
 FRAME_ROUTER_FOREGROUND=fully run_router next
 assert_file_contains 'am start --activity-reorder-to-front -a android.intent.action.VIEW -d https://home.test.invalid/lovelace/home -p org.mozilla.firefox' "$log" \
   'next must treat Fully foreground as photos before advancing'
+assert_file_count 'input swipe 100 1000 100 500 100' "$log" 1 \
+  'Fully-foreground Firefox launch must perform exactly one swipe'
 
 run_router_expect_failure unknown-action
 run_router_expect_failure status "$tmp_dir/missing.conf"
