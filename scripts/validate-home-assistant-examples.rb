@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "open3"
 require "set"
 require "yaml"
 
@@ -70,10 +71,11 @@ FILES.each_value do |path|
   fail_validation("missing #{path.delete_prefix("#{REPO_ROOT}/")}") unless File.file?(path)
 end
 
-actual_files = Dir.glob(File.join(EXAMPLE_ROOT, "**", "*"))
-                  .select { |path| File.file?(path) }
-                  .map { |path| path.delete_prefix("#{REPO_ROOT}/") }
-                  .sort
+tracked_output, tracked_status = Open3.capture2(
+  "git", "-C", REPO_ROOT, "ls-files", "examples/home-assistant-wall-panel"
+)
+fail_validation("could not list tracked example files") unless tracked_status.success?
+actual_files = tracked_output.lines.map(&:strip).reject(&:empty?).sort
 unless actual_files == EXPECTED_FILES.reject { |path| path.start_with?("docs/") }
   fail_validation("unexpected example file set #{actual_files.inspect}")
 end
