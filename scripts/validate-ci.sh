@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 sh_files=(
+  examples/home-assistant-wall-panel/build-weather-loops.sh
   scripts/audit-licenses.sh
   scripts/ci-lib.sh
   scripts/run-gitleaks.sh

@@ -1,0 +1,178 @@
+# Replace the generic entity IDs before importing this raw dashboard config.
+# The layout uses only built-in Home Assistant cards. Animated backgrounds
+# require a compatible lovelace-animated-background resource.
+views:
+  - title: Home
+    path: home
+    icon: mdi:home
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: At a glance
+            icon: mdi:home-outline
+          - type: markdown
+            content: |-
+              # {{ states('sensor.time') }} · {{ as_timestamp(states('sensor.date')) | timestamp_custom('%a, %b %d') }}
+              **🌅 Sunrise {{ as_timestamp(states('sensor.sun_next_rising')) | timestamp_custom('%-I:%M %p') }} · 🌇 Sunset {{ as_timestamp(states('sensor.sun_next_setting')) | timestamp_custom('%-I:%M %p') }}**
+            grid_options:
+              columns: 12
+              rows: auto
+          - type: tile
+            entity: binary_sensor.internet_status
+            name: Internet
+            icon: mdi:web
+            tap_action:
+              action: more-info
+            grid_options:
+              columns: 12
+              rows: 1
+          - type: heading
+            heading: Home status
+            icon: mdi:home-heart
+          - type: glance
+            columns: 3
+            show_name: true
+            show_state: true
+            state_color: true
+            entities:
+              - entity: vacuum.robot_cleaner
+                name: Robot
+              - entity: sensor.robot_battery
+                name: Battery
+              - entity: sensor.robot_cleaning_progress
+                name: Cleaning
+            grid_options:
+              columns: 12
+              rows: auto
+          - type: tile
+            entity: sensor.last_successful_backup
+            name: Last HA backup
+            icon: mdi:backup-restore
+            tap_action:
+              action: more-info
+            grid_options:
+              columns: 12
+              rows: 1
+      - type: grid
+        cards:
+          - type: heading
+            heading: Weather
+            icon: mdi:weather-partly-cloudy
+          - type: weather-forecast
+            entity: weather.home
+            show_current: true
+            show_forecast: true
+            forecast_type: daily
+            grid_options:
+              columns: 12
+              rows: auto
+          - type: heading
+            heading: Hourly forecast
+            icon: mdi:clock-outline
+          - type: weather-forecast
+            entity: weather.home
+            show_current: false
+            show_forecast: true
+            forecast_type: hourly
+            grid_options:
+              columns: 12
+              rows: auto
+    animated_background: weather
+
+  - title: Live Cameras
+    path: cameras
+    icon: mdi:cctv
+    type: panel
+    cards:
+      - type: horizontal-stack
+        cards:
+          - type: vertical-stack
+            cards:
+              - type: picture-entity
+                entity: camera.camera_1
+                name: Camera 1
+                camera_view: live
+                show_name: true
+                show_state: false
+                fit_mode: contain
+                aspect_ratio: "16:9"
+                tap_action:
+                  action: more-info
+              - type: picture-entity
+                entity: camera.camera_2
+                name: Camera 2
+                camera_view: live
+                show_name: true
+                show_state: false
+                fit_mode: contain
+                aspect_ratio: "16:9"
+                tap_action:
+                  action: more-info
+          - type: vertical-stack
+            cards:
+              - type: picture-entity
+                entity: camera.camera_3
+                name: Camera 3
+                camera_view: live
+                show_name: true
+                show_state: false
+                fit_mode: contain
+                aspect_ratio: "16:9"
+                tap_action:
+                  action: more-info
+              - type: picture-entity
+                entity: camera.camera_4
+                name: Camera 4
+                camera_view: live
+                show_name: true
+                show_state: false
+                fit_mode: contain
+                aspect_ratio: "16:9"
+                tap_action:
+                  action: more-info
+    animated_background: neutral
+
+  - title: Calendar
+    path: calendar
+    icon: mdi:calendar-month
+    type: panel
+    animated_background: neutral
+    cards:
+      - type: calendar
+        initial_view: dayGridMonth
+        entities:
+          - calendar.family
+          - calendar.personal
+          - calendar.birthdays
+          - calendar.holidays
+
+animated_background:
+  default_url: /local/wallpanel-weather/neutral.png
+  transparent_panel: true
+  groups:
+    - name: weather
+      config:
+        entity: weather.home
+        default_url: /local/wallpanel-weather/cloudy.mp4
+        state_url:
+          clear-night: /local/wallpanel-weather/clear-night.mp4
+          cloudy: /local/wallpanel-weather/cloudy.mp4
+          exceptional: /local/wallpanel-weather/sunny.mp4
+          fog: /local/wallpanel-weather/cloudy.mp4
+          hail: /local/wallpanel-weather/rainy.mp4
+          lightning: /local/wallpanel-weather/rainy.mp4
+          lightning-rainy: /local/wallpanel-weather/rainy.mp4
+          partlycloudy: /local/wallpanel-weather/cloudy.mp4
+          pouring: /local/wallpanel-weather/rainy.mp4
+          rainy: /local/wallpanel-weather/rainy.mp4
+          snowy: /local/wallpanel-weather/cloudy.mp4
+          snowy-rainy: /local/wallpanel-weather/rainy.mp4
+          sunny: /local/wallpanel-weather/sunny.mp4
+          windy: /local/wallpanel-weather/sunny.mp4
+          windy-variant: /local/wallpanel-weather/cloudy.mp4
+    - name: neutral
+      config:
+        default_url: /local/wallpanel-weather/neutral.png

@@ -32,6 +32,7 @@ required_files=(
   scripts/run-gitleaks.sh
   scripts/run-govulncheck.sh
   scripts/run-trivy.sh
+  scripts/validate-home-assistant-examples.rb
   scripts/validate-ci.sh
 )
 
@@ -72,9 +73,12 @@ fi
 
 if command -v ruby >/dev/null 2>&1; then
   ruby scripts/validate-config.rb config/config.example.yaml config/qwen.example.yaml
+  ruby scripts/validate-home-assistant-examples.rb
 else
   docker run --rm -v "$repo_root:/work:ro" -w /work ruby:3.4-alpine \
     ruby scripts/validate-config.rb config/config.example.yaml config/qwen.example.yaml
+  docker run --rm -v "$repo_root:/work:ro" -w /work ruby:3.4-alpine \
+    ruby scripts/validate-home-assistant-examples.rb
 fi
 
 ./scripts/validate-ci.sh
