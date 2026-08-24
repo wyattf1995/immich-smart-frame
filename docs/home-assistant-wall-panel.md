@@ -29,12 +29,19 @@ verified on one Lenovo CD-3L501F running stock Android 10. The tested software
 was Home Assistant Core 2026.8.3, Firefox 154, Fully Kiosk Browser 1.61.2, and
 Key Mapper 4.3.1 FOSS.
 
-Physical volume/star handling and Lenovo's native air-gesture input remain
-**UNVERIFIED** end to end. The mappings are supplied for review and testing,
-not as a claim that every firmware build or orientation emits the same input.
-A later physical swipe on the tested frame produced proximity/light activity
-without a raw gesture key, which is below Key Mapper's control. Do not reboot,
-unlock the bootloader, or reset the frame to troubleshoot that symptom.
+Physical volume/star handling remains **UNVERIFIED** end to end. The mappings
+are supplied for review and testing, not as a claim that every firmware build
+or orientation emits the same input. On the tested unit, an ordinary full
+reboot restored raw native-gesture events after Lenovo's OEM input path stopped
+emitting them, and both gesture directions then activated the pre-router
+destination mappings. The cyclic router mapping still needs a physical
+post-import test.
+
+That reboot also stopped wireless ADB and Key Mapper's Expert Mode sysbridge.
+Fully returned automatically, but gesture mappings did not reconnect until the
+official Key Mapper `start.sh` command was run through trusted USB ADB. Reboot
+only with that recovery path available; do not unlock or reset the frame for a
+gesture fault.
 
 ## Why two browsers
 
@@ -128,10 +135,11 @@ USB-debugging prompt. A second global scan-code-255 rule can interact with that
 action. Preserve the recovery path until a dialog-scoped replacement is proven,
 and treat the combined physical behavior as **UNVERIFIED** until tested.
 
-The tested frame also observed native gesture scan codes 249, 251, and 252 at
-different points, but their direction/orientation relationship was not stable
-enough to publish as an import. Record gestures on your own unit and map them
-to explicit destinations only after confirming the raw events are repeatable.
+The tested frame also observed native gesture scan codes 249, 251, and 252.
+Their direction relationship can change with orientation, so record gestures
+on your own unit before assigning them. The optional
+[frame mode router](frame-mode-router.md) publishes two disabled scan-code
+examples and cycles Photos, Home, Cameras, and Calendar in either direction.
 
 ## Rollback and recovery
 
@@ -141,6 +149,8 @@ to explicit destinations only after confirming the raw events are repeatable.
 - Do not clear Fully, Firefox, WebView, or Key Mapper data as a routine fix.
 - Wireless ADB does not survive reboot on the locked stock firmware. Rebooting
   can turn a browser problem into a new physical-access session.
+- Key Mapper Expert Mode also needs its displayed `start.sh` command after a
+  reboot on the tested Android 10 build.
 
 The slideshow itself continues to use the main [Quick start](../README.md#quick-start),
 [Curation](curation.md), and [Upgrade and rollback](upgrade-rollback.md) paths.

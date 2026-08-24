@@ -5,12 +5,14 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 sh_files=(
+  examples/frame-mode-router/frame-mode-router.sh
   examples/home-assistant-wall-panel/build-weather-loops.sh
   scripts/audit-licenses.sh
   scripts/ci-lib.sh
   scripts/run-gitleaks.sh
   scripts/run-govulncheck.sh
   scripts/run-trivy.sh
+  scripts/test-frame-mode-router.sh
   scripts/validate-ci.sh
   scripts/validate.sh
 )
@@ -41,6 +43,8 @@ done
 
 ruby <<'RUBY'
 require "yaml"
+require "json"
+require "base64"
 
 def load_trusted_yaml(file)
   YAML.load_file(file)
@@ -138,6 +142,91 @@ end
 unless File.read("scripts/run-gitleaks.sh").include?("grep -Eq '(^|[^[:digit:]])0 commits scanned([^[:digit:]]|$)'")
   warn "Gitleaks zero-history guard must not reject multi-digit commit counts ending in zero"
   exit 1
+end
+
+router_example_files = [
+  "examples/frame-mode-router/frame-mode-router.example.conf",
+  "examples/frame-mode-router/keymapper-mode-router.example.json"
+]
+router_example_files.each do |file|
+  contents = File.read(file)
+  urls = contents.scan(%r{https?://[^\s"']+})
+  unless urls.all? { |url| url.match?(%r{\Ahttps?://(?:[A-Za-z0-9-]+\.)*example\.invalid(?:/|\z)}) }
+    warn "#{file} may only contain example.invalid URLs"
+    exit 1
+  end
+end
+
+keymapper = JSON.parse(File.read("examples/frame-mode-router/keymapper-mode-router.example.json"))
+unless keymapper["keymap_db_version"] == 22 && keymapper["app_version"] == 259
+  warn "frame-mode-router Key Mapper export must use database version 22 and app version 259"
+  exit 1
+end
+
+keymaps = keymapper.fetch("keymap_list")
+unless keymaps.is_a?(Array) && keymaps.length == 2 && keymaps.all? { |keymap| keymap["isEnabled"] == false }
+  warn "frame-mode-router Key Mapper export must contain exactly two disabled key maps"
+  exit 1
+end
+
+def values_for_key(node, expected_key)
+  case node
+  when Hash
+    node.each_with_object([]) do |(key, value), values|
+      values.concat([value]) if key == expected_key
+      values.concat(values_for_key(value, expected_key))
+    end
+  when Array
+    node.flat_map { |value| values_for_key(value, expected_key) }
+  else
+    []
+  end
+end
+
+uids = values_for_key(keymapper, "uid")
+unless uids.length == 6 && uids.all? { |uid| uid.is_a?(String) && uid.match?(/\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i) } &&
+       uids.length == uids.uniq.length
+  warn "frame-mode-router Key Mapper export must contain exactly six valid unique UUIDs"
+  exit 1
+end
+
+def contains_scan_code?(node, code)
+  case node
+  when Hash
+    node.any? do |key, value|
+      (key == "scanCode" && value.to_i == code) || contains_scan_code?(value, code)
+    end
+  when Array
+    node.any? { |value| contains_scan_code?(value, code) }
+  else
+    false
+  end
+end
+
+expected_commands = {
+  251 => "sh /data/local/tmp/frame-mode-router.sh next",
+  252 => "sh /data/local/tmp/frame-mode-router.sh prev"
+}
+expected_commands.each do |scan_code, expected_command|
+  rule = keymaps.find do |candidate|
+    candidate["isEnabled"] == false && contains_scan_code?(candidate, scan_code.to_i)
+  end
+  action = rule&.fetch("actionList", nil)&.yield_self { |actions| actions.length == 1 ? actions.first : nil }
+  trigger_key = rule&.dig("trigger", "keys")&.yield_self { |keys| keys.length == 1 ? keys.first : nil }
+  timeout_extras = action ? action.fetch("extras", []).select { |extra| extra["id"] == "extra_shell_command_timeout" } : []
+  decoded_command = begin
+    Base64.strict_decode64(action.fetch("data"))
+  rescue ArgumentError, KeyError, NoMethodError
+    nil
+  end
+  unless trigger_key&.fetch("deviceName", nil).is_a?(String) && !trigger_key["deviceName"].empty? &&
+         trigger_key["keyCode"] == 0 && trigger_key["scanCode"] == scan_code &&
+         action&.fetch("type", nil) == "SHELL_COMMAND" && action["flags"] == 32 &&
+         timeout_extras.length == 1 && timeout_extras.first["data"] == "30000" &&
+         decoded_command == expected_command
+    warn "Key Mapper gesture #{scan_code} must have the expected deviceName/keyCode shape and exact ADB shell action"
+    exit 1
+  end
 end
 RUBY
 

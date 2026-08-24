@@ -1,0 +1,94 @@
+{
+  "keymap_db_version": 22,
+  "app_version": 259,
+  "keymap_list": [
+    {
+      "actionList": [
+        {
+          "data": "c2ggL2RhdGEvbG9jYWwvdG1wL2ZyYW1lLW1vZGUtcm91dGVyLnNoIG5leHQ=",
+          "extras": [
+            {
+              "data": "Next frame mode",
+              "id": "extra_shell_command_description"
+            },
+            {
+              "data": "30000",
+              "id": "extra_shell_command_timeout"
+            }
+          ],
+          "flags": 32,
+          "type": "SHELL_COMMAND",
+          "uid": "41000000-0000-4000-8000-000000000001"
+        }
+      ],
+      "constraintList": [],
+      "constraintMode": 1,
+      "flags": 0,
+      "id": 0,
+      "isEnabled": false,
+      "trigger": {
+        "extras": [],
+        "flags": 0,
+        "keys": [
+          {
+            "clickType": 0,
+            "deviceBus": 0,
+            "deviceName": "gesture",
+            "deviceProduct": 0,
+            "deviceVendor": 0,
+            "flags": 0,
+            "keyCode": 0,
+            "scanCode": 251,
+            "uid": "41000000-0000-4000-8000-000000000002"
+          }
+        ],
+        "mode": 2
+      },
+      "uid": "41000000-0000-4000-8000-000000000003"
+    },
+    {
+      "actionList": [
+        {
+          "data": "c2ggL2RhdGEvbG9jYWwvdG1wL2ZyYW1lLW1vZGUtcm91dGVyLnNoIHByZXY=",
+          "extras": [
+            {
+              "data": "Previous frame mode",
+              "id": "extra_shell_command_description"
+            },
+            {
+              "data": "30000",
+              "id": "extra_shell_command_timeout"
+            }
+          ],
+          "flags": 32,
+          "type": "SHELL_COMMAND",
+          "uid": "42000000-0000-4000-8000-000000000001"
+        }
+      ],
+      "constraintList": [],
+      "constraintMode": 1,
+      "flags": 0,
+      "id": 0,
+      "isEnabled": false,
+      "trigger": {
+        "extras": [],
+        "flags": 0,
+        "keys": [
+          {
+            "clickType": 0,
+            "deviceBus": 0,
+            "deviceName": "gesture",
+            "deviceProduct": 0,
+            "deviceVendor": 0,
+            "flags": 0,
+            "keyCode": 0,
+            "scanCode": 252,
+            "uid": "42000000-0000-4000-8000-000000000002"
+          }
+        ],
+        "mode": 2
+      },
+      "uid": "42000000-0000-4000-8000-000000000003"
+    }
+  ]
+}

@@ -27,11 +27,16 @@ required_files=(
   custom-image/weighted-curation.patch
   custom-image/weighted-curation-tests.patch
   docker-compose.yaml
+  docs/frame-mode-router.md
+  examples/frame-mode-router/frame-mode-router.example.conf
+  examples/frame-mode-router/frame-mode-router.sh
+  examples/frame-mode-router/keymapper-mode-router.example.json
   scripts/audit-licenses.sh
   scripts/ci-lib.sh
   scripts/run-gitleaks.sh
   scripts/run-govulncheck.sh
   scripts/run-trivy.sh
+  scripts/test-frame-mode-router.sh
   scripts/validate-home-assistant-examples.rb
   scripts/validate-ci.sh
 )
@@ -82,6 +87,8 @@ else
 fi
 
 ./scripts/validate-ci.sh
+
+./scripts/test-frame-mode-router.sh
 
 docker compose --env-file .env.example config --quiet
 

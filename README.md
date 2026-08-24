@@ -216,7 +216,10 @@ The same no-touch frame can keep Immich photos in Fully Kiosk Browser while
 Firefox displays a Home Assistant Home, camera, or calendar view. The optional
 [Home Assistant wall-panel guide](docs/home-assistant-wall-panel.md) includes a
 privacy-safe dashboard example, portable local weather-loop builder, and a
-reviewable Key Mapper profile. Home Assistant is not required for the slideshow.
+reviewable Key Mapper profile. The separate
+[frame mode router](docs/frame-mode-router.md) can turn two repeatable gestures
+into a circular Photos/Home/Cameras/Calendar control. Home Assistant is not
+required for the slideshow.
 
 ## Validation
 
