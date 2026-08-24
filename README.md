@@ -210,6 +210,14 @@ See [Device setup](docs/device-setup.md) and
 MediaTek-specific service failures encountered during testing. The device guide
 also covers VLAN and firewall isolation for a dedicated Android 10 frame.
 
+## Optional Home Assistant companion
+
+The same no-touch frame can keep Immich photos in Fully Kiosk Browser while
+Firefox displays a Home Assistant Home, camera, or calendar view. The optional
+[Home Assistant wall-panel guide](docs/home-assistant-wall-panel.md) includes a
+privacy-safe dashboard example, portable local weather-loop builder, and a
+reviewable Key Mapper profile. Home Assistant is not required for the slideshow.
+
 ## Validation
 
 After setup, run:
@@ -219,8 +227,9 @@ After setup, run:
 ```
 
 The validator checks public-repository hygiene, configuration/profile weights,
-Compose rendering, patch applicability, and the patched Go tests. GitHub Actions
-runs the same checks for pushes and pull requests. Use
+the Home Assistant companion examples, Compose rendering, patch applicability,
+and the patched Go tests. GitHub Actions runs the same checks for pushes and
+pull requests. Use
 `./scripts/validate.sh --static` to skip the Docker image build.
 
 ## Security

@@ -1,0 +1,115 @@
+{
+  "keymap_db_version": 22,
+  "app_version": 259,
+  "keymap_list": [
+    {
+      "actionList": [
+        {
+          "data": "61",
+          "extras": [
+            {
+              "data": "0",
+              "id": "extra_meta_state"
+            }
+          ],
+          "flags": 0,
+          "type": "KEY_EVENT",
+          "uid": "10000000-0000-4000-8000-000000000001"
+        }
+      ],
+      "constraintList": [],
+      "constraintMode": 1,
+      "flags": 0,
+      "id": 0,
+      "isEnabled": true,
+      "trigger": {
+        "extras": [],
+        "flags": 0,
+        "keys": [
+          {
+            "clickType": 0,
+            "deviceId": "io.github.sds100.keymapper.ANY_DEVICE",
+            "flags": 0,
+            "keyCode": 25,
+            "uid": "10000000-0000-4000-8000-000000000002"
+          }
+        ],
+        "mode": 2
+      },
+      "uid": "10000000-0000-4000-8000-000000000003"
+    },
+    {
+      "actionList": [
+        {
+          "data": "61",
+          "extras": [
+            {
+              "data": "1",
+              "id": "extra_meta_state"
+            }
+          ],
+          "flags": 0,
+          "type": "KEY_EVENT",
+          "uid": "20000000-0000-4000-8000-000000000001"
+        }
+      ],
+      "constraintList": [],
+      "constraintMode": 1,
+      "flags": 0,
+      "id": 0,
+      "isEnabled": true,
+      "trigger": {
+        "extras": [],
+        "flags": 0,
+        "keys": [
+          {
+            "clickType": 0,
+            "deviceId": "io.github.sds100.keymapper.ANY_DEVICE",
+            "flags": 0,
+            "keyCode": 24,
+            "uid": "20000000-0000-4000-8000-000000000002"
+          }
+        ],
+        "mode": 2
+      },
+      "uid": "20000000-0000-4000-8000-000000000003"
+    },
+    {
+      "actionList": [
+        {
+          "data": "66",
+          "extras": [
+            {
+              "data": "0",
+              "id": "extra_meta_state"
+            }
+          ],
+          "flags": 0,
+          "type": "KEY_EVENT",
+          "uid": "30000000-0000-4000-8000-000000000001"
+        }
+      ],
+      "constraintList": [],
+      "constraintMode": 1,
+      "flags": 0,
+      "id": 0,
+      "isEnabled": true,
+      "trigger": {
+        "extras": [],
+        "flags": 0,
+        "keys": [
+          {
+            "clickType": 0,
+            "deviceId": "io.github.sds100.keymapper.ANY_DEVICE",
+            "flags": 4,
+            "keyCode": 0,
+            "scanCode": 255,
+            "uid": "30000000-0000-4000-8000-000000000002"
+          }
+        ],
+        "mode": 2
+      },
+      "uid": "30000000-0000-4000-8000-000000000003"
+    }
+  ]
+}

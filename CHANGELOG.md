@@ -13,6 +13,8 @@ changes will still be called out explicitly.
 
 - Added validated, per-profile album penalty factors so an overrepresented
   album can remain eligible while being selected less often through any source.
+- Added an optional, privacy-safe Home Assistant wall-panel example with Home,
+  four-camera, calendar, weather-background, and physical-key navigation setup.
 
 ### Changed
 

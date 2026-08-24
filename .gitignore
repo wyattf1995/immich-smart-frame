@@ -5,3 +5,6 @@ config/config.yaml
 secrets/
 screenshots/
 offline-assets/
+examples/home-assistant-wall-panel/weather/source/
+examples/home-assistant-wall-panel/weather/output/
+examples/home-assistant-wall-panel/weather/preview/
