@@ -5,12 +5,14 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 sh_files=(
+  examples/frame-mode-router/frame-mode-router.sh
   examples/home-assistant-wall-panel/build-weather-loops.sh
   scripts/audit-licenses.sh
   scripts/ci-lib.sh
   scripts/run-gitleaks.sh
   scripts/run-govulncheck.sh
   scripts/run-trivy.sh
+  scripts/test-frame-mode-router.sh
   scripts/validate-ci.sh
   scripts/validate.sh
 )
@@ -41,6 +43,8 @@ done
 
 ruby <<'RUBY'
 require "yaml"
+require "json"
+require "base64"
 
 def load_trusted_yaml(file)
   YAML.load_file(file)
@@ -138,6 +142,60 @@ end
 unless File.read("scripts/run-gitleaks.sh").include?("grep -Eq '(^|[^[:digit:]])0 commits scanned([^[:digit:]]|$)'")
   warn "Gitleaks zero-history guard must not reject multi-digit commit counts ending in zero"
   exit 1
+end
+
+router_example_files = [
+  "examples/frame-mode-router/frame-mode-router.example.conf",
+  "examples/frame-mode-router/keymapper-mode-router.example.json"
+]
+router_example_files.each do |file|
+  contents = File.read(file)
+  urls = contents.scan(%r{https?://[^\s"']+})
+  unless urls.all? { |url| url.match?(%r{\Ahttps?://(?:[A-Za-z0-9-]+\.)*example\.invalid(?:/|\z)}) }
+    warn "#{file} may only contain example.invalid URLs"
+    exit 1
+  end
+end
+
+keymapper = JSON.parse(File.read("examples/frame-mode-router/keymapper-mode-router.example.json"))
+uids = keymapper.to_s.scan(/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}/i)
+unless uids.length == uids.uniq.length
+  warn "frame-mode-router Key Mapper UUIDs must be unique"
+  exit 1
+end
+
+def contains_scan_code?(node, code)
+  case node
+  when Hash
+    node.any? do |key, value|
+      (key == "scanCode" && value.to_i == code) || contains_scan_code?(value, code)
+    end
+  when Array
+    node.any? { |value| contains_scan_code?(value, code) }
+  else
+    false
+  end
+end
+
+def decoded_command_for(rule)
+  JSON.generate(rule).scan(/[A-Za-z0-9+\/]{16,}={0,2}/).each do |candidate|
+    decoded = Base64.strict_decode64(candidate)
+    return decoded if decoded.match?(/frame-mode-router/) && decoded.match?(/\b(?:next|prev)\b/)
+  rescue ArgumentError
+    next
+  end
+  nil
+end
+
+keymaps = keymapper.fetch("keymap_list")
+%w[251 252].each do |scan_code|
+  rule = keymaps.find do |candidate|
+    candidate["isEnabled"] == false && contains_scan_code?(candidate, scan_code.to_i)
+  end
+  unless rule && JSON.generate(rule).include?("30000") && decoded_command_for(rule)
+    warn "Key Mapper gesture #{scan_code} must be disabled, timed 30000ms, and run a base64 router command"
+    exit 1
+  end
 end
 RUBY
 
