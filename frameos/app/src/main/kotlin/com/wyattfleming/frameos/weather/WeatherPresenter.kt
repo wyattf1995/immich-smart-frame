@@ -53,6 +53,7 @@ class WeatherPresenter(
 
     private fun presentSnapshot(snapshot: WeatherSnapshot, stale: Boolean): WeatherPresentation {
         val current = snapshot.current
+        val nearestHourly = snapshot.hourly.firstOrNull()
         val updateTime = formatEpochTime(current.updatedAtEpochMillis)
         return WeatherPresentation(
             temperature = formatTemperature(current.temperature, current.temperatureUnit),
@@ -60,10 +61,17 @@ class WeatherPresenter(
             sceneCondition = current.condition,
             status = if (stale) "Offline · updated $updateTime" else "Updated $updateTime",
             metrics = buildList {
-                current.humidity?.let { add(WeatherMetric("Humidity", "${formatNumber(it)}%")) }
-                current.windSpeed?.let { speed ->
+                (current.apparentTemperature ?: nearestHourly?.apparentTemperature)?.let {
+                    add(WeatherMetric("Feels like", formatTemperature(it, current.temperatureUnit)))
+                }
+                (current.humidity ?: nearestHourly?.humidity)?.let {
+                    add(WeatherMetric("Humidity", "${formatNumber(it)}%"))
+                }
+                (current.windSpeed ?: nearestHourly?.windSpeed)?.let { speed ->
                     val unit = current.windSpeedUnit?.let { " $it" }.orEmpty()
-                    add(WeatherMetric("Wind", "${formatNumber(speed)}$unit"))
+                    val bearing = current.windBearing ?: nearestHourly?.windBearing
+                    val direction = bearing?.let { " · ${formatWindDirection(it)}" }.orEmpty()
+                    add(WeatherMetric("Wind", "${formatNumber(speed)}$unit$direction"))
                 }
                 current.pressure?.let { pressure ->
                     val unit = current.pressureUnit?.let { " $it" }.orEmpty()
@@ -72,6 +80,15 @@ class WeatherPresenter(
                 current.visibility?.let { visibility ->
                     val unit = current.visibilityUnit?.let { " $it" }.orEmpty()
                     add(WeatherMetric("Visibility", "${formatNumber(visibility)}$unit"))
+                }
+                current.dewPoint?.let {
+                    add(WeatherMetric("Dew point", formatTemperature(it, current.temperatureUnit)))
+                }
+                current.cloudCoverage?.let {
+                    add(WeatherMetric("Cloud cover", "${formatNumber(it)}%"))
+                }
+                current.uvIndex?.let {
+                    add(WeatherMetric("UV index", formatNumber(it)))
                 }
             },
             daily = snapshot.daily.map(::presentDaily),
@@ -114,4 +131,13 @@ class WeatherPresenter(
     private fun formatTemperature(value: Double, unit: String): String = "${formatNumber(value)}$unit"
 
     private fun formatNumber(value: Double): String = numberFormat.format(value)
+
+    private fun formatWindDirection(bearing: Double): String {
+        val directions = arrayOf(
+            "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+            "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+        )
+        val normalized = ((bearing % 360.0) + 360.0) % 360.0
+        return directions[((normalized / 22.5) + 0.5).toInt() % directions.size]
+    }
 }

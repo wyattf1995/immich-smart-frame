@@ -29,7 +29,11 @@ class WeatherContentView(context: Context) : View(context) {
             field = value
             pageEpochMillis = SystemClock.uptimeMillis()
             pageAnchorIndex = 0
-            contentDescription = value.emptyMessage ?: "${value.condition}, ${value.temperature}. ${value.status}"
+            val metricSummary = value.metrics.joinToString { "${it.label} ${it.value}" }
+            contentDescription = value.emptyMessage ?: buildString {
+                append("${value.condition}, ${value.temperature}. ${value.status}")
+                if (metricSummary.isNotEmpty()) append(". $metricSummary")
+            }
             invalidate()
         }
 
@@ -308,10 +312,14 @@ class WeatherContentView(context: Context) : View(context) {
         drawText(canvas, presentation.temperature, card.left + card.width() * 0.34f, card.top + card.height() * 0.48f, 62f, Color.WHITE, true)
         drawText(canvas, presentation.condition, card.left + card.width() * 0.34f, card.top + card.height() * 0.61f, 23f, Color.WHITE, true)
 
-        val metrics = presentation.metrics.take(4)
+        val metrics = presentation.metrics.take(8)
+        val columns = minOf(4, maxOf(metrics.size, 1))
         metrics.forEachIndexed { index, metric ->
-            val x = card.left + dp(24f) + index * (card.width() - dp(48f)) / maxOf(metrics.size, 1)
-            drawMetric(canvas, metric, x, card.bottom - dp(58f))
+            val column = index % columns
+            val row = index / columns
+            val x = card.left + dp(24f) + column * (card.width() - dp(48f)) / columns
+            val y = card.bottom - dp(if (row == 0 && metrics.size > columns) 108f else 52f)
+            drawMetric(canvas, metric, x, y)
         }
     }
 
@@ -327,6 +335,9 @@ class WeatherContentView(context: Context) : View(context) {
             drawCenteredText(canvas, "${item.temperature}°", center, card.top + card.height() * 0.72f, 24f, Color.WHITE, true)
             item.lowTemperature?.let {
                 drawCenteredText(canvas, "$it°", center, card.top + card.height() * 0.84f, 17f, 0xFFADB7C6.toInt())
+            }
+            item.precipitation?.takeUnless { it == "0%" }?.let { precipitation ->
+                drawCenteredText(canvas, precipitation, center, card.top + card.height() * 0.94f, 12f, 0xFF91C9FF.toInt(), true)
             }
         }
     }

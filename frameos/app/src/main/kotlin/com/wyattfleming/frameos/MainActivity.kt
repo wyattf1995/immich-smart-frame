@@ -55,6 +55,7 @@ import com.wyattfleming.frameos.weather.UrlConnectionHomeAssistantTransport
 import com.wyattfleming.frameos.weather.WeatherCoordinator
 import com.wyattfleming.frameos.weather.WeatherPresentation
 import com.wyattfleming.frameos.weather.WeatherPresenter
+import com.wyattfleming.frameos.weather.WeatherRefreshPolicy
 import com.wyattfleming.frameos.weather.WeatherRepository
 import com.wyattfleming.frameos.web.FrameSurfaceRouter
 import com.wyattfleming.frameos.web.FrameSurfaceTarget
@@ -103,6 +104,9 @@ class MainActivity : Activity() {
     private var callbackVerifier: OAuthCallbackVerifier? = null
     private var weatherCoordinator: WeatherCoordinator? = null
     private var weatherNeedsAuthentication = false
+    private var weatherRefreshInProgress = false
+    private var weatherAuthorizationInProgress = false
+    private var activityResumed = false
     private var weatherRequestGeneration = 0
     private var surfaceRouter: FrameSurfaceRouter? = null
     private var webSurface: FrameWebSurface? = null
@@ -116,6 +120,7 @@ class MainActivity : Activity() {
             .start()
     }
     private val expireIdle = Runnable { dispatch(FrameIntent.IdleExpired) }
+    private val refreshVisibleWeather = Runnable { refreshWeather() }
 
     private val gestureDetector by lazy {
         GestureDetector(
@@ -171,11 +176,22 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        activityResumed = true
         enterImmersiveMode()
         render(state, announce = false)
+        if (
+            state.mode == FrameMode.WEATHER &&
+            !weatherNeedsAuthentication &&
+            !weatherAuthorizationInProgress &&
+            !weatherRefreshInProgress
+        ) {
+            refreshWeather()
+        }
     }
 
     override fun onPause() {
+        activityResumed = false
+        handler.removeCallbacks(refreshVisibleWeather)
         webSurface?.setContentActive(false)
         super.onPause()
     }
@@ -506,6 +522,7 @@ class MainActivity : Activity() {
                 }.start()
             }
         }
+        scheduleWeatherRefresh()
     }
 
     private fun updatePageLoading(label: String, loading: Boolean) {
@@ -637,6 +654,9 @@ class MainActivity : Activity() {
 
     private fun refreshWeather() {
         val coordinator = weatherCoordinator ?: return
+        if (weatherAuthorizationInProgress || weatherRefreshInProgress) return
+        weatherRefreshInProgress = true
+        handler.removeCallbacks(refreshVisibleWeather)
         val generation = ++weatherRequestGeneration
         ioExecutor.execute {
             val presentation = try {
@@ -646,10 +666,22 @@ class MainActivity : Activity() {
             }
             handler.post {
                 if (generation != weatherRequestGeneration || isFinishing || isDestroyed) return@post
+                weatherRefreshInProgress = false
                 weatherContent.presentation = presentation
                 weatherNeedsAuthentication = presentation.emptyMessage == "Weather needs Home Assistant sign-in"
+                scheduleWeatherRefresh()
             }
         }
+    }
+
+    private fun scheduleWeatherRefresh() {
+        handler.removeCallbacks(refreshVisibleWeather)
+        WeatherRefreshPolicy.nextDelayMillis(
+            weatherVisible = state.mode == FrameMode.WEATHER,
+            activityResumed = activityResumed,
+            authenticationRequired = weatherNeedsAuthentication,
+            authorizationInProgress = weatherAuthorizationInProgress || weatherRefreshInProgress,
+        )?.let { delay -> handler.postDelayed(refreshVisibleWeather, delay) }
     }
 
     private fun beginWeatherAuthorization() {
@@ -676,6 +708,7 @@ class MainActivity : Activity() {
         val verifier = callbackVerifier ?: return
         val code = verifier.verify(callbackUrl) ?: run {
             setIntent(Intent(this, MainActivity::class.java))
+            weatherAuthorizationInProgress = false
             weatherNeedsAuthentication = true
             weatherContent.presentation = WeatherPresentation(emptyMessage = "Weather needs Home Assistant sign-in")
             showHud("Sign-in link expired")
@@ -687,17 +720,21 @@ class MainActivity : Activity() {
         weatherContent.presentation = WeatherPresentation(emptyMessage = "Connecting to Home Assistant")
         weatherNeedsAuthentication = false
         val client = oauthClient ?: return
+        weatherAuthorizationInProgress = true
+        handler.removeCallbacks(refreshVisibleWeather)
         val generation = ++weatherRequestGeneration
         ioExecutor.execute {
             val success = client.exchangeAuthorizationCode(code.code)
             handler.post {
                 if (generation != weatherRequestGeneration || isFinishing || isDestroyed) return@post
+                weatherAuthorizationInProgress = false
                 if (success) {
                     refreshWeather()
                 } else {
                     weatherNeedsAuthentication = true
                     weatherContent.presentation = WeatherPresentation(emptyMessage = "Weather needs Home Assistant sign-in")
                     showHud("Home Assistant sign-in failed")
+                    scheduleWeatherRefresh()
                 }
             }
         }

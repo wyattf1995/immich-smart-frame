@@ -25,7 +25,7 @@ views:
             name: Internet
             icon: mdi:web
             tap_action:
-              action: more-info
+              action: none
             grid_options:
               columns: 12
               rows: 1
@@ -40,10 +40,16 @@ views:
             entities:
               - entity: vacuum.robot_cleaner
                 name: Robot
+                tap_action:
+                  action: none
               - entity: sensor.robot_battery
                 name: Battery
+                tap_action:
+                  action: none
               - entity: sensor.robot_cleaning_progress
                 name: Cleaning
+                tap_action:
+                  action: none
             grid_options:
               columns: 12
               rows: auto
@@ -52,7 +58,7 @@ views:
             name: Last HA backup
             icon: mdi:backup-restore
             tap_action:
-              action: more-info
+              action: none
             grid_options:
               columns: 12
               rows: 1
@@ -186,7 +192,7 @@ views:
                 fit_mode: contain
                 aspect_ratio: "16:9"
                 tap_action:
-                  action: more-info
+                  action: none
               - type: picture-entity
                 entity: camera.camera_2
                 name: Camera 2
@@ -196,7 +202,7 @@ views:
                 fit_mode: contain
                 aspect_ratio: "16:9"
                 tap_action:
-                  action: more-info
+                  action: none
           - type: vertical-stack
             cards:
               - type: picture-entity
@@ -208,7 +214,7 @@ views:
                 fit_mode: contain
                 aspect_ratio: "16:9"
                 tap_action:
-                  action: more-info
+                  action: none
               - type: picture-entity
                 entity: camera.camera_4
                 name: Camera 4
@@ -218,7 +224,7 @@ views:
                 fit_mode: contain
                 aspect_ratio: "16:9"
                 tap_action:
-                  action: more-info
+                  action: none
     animated_background: neutral
 
   - title: Calendar
