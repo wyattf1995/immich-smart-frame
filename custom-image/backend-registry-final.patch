@@ -1,0 +1,617 @@
+diff --git a/internal/immich/immich_date.go b/internal/immich/immich_date.go
+index 46b5e3a..a04c31a 100644
+--- a/internal/immich/immich_date.go
++++ b/internal/immich/immich_date.go
+@@ -1,6 +1,7 @@
+ package immich
+ 
+ import (
++	"context"
+ 	"crypto/sha256"
+ 	"encoding/json"
+ 	"errors"
+@@ -15,42 +16,224 @@ import (
+ 
+ 	"charm.land/log/v2"
+ 	"github.com/damongolding/immich-kiosk/internal/cache"
++	"github.com/damongolding/immich-kiosk/internal/config"
+ 	"github.com/damongolding/immich-kiosk/internal/kiosk"
+ 	"github.com/google/go-querystring/query"
+ )
+ 
++const (
++	defaultDatePoolRegistrySize = 128
++	maxDateCandidates           = 200
++)
++
++var errDatePoolRegistryBusy = errors.New("date candidate pool registry is at capacity")
++
++type datePoolFetch func(context.Context) ([]Asset, error)
++
+ type dateCandidatePool struct {
+ 	mu         sync.Mutex
+-	refillMu   sync.Mutex
+ 	candidates []Asset
++	expiresAt  time.Time
++	refreshing bool
++	ready      chan struct{}
+ }
+ 
+ func newDateCandidatePool(candidates []Asset) *dateCandidatePool {
+-	return &dateCandidatePool{candidates: candidates}
++	return &dateCandidatePool{candidates: uniqueDateCandidates(candidates, maxDateCandidates)}
++}
++
++type datePoolEntry struct {
++	pool       *dateCandidatePool
++	active     int
++	lastAccess time.Time
++}
++
++type datePoolRegistry struct {
++	mu         sync.Mutex
++	entries    map[string]*datePoolEntry
++	maxEntries int
++	now        func() time.Time
++}
++
++var dateCandidatePools = newDatePoolRegistry(defaultDatePoolRegistrySize)
++
++func newDatePoolRegistry(maxEntries int) *datePoolRegistry {
++	return newDatePoolRegistryWithClock(maxEntries, time.Now)
++}
++
++func newDatePoolRegistryWithClock(maxEntries int, now func() time.Time) *datePoolRegistry {
++	if maxEntries < 1 {
++		maxEntries = 1
++	}
++	return &datePoolRegistry{entries: make(map[string]*datePoolEntry, maxEntries), maxEntries: maxEntries, now: now}
++}
++
++func (r *datePoolRegistry) take(ctx context.Context, key string, ttl time.Duration, fetch datePoolFetch) (Asset, bool, error) {
++	entry, err := r.acquire(key)
++	if err != nil {
++		return Asset{}, false, err
++	}
++	defer r.release(entry)
++	return entry.pool.takeOrRefill(ctx, ttl, r.now, fetch)
++}
++
++func (r *datePoolRegistry) acquire(key string) (*datePoolEntry, error) {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	now := r.now()
++	for candidateKey, entry := range r.entries {
++		if entry.active == 0 && entry.pool.expired(now) {
++			delete(r.entries, candidateKey)
++		}
++	}
++	if entry, ok := r.entries[key]; ok {
++		entry.active++
++		entry.lastAccess = now
++		return entry, nil
++	}
++	if len(r.entries) >= r.maxEntries {
++		var oldestKey string
++		var oldest time.Time
++		for candidateKey, entry := range r.entries {
++			if entry.active == 0 && (oldestKey == "" || entry.lastAccess.Before(oldest)) {
++				oldestKey = candidateKey
++				oldest = entry.lastAccess
++			}
++		}
++		if oldestKey == "" {
++			return nil, errDatePoolRegistryBusy
++		}
++		delete(r.entries, oldestKey)
++	}
++	entry := &datePoolEntry{pool: &dateCandidatePool{}, active: 1, lastAccess: now}
++	r.entries[key] = entry
++	return entry, nil
++}
++
++func (r *datePoolRegistry) release(entry *datePoolEntry) {
++	r.mu.Lock()
++	entry.active--
++	entry.lastAccess = r.now()
++	r.mu.Unlock()
++}
++
++func (r *datePoolRegistry) size() int {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	return len(r.entries)
++}
++
++func (p *dateCandidatePool) expired(now time.Time) bool {
++	p.mu.Lock()
++	defer p.mu.Unlock()
++	return !p.expiresAt.IsZero() && !now.Before(p.expiresAt) && !p.refreshing
+ }
+ 
+-// take removes a candidate before validation, so a cached candidate is never
+-// decoded or evaluated twice. Removing the last item is O(1).
+ func (p *dateCandidatePool) take() (Asset, bool) {
+ 	p.mu.Lock()
+ 	defer p.mu.Unlock()
+ 	if len(p.candidates) == 0 {
+ 		return Asset{}, false
+ 	}
+-	last := len(p.candidates) - 1
+-	asset := p.candidates[last]
+-	p.candidates[last] = Asset{}
+-	p.candidates = p.candidates[:last]
+-	return asset, true
++	return popDateCandidate(&p.candidates), true
+ }
+ 
+-func (p *dateCandidatePool) refill(candidates []Asset) {
+-	p.mu.Lock()
+-	p.candidates = candidates
+-	p.mu.Unlock()
++func (p *dateCandidatePool) takeOrRefill(ctx context.Context, ttl time.Duration, now func() time.Time, fetch datePoolFetch) (Asset, bool, error) {
++	for {
++		p.mu.Lock()
++		if !p.expiresAt.IsZero() && !now().Before(p.expiresAt) && !p.refreshing {
++			clear(p.candidates)
++			p.candidates = nil
++		}
++		if len(p.candidates) > 0 {
++			asset := popDateCandidate(&p.candidates)
++			p.mu.Unlock()
++			return asset, true, nil
++		}
++		if p.refreshing {
++			ready := p.ready
++			p.mu.Unlock()
++			select {
++			case <-ctx.Done():
++				return Asset{}, false, ctx.Err()
++			case <-ready:
++				continue
++			}
++		}
++
++		p.refreshing = true
++		p.ready = make(chan struct{})
++		ready := p.ready
++		p.mu.Unlock()
++
++		candidates, err := fetch(ctx)
++		candidates = uniqueDateCandidates(candidates, maxDateCandidates)
++
++		p.mu.Lock()
++		if err == nil {
++			p.candidates = candidates
++			p.expiresAt = now().Add(ttl)
++		}
++		p.refreshing = false
++		close(ready)
++		if err != nil {
++			p.mu.Unlock()
++			return Asset{}, false, err
++		}
++		if len(p.candidates) == 0 {
++			p.mu.Unlock()
++			return Asset{}, false, nil
++		}
++		asset := popDateCandidate(&p.candidates)
++		p.mu.Unlock()
++		return asset, true, nil
++	}
+ }
+ 
+-func dateCandidatePoolKey(apiCacheKey string) string { return "date-candidates:" + apiCacheKey }
++func popDateCandidate(candidates *[]Asset) Asset {
++	last := len(*candidates) - 1
++	asset := (*candidates)[last]
++	(*candidates)[last] = Asset{}
++	*candidates = (*candidates)[:last]
++	return asset
++}
++
++func uniqueDateCandidates(candidates []Asset, limit int) []Asset {
++	if limit < 1 {
++		return nil
++	}
++	result := make([]Asset, 0, min(len(candidates), limit))
++	seen := make(map[string]struct{}, min(len(candidates), limit))
++	for _, candidate := range candidates {
++		if candidate.ID == "" {
++			continue
++		}
++		if _, exists := seen[candidate.ID]; exists {
++			continue
++		}
++		seen[candidate.ID] = struct{}{}
++		result = append(result, candidate)
++		if len(result) == limit {
++			break
++		}
++	}
++	return result
++}
++
++func dateCandidateRequestSize(configured int) int {
++	if configured < 1 {
++		return 1
++	}
++	return min(configured, maxDateCandidates)
++}
++
++func dateCandidatePoolTTL(requestConfig config.Config) time.Duration {
++	return max(
++		(time.Duration(requestConfig.Duration)*time.Second)+time.Minute,
++		(time.Duration(requestConfig.CacheDuration)*time.Second)+time.Minute,
++		5*time.Minute,
++	)
++}
+ 
+ // RandomAssetInDateRange retrieves a random asset from the Immich API within the specified date range.
+ // Parameters:
+@@ -82,119 +265,104 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+ 		log.Debug(requestID+" Getting Random asset", "from", dateStartHuman, "to", dateEndHuman)
+ 	}
+ 
+-	for range MaxRetries {
+-
+-		var immichAssets []Asset
+-
+-		u, err := url.Parse(a.requestConfig.ImmichURL)
+-		if err != nil {
+-			return fmt.Errorf("parsing url: %w", err)
+-		}
+-
+-		requestBody := SearchRandomBody{
+-			Type:        string(ImageType),
+-			TakenAfter:  dateStart.Format(time.RFC3339),
+-			TakenBefore: dateEnd.Format(time.RFC3339),
+-			WithExif:    true,
+-			WithPeople:  true,
+-			Size:        a.requestConfig.Kiosk.FetchedAssetsSize,
+-		}
+-
+-		// Include videos if show videos is enabled
+-		if a.requestConfig.ShowVideos {
+-			requestBody.Type = ""
+-		}
+-
+-		if a.requestConfig.ShowArchived {
+-			requestBody.WithArchived = true
+-		}
+-
+-		filterFavorites(&requestBody, a.requestConfig.FilterFavorites)
++	u, err := url.Parse(a.requestConfig.ImmichURL)
++	if err != nil {
++		return fmt.Errorf("parsing url: %w", err)
++	}
+ 
+-		// convert body to queries so url is unique and can be cached
+-		queries, _ := query.Values(requestBody)
++	requestBody := SearchRandomBody{
++		Type:        string(ImageType),
++		TakenAfter:  dateStart.Format(time.RFC3339),
++		TakenBefore: dateEnd.Format(time.RFC3339),
++		WithExif:    true,
++		WithPeople:  true,
++		Size:        a.requestConfig.Kiosk.FetchedAssetsSize,
++	}
++	if a.requestConfig.Kiosk.Cache {
++		requestBody.Size = dateCandidateRequestSize(requestBody.Size)
++	}
++	if a.requestConfig.ShowVideos {
++		requestBody.Type = ""
++	}
++	if a.requestConfig.ShowArchived {
++		requestBody.WithArchived = true
++	}
++	filterFavorites(&requestBody, a.requestConfig.FilterFavorites)
++
++	queries, _ := query.Values(requestBody)
++	apiURL := url.URL{
++		Scheme:   u.Scheme,
++		Host:     u.Host,
++		Path:     "api/search/random",
++		RawQuery: fmt.Sprintf("kiosk=%x", sha256.Sum256([]byte(queries.Encode()))),
++	}
++	jsonBody, marshalErr := json.Marshal(requestBody)
++	if marshalErr != nil {
++		return fmt.Errorf("marshaling request body: %w", marshalErr)
++	}
+ 
+-		apiURL := url.URL{
+-			Scheme:   u.Scheme,
+-			Host:     u.Host,
+-			Path:     "api/search/random",
+-			RawQuery: fmt.Sprintf("kiosk=%x", sha256.Sum256([]byte(queries.Encode()))),
++	fetchCandidates := func(ctx context.Context) ([]Asset, error) {
++		var candidates []Asset
++		apiBody, _, _, callErr := a.immichAPICall(ctx, http.MethodPost, apiURL.String(), jsonBody)
++		if callErr != nil {
++			_, _, callErr = immichAPIFail(candidates, callErr, apiBody, apiURL.String())
++			return nil, callErr
+ 		}
+-
+-		jsonBody, marshalErr := json.Marshal(requestBody)
+-		if marshalErr != nil {
+-			return fmt.Errorf("marshaling request body: %w", marshalErr)
++		if unmarshalErr := json.Unmarshal(apiBody, &candidates); unmarshalErr != nil {
++			_, _, unmarshalErr = immichAPIFail(candidates, unmarshalErr, apiBody, apiURL.String())
++			return nil, unmarshalErr
+ 		}
++		return candidates, nil
++	}
+ 
+-		immichAPICall := withImmichAPICache(a.immichAPICall, requestID, deviceID, a.requestConfig, immichAssets)
+-		apiBody, _, _, err := immichAPICall(a.ctx, http.MethodPost, apiURL.String(), jsonBody)
+-		if err != nil {
+-			_, _, err = immichAPIFail(immichAssets, err, apiBody, apiURL.String())
+-			return err
++	wantedAssetType := ImageOnlyAssetTypes
++	if a.requestConfig.ShowVideos {
++		wantedAssetType = AllAssetTypes
++	}
++	useCandidate := func(asset Asset) bool {
++		asset.Bucket = kiosk.SourceDateRange
++		asset.requestConfig = a.requestConfig
++		asset.ctx = a.ctx
++		if !asset.isValidAsset(requestID, deviceID, wantedAssetType, a.RatioWanted) {
++			return false
+ 		}
++		asset.BucketID = dateRange
++		*a = asset
++		return true
++	}
+ 
+-		apiCacheKey := cache.APICacheKey(apiURL.String(), deviceID, a.requestConfig.SelectedUser)
+-		poolKey := dateCandidatePoolKey(apiCacheKey)
+-		var pool *dateCandidatePool
+-		if cachedPool, found := cache.Get(poolKey); found {
+-			pool, _ = cachedPool.(*dateCandidatePool)
+-		}
+-		if pool == nil {
+-			pool = newDateCandidatePool(nil)
+-			cache.Set(poolKey, pool, a.requestConfig.Duration, a.requestConfig.CacheDuration)
+-			pool.refillMu.Lock()
+-			err = json.Unmarshal(apiBody, &immichAssets)
+-			if err != nil {
+-				pool.refillMu.Unlock()
+-				_, _, err = immichAPIFail(immichAssets, err, apiBody, apiURL.String())
+-				return err
++	if !a.requestConfig.Kiosk.Cache {
++		for range MaxRetries {
++			candidates, fetchErr := fetchCandidates(a.ctx)
++			if fetchErr != nil {
++				return fetchErr
+ 			}
+-			pool.refill(immichAssets)
+-			pool.refillMu.Unlock()
+-		}
+-
+-		if candidate, ok := pool.take(); ok {
+-			immichAssets = []Asset{candidate}
+-		} else {
+-			// The decoded pool is authoritative: when it drains, discard the raw
+-			// API response before retrying so a refill cannot recycle candidates.
+-			pool.refillMu.Lock()
+-			cache.Delete(apiCacheKey)
+-			cache.Delete(poolKey)
+-			pool.refillMu.Unlock()
+-			continue
+-		}
+-
+-		if len(immichAssets) == 0 {
+-			log.Debug(requestID + " No assets left in cache. Refreshing and trying again")
+-			cache.Delete(apiCacheKey)
+-			continue
+-		}
+-
+-		wantedAssetType := ImageOnlyAssetTypes
+-		if a.requestConfig.ShowVideos {
+-			wantedAssetType = AllAssetTypes
++			for _, candidate := range candidates {
++				if useCandidate(candidate) {
++					return nil
++				}
++			}
++			log.Debug(requestID + " No viable assets returned. Fetching a fresh response")
+ 		}
++		return fmt.Errorf("no assets found for '%s'. Max retries reached", dateRange)
++	}
+ 
+-		for _, asset := range immichAssets {
+-
+-			asset.Bucket = kiosk.SourceDateRange
+-			asset.requestConfig = a.requestConfig
+-			asset.ctx = a.ctx
+-
+-			if !asset.isValidAsset(requestID, deviceID, wantedAssetType, a.RatioWanted) {
+-				continue
++	poolKey := cache.APICacheKey(apiURL.String(), deviceID, a.requestConfig.SelectedUser)
++	poolTTL := dateCandidatePoolTTL(a.requestConfig)
++	for range MaxRetries {
++		for range requestBody.Size {
++			candidate, ok, takeErr := dateCandidatePools.take(a.ctx, poolKey, poolTTL, fetchCandidates)
++			if takeErr != nil {
++				return takeErr
++			}
++			if !ok {
++				break
++			}
++			if useCandidate(candidate) {
++				return nil
+ 			}
+-
+-			asset.BucketID = dateRange
+-
+-			*a = asset
+-
+-			return nil
+ 		}
+-
+-		log.Debug(requestID + " No viable assets left in cache. Refreshing and trying again")
+-		cache.Delete(apiCacheKey)
++		log.Debug(requestID + " No viable decoded candidates. Refreshing the exhausted pool")
+ 	}
+ 
+ 	return fmt.Errorf("no assets found for '%s'. Max retries reached", dateRange)
+diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
+index 3e4197a..78e7a02 100644
+--- a/internal/immich/immich_helpers.go
++++ b/internal/immich/immich_helpers.go
+@@ -27,8 +27,47 @@ import (
+ 	"github.com/google/go-querystring/query"
+ )
+ 
+-var compiledAlbumPenaltyFactors sync.Map
+-var compiledAlbumRestrictions sync.Map
++const (
++	defaultAlbumRestrictionRegistrySize = 128
++	defaultAlbumRestrictionTTL          = 10 * time.Minute
++)
++
++type albumRestrictionCacheKey struct {
++	profiles       uintptr
++	excludedAlbums uintptr
++	excludedCount  int
++	profile        string
++}
++
++type albumRestrictionCacheEntry struct {
++	restrictions   albumRestrictions
++	profiles       map[string]config.CurationProfile
++	excludedAlbums []string
++	expiresAt      time.Time
++	lastAccess     time.Time
++}
++
++type albumRestrictionRegistry struct {
++	mu         sync.Mutex
++	entries    map[albumRestrictionCacheKey]albumRestrictionCacheEntry
++	maxEntries int
++	ttl        time.Duration
++	now        func() time.Time
++}
++
++var compiledAlbumRestrictions = newAlbumRestrictionRegistry(defaultAlbumRestrictionRegistrySize, defaultAlbumRestrictionTTL, time.Now)
++
++func newAlbumRestrictionRegistry(maxEntries int, ttl time.Duration, now func() time.Time) *albumRestrictionRegistry {
++	if maxEntries < 1 {
++		maxEntries = 1
++	}
++	return &albumRestrictionRegistry{
++		entries:    make(map[albumRestrictionCacheKey]albumRestrictionCacheEntry, maxEntries),
++		maxEntries: maxEntries,
++		ttl:        ttl,
++		now:        now,
++	}
++}
+ 
+ // immichAPIFail handles failures in Immich API calls by unmarshaling the error response,
+ // logging the error, and returning a formatted error along with the original value.
+@@ -780,32 +819,92 @@ func (r albumRestrictions) allows(albums Albums, assetID, requestID string) bool
+ }
+ 
+ func selectedAlbumRestrictions(requestConfig config.Config) albumRestrictions {
+-	cacheKey := fmt.Sprintf("%p:%s:%s", requestConfig.Curation.Profiles, strings.ToLower(strings.TrimSpace(requestConfig.CurationProfile)), strings.Join(requestConfig.ExcludedAlbums, "\x00"))
+-	if cached, ok := compiledAlbumRestrictions.Load(cacheKey); ok {
+-		return cached.(albumRestrictions)
++	return compiledAlbumRestrictions.get(requestConfig)
++}
++
++func (r *albumRestrictionRegistry) get(requestConfig config.Config) albumRestrictions {
++	cacheKey := albumRestrictionKey(requestConfig)
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	now := r.now()
++	if entry, ok := r.entries[cacheKey]; ok && now.Before(entry.expiresAt) {
++		entry.lastAccess = now
++		r.entries[cacheKey] = entry
++		return entry.restrictions
++	}
++	delete(r.entries, cacheKey)
++	if len(r.entries) >= r.maxEntries {
++		r.pruneAndEvict(now)
++	}
++	restrictions := compileAlbumRestrictions(requestConfig)
++	r.entries[cacheKey] = albumRestrictionCacheEntry{
++		restrictions:   restrictions,
++		profiles:       requestConfig.Curation.Profiles,
++		excludedAlbums: requestConfig.ExcludedAlbums,
++		expiresAt:      now.Add(r.ttl),
++		lastAccess:     now,
++	}
++	return restrictions
++}
++
++func (r *albumRestrictionRegistry) pruneAndEvict(now time.Time) {
++	var oldestKey albumRestrictionCacheKey
++	var oldest time.Time
++	hasOldest := false
++	for key, entry := range r.entries {
++		if !now.Before(entry.expiresAt) {
++			delete(r.entries, key)
++			continue
++		}
++		if !hasOldest || entry.lastAccess.Before(oldest) {
++			oldestKey = key
++			oldest = entry.lastAccess
++			hasOldest = true
++		}
+ 	}
++	if len(r.entries) >= r.maxEntries && hasOldest {
++		delete(r.entries, oldestKey)
++	}
++}
++
++func (r *albumRestrictionRegistry) size() int {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	return len(r.entries)
++}
++
++func albumRestrictionKey(requestConfig config.Config) albumRestrictionCacheKey {
++	var profilesPointer uintptr
++	if requestConfig.Curation.Profiles != nil {
++		profilesPointer = reflect.ValueOf(requestConfig.Curation.Profiles).Pointer()
++	}
++	var excludedPointer uintptr
++	if len(requestConfig.ExcludedAlbums) > 0 {
++		excludedPointer = reflect.ValueOf(requestConfig.ExcludedAlbums).Pointer()
++	}
++	return albumRestrictionCacheKey{
++		profiles:       profilesPointer,
++		excludedAlbums: excludedPointer,
++		excludedCount:  len(requestConfig.ExcludedAlbums),
++		profile:        strings.ToLower(strings.TrimSpace(requestConfig.CurationProfile)),
++	}
++}
++
++func compileAlbumRestrictions(requestConfig config.Config) albumRestrictions {
+ 	excluded := make(map[string]struct{}, len(requestConfig.ExcludedAlbums))
+ 	for _, albumID := range requestConfig.ExcludedAlbums {
+ 		excluded[albumID] = struct{}{}
+ 	}
+-	restrictions := albumRestrictions{excluded: excluded, penalties: selectedAlbumPenaltyFactors(requestConfig)}
+-	actual, _ := compiledAlbumRestrictions.LoadOrStore(cacheKey, restrictions)
+-	return actual.(albumRestrictions)
++	return albumRestrictions{excluded: excluded, penalties: selectedAlbumPenaltyFactors(requestConfig)}
+ }
+ 
+ func selectedAlbumPenaltyFactors(requestConfig config.Config) map[string]float64 {
+ 	if requestConfig.CurationProfile == "" {
+ 		return nil
+ 	}
+-	cacheKey := fmt.Sprintf("%p:%s", requestConfig.Curation.Profiles, strings.ToLower(strings.TrimSpace(requestConfig.CurationProfile)))
+-	if cached, ok := compiledAlbumPenaltyFactors.Load(cacheKey); ok {
+-		return cached.(map[string]float64)
+-	}
+ 	for name, profile := range requestConfig.Curation.Profiles {
+ 		if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(requestConfig.CurationProfile)) {
+-			factors := albumPenaltyFactors(profile.AlbumPenalties)
+-			actual, _ := compiledAlbumPenaltyFactors.LoadOrStore(cacheKey, factors)
+-			return actual.(map[string]float64)
++			return albumPenaltyFactors(profile.AlbumPenalties)
+ 		}
+ 	}
+ 	return nil
