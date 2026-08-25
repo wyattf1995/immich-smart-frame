@@ -61,6 +61,9 @@ case "${FRAME_ROUTER_FOREGROUND:-firefox}" in
   firefox)
     printf '%s\n' '  mResumedActivity: ActivityRecord{42 u0 org.mozilla.firefox/org.mozilla.gecko.BrowserApp}'
     ;;
+  frameos)
+    printf '%s\n' '  mResumedActivity: ActivityRecord{42 u0 com.wyattfleming.frameos/.MainActivity}'
+    ;;
   unknown)
     printf '%s\n' '  mResumedActivity: ActivityRecord{42 u0 com.example.unknown/.MainActivity}'
     ;;
@@ -95,6 +98,7 @@ EOF
 chmod +x "$fake_bin"/*
 
 config="$tmp_dir/router.conf"
+frameos_config="$tmp_dir/frameos-router.conf"
 state="$tmp_dir/state"
 lock="$tmp_dir/router.lock"
 log="$tmp_dir/commands.log"
@@ -106,6 +110,18 @@ CAMERAS_URL=https://home.test.invalid/lovelace/cameras
 CALENDAR_URL=https://home.test.invalid/lovelace/calendar
 FULLY_ACTIVITY=de.ozerov.fully/.FullyActivity
 FIREFOX_PACKAGE=org.mozilla.firefox
+EOF
+
+cat > "$frameos_config" <<EOF
+STATE_FILE=$state
+LOCK_DIR=$lock
+HOME_URL=https://home.test.invalid/lovelace/home
+CAMERAS_URL=https://home.test.invalid/lovelace/cameras
+CALENDAR_URL=https://home.test.invalid/lovelace/calendar
+FULLY_ACTIVITY=de.ozerov.fully/.FullyActivity
+FIREFOX_PACKAGE=org.mozilla.firefox
+FRAMEOS_PACKAGE=com.wyattfleming.frameos
+FRAMEOS_RECEIVER=com.wyattfleming.frameos/.control.FrameControlReceiver
 EOF
 
 run_router() {
@@ -125,6 +141,16 @@ run_router_expect_failure() {
   local result=$?
   set -e
   [[ "$result" -ne 0 ]] || fail "expected failure for: $*"
+}
+
+run_frameos_router() {
+  if [[ "$1" == show ]]; then
+    FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router_shell" "$router" show "$2" "$frameos_config" \
+      >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
+  else
+    FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router_shell" "$router" "$1" "$frameos_config" \
+      >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
+  fi
 }
 
 : > "$log"
@@ -147,6 +173,46 @@ printf 'not-a-mode\n' > "$state"
 FRAME_ROUTER_FOREGROUND=unknown run_router status
 assert_eq home "$(tr -d '\r\n' < "$tmp_dir/stdout")" \
   'corrupt state must default to home for an unknown foreground'
+
+: > "$log"
+printf 'photos\n' > "$state"
+FRAME_ROUTER_FOREGROUND=frameos run_frameos_router next
+assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL -n com.wyattfleming.frameos/.control.FrameControlReceiver --es frameos.mode HOME' "$log" \
+  'FrameOS next must advance photos to Home through the protected receiver'
+assert_file_not_contains 'org.mozilla.firefox' "$log" 'FrameOS transitions must not launch Firefox'
+assert_file_not_contains 'de.ozerov.fully/.FullyActivity' "$log" 'FrameOS Photos must not launch Fully'
+assert_eq home "$(tr -d '\r\n' < "$state")" 'FrameOS next must persist Home'
+
+: > "$log"
+FRAME_ROUTER_FOREGROUND=frameos run_frameos_router next
+assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL -n com.wyattfleming.frameos/.control.FrameControlReceiver --es frameos.mode WEATHER' "$log" \
+  'FrameOS next must include the native Weather view'
+
+: > "$log"
+FRAME_ROUTER_FOREGROUND=frameos run_frameos_router next
+assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL -n com.wyattfleming.frameos/.control.FrameControlReceiver --es frameos.mode CAMERAS' "$log" \
+  'FrameOS next must advance Weather to Cameras'
+
+: > "$log"
+FRAME_ROUTER_FOREGROUND=frameos run_frameos_router next
+assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL -n com.wyattfleming.frameos/.control.FrameControlReceiver --es frameos.mode CALENDAR' "$log" \
+  'FrameOS next must advance Cameras to Calendar'
+
+: > "$log"
+FRAME_ROUTER_FOREGROUND=frameos run_frameos_router next
+assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL -n com.wyattfleming.frameos/.control.FrameControlReceiver --es frameos.mode PHOTOS' "$log" \
+  'FrameOS next must wrap Calendar to Photos inside FrameOS'
+
+: > "$log"
+printf 'photos\n' > "$state"
+FRAME_ROUTER_FOREGROUND=frameos run_frameos_router prev
+assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL -n com.wyattfleming.frameos/.control.FrameControlReceiver --es frameos.mode CALENDAR' "$log" \
+  'FrameOS prev must wrap Photos to Calendar'
+
+: > "$log"
+FRAME_ROUTER_FOREGROUND=unknown run_frameos_router show weather
+assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL -n com.wyattfleming.frameos/.control.FrameControlReceiver --es frameos.mode WEATHER' "$log" \
+  'FrameOS direct Weather must use the protected receiver'
 
 : > "$log"
 printf 'photos\n' > "$state"
