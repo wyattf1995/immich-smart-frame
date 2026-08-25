@@ -1,5 +1,5 @@
 diff --git a/main.go b/main.go
-index 62271d3..a647f97 100644
+index 62271d3..cbcca22 100644
 --- a/main.go
 +++ b/main.go
 @@ -63,8 +63,8 @@ func init() {
@@ -62,7 +62,77 @@ index 62271d3..a647f97 100644
  	video.DeleteTmpDir()
  
  	fmt.Println("")
-@@ -365,7 +367,45 @@ func AssetCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareFu
+@@ -265,6 +267,7 @@ func main() {
+ }
+ 
+ func addMiddleware(e *echo.Echo, baseConfig *config.Config) {
++	startupConfig := baseConfig.Snapshot()
+ 	e.Pre(middleware.RemoveTrailingSlash())
+ 	e.Pre(NoCacheMiddleware)
+ 	e.Use(middleware.Recover())
+@@ -277,7 +280,7 @@ func addMiddleware(e *echo.Echo, baseConfig *config.Config) {
+ 		},
+ 	}))
+ 
+-	if baseConfig.Kiosk.Password != "" {
++	if startupConfig.Kiosk.Password != "" {
+ 		e.Use(middleware.KeyAuthWithConfig(middleware.KeyAuthConfig{
+ 			Skipper: func(c *echo.Context) bool {
+ 				// skip auth for assets and /health endpoint
+@@ -286,13 +289,15 @@ func addMiddleware(e *echo.Echo, baseConfig *config.Config) {
+ 			},
+ 			KeyLookup: "header:Authorization,header:X-Api-Key,query:authsecret,query:password,form:authsecret,form:password",
+ 			Validator: func(c *echo.Context, key string, _ middleware.ExtractorSource) (bool, error) {
+-				if subtle.ConstantTimeCompare([]byte(key), []byte(baseConfig.Kiosk.Password)) == 1 {
++				requestConfig := baseConfig.Snapshot()
++				if subtle.ConstantTimeCompare([]byte(key), []byte(requestConfig.Kiosk.Password)) == 1 {
+ 					return true, nil
+ 				}
+ 				return false, nil
+ 			},
+ 			ErrorHandler: func(c *echo.Context, err error) error {
+-				if baseConfig.Kiosk.Debug || baseConfig.Kiosk.DebugVerbose {
++				requestConfig := baseConfig.Snapshot()
++				if requestConfig.Kiosk.Debug || requestConfig.Kiosk.DebugVerbose {
+ 					log.Warn("unauthorized request",
+ 						"IP", c.RealIP(),
+ 						"method", c.Request().Method,
+@@ -304,8 +309,10 @@ func addMiddleware(e *echo.Echo, baseConfig *config.Config) {
+ 		}))
+ 	}
+ 
+-	if len(baseConfig.Kiosk.AllowedOrigins) > 0 {
+-		e.Use(middleware.CORS(baseConfig.Kiosk.AllowedOrigins...))
++	// CORS registration is startup-only in Echo. Snapshot it so reloads cannot
++	// race middleware construction or imply unsupported live CORS mutation.
++	if len(startupConfig.Kiosk.AllowedOrigins) > 0 {
++		e.Use(middleware.CORS(startupConfig.Kiosk.AllowedOrigins...))
+ 	}
+ }
+ 
+@@ -339,8 +346,9 @@ func NoCacheMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+ 
+ // Middleware for static routes with access to baseConfig
+ func StaticCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareFunc {
++	startupConfig := baseConfig.Snapshot()
+ 	return func(next echo.HandlerFunc) echo.HandlerFunc {
+-		if baseConfig.Kiosk.Debug || baseConfig.Kiosk.DebugVerbose {
++		if startupConfig.Kiosk.Debug || startupConfig.Kiosk.DebugVerbose {
+ 			return NoCacheMiddleware(next)
+ 		}
+ 
+@@ -353,8 +361,9 @@ func StaticCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareF
+ 
+ // Middleware for asset(s) routes with access to baseConfig
+ func AssetCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareFunc {
++	startupConfig := baseConfig.Snapshot()
+ 	return func(next echo.HandlerFunc) echo.HandlerFunc {
+-		if baseConfig.Kiosk.Debug || baseConfig.Kiosk.DebugVerbose {
++		if startupConfig.Kiosk.Debug || startupConfig.Kiosk.DebugVerbose {
+ 			return NoCacheMiddleware(next)
+ 		}
+ 
+@@ -365,7 +374,45 @@ func AssetCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareFu
  	}
  }
  
@@ -109,7 +179,7 @@ index 62271d3..a647f97 100644
  	port := os.Getenv("KIOSK_PORT")
  	if port == "" {
  		port = "3000"
-@@ -374,7 +414,7 @@ func healthCheck() int {
+@@ -374,7 +421,7 @@ func healthCheck() int {
  	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
  	defer cancel()
  
@@ -118,7 +188,7 @@ index 62271d3..a647f97 100644
  	if err != nil {
  		fmt.Fprintln(os.Stderr, "FAIL")
  		return 1
-@@ -409,8 +449,9 @@ func healthCheck() int {
+@@ -409,8 +456,9 @@ func healthCheck() int {
  }
  
  func versionCheck(c context.Context, immichURL string) bool {
@@ -345,10 +415,10 @@ index c64b0a7..85f5c0e 100644
  // FilterDate is applied here.
  // FilterNewest is applied here.
 diff --git a/internal/immich/immich_server.go b/internal/immich/immich_server.go
-index 38596ba..24a0873 100644
+index 38596ba..9994251 100644
 --- a/internal/immich/immich_server.go
 +++ b/internal/immich/immich_server.go
-@@ -7,10 +7,28 @@ import (
+@@ -7,10 +7,31 @@ import (
  	"io"
  	"net/http"
  	"net/url"
@@ -357,6 +427,7 @@ index 38596ba..24a0873 100644
  
  	"charm.land/log/v2"
 +	"github.com/damongolding/immich-kiosk/internal/config"
++	"golang.org/x/sync/singleflight"
  )
  
 +const (
@@ -374,10 +445,12 @@ index 38596ba..24a0873 100644
 +	results map[string]readinessResult
 +}{results: make(map[string]readinessResult)}
 +
++var readinessProbes singleflight.Group
++
  type ServerAboutResponse struct {
  	Build                      *string `json:"build,omitempty"`
  	BuildImage                 *string `json:"buildImage,omitempty"`
-@@ -170,3 +188,31 @@ func Version(ctx context.Context, immichURL string) (ServerVersionResponse, erro
+@@ -170,3 +191,46 @@ func Version(ctx context.Context, immichURL string) (ServerVersionResponse, erro
  
  	return serverVersionResponse, nil
  }
@@ -387,19 +460,35 @@ index 38596ba..24a0873 100644
 +// response bodies.
 +func Ready(ctx context.Context, requestConfig config.Config) error {
 +	key := requestConfig.ImmichURL + "\x00" + requestConfig.SelectedUser
-+	now := time.Now()
++	if ready, cacheErr := cachedReadiness(key, time.Now()); ready || cacheErr != nil {
++		return cacheErr
++	}
++	_, err, _ := readinessProbes.Do(key, func() (any, error) {
++		if ready, cacheErr := cachedReadiness(key, time.Now()); ready || cacheErr != nil {
++			return nil, cacheErr
++		}
++		asset := New(ctx, requestConfig)
++		_, probeErr := asset.assetsStatistics()
++		storeReadiness(key, time.Now(), probeErr)
++		return nil, probeErr
++	})
++	return err
++}
++
++func cachedReadiness(key string, now time.Time) (bool, error) {
 +	readinessCache.Lock()
 +	cached := readinessCache.results[key]
 +	readinessCache.Unlock()
 +	if now.Before(cached.successUntil) {
-+		return nil
++		return true, nil
 +	}
 +	if now.Before(cached.failureUntil) {
-+		return fmt.Errorf("Immich readiness probe is temporarily backed off")
++		return false, fmt.Errorf("Immich readiness probe is temporarily backed off")
 +	}
++	return false, nil
++}
 +
-+	asset := New(ctx, requestConfig)
-+	_, err := asset.assetsStatistics()
++func storeReadiness(key string, now time.Time, err error) {
 +	readinessCache.Lock()
 +	if err == nil {
 +		readinessCache.results[key] = readinessResult{successUntil: now.Add(readinessSuccessTTL)}
@@ -407,7 +496,6 @@ index 38596ba..24a0873 100644
 +		readinessCache.results[key] = readinessResult{failureUntil: now.Add(readinessFailureTTL)}
 +	}
 +	readinessCache.Unlock()
-+	return err
 +}
 diff --git a/internal/routes/routes.go b/internal/routes/routes.go
 index a88aa45..c2db007 100644
