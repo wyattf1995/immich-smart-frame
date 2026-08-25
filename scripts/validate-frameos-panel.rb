@@ -48,6 +48,12 @@ required = [
   "panel.contentWindow.focus()",
   "const waitForRouteReady = (readyView) =>",
   "ROUTE_READY_TIMEOUT_MILLIS",
+  "ROOT_SHADOW_PROBE_INTERVAL_MILLIS",
+  "const scheduleHomeAssistantRootProbe = (state) =>",
+  'state.documentRoot.querySelector("home-assistant")',
+  "homeAssistant?.shadowRoot",
+  "state.rootProbeTimer = window.setTimeout",
+  "window.clearTimeout(state.rootProbeTimer)",
   "const readinessRequirements = Object.freeze({",
   'primaryHeadings: Object.freeze(["today", "up next", "home status"])',
   "primaryHeadings",
@@ -94,8 +100,12 @@ wait_for_route_ready = panel[/const waitForRouteReady = \(readyView\) => \{.*?\n
 abort("FrameOS panel wrapper is missing waitForRouteReady") unless wait_for_route_ready
 deadline_index = wait_for_route_ready.index("state.deadlineTimer = window.setTimeout")
 initial_inspection_index = wait_for_route_ready.index("inspectAddedSubtree(documentRoot, state)")
+root_probe_index = wait_for_route_ready.index("scheduleHomeAssistantRootProbe(state)")
 unless deadline_index && initial_inspection_index && deadline_index < initial_inspection_index
   abort("FrameOS panel wrapper must arm the deadline before synchronous initial readiness inspection")
+end
+unless root_probe_index && initial_inspection_index < root_probe_index
+  abort("FrameOS panel wrapper must probe for a late Home Assistant shadow root after initial inspection")
 end
 
 forbidden = [
