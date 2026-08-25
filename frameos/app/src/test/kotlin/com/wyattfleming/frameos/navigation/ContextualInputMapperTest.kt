@@ -29,16 +29,24 @@ class ContextualInputMapperTest {
     }
 
     @Test
-    fun `HA surfaces retain browser focus controls and normalize star to enter`() {
+    fun `HA surfaces retain browser focus controls while raw star remains trackable`() {
         listOf(FrameMode.HOME, FrameMode.CAMERAS, FrameMode.CALENDAR).forEach { mode ->
             assertEquals(
                 ContextualFrameAction.ForwardToWeb(KeyEvent.KEYCODE_TAB),
                 mapper.map(mode, KeyEvent.KEYCODE_TAB, shiftPressed = false),
             )
+            assertNull(mapper.map(mode, KeyEvent.KEYCODE_STAR, shiftPressed = false))
             assertEquals(
                 ContextualFrameAction.ForwardToWeb(KeyEvent.KEYCODE_ENTER),
-                mapper.map(mode, KeyEvent.KEYCODE_STAR, shiftPressed = false),
+                mapper.mapStarRelease(mode),
             )
+        }
+    }
+
+    @Test
+    fun `short raw star keeps native primary behavior outside HA`() {
+        listOf(FrameMode.PHOTOS, FrameMode.WEATHER).forEach { mode ->
+            assertEquals(ContextualFrameAction.PrimaryAction, mapper.mapStarRelease(mode))
         }
     }
 

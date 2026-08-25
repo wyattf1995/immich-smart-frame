@@ -51,6 +51,14 @@ class PhysicalInputMapperTest {
     }
 
     @Test
+    fun `router home injection has a dedicated non system key`() {
+        assertEquals(
+            FrameIntent.GoHome,
+            mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_MOVE_HOME, scanCode = 102),
+        )
+    }
+
+    @Test
     fun `remapped enter keys trigger the contextual primary action`() {
         assertEquals(
             FrameIntent.PrimaryAction,

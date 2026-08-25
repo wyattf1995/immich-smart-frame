@@ -25,6 +25,12 @@ class FrameConfigurationTest {
                 homeAssistantUrl = "javascript:alert(1)",
             ),
         )
+        assertNull(
+            FrameConfiguration.from(
+                photosUrl = "http://frame-host.example.invalid:3000/",
+                homeAssistantUrl = "http://home-assistant.example.invalid/",
+            ),
+        )
     }
 
     @Test
