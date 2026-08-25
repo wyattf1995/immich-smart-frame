@@ -85,6 +85,47 @@ class HomeAssistantWeatherRemoteTest {
         }
     }
 
+    @Test
+    fun `fallback weather requests never forward the primary bearer token`() {
+        val fallbackEndpoint = HomeAssistantWeatherEndpoint.fromDisplayUrl(
+            "https://fallback.example.invalid:9443/local/frameos.html",
+        )
+        val transport = RecordingTransport(responseForRequest = { request ->
+            when {
+                request.url.startsWith("https://home.example.invalid:8123/") ->
+                    HomeAssistantHttpResponse(500, "primary unavailable")
+                request.method == "GET" -> HomeAssistantHttpResponse(200, currentPayload)
+                request.body == "{\"entity_id\":\"weather.home\",\"type\":\"daily\"}" ->
+                    HomeAssistantHttpResponse(200, dailyEnvelope)
+                request.body == "{\"entity_id\":\"weather.home\",\"type\":\"hourly\"}" ->
+                    HomeAssistantHttpResponse(200, hourlyEnvelope)
+                else -> error("Unexpected fallback request: $request")
+            }
+        })
+        val remote = HomeAssistantWeatherRemote(
+            endpoint = endpoint,
+            transport = transport,
+            parser = HomeAssistantWeatherParser(),
+            fallbackEndpoint = fallbackEndpoint,
+        )
+
+        assertTrue(remote.fetch("weather.home", token) is WeatherRemoteResult.Success)
+
+        val requests = synchronized(transport.requests) { transport.requests.toList() }
+
+        val primaryRequests = requests.filter {
+            it.url.startsWith("https://home.example.invalid:8123/")
+        }
+        assertEquals(3, primaryRequests.size)
+        assertTrue(primaryRequests.all { it.headers["Authorization"] == "Bearer $token" })
+
+        val fallbackRequests = requests.filter {
+            it.url.startsWith("https://fallback.example.invalid:9443/")
+        }
+        assertEquals(3, fallbackRequests.size)
+        assertTrue(fallbackRequests.all { "Authorization" !in it.headers })
+    }
+
     private class RecordingTransport(
         vararg responses: HomeAssistantHttpResponse,
         private val throws: Throwable? = null,
