@@ -31,14 +31,14 @@ class WeatherSnapshotCodec {
 
     private fun encodeSnapshot(snapshot: WeatherSnapshot): JSONObject = JSONObject()
         .put("current", encodeCurrent(snapshot.current))
-        .put("daily", JSONArray(snapshot.daily.map(::encodeForecast)))
-        .put("hourly", JSONArray(snapshot.hourly.map(::encodeForecast)))
+        .put("daily", encodeForecasts(snapshot.daily))
+        .put("hourly", encodeForecasts(snapshot.hourly))
         .putNullable("alert", snapshot.alert)
 
     private fun decodeSnapshot(root: JSONObject): WeatherSnapshot = WeatherSnapshot(
         current = decodeCurrent(root.getJSONObject("current")),
-        daily = root.getJSONArray("daily").objects().map(::decodeForecast),
-        hourly = root.getJSONArray("hourly").objects().map(::decodeForecast),
+        daily = decodeForecasts(root.getJSONArray("daily")),
+        hourly = decodeForecasts(root.getJSONArray("hourly")),
         alert = root.optionalString("alert"),
     )
 
@@ -118,8 +118,12 @@ class WeatherSnapshotCodec {
     private fun JSONObject.optionalDouble(key: String): Double? =
         if (!has(key) || isNull(key)) null else getDouble(key)
 
-    private fun JSONArray.objects(): List<JSONObject> = buildList(length()) {
-        repeat(length()) { index -> add(getJSONObject(index)) }
+    private fun encodeForecasts(forecasts: List<WeatherForecast>): JSONArray = JSONArray().apply {
+        forecasts.forEach { put(encodeForecast(it)) }
+    }
+
+    private fun decodeForecasts(array: JSONArray): List<WeatherForecast> = buildList(array.length()) {
+        repeat(array.length()) { index -> add(decodeForecast(array.getJSONObject(index))) }
     }
 
     private companion object {

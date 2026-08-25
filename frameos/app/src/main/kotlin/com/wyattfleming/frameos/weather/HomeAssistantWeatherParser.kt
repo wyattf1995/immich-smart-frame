@@ -45,9 +45,12 @@ class HomeAssistantWeatherParser {
             ?: throw WeatherPayloadException("Forecast entity did not match")
         val forecasts = entity.optJSONArray("forecast")
             ?: throw WeatherPayloadException("Forecast list was missing")
-        forecasts.objects().map { item ->
+        buildList(forecasts.length()) {
+            repeat(forecasts.length()) { index ->
+                val item = forecasts.optJSONObject(index)
+                    ?: throw WeatherPayloadException("Forecast entry was not an object")
             val condition = WeatherCondition.fromHomeAssistant(item.requiredString("condition"))
-            WeatherForecast(
+                add(WeatherForecast(
                 type = forecastType,
                 dateTime = item.requiredString("datetime"),
                 condition = condition,
@@ -59,7 +62,8 @@ class HomeAssistantWeatherParser {
                 humidity = item.optionalDouble("humidity"),
                 windSpeed = item.optionalDouble("wind_speed"),
                 windBearing = item.optionalDouble("wind_bearing"),
-            )
+                ))
+            }
         }
     }
 
@@ -99,9 +103,4 @@ class HomeAssistantWeatherParser {
         }
     }
 
-    private fun JSONArray.objects(): List<JSONObject> = buildList(length()) {
-        repeat(length()) { index ->
-            add(optJSONObject(index) ?: throw WeatherPayloadException("Forecast entry was not an object"))
-        }
-    }
 }

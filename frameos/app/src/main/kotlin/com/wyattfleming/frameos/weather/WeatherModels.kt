@@ -101,6 +101,7 @@ sealed interface WeatherRemoteResult {
 
 interface WeatherRemote {
     fun fetch(entityId: String, bearerToken: String): WeatherRemoteResult
+    fun cancel() = Unit
 }
 
 interface WeatherCache {

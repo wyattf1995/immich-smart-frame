@@ -74,7 +74,9 @@ class MainActivity : Activity() {
     private val inputMapper = PhysicalInputMapper()
     private val contextualInputMapper = ContextualInputMapper()
     private val handler = Handler(Looper.getMainLooper())
-    private val ioExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val weatherWorkerExecutor: ExecutorService = Executors.newFixedThreadPool(2)
+    private val weatherRequestExecutor: ExecutorService = Executors.newFixedThreadPool(3)
+    private val authorizationExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val secureRandom = SecureRandom()
     private val externalControlPolicy by lazy {
         FrameExternalControlPolicy(
@@ -204,10 +206,18 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         weatherRequestGeneration += 1
-        ioExecutor.shutdownNow()
+        weatherCoordinator?.cancel()
+        weatherWorkerExecutor.shutdownNow()
+        weatherRequestExecutor.shutdownNow()
+        authorizationExecutor.shutdownNow()
         handler.removeCallbacksAndMessages(null)
         webSurface?.destroy()
         super.onDestroy()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        webSurface?.trimMemory(level)
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -636,6 +646,7 @@ class MainActivity : Activity() {
                         endpoint = HomeAssistantWeatherEndpoint.fromDisplayUrl(activeConfiguration.homeAssistantUrl),
                         transport = transport,
                         parser = HomeAssistantWeatherParser(),
+                        requestExecutor = weatherRequestExecutor,
                     ),
                     cache = SharedPreferencesWeatherCache(this),
                     clock = System::currentTimeMillis,
@@ -644,13 +655,9 @@ class MainActivity : Activity() {
                 presenter = WeatherPresenter(ZoneId.systemDefault(), Locale.getDefault()),
                 entityId = activeConfiguration.weatherEntityId,
             )
-            weatherNeedsAuthentication = sessionStore.read() == null
+            weatherNeedsAuthentication = false
             weatherContent.presentation = WeatherPresentation(
-                emptyMessage = if (weatherNeedsAuthentication) {
-                    "Weather needs Home Assistant sign-in"
-                } else {
-                    "Loading the latest forecast"
-                },
+                emptyMessage = "Loading the latest forecast",
             )
         } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
             weatherNeedsAuthentication = false
@@ -666,7 +673,13 @@ class MainActivity : Activity() {
         weatherRefreshInProgress = true
         handler.removeCallbacks(refreshVisibleWeather)
         val generation = ++weatherRequestGeneration
-        ioExecutor.execute {
+        weatherWorkerExecutor.execute {
+            coordinator.cachedPresentation()?.let { cached ->
+                handler.post {
+                    if (generation != weatherRequestGeneration || isFinishing || isDestroyed) return@post
+                    weatherContent.presentation = cached
+                }
+            }
             val presentation = try {
                 coordinator.refresh()
             } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
@@ -731,7 +744,7 @@ class MainActivity : Activity() {
         weatherAuthorizationInProgress = true
         handler.removeCallbacks(refreshVisibleWeather)
         val generation = ++weatherRequestGeneration
-        ioExecutor.execute {
+        authorizationExecutor.execute {
             val success = client.exchangeAuthorizationCode(code.code)
             handler.post {
                 if (generation != weatherRequestGeneration || isFinishing || isDestroyed) return@post

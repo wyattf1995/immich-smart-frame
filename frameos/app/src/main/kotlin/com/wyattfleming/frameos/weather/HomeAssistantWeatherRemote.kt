@@ -1,5 +1,12 @@
 package com.wyattfleming.frameos.weather
 
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+
 data class HomeAssistantHttpRequest(
     val method: String,
     val url: String,
@@ -20,6 +27,8 @@ class HomeAssistantWeatherRemote(
     private val endpoint: HomeAssistantWeatherEndpoint,
     private val transport: HomeAssistantHttpTransport,
     private val parser: HomeAssistantWeatherParser,
+    private val requestExecutor: ExecutorService = Executors.newFixedThreadPool(MAX_PARALLEL_REQUESTS),
+    private val requestTimeoutMillis: Long = TOTAL_REQUEST_TIMEOUT_MILLIS,
 ) : WeatherRemote {
     override fun fetch(entityId: String, bearerToken: String): WeatherRemoteResult {
         if (bearerToken.isBlank()) return WeatherRemoteResult.AuthRequired(AUTH_REQUIRED)
@@ -28,16 +37,20 @@ class HomeAssistantWeatherRemote(
                 "Accept" to "application/json",
                 "Authorization" to "Bearer $bearerToken",
             )
-            val currentResponse = execute(
-                HomeAssistantHttpRequest(
-                    method = "GET",
-                    url = endpoint.stateUrl(entityId),
-                    headers = headers,
-                ),
-            )
-            val current = parser.parseCurrentState(entityId, currentResponse.body)
-            val daily = fetchForecast(entityId, WeatherForecastType.DAILY, headers)
-            val hourly = fetchForecast(entityId, WeatherForecastType.HOURLY, headers)
+            val deadline = WeatherRequestDeadline(timeoutMillis = requestTimeoutMillis)
+            val currentFuture = requestExecutor.submit<WeatherCurrent> {
+                parser.parseCurrentState(entityId, execute(HomeAssistantHttpRequest("GET", endpoint.stateUrl(entityId), headers)).body)
+            }
+            val dailyFuture = requestExecutor.submit<List<WeatherForecast>> {
+                fetchForecast(entityId, WeatherForecastType.DAILY, headers)
+            }
+            val hourlyFuture = requestExecutor.submit<List<WeatherForecast>> {
+                fetchForecast(entityId, WeatherForecastType.HOURLY, headers)
+            }
+            val futures = listOf(currentFuture, dailyFuture, hourlyFuture)
+            val current = await(currentFuture, deadline)
+            val daily = await(dailyFuture, deadline)
+            val hourly = await(hourlyFuture, deadline)
             WeatherRemoteResult.Success(
                 WeatherSnapshot(
                     current = current,
@@ -51,6 +64,20 @@ class HomeAssistantWeatherRemote(
         } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
             WeatherRemoteResult.Offline(OFFLINE)
         }
+    }
+
+    override fun cancel() {
+        (transport as? CancellableHomeAssistantHttpTransport)?.cancelInFlight()
+    }
+
+    private fun <T> await(future: Future<T>, deadline: WeatherRequestDeadline): T = try {
+        val remainingMillis = deadline.remainingMillis()
+        if (remainingMillis == 0L) throw TimeoutException("Weather request deadline elapsed")
+        future.get(remainingMillis, TimeUnit.MILLISECONDS)
+    } catch (error: ExecutionException) {
+        throw (error.cause ?: error)
+    } finally {
+        if (deadline.isExpired()) cancel()
     }
 
     private fun fetchForecast(
@@ -81,6 +108,8 @@ class HomeAssistantWeatherRemote(
     private class AuthenticationException : Exception()
 
     private companion object {
+        const val MAX_PARALLEL_REQUESTS = 3
+        const val TOTAL_REQUEST_TIMEOUT_MILLIS = 15_000L
         const val AUTH_REQUIRED = "weather_auth_required"
         const val OFFLINE = "weather_offline"
     }

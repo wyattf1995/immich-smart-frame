@@ -16,6 +16,10 @@ class WeatherCoordinator(
 
     fun refresh(): WeatherPresentation {
         val token = accessTokenProvider.validAccessToken().orEmpty()
-        return presenter.present(repository.load(entityId, token))
+        return presenter.present(repository.refresh(entityId, token))
     }
+
+    fun cachedPresentation(): WeatherPresentation? = repository.cached(entityId)?.let(presenter::present)
+
+    fun cancel() = repository.cancel()
 }

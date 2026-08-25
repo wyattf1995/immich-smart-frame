@@ -21,7 +21,9 @@ data class WeatherSceneProfile(
         get() = sunlight || stars || clouds || rainIntensity > 0 || snow || fog
 }
 
-fun WeatherCondition.sceneProfile(): WeatherSceneProfile = when (this) {
+private val DEFAULT_SCENE_PROFILE = WeatherSceneProfile()
+
+private val SCENE_PROFILES: Map<WeatherCondition, WeatherSceneProfile> = WeatherCondition.entries.associateWith { condition -> when (condition) {
     WeatherCondition.SUNNY -> WeatherSceneProfile(sunlight = true)
     WeatherCondition.CLEAR_NIGHT -> WeatherSceneProfile(stars = true, shootingStars = 2)
     WeatherCondition.PARTLY_CLOUDY -> WeatherSceneProfile(clouds = true, cloudSpeedMultiplier = 0.8f)
@@ -35,5 +37,7 @@ fun WeatherCondition.sceneProfile(): WeatherSceneProfile = when (this) {
     WeatherCondition.SNOWY, WeatherCondition.SNOWY_RAINY, WeatherCondition.HAIL ->
         WeatherSceneProfile(clouds = true, snow = true)
     WeatherCondition.FOG -> WeatherSceneProfile(fog = true)
-    else -> WeatherSceneProfile()
-}
+    else -> DEFAULT_SCENE_PROFILE
+} }
+
+fun WeatherCondition.sceneProfile(): WeatherSceneProfile = SCENE_PROFILES.getValue(this)

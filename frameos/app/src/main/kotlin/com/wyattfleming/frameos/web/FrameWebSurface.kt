@@ -2,6 +2,7 @@ package com.wyattfleming.frameos.web
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.view.accessibility.AccessibilityManager
 import android.graphics.Color
 import android.os.SystemClock
 import android.view.MotionEvent
@@ -29,6 +30,9 @@ class FrameWebSurface(
     }
 
     private val frameRuntime = runtime
+    private val retentionPolicy = FrameWebSessionRetentionPolicy()
+    private val requiresFullAccessibilityTree = context.getSystemService(AccessibilityManager::class.java)
+        ?.isTouchExplorationEnabled == true
 
     private inner class ManagedSession(
         val configuredUrl: String,
@@ -38,7 +42,7 @@ class FrameWebSurface(
             GeckoSessionSettings().apply {
                 setAllowJavascript(true)
                 setDisplayMode(GeckoSessionSettings.DISPLAY_MODE_FULLSCREEN)
-                setFullAccessibilityTree(true)
+                setFullAccessibilityTree(requiresFullAccessibilityTree)
                 setSuspendMediaWhenInactive(true)
             },
         )
@@ -110,14 +114,15 @@ class FrameWebSurface(
         }
     }
 
-    private val persistentSessions = mapOf(
-        FrameWebSlot.PHOTOS to ManagedSession(photosUrl, "Photos"),
-        FrameWebSlot.HOME_ASSISTANT to ManagedSession(homeAssistantUrl, "Home Assistant"),
-    )
+    private val photosSession = ManagedSession(photosUrl, "Photos")
+    private val homeAssistantUrl = homeAssistantUrl
+    private var homeAssistantSession: ManagedSession? = null
     private var cameraSession: ManagedSession? = null
     private var attachedSlot: FrameWebSlot? = null
     private var hiddenGeneration = 0
     private var preloadGeneration = 0
+    private var hiddenHomeSinceMillis: Long? = null
+    private val evictHiddenHome = Runnable { evictHiddenHomeIfExpired() }
 
     init {
         setBackgroundColor(Color.BLACK)
@@ -130,7 +135,7 @@ class FrameWebSurface(
 
     fun preload(slot: FrameWebSlot, url: String) {
         require(slot.canPreload) { "$slot cannot be preloaded" }
-        val managed = persistentSessions.getValue(slot)
+        val managed = sessionFor(slot)
         if (!managed.loadState.shouldRequest(url)) return
         val generation = ++preloadGeneration
         managed.session.setActive(true)
@@ -144,6 +149,7 @@ class FrameWebSurface(
 
     fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean) {
         hiddenGeneration += 1
+        handlerRemoveHomeEviction()
         if (attachedSlot == FrameWebSlot.CAMERAS && slot != FrameWebSlot.CAMERAS) {
             disposeCameraSession()
         }
@@ -163,16 +169,22 @@ class FrameWebSurface(
         managed.session.setFocused(takeFocus)
         if (takeFocus) requestFocus()
         contentDescription = managed.label
+        if (slot != FrameWebSlot.HOME_ASSISTANT) scheduleHiddenHomeEviction()
     }
 
     fun hide() {
         hiddenGeneration += 1
         visibility = View.GONE
         if (attachedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
-        persistentSessions.values.forEach {
+        allSessions().forEach {
             it.session.setFocused(false)
             it.session.setActive(false)
         }
+        if (attachedSlot == FrameWebSlot.HOME_ASSISTANT && session != null) {
+            releaseSession()
+            attachedSlot = null
+        }
+        scheduleHiddenHomeEviction()
     }
 
     fun setContentActive(active: Boolean) {
@@ -203,22 +215,32 @@ class FrameWebSurface(
     }
 
     fun destroy() {
+        removeCallbacks(evictHiddenHome)
         if (session != null) releaseSession()
         cameraSession?.close()
         cameraSession = null
-        persistentSessions.values.forEach(ManagedSession::close)
+        homeAssistantSession?.close()
+        homeAssistantSession = null
+        photosSession.close()
+    }
+
+    fun trimMemory(level: Int) {
+        if (retentionPolicy.shouldEvictForTrimMemory(level)) evictHiddenHome()
     }
 
     private fun sessionFor(slot: FrameWebSlot): ManagedSession = when (slot) {
-        FrameWebSlot.PHOTOS, FrameWebSlot.HOME_ASSISTANT -> persistentSessions.getValue(slot)
+        FrameWebSlot.PHOTOS -> photosSession
+        FrameWebSlot.HOME_ASSISTANT -> homeAssistantSession ?: ManagedSession(homeAssistantUrl, "Home Assistant")
+            .also { homeAssistantSession = it }
         FrameWebSlot.CAMERAS -> cameraSession ?: ManagedSession(
-            configuredUrl = persistentSessions.getValue(FrameWebSlot.HOME_ASSISTANT).configuredUrl,
+            configuredUrl = homeAssistantUrl,
             label = "Cameras",
         ).also { cameraSession = it }
     }
 
     private fun allSessions(): List<ManagedSession> = buildList {
-        addAll(persistentSessions.values)
+        add(photosSession)
+        homeAssistantSession?.let(::add)
         cameraSession?.let(::add)
     }
 
@@ -230,6 +252,32 @@ class FrameWebSurface(
         }
         disposable.close()
         cameraSession = null
+    }
+
+    private fun scheduleHiddenHomeEviction() {
+        homeAssistantSession ?: return
+        if (attachedSlot == FrameWebSlot.HOME_ASSISTANT) return
+        val hiddenSince = hiddenHomeSinceMillis ?: SystemClock.uptimeMillis().also { hiddenHomeSinceMillis = it }
+        removeCallbacks(evictHiddenHome)
+        postDelayed(evictHiddenHome, (FrameWebSessionRetentionPolicy.HIDDEN_HOME_TTL_MILLIS - (SystemClock.uptimeMillis() - hiddenSince)).coerceAtLeast(0L))
+    }
+
+    private fun evictHiddenHomeIfExpired() {
+        val hiddenSince = hiddenHomeSinceMillis ?: return
+        if (retentionPolicy.shouldEvictHiddenHome(SystemClock.uptimeMillis(), hiddenSince)) evictHiddenHome()
+    }
+
+    private fun evictHiddenHome() {
+        if (attachedSlot == FrameWebSlot.HOME_ASSISTANT) return
+        removeCallbacks(evictHiddenHome)
+        homeAssistantSession?.close()
+        homeAssistantSession = null
+        hiddenHomeSinceMillis = null
+    }
+
+    private fun handlerRemoveHomeEviction() {
+        removeCallbacks(evictHiddenHome)
+        hiddenHomeSinceMillis = null
     }
 
     private companion object {
