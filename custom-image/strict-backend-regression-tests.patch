@@ -99,13 +99,14 @@ new file mode 100644
 index 0000000..5555555
 --- /dev/null
 +++ b/internal/routes/routes_prefetch_context_test.go
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,39 @@
 +package routes
 +
 +import (
 +	"context"
 +	"net/http"
 +	"net/url"
++	"sync"
 +	"testing"
 +	"time"
 +
@@ -118,9 +119,10 @@ index 0000000..5555555
 +func TestAssetPreFetchPassesDeadlineToBlockingHTTPTransport(t *testing.T) {
 +	originalClient := immich.HTTPClient
 +	cancelled := make(chan struct{})
++	var cancelOnce sync.Once
 +	immich.HTTPClient = &http.Client{Transport: routesRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 +		<-r.Context().Done()
-+		close(cancelled)
++		cancelOnce.Do(func() { close(cancelled) })
 +		return nil, r.Context().Err()
 +	})}
 +	t.Cleanup(func() { immich.HTTPClient = originalClient })
