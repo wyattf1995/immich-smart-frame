@@ -16,6 +16,7 @@ COPY album-penalties.patch /tmp/album-penalties.patch
 COPY backend-performance.patch /tmp/backend-performance.patch
 COPY backend-registry-final.patch /tmp/backend-registry-final.patch
 COPY backend-registry-allocation.patch /tmp/backend-registry-allocation.patch
+COPY backend-source-gofmt.patch /tmp/backend-source-gofmt.patch
 COPY weighted-curation-tests.patch /tmp/weighted-curation-tests.patch
 COPY performance-regression-tests.patch /tmp/performance-regression-tests.patch
 COPY strict-backend-regression-tests.patch /tmp/strict-backend-regression-tests.patch
@@ -35,12 +36,14 @@ RUN cd /src \
     && git apply --unidiff-zero /tmp/runtime-hardening.patch \
     && git apply --check /tmp/album-penalties.patch \
     && git apply /tmp/album-penalties.patch \
-	&& git apply --check /tmp/backend-performance.patch \
-	&& git apply /tmp/backend-performance.patch \
-	&& git apply --check /tmp/backend-registry-final.patch \
-	&& git apply /tmp/backend-registry-final.patch \
-	&& git apply --check /tmp/backend-registry-allocation.patch \
-	&& git apply /tmp/backend-registry-allocation.patch \
+	&& git apply --check --unidiff-zero /tmp/backend-performance.patch \
+	&& git apply --unidiff-zero /tmp/backend-performance.patch \
+	&& git apply --check --unidiff-zero /tmp/backend-registry-final.patch \
+	&& git apply --unidiff-zero /tmp/backend-registry-final.patch \
+	&& git apply --check --unidiff-zero /tmp/backend-registry-allocation.patch \
+	&& git apply --unidiff-zero /tmp/backend-registry-allocation.patch \
+	&& git apply --check --unidiff-zero /tmp/backend-source-gofmt.patch \
+	&& git apply --unidiff-zero /tmp/backend-source-gofmt.patch \
     && git apply --check --unidiff-zero /tmp/weighted-curation-tests.patch \
     && git apply --unidiff-zero /tmp/weighted-curation-tests.patch \
     && git apply --check --unidiff-zero /tmp/performance-regression-tests.patch \

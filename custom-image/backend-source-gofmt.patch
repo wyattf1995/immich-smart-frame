@@ -1,0 +1,9 @@
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 8d21142..f5a4118 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -47,2 +47,2 @@ const (
+-	defaultScheme     = "http://"
+-	DefaultDateLayout = "02/01/2006"
++	defaultScheme             = "http://"
++	DefaultDateLayout         = "02/01/2006"
