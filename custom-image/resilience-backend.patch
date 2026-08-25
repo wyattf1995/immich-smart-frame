@@ -511,7 +511,7 @@ index a88aa45..c2db007 100644
  	// If kiosk version on client and server do not match refresh client.
  	if kioskDeviceVersion != "" && KioskVersion != kioskDeviceVersion {
 diff --git a/internal/routes/routes_asset.go b/internal/routes/routes_asset.go
-index 8721a47..1e8d749 100644
+index 8721a47..01176c7 100644
 --- a/internal/routes/routes_asset.go
 +++ b/internal/routes/routes_asset.go
 @@ -2,11 +2,13 @@ package routes
@@ -570,25 +570,19 @@ index 8721a47..1e8d749 100644
  			t := i18n.T()
  			return RenderError(c, err, t("retrieving_asset"), requestConfig.Duration)
  		}
-@@ -81,6 +108,17 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+@@ -81,6 +108,11 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
  		if requestConfig.Kiosk.PreFetch {
  			scheduleAssetPrefetch(com, requestData, requestCtx)
  		}
 +		if requestConfig.OfflineMode.Enabled {
-+			// The downloader is single-flight and writes atomically. Starting it after
-+			// a successful live selection pre-warms durable fallback before an outage.
-+			go func() {
-+				prefetchCtx, cancel := context.WithTimeout(com.Context(), offlinePrefetchDeadline)
-+				defer cancel()
-+				if err := downloadOfflineAssets(prefetchCtx, requestConfig, requestCtx, com, requestID, deviceID); err != nil && !errors.Is(err, context.Canceled) {
-+					log.Warn("offline prewarm", "err", err)
-+				}
-+			}()
++			// The dedicated scheduler deduplicates slide-triggered prewarm work and
++			// derives its lifetime from shutdown, so it is drained before exit.
++			scheduleOfflinePrewarm(com, requestConfig, requestCtx, requestID, deviceID)
 +		}
  
  		go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, viewData)
  
-@@ -327,7 +365,7 @@ func LikeAsset(baseConfig *config.Config, com *common.Common, setAssetAsLiked bo
+@@ -327,7 +359,7 @@ func LikeAsset(baseConfig *config.Config, com *common.Common, setAssetAsLiked bo
  			return echo.NewHTTPError(http.StatusBadRequest, "Asset ID is required")
  		}
  
@@ -597,7 +591,7 @@ index 8721a47..1e8d749 100644
  			return Render(c, http.StatusOK, partials.LikeButton(assetID, user, true, true, true, com.Secret()))
  		}
  
-@@ -370,7 +408,17 @@ func LikeAsset(baseConfig *config.Config, com *common.Common, setAssetAsLiked bo
+@@ -370,7 +402,17 @@ func LikeAsset(baseConfig *config.Config, com *common.Common, setAssetAsLiked bo
  
  		// handle error
  		if eg != nil {
@@ -616,7 +610,7 @@ index 8721a47..1e8d749 100644
  		}
  
  		return Render(c, http.StatusOK, partials.LikeButton(assetID, user, setAssetAsLiked, setAssetAsLiked, true, com.Secret()))
-@@ -423,7 +471,7 @@ func HideAsset(baseConfig *config.Config, com *common.Common, hideAsset bool) ec
+@@ -423,7 +465,7 @@ func HideAsset(baseConfig *config.Config, com *common.Common, hideAsset bool) ec
  			return echo.NewHTTPError(http.StatusBadRequest, "Tag name is required")
  		}
  
@@ -625,7 +619,7 @@ index 8721a47..1e8d749 100644
  			return Render(c, http.StatusOK, partials.HideButton(assetID, user, !hideAsset, true, com.Secret()))
  		}
  
-@@ -467,16 +515,39 @@ func HideAsset(baseConfig *config.Config, com *common.Common, hideAsset bool) ec
+@@ -467,16 +509,39 @@ func HideAsset(baseConfig *config.Config, com *common.Common, hideAsset bool) ec
  		}
  
  		if eg != nil {
@@ -667,7 +661,7 @@ index 8721a47..1e8d749 100644
  			return nil
  		}
  
-@@ -545,7 +616,7 @@ func RatingAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+@@ -545,7 +610,7 @@ func RatingAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
  
  func ClearRatingAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
  	return func(c *echo.Context) error {
@@ -741,10 +735,24 @@ index 57e5f76..01776b8 100644
  			log.Error("OfflineMode: DownloadOfflineAssets", "err", downloadErr)
  		}
 diff --git a/internal/routes/routes_prefetch.go b/internal/routes/routes_prefetch.go
-index 0acffdb..f098b35 100644
+index 0acffdb..97f4876 100644
 --- a/internal/routes/routes_prefetch.go
 +++ b/internal/routes/routes_prefetch.go
-@@ -15,6 +15,7 @@ type prefetchScheduler struct {
+@@ -2,8 +2,13 @@ package routes
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"sync"
+ 	"time"
++
++	"charm.land/log/v2"
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
+ )
+ 
+ const (
+@@ -15,6 +20,7 @@ type prefetchScheduler struct {
  	sem      chan struct{}
  	timeout  time.Duration
  	inFlight sync.Map
@@ -752,7 +760,7 @@ index 0acffdb..f098b35 100644
  }
  
  func newPrefetchScheduler(concurrency int, timeout time.Duration) *prefetchScheduler {
-@@ -22,6 +23,15 @@ func newPrefetchScheduler(concurrency int, timeout time.Duration) *prefetchSched
+@@ -22,6 +28,15 @@ func newPrefetchScheduler(concurrency int, timeout time.Duration) *prefetchSched
  }
  
  func (s *prefetchScheduler) schedule(key string, work func(context.Context)) bool {
@@ -768,7 +776,7 @@ index 0acffdb..f098b35 100644
  	if _, loaded := s.inFlight.LoadOrStore(key, struct{}{}); loaded {
  		return false
  	}
-@@ -31,13 +41,32 @@ func (s *prefetchScheduler) schedule(key string, work func(context.Context)) boo
+@@ -31,13 +46,51 @@ func (s *prefetchScheduler) schedule(key string, work func(context.Context)) boo
  		s.inFlight.Delete(key)
  		return false
  	}
@@ -800,8 +808,27 @@ index 0acffdb..f098b35 100644
 +
  var assetPrefetchScheduler = newPrefetchScheduler(defaultPrefetchConcurrency, defaultPrefetchTimeout)
 +
++const offlinePrewarmKey = "offline-prewarm"
++
++// Kept separate from ordinary asset prefetch so a durable offline download does
++// not consume the short-lived foreground prefetch capacity.
++var offlinePrefetchScheduler = newPrefetchScheduler(1, offlinePrefetchDeadline)
++
++func scheduleOfflinePrewarm(com *common.Common, requestConfig config.Config, requestCtx common.ContextCopy, requestID, deviceID string) bool {
++	if IsOfflineDownloadRunning() {
++		return false
++	}
++	return offlinePrefetchScheduler.scheduleWithContext(com.Context(), offlinePrewarmKey, func(ctx context.Context) {
++		if err := downloadOfflineAssets(ctx, requestConfig, requestCtx, com, requestID, deviceID); err != nil && !errors.Is(err, context.Canceled) {
++			log.Warn("offline prewarm", "err", err)
++		}
++	})
++}
++
 +// DrainAssetPrefetch waits for shutdown-cancelled prefetch workers to exit.
-+func DrainAssetPrefetch(ctx context.Context) bool { return assetPrefetchScheduler.drain(ctx) }
++func DrainAssetPrefetch(ctx context.Context) bool {
++	return assetPrefetchScheduler.drain(ctx) && offlinePrefetchScheduler.drain(ctx)
++}
 diff --git a/internal/routes/routes_webhooks.go b/internal/routes/routes_webhooks.go
 index 3b85b57..2e990c0 100644
 --- a/internal/routes/routes_webhooks.go
