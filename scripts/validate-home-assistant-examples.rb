@@ -109,9 +109,13 @@ end
 weather_cards = weather_view.fetch("sections", []).flat_map { |section| section.fetch("cards", []) }
 weather_forecasts = weather_cards.select { |card| card["type"] == "weather-forecast" }
 forecast_types = weather_forecasts.map { |card| card["forecast_type"] }.compact.to_set
+hourly_forecast = weather_forecasts.find { |card| card["forecast_type"] == "hourly" }
 unless weather_forecasts.any? { |card| card["show_current"] == true } &&
        forecast_types == Set["daily", "hourly"]
   fail_validation("Weather must show current conditions plus daily and hourly forecasts")
+end
+unless hourly_forecast && hourly_forecast["forecast_slots"] == 12
+  fail_validation("Weather must expose a twelve-slot hourly forecast")
 end
 
 history_card = weather_cards.find { |card| card["type"] == "history-graph" }
