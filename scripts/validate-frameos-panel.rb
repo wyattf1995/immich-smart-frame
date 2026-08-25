@@ -35,6 +35,7 @@ required = [
   "const isActivePanelElement = (element, documentRoot) =>",
   "element.isConnected && element.ownerDocument === documentRoot",
   "const pruneRouteEvidence = (state) =>",
+  "!cameraVideoIsDecoded(video)",
   "const pruneRouteObservers = (state) =>",
   "state.observers.push({ root, observer });",
   "primaryHeadings: new Map()",

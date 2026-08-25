@@ -205,9 +205,30 @@ unless weather_video_urls.all? { |url| url.match?(%r{\A/local/wallpanel-weather/
   fail_validation("weather MP4 URLs must carry generated SHA-256 cache fingerprints")
 end
 default_fingerprint = weather_group.fetch("default_url")[/\?v=([0-9a-f]{12,64})\z/, 1]
-unless default_fingerprint &&
-       weather_group.fetch("state_url").fetch("snowy-rainy") == "/local/wallpanel-weather/rainy.mp4?v=#{default_fingerprint}"
-  fail_validation("snowy-rainy must retain the rainy MP4 mapping while its cache fingerprint changes")
+expected_weather_files = {
+  "default_url" => "cloudy.mp4",
+  "clear-night" => "clear-night.mp4",
+  "cloudy" => "cloudy.mp4",
+  "exceptional" => "sunny.mp4",
+  "fog" => "cloudy.mp4",
+  "hail" => "rainy.mp4",
+  "lightning" => "rainy.mp4",
+  "lightning-rainy" => "rainy.mp4",
+  "partlycloudy" => "cloudy.mp4",
+  "pouring" => "rainy.mp4",
+  "rainy" => "rainy.mp4",
+  "snowy" => "cloudy.mp4",
+  "snowy-rainy" => "rainy.mp4",
+  "sunny" => "sunny.mp4",
+  "windy" => "sunny.mp4",
+  "windy-variant" => "cloudy.mp4"
+}.freeze
+actual_weather_urls = { "default_url" => weather_group.fetch("default_url") }.merge(weather_group.fetch("state_url"))
+expected_weather_urls = expected_weather_files.transform_values do |filename|
+  "/local/wallpanel-weather/#{filename}?v=#{default_fingerprint}"
+end
+unless default_fingerprint && actual_weather_urls == expected_weather_urls
+  fail_validation("weather media mappings must retain every baseline file and share the generated fingerprint")
 end
 
 keymapper = JSON.parse(File.read(FILES.fetch(:keymapper)))
