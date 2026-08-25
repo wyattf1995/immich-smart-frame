@@ -101,6 +101,10 @@ if [ "${1:-}" = "de.ozerov.fully" ] && [ "${FRAME_ROUTER_FULLY_RUNNING:-0}" = 1 
   printf '%s\n' 4242
   exit 0
 fi
+if [ "${1:-}" = "org.mozilla.firefox" ] && [ "${FRAME_ROUTER_FIREFOX_RUNNING:-0}" = 1 ]; then
+  printf '%s\n' 4343
+  exit 0
+fi
 exit 1
 EOF
 
@@ -186,11 +190,14 @@ assert_eq home "$(tr -d '\r\n' < "$tmp_dir/stdout")" \
 
 : > "$log"
 printf 'photos\n' > "$state"
-FRAME_ROUTER_FOREGROUND=frameos FRAME_ROUTER_FULLY_RUNNING=1 run_frameos_router next
+FRAME_ROUTER_FOREGROUND=frameos FRAME_ROUTER_FULLY_RUNNING=1 FRAME_ROUTER_FIREFOX_RUNNING=1 \
+  run_frameos_router next
 assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL -n com.wyattfleming.frameos/.control.FrameControlReceiver --es frameos.mode HOME' "$log" \
   'FrameOS next must advance photos to Home through the protected receiver'
 assert_file_contains 'am force-stop de.ozerov.fully' "$log" \
   'FrameOS must stop Fully when its priority process is alive'
+assert_file_contains 'am force-stop org.mozilla.firefox' "$log" \
+  'FrameOS must release the legacy Firefox process when it is alive'
 assert_file_contains 'am start --activity-reorder-to-front -n com.wyattfleming.frameos/.MainActivity' "$log" \
   'the shell router must foreground FrameOS after queuing its protected command'
 assert_file_not_contains 'org.mozilla.firefox' "$log" 'FrameOS transitions must not launch Firefox'
@@ -203,6 +210,8 @@ assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL 
   'FrameOS next must include the native Weather view'
 assert_file_not_contains 'am force-stop de.ozerov.fully' "$log" \
   'warm FrameOS transitions must not pay for stopping an absent Fully process'
+assert_file_not_contains 'am force-stop org.mozilla.firefox' "$log" \
+  'warm FrameOS transitions must not pay for stopping an absent Firefox process'
 
 : > "$log"
 FRAME_ROUTER_FOREGROUND=frameos run_frameos_router next
