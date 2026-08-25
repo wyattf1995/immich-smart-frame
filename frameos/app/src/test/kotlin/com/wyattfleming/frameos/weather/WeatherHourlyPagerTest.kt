@@ -22,6 +22,6 @@ class WeatherHourlyPagerTest {
 
         assertEquals(1, pager.pageCount(hours))
         assertEquals(hours, pager.page(hours, pageIndex = 99))
-        assertEquals(emptyList<String>(), pager.page(emptyList(), pageIndex = 0))
+        assertEquals(emptyList<String>(), pager.page(emptyList<String>(), pageIndex = 0))
     }
 }
