@@ -29,6 +29,10 @@ class HomeAssistantOAuthEndpointTest {
             "grant_type=authorization_code&code=authorization-code&client_id=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html",
             endpoint.tokenRequestBody(callback, "authorization-code"),
         )
+        assertEquals(
+            "grant_type=refresh_token&refresh_token=refresh-secret&client_id=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html",
+            endpoint.refreshTokenRequestBody(callback, "refresh-secret"),
+        )
     }
 
     @Test
@@ -63,5 +67,12 @@ class HomeAssistantOAuthEndpointTest {
         assertEquals(1800L, tokens.expiresInSeconds)
         assertFalse(tokens.toString().contains("access-secret"))
         assertFalse(tokens.toString().contains("refresh-secret"))
+
+        val refreshed = endpoint.parseRefreshTokenResponse(
+            """{"access_token":"new-access-secret","token_type":"Bearer","expires_in":1800}""",
+        )
+        assertEquals("new-access-secret", refreshed.accessToken)
+        assertEquals(1800L, refreshed.expiresInSeconds)
+        assertFalse(refreshed.toString().contains("new-access-secret"))
     }
 }
