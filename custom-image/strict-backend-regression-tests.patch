@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..3333333
 --- /dev/null
 +++ b/internal/immich/immich_album_fast_path_test.go
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,44 @@
 +package immich
 +
 +import (
