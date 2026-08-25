@@ -19,7 +19,7 @@ class WeatherRepository(
         }
         if (bearerToken.isBlank()) {
             cache.recordError(ERROR_AUTH_REQUIRED)
-            return WeatherLoadResult.AuthRequired
+            return cached?.let { WeatherLoadResult.Stale(it.snapshot) } ?: WeatherLoadResult.AuthRequired
         }
 
         return when (val result = remote.fetch(entityId, bearerToken)) {
