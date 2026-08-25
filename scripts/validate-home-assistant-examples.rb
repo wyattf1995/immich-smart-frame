@@ -146,7 +146,11 @@ unless up_next_markdown &&
        up_next_markdown.fetch("content").include?("state_attr(calendar.entity, 'start_time')") &&
        up_next_markdown.fetch("content").include?("state_attr(calendar.entity, 'all_day')") &&
        up_next_markdown.fetch("content").include?("event.all_day") &&
-       up_next_markdown.fetch("content").include?("timestamp_custom('%a, %b %-d')") &&
+       up_next_markdown.fetch("content").include?("'%a, %b %-d'") &&
+       up_next_markdown.fetch("content").include?("'%a, %b %-d, %Y'") &&
+       up_next_markdown.fetch("content").include?("event_year") &&
+       up_next_markdown.fetch("content").include?("event_year != now().year") &&
+       up_next_markdown.fetch("content").include?("now().year") &&
        up_next_markdown.fetch("content").include?("timestamp_custom('%-I:%M %p')") &&
        up_next_markdown.fetch("content").include?("All day") &&
        up_next_markdown.fetch("content").include?("events[:4]")

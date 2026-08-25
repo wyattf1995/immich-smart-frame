@@ -161,8 +161,10 @@ already-exposed `message`, `start_time`, `all_day`, and `location` state
 attributes from each of the four calendar entities. It sorts one next item per
 calendar and renders at most four items. Timed events show `Tue, Sep 15 · 6:00
 PM`; all-day events show `Tue, Sep 15 · All day`, never a misleading midnight
-time. It does not call a calendar service or fetch a separate event feed.
-Remove any optional card whose entity your installation does not provide.
+time. Entries in another calendar year include the year (for example, `Tue,
+Sep 15, 2027 · 6:00 PM`), while same-year entries stay compact. It does not
+call a calendar service or fetch a separate event feed. Remove any optional
+card whose entity your installation does not provide.
 
 Create a UI-managed dashboard, open its raw configuration editor, and paste the
 adapted `dashboard.example.yaml`. The built-in Calendar card defaults to Month;
