@@ -36,13 +36,13 @@ receiver_contracts = [
   "FrameControlCommandCodec",
   "FrameControlStore",
   "FrameConfigurationStore",
-  "Intent(context, MainActivity::class.java)",
+  "FrameControlContract.ACTION_CONTROL",
 ]
 receiver_contracts.each do |contract|
   abort("FrameOS control receiver missing contract: #{contract}") unless receiver.include?(contract)
 end
 
-forbidden = ["Runtime.getRuntime", "ProcessBuilder", "su ", "http://", "https://"]
+forbidden = ["startActivity", "Runtime.getRuntime", "ProcessBuilder", "su ", "http://", "https://"]
 forbidden.each do |value|
   abort("FrameOS control receiver contains forbidden behavior: #{value}") if receiver.include?(value)
 end

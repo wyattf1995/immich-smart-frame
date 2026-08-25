@@ -121,6 +121,7 @@ CALENDAR_URL=https://home.test.invalid/lovelace/calendar
 FULLY_ACTIVITY=de.ozerov.fully/.FullyActivity
 FIREFOX_PACKAGE=org.mozilla.firefox
 FRAMEOS_PACKAGE=com.wyattfleming.frameos
+FRAMEOS_ACTIVITY=com.wyattfleming.frameos/.MainActivity
 FRAMEOS_RECEIVER=com.wyattfleming.frameos/.control.FrameControlReceiver
 EOF
 
@@ -179,6 +180,8 @@ printf 'photos\n' > "$state"
 FRAME_ROUTER_FOREGROUND=frameos run_frameos_router next
 assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL -n com.wyattfleming.frameos/.control.FrameControlReceiver --es frameos.mode HOME' "$log" \
   'FrameOS next must advance photos to Home through the protected receiver'
+assert_file_contains 'am start --activity-reorder-to-front -n com.wyattfleming.frameos/.MainActivity' "$log" \
+  'the shell router must foreground FrameOS after queuing its protected command'
 assert_file_not_contains 'org.mozilla.firefox' "$log" 'FrameOS transitions must not launch Firefox'
 assert_file_not_contains 'de.ozerov.fully/.FullyActivity' "$log" 'FrameOS Photos must not launch Fully'
 assert_eq home "$(tr -d '\r\n' < "$state")" 'FrameOS next must persist Home'
