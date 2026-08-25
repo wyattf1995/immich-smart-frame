@@ -85,6 +85,23 @@ class WeatherRepositoryTest {
     }
 
     @Test
+    fun `keeps stale cached weather visible while a rejected credential needs reauthentication`() {
+        val cache = RecordingWeatherCache(cached = CachedWeatherSnapshot(snapshot, savedAtEpochMillis = 1_000L))
+        val repository = WeatherRepository(
+            remote = FakeWeatherRemote(WeatherRemoteResult.AuthRequired("credential rejected")),
+            cache = cache,
+            clock = { 122_000L },
+            freshForMillis = 60_000L,
+        )
+
+        assertEquals(
+            WeatherLoadResult.Stale(snapshot, authenticationRequired = true),
+            repository.refresh("weather.home", "access-token"),
+        )
+        assertEquals("weather_auth_required", cache.lastErrorMessage)
+    }
+
+    @Test
     fun `reports offline without a cache and auth required without leaking the token`() {
         val offlineCache = RecordingWeatherCache()
         val offline = WeatherRepository(
