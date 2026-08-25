@@ -48,6 +48,17 @@ class PhysicalInputMapperTest {
     @Test
     fun `ordinary keyboard input is left for the active page`() {
         assertNull(mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_TAB, scanCode = 15))
-        assertNull(mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_ENTER, scanCode = 28))
+    }
+
+    @Test
+    fun `remapped enter keys trigger the contextual primary action`() {
+        assertEquals(
+            FrameIntent.PrimaryAction,
+            mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_ENTER, scanCode = 28),
+        )
+        assertEquals(
+            FrameIntent.PrimaryAction,
+            mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_DPAD_CENTER, scanCode = 232),
+        )
     }
 }
