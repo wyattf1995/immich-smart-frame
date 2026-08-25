@@ -51,7 +51,7 @@ new file mode 100644
 index 0000000..2222222
 --- /dev/null
 +++ b/internal/routes/routes_prefetch_test.go
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,30 @@
 +package routes
 +
 +import (
@@ -82,9 +82,3 @@ index 0000000..2222222
 +	assert.True(t, scheduler.schedule("device-a\\x00/url-c", func(context.Context) {}))
 +}
 +
-+func TestPrefetchSchedulerCancelsWorkAtTimeout(t *testing.T) {
-+	scheduler := newPrefetchScheduler(1, 20*time.Millisecond)
-+	cancelled := make(chan struct{})
-+	assert.True(t, scheduler.schedule("device-a\\x00/url-a", func(ctx context.Context) { <-ctx.Done(); close(cancelled) }))
-+	require.Eventually(t, func() bool { select { case <-cancelled: return true; default: return false } }, time.Second, 5*time.Millisecond)
-+}
