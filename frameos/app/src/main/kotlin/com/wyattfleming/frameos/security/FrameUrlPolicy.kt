@@ -7,7 +7,8 @@ import java.nio.charset.StandardCharsets
 class FrameUrlPolicy {
     fun isSafeConfigurationUrl(value: String): Boolean {
         val uri = value.parseUri() ?: return false
-        if (uri.scheme.lowercase() !in ALLOWED_SCHEMES) return false
+        val scheme = uri.scheme?.lowercase() ?: return false
+        if (scheme !in ALLOWED_SCHEMES) return false
         if (uri.host.isNullOrBlank() || uri.userInfo != null) return false
 
         return !containsSecretParameters(uri.rawQuery) &&
