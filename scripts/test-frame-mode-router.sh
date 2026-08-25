@@ -193,6 +193,13 @@ run_router_expect_failure() {
   [[ "$result" -ne 0 ]] || fail "expected failure for: $*"
 }
 
+assert_router_failure_contains() {
+  local needle="$1"
+  shift
+  run_router_expect_failure "$@"
+  assert_file_contains "$needle" "$tmp_dir/stderr" "router failure must explain the lock state"
+}
+
 run_frameos_router() {
   rm -f "$firefox_started"
   if [[ "$1" == show ]]; then
@@ -375,6 +382,30 @@ assert_file_count 'input swipe 100 1000 100 500 100' "$log" 1 \
 
 run_router_expect_failure unknown-action
 run_router_expect_failure status "$tmp_dir/missing.conf"
+
+# A timeout can kill the shell without running its EXIT trap. A stale lock with
+# a recorded dead owner must self-heal only after its lease has expired.
+: > "$log"
+printf '999999 1\n' > "$lock"
+FRAME_ROUTER_FOREGROUND=unknown run_router show photos
+assert_eq photos "$(tr -d '\r\n' < "$state")" \
+  'an expired lock owned by a dead process must not strand routing'
+[[ ! -e "$lock" ]] || fail 'the reclaimed stale lock must be released after the transition'
+
+# Never reclaim a lock merely because its lease is old when the recorded owner
+# is still alive. This guards PID+lease recovery against a slow live command.
+: > "$log"
+printf '%s 1\n' "$$" > "$lock"
+assert_router_failure_contains 'live owner' show photos "$config"
+assert_eq "$$ 1" "$(tr -d '\r\n' < "$lock")" \
+  'a live lock owner must retain its lock even after the lease age'
+rm -f "$lock"
+
+# A dead owner inside the lease remains protected from a rapid stale-lock
+# takeover; callers receive a retryable lock result instead.
+printf '999999 %s\n' "$(date +%s)" > "$lock"
+assert_router_failure_contains 'lease has not expired' show photos "$config"
+rm -f "$lock"
 
 : > "$log"
 rm -f "$state" "$tmp_dir/am-started" "$tmp_dir/release-am"
