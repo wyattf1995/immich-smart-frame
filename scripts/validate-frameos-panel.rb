@@ -64,6 +64,13 @@ abort("FrameOS panel wrapper must not treat absent camera videos as ready") if p
 unless panel.match?(/showStillConnecting\(state\.view, detail\);\s*focusPanel\(\);/m)
   abort("FrameOS panel wrapper must focus the panel after a nonblocking readiness timeout")
 end
+wait_for_route_ready = panel[/const waitForRouteReady = \(readyView\) => \{.*?\n        \};\n\n        const navigatePanel/m]
+abort("FrameOS panel wrapper is missing waitForRouteReady") unless wait_for_route_ready
+deadline_index = wait_for_route_ready.index("state.deadlineTimer = window.setTimeout")
+initial_inspection_index = wait_for_route_ready.index("inspectAddedSubtree(documentRoot, state)")
+unless deadline_index && initial_inspection_index && deadline_index < initial_inspection_index
+  abort("FrameOS panel wrapper must arm the deadline before synchronous initial readiness inspection")
+end
 
 forbidden = [
   "fetch(",
