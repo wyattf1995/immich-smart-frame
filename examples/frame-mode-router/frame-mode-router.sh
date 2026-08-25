@@ -202,8 +202,11 @@ open_frameos_mode() {
   esac
 
   # Fully's separate priority process can otherwise reclaim the foreground.
-  # Force-stopping it preserves app data and is reversed by the legacy rollback.
-  am force-stop "$fully_package" >/dev/null 2>&1 || true
+  # Only pay Android's force-stop cost while that process is actually alive;
+  # subsequent FrameOS-to-FrameOS transitions stay on the warm path.
+  if pidof "$fully_package" >/dev/null 2>&1; then
+    am force-stop "$fully_package" >/dev/null 2>&1 || true
+  fi
   am broadcast --user 0 \
     -a "$FRAMEOS_CONTROL_ACTION" \
     -n "$FRAMEOS_RECEIVER" \
