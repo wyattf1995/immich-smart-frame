@@ -279,7 +279,7 @@ index 95939de..3d9ba8a 100644
  
  // updateMemoryCache updates the cache by removing used assets from memories.
 diff --git a/internal/routes/routes_asset.go b/internal/routes/routes_asset.go
-index ea80d9f..90dc19c 100644
+index ea80d9f..8721a47 100644
 --- a/internal/routes/routes_asset.go
 +++ b/internal/routes/routes_asset.go
 @@ -64,7 +64,7 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
@@ -291,7 +291,15 @@ index ea80d9f..90dc19c 100644
  				go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, cachedViewData[0])
  
  				return renderCachedViewData(c, cachedViewData, &requestConfig, requestID, deviceID, com.Secret())
-@@ -79,7 +79,7 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+@@ -72,14 +72,14 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 			log.Debug(requestID, "deviceID", deviceID, "cache miss for new image")
+ 		}
+ 
+-		viewData, err := generateViewData(requestConfig, requestCtx, requestID, deviceID, false)
++		viewData, err := generateViewData(com.Context(), requestConfig, requestCtx, requestID, deviceID, false)
+ 		if err != nil {
+ 			t := i18n.T()
+ 			return RenderError(c, err, t("retrieving_asset"), requestConfig.Duration)
  		}
  
  		if requestConfig.Kiosk.PreFetch {
@@ -301,10 +309,41 @@ index ea80d9f..90dc19c 100644
  
  		go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, viewData)
 diff --git a/internal/routes/routes_asset_helpers.go b/internal/routes/routes_asset_helpers.go
-index a9a2c41..a8b8be4 100644
+index a9a2c41..43572b0 100644
 --- a/internal/routes/routes_asset_helpers.go
 +++ b/internal/routes/routes_asset_helpers.go
-@@ -736,7 +736,12 @@ func ProcessViewImageDataWithOptions(requestConfig config.Config, c common.Conte
+@@ -602,6 +602,10 @@ func DrawFaceOnImage(img image.Image, i *immich.Asset) image.Image {
+ //   - ViewImageData containing the processed image and metadata
+ //   - Error if any step fails
+ func processViewImageData(requestConfig config.Config, c common.ContextCopy, isPrefetch bool, options common.ViewImageDataOptions) (common.ViewImageData, error) {
++	return processViewImageDataWithContext(context.Background(), requestConfig, c, isPrefetch, options)
++}
++
++func processViewImageDataWithContext(ctx context.Context, requestConfig config.Config, c common.ContextCopy, isPrefetch bool, options common.ViewImageDataOptions) (common.ViewImageData, error) {
+ 	// Initialize request metadata
+ 	metadata := requestMetadata{
+ 		requestID: utils.ColorizeRequestID(c.ResponseHeader.Get(echo.HeaderXRequestID)),
+@@ -609,7 +613,7 @@ func processViewImageData(requestConfig config.Config, c common.ContextCopy, isP
+ 		urlString: c.URL.String(),
+ 	}
+ 
+-	immichAsset := setupImmichAsset(requestConfig, options.ImageOrientation)
++	immichAsset := setupImmichAsset(ctx, requestConfig, options.ImageOrientation)
+ 
+ 	// Handle relative asset configuration if needed
+ 	if options.RelativeAssetWanted {
+@@ -654,8 +658,8 @@ func processViewImageData(requestConfig config.Config, c common.ContextCopy, isP
+ 
+ // setupImmichAsset creates and configures a new ImmichAsset based on the provided config
+ // and orientation settings
+-func setupImmichAsset(config config.Config, orientation immich.ImageOrientation) immich.Asset {
+-	asset := immich.New(context.Background(), config)
++func setupImmichAsset(ctx context.Context, config config.Config, orientation immich.ImageOrientation) immich.Asset {
++	asset := immich.New(ctx, config)
+ 	if orientation == immich.PortraitOrientation || orientation == immich.LandscapeOrientation {
+ 		asset.RatioWanted = orientation
+ 	}
+@@ -736,16 +740,21 @@ func ProcessViewImageDataWithOptions(requestConfig config.Config, c common.Conte
  func assetToCache(ctx context.Context, viewDataToAdd common.ViewData, requestConfig *config.Config, deviceID string, requestData *common.RouteRequestData, c common.ContextCopy) {
  	cache.AssetToCache(viewDataToAdd, requestConfig, deviceID, c.URL.String())
  
@@ -314,10 +353,104 @@ index a9a2c41..a8b8be4 100644
 +
 +func scheduleAssetPrefetch(common *common.Common, requestData *common.RouteRequestData, c common.ContextCopy) {
 +	key := requestData.DeviceID + "\x00" + c.URL.String()
-+	assetPrefetchScheduler.schedule(key, func(context.Context) { assetPreFetch(common, requestData, c) })
++	assetPrefetchScheduler.schedule(key, func(ctx context.Context) { assetPreFetch(ctx, common, requestData, c) })
  }
  
  // assetPreFetch handles prefetching assets for the current request
+-func assetPreFetch(common *common.Common, requestData *common.RouteRequestData, c common.ContextCopy) {
++func assetPreFetch(ctx context.Context, common *common.Common, requestData *common.RouteRequestData, c common.ContextCopy) {
+ 	requestConfig := requestData.RequestConfig
+ 	requestID := requestData.RequestID
+ 	deviceID := requestData.DeviceID
+ 
+-	viewDataToAdd, err := generateViewData(requestConfig, c, requestID, deviceID, true)
++	viewDataToAdd, err := generateViewData(ctx, requestConfig, c, requestID, deviceID, true)
+ 	if err != nil {
+ 		log.Error("generateViewData", "prefetch", true, "err", err)
+ 		return
+@@ -799,11 +808,11 @@ func renderCachedViewData(c *echo.Context, cachedViewData []common.ViewData, req
+ // fetchSecondSplitViewAsset attempts to retrieve a second asset for split view layouts that is different from the first asset.
+ // It tries up to three times to obtain a unique asset and appends it to the provided ViewData if successful.
+ // Returns an error if asset retrieval fails.
+-func fetchSecondSplitViewAsset(viewData *common.ViewData, viewDataSplitView common.ViewImageData, requestConfig config.Config, c common.ContextCopy, isPrefetch bool, options common.ViewImageDataOptions) error {
++func fetchSecondSplitViewAsset(ctx context.Context, viewData *common.ViewData, viewDataSplitView common.ViewImageData, requestConfig config.Config, c common.ContextCopy, isPrefetch bool, options common.ViewImageDataOptions) error {
+ 	const maxImageRetrievalAttempts = 3
+ 
+ 	for range maxImageRetrievalAttempts {
+-		viewDataSplitViewSecond, err := ProcessViewImageDataWithOptions(requestConfig, c, isPrefetch, options)
++		viewDataSplitViewSecond, err := processViewImageDataWithContext(ctx, requestConfig, c, isPrefetch, options)
+ 		if err != nil {
+ 			return err
+ 		}
+@@ -827,7 +836,7 @@ func determineLayoutMode(layout string, clientHeight, clientWidth int) string {
+ 
+ // generateViewData prepares view data for a kiosk page request based on the specified layout and client display dimensions.
+ // It selects and processes one or two assets as needed for the layout, handling orientation and split view logic, and returns the resulting ViewData or an error.
+-func generateViewData(requestConfig config.Config, c common.ContextCopy, requestID, deviceID string, isPrefetch bool) (common.ViewData, error) {
++func generateViewData(ctx context.Context, requestConfig config.Config, c common.ContextCopy, requestID, deviceID string, isPrefetch bool) (common.ViewData, error) {
+ 	viewData := common.ViewData{
+ 		RequestID: requestID,
+ 		DeviceID:  deviceID,
+@@ -844,14 +853,14 @@ func generateViewData(requestConfig config.Config, c common.ContextCopy, request
+ 		if requestConfig.Layout == kiosk.LayoutPortrait {
+ 			options.ImageOrientation = immich.PortraitOrientation
+ 		}
+-		viewDataSingle, err := ProcessViewImageDataWithOptions(requestConfig, c, isPrefetch, options)
++		viewDataSingle, err := processViewImageDataWithContext(ctx, requestConfig, c, isPrefetch, options)
+ 		if err != nil {
+ 			return viewData, err
+ 		}
+ 		viewData.Assets = append(viewData.Assets, viewDataSingle)
+ 
+ 	case kiosk.LayoutSplitview:
+-		viewDataSplitView, err := ProcessViewImageData(requestConfig, c, isPrefetch)
++		viewDataSplitView, err := processViewImageDataWithContext(ctx, requestConfig, c, isPrefetch, common.ViewImageDataOptions{})
+ 		if err != nil {
+ 			return viewData, err
+ 		}
+@@ -869,12 +878,12 @@ func generateViewData(requestConfig config.Config, c common.ContextCopy, request
+ 		}
+ 
+ 		// Second image
+-		if secondAssetErr := fetchSecondSplitViewAsset(&viewData, viewDataSplitView, requestConfig, c, isPrefetch, options); secondAssetErr != nil {
++		if secondAssetErr := fetchSecondSplitViewAsset(ctx, &viewData, viewDataSplitView, requestConfig, c, isPrefetch, options); secondAssetErr != nil {
+ 			return viewData, secondAssetErr
+ 		}
+ 
+ 	case kiosk.LayoutSplitviewLandscape:
+-		viewDataSplitView, err := ProcessViewImageData(requestConfig, c, isPrefetch)
++		viewDataSplitView, err := processViewImageDataWithContext(ctx, requestConfig, c, isPrefetch, common.ViewImageDataOptions{})
+ 		if err != nil {
+ 			return viewData, err
+ 		}
+@@ -892,12 +901,12 @@ func generateViewData(requestConfig config.Config, c common.ContextCopy, request
+ 		}
+ 
+ 		// Second image
+-		if secondAssetErr := fetchSecondSplitViewAsset(&viewData, viewDataSplitView, requestConfig, c, isPrefetch, options); secondAssetErr != nil {
++		if secondAssetErr := fetchSecondSplitViewAsset(ctx, &viewData, viewDataSplitView, requestConfig, c, isPrefetch, options); secondAssetErr != nil {
+ 			return viewData, secondAssetErr
+ 		}
+ 
+ 	default:
+-		viewDataSingle, err := ProcessViewImageData(requestConfig, c, isPrefetch)
++		viewDataSingle, err := processViewImageDataWithContext(ctx, requestConfig, c, isPrefetch, common.ViewImageDataOptions{})
+ 		if err != nil {
+ 			return viewData, err
+ 		}
+diff --git a/internal/routes/routes_offline.go b/internal/routes/routes_offline.go
+index df73edd..57e5f76 100644
+--- a/internal/routes/routes_offline.go
++++ b/internal/routes/routes_offline.go
+@@ -217,7 +217,7 @@ func downloadOfflineAssets(requestConfig config.Config, requestCtx common.Contex
+ 					return err
+ 				}
+ 
+-				viewData, err := generateViewData(requestConfig, requestCtx, requestID, deviceID, false)
++				viewData, err := generateViewData(com.Context(), requestConfig, requestCtx, requestID, deviceID, false)
+ 				if err != nil {
+ 					log.Error("SaveOfflineAsset: generateViewData", "err", err)
+ 					if errorCount.Add(1) > fileExistsTolerance*2 {
 diff --git a/internal/routes/routes_prefetch.go b/internal/routes/routes_prefetch.go
 new file mode 100644
 index 0000000..0acffdb
