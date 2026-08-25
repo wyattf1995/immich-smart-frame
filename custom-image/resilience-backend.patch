@@ -232,10 +232,18 @@ index 62271d3..1cda859 100644
  		log.Error("Failed to get Immich version. Skipping version check.", "err", immichVersionErr)
  	} else {
 diff --git a/internal/config/config.go b/internal/config/config.go
-index f5a4118..5d7ef81 100644
+index f5a4118..a5f47c8 100644
 --- a/internal/config/config.go
 +++ b/internal/config/config.go
-@@ -747,6 +747,21 @@ func (c *Config) Load() error {
+@@ -739,6 +739,7 @@ func (c *Config) Load() error {
+ 	c.checkWeatherRotationInterval()
+ 	c.checkDebuging()
+ 	c.checkFetchedAssetsSize()
++	c.checkHTTPTimeout()
+ 	c.checkRedirects()
+ 	c.checkOffline()
+ 	c.checkBurnIn()
+@@ -747,6 +748,21 @@ func (c *Config) Load() error {
  	return nil
  }
  
@@ -257,7 +265,7 @@ index f5a4118..5d7ef81 100644
  // ResetBuckets clears all the asset bucket slice fields (Person, Album, Date)
  // in the Config structure. This is typically used when applying new query parameters
  // to ensure old values don't persist. When querying specific buckets, the previous
-@@ -857,7 +872,7 @@ func RedactedCopy[T any](in T) T {
+@@ -857,7 +873,7 @@ func RedactedCopy[T any](in T) T {
  	src := reflect.ValueOf(in)
  	dst := reflect.New(src.Type()).Elem()
  	seen := make(map[unsafe.Pointer]reflect.Value) // cycle-guard
@@ -266,7 +274,7 @@ index f5a4118..5d7ef81 100644
  	out, ok := dst.Interface().(T)
  	if !ok {
  		var zero T
-@@ -866,7 +881,7 @@ func RedactedCopy[T any](in T) T {
+@@ -866,7 +882,7 @@ func RedactedCopy[T any](in T) T {
  	return out
  }
  
@@ -275,7 +283,7 @@ index f5a4118..5d7ef81 100644
  	if !src.IsValid() {
  		return
  	}
-@@ -884,18 +899,18 @@ func copyRec(src, dst reflect.Value, seen map[unsafe.Pointer]reflect.Value) {
+@@ -884,18 +900,18 @@ func copyRec(src, dst reflect.Value, seen map[unsafe.Pointer]reflect.Value) {
  		}
  		dst.Set(reflect.New(src.Elem().Type()))
  		seen[addr] = dst
@@ -297,7 +305,7 @@ index f5a4118..5d7ef81 100644
  			}
  		}
  
-@@ -903,7 +918,7 @@ func copyRec(src, dst reflect.Value, seen map[unsafe.Pointer]reflect.Value) {
+@@ -903,7 +919,7 @@ func copyRec(src, dst reflect.Value, seen map[unsafe.Pointer]reflect.Value) {
  		l := src.Len()
  		dslice := reflect.MakeSlice(src.Type(), l, l)
  		for i := range l {
@@ -306,7 +314,7 @@ index f5a4118..5d7ef81 100644
  		}
  		dst.Set(dslice)
  
-@@ -911,7 +926,7 @@ func copyRec(src, dst reflect.Value, seen map[unsafe.Pointer]reflect.Value) {
+@@ -911,7 +927,7 @@ func copyRec(src, dst reflect.Value, seen map[unsafe.Pointer]reflect.Value) {
  		dmap := reflect.MakeMapWithSize(src.Type(), src.Len())
  		for _, k := range src.MapKeys() {
  			v := reflect.New(src.Type().Elem()).Elem()
@@ -315,6 +323,24 @@ index f5a4118..5d7ef81 100644
  			dmap.SetMapIndex(k, v)
  		}
  		dst.Set(dmap)
+diff --git a/internal/config/config_validation.go b/internal/config/config_validation.go
+index 03217e5..b9c9708 100644
+--- a/internal/config/config_validation.go
++++ b/internal/config/config_validation.go
+@@ -598,6 +598,13 @@ func (c *Config) checkOffline() {
+ 	}
+ }
+ 
++func (c *Config) checkHTTPTimeout() {
++	if c.Kiosk.HTTPTimeout <= 0 {
++		log.Warn("Invalid http_timeout value. Using default: 20", "http_timeout", c.Kiosk.HTTPTimeout)
++		c.Kiosk.HTTPTimeout = 20
++	}
++}
++
+ func checkSchema(config map[string]any, level string) bool {
+ 	if strings.EqualFold(level, kiosk.ConfigValidationOff) {
+ 		log.Info("Config validation disabled")
 diff --git a/internal/config/config_watcher.go b/internal/config/config_watcher.go
 index d80e128..28a7685 100644
 --- a/internal/config/config_watcher.go
@@ -455,7 +481,7 @@ index c64b0a7..d95fb31 100644
  // FilterDate is applied here.
  // FilterNewest is applied here.
 diff --git a/internal/immich/immich_server.go b/internal/immich/immich_server.go
-index 38596ba..b47895f 100644
+index 38596ba..efdead2 100644
 --- a/internal/immich/immich_server.go
 +++ b/internal/immich/immich_server.go
 @@ -2,15 +2,37 @@ package immich
@@ -496,7 +522,16 @@ index 38596ba..b47895f 100644
  type ServerAboutResponse struct {
  	Build                      *string `json:"build,omitempty"`
  	BuildImage                 *string `json:"buildImage,omitempty"`
-@@ -170,3 +192,58 @@ func Version(ctx context.Context, immichURL string) (ServerVersionResponse, erro
+@@ -82,6 +104,8 @@ type ServerPingResponse struct {
+ 
+ func IsOnline(ctx context.Context, immichURL string) bool {
+ 	var pong ServerPingResponse
++	ctx, cancel := context.WithTimeout(ctx, defaultAPICallTimeout)
++	defer cancel()
+ 
+ 	u, err := url.Parse(immichURL)
+ 	if err != nil {
+@@ -170,3 +194,58 @@ func Version(ctx context.Context, immichURL string) (ServerVersionResponse, erro
  
  	return serverVersionResponse, nil
  }
@@ -742,7 +777,7 @@ index 43572b0..e4e6bd9 100644
  
  // assetPreFetch handles prefetching assets for the current request
 diff --git a/internal/routes/routes_offline.go b/internal/routes/routes_offline.go
-index 57e5f76..1a42086 100644
+index 57e5f76..247450b 100644
 --- a/internal/routes/routes_offline.go
 +++ b/internal/routes/routes_offline.go
 @@ -55,7 +55,7 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
@@ -754,7 +789,22 @@ index 57e5f76..1a42086 100644
  		requestConfig.History = requestData.RequestConfig.History
  		requestConfig.Memories = false
  		requestConfig.ShowVideos = false
-@@ -163,7 +163,7 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+@@ -97,7 +97,13 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 		}
+ 
+ 		if requestConfig.OfflineMode.ExpirationHours > 0 {
+-			expired, expiredErr := checkOfflineAssetsExpiration(com.Context(), requestConfig.ImmichURL)
++			timeout := time.Duration(requestConfig.Kiosk.HTTPTimeout) * time.Second
++			if timeout <= 0 {
++				timeout = 20 * time.Second
++			}
++			expirationCtx, cancel := context.WithTimeout(com.Context(), timeout)
++			expired, expiredErr := checkOfflineAssetsExpiration(expirationCtx, requestConfig.ImmichURL)
++			cancel()
+ 			if expiredErr != nil {
+ 				return expiredErr
+ 			}
+@@ -163,7 +169,7 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
  //   - Max size parsing fails
  //   - File operations fail
  //   - Asset downloads fail
@@ -763,7 +813,7 @@ index 57e5f76..1a42086 100644
  	if !mu.TryLock() {
  		log.Debug("DownloadOfflineAssets is already running")
  		return nil
-@@ -179,7 +179,7 @@ func downloadOfflineAssets(requestConfig config.Config, requestCtx common.Contex
+@@ -179,7 +185,7 @@ func downloadOfflineAssets(requestConfig config.Config, requestCtx common.Contex
  	}
  
  	// Setup parent context with cancel
@@ -772,7 +822,7 @@ index 57e5f76..1a42086 100644
  	defer cancel()
  
  	// Wrap with errgroup context
-@@ -217,7 +217,7 @@ func downloadOfflineAssets(requestConfig config.Config, requestCtx common.Contex
+@@ -217,7 +223,7 @@ func downloadOfflineAssets(requestConfig config.Config, requestCtx common.Contex
  					return err
  				}
  
@@ -781,7 +831,7 @@ index 57e5f76..1a42086 100644
  				if err != nil {
  					log.Error("SaveOfflineAsset: generateViewData", "err", err)
  					if errorCount.Add(1) > fileExistsTolerance*2 {
-@@ -449,12 +449,7 @@ func generateCacheFilename(uuids ...string) string {
+@@ -449,12 +455,7 @@ func generateCacheFilename(uuids ...string) string {
  // Returns an error if the render operation fails
  func handleNoOfflineAssets(c *echo.Context, requestConfig config.Config, com *common.Common, requestID, deviceID string) error {
  	requestCtx := common.CopyContext(c)
@@ -795,7 +845,7 @@ index 57e5f76..1a42086 100644
  
  	maxSizeMessage := "None"
  	if requestConfig.OfflineMode.MaxSize != "0" {
-@@ -552,6 +547,28 @@ func IsOfflineDownloadRunning() bool {
+@@ -552,6 +553,28 @@ func IsOfflineDownloadRunning() bool {
  	return !locked
  }
  
