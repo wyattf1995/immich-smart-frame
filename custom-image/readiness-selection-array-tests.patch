@@ -1,0 +1,23 @@
+diff --git a/internal/immich/immich_resilience_coverage_test.go b/internal/immich/immich_resilience_coverage_test.go
+index 01e69d9..75b2810 100644
+--- a/internal/immich/immich_resilience_coverage_test.go
++++ b/internal/immich/immich_resilience_coverage_test.go
+@@ -78,7 +78,7 @@ func TestReadinessCachesRecentSuccessAndBacksOffFailures(t *testing.T) {
+ 	calls := 0
+ 	HTTPClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+ 		calls++
+-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"total":1}`))}, nil
++		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`[]`))}, nil
+ 	})}
+ 	cfg := config.Config{ImmichURL: "http://readiness-success.test", ImmichAPIKey: "key", Kiosk: config.KioskSettings{Cache: false}}
+ 	require.NoError(t, Ready(context.Background(), cfg))
+@@ -107,7 +107,7 @@ func TestReadinessCoalescesConcurrentInitialProbes(t *testing.T) {
+ 		calls++
+ 		mu.Unlock()
+ 		time.Sleep(50 * time.Millisecond)
+-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"total":1}`))}, nil
++		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`[]`))}, nil
+ 	})}
+ 	cfg := config.Config{ImmichURL: "http://readiness-singleflight.test", ImmichAPIKey: "key", Kiosk: config.KioskSettings{Cache: false}}
+ 	var wg sync.WaitGroup
+

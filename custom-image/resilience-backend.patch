@@ -481,7 +481,7 @@ index c64b0a7..d95fb31 100644
  // FilterDate is applied here.
  // FilterNewest is applied here.
 diff --git a/internal/immich/immich_server.go b/internal/immich/immich_server.go
-index 38596ba..efdead2 100644
+index 38596ba..19db5ab 100644
 --- a/internal/immich/immich_server.go
 +++ b/internal/immich/immich_server.go
 @@ -2,15 +2,37 @@ package immich
@@ -531,7 +531,7 @@ index 38596ba..efdead2 100644
  
  	u, err := url.Parse(immichURL)
  	if err != nil {
-@@ -170,3 +194,58 @@ func Version(ctx context.Context, immichURL string) (ServerVersionResponse, erro
+@@ -170,3 +194,63 @@ func Version(ctx context.Context, immichURL string) (ServerVersionResponse, erro
  
  	return serverVersionResponse, nil
  }
@@ -548,8 +548,13 @@ index 38596ba..efdead2 100644
 +		if ready, cacheErr := cachedReadiness(key, time.Now()); ready || cacheErr != nil {
 +			return nil, cacheErr
 +		}
-+		asset := New(ctx, requestConfig)
-+		_, probeErr := asset.assetsStatistics()
++		probeConfig := requestConfig
++		probeConfig.Kiosk.Cache = false
++		asset := New(ctx, probeConfig)
++		// Use the same minimal safe selection operation as the kiosk itself. It
++		// validates authentication without requiring Immich's optional statistics
++		// permission and succeeds for an empty library.
++		_, _, probeErr := asset.fetchAssets("readiness", "readiness", SearchRandomBody{Size: 1})
 +		storeReadiness(key, time.Now(), probeErr)
 +		return nil, probeErr
 +	})
