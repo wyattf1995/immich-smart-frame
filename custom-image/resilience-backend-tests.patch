@@ -1,0 +1,123 @@
+diff --git a/internal/immich/immich_resilience_test.go b/internal/immich/immich_resilience_test.go
+new file mode 100644
+index 0000000..4c9c1f5
+--- /dev/null
++++ b/internal/immich/immich_resilience_test.go
+@@ -0,0 +1,41 @@
++package immich
++
++import (
++	"context"
++	"io"
++	"net/http"
++	"strings"
++	"sync/atomic"
++	"testing"
++
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/stretchr/testify/require"
++)
++
++func TestImmichAPICallRetriesTransientSafeReadButNotMutation(t *testing.T) {
++	original := HTTPClient
++	t.Cleanup(func() { HTTPClient = original })
++	var calls atomic.Int32
++	HTTPClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
++		if calls.Add(1) == 1 {
++			return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("busy"))}, nil
++		}
++		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("{}"))}, nil
++	})}
++	asset := New(context.Background(), config.Config{ImmichAPIKey: "key"})
++	_, _, _, err := asset.immichAPICall(context.Background(), http.MethodGet, "http://immich.test/api/assets", nil)
++	require.NoError(t, err)
++	require.EqualValues(t, 2, calls.Load())
++
++	calls.Store(0)
++	_, _, _, err = asset.immichAPICall(context.Background(), http.MethodPost, "http://immich.test/api/assets/asset/rating", []byte(`{}`))
++	require.Error(t, err)
++	require.EqualValues(t, 1, calls.Load())
++}
++
++func TestRetryableOperationOnlyAllowsSelectionPosts(t *testing.T) {
++	require.True(t, retryableOperation(http.MethodPost, "http://immich.test/api/search/random"))
++	require.True(t, retryableOperation(http.MethodPost, "http://immich.test/api/search/metadata"))
++	require.False(t, retryableOperation(http.MethodPost, "http://immich.test/api/assets/asset/like"))
++	require.False(t, retryableOperation(http.MethodDelete, "http://immich.test/api/assets/asset"))
++}
+diff --git a/internal/routes/routes_resilience_test.go b/internal/routes/routes_resilience_test.go
+new file mode 100644
+index 0000000..a2d4d79
+--- /dev/null
++++ b/internal/routes/routes_resilience_test.go
+@@ -0,0 +1,41 @@
++package routes
++
++import (
++	"context"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestForegroundAssetContextHonorsRequestAndShutdown(t *testing.T) {
++	request, cancelRequest := context.WithCancel(context.Background())
++	shutdown, cancelShutdown := context.WithCancel(context.Background())
++	ctx, cancel := foregroundAssetContext(request, shutdown, 1)
++	defer cancel()
++	cancelRequest()
++	require.Eventually(t, func() bool { return ctx.Err() == context.Canceled }, time.Second, time.Millisecond)
++
++	ctx, cancel = foregroundAssetContext(context.Background(), shutdown, 1)
++	defer cancel()
++	cancelShutdown()
++	require.Eventually(t, func() bool { return ctx.Err() == context.Canceled }, time.Second, time.Millisecond)
++}
++
++func TestPrefetchSchedulerStopsWhenParentStopsAndDrains(t *testing.T) {
++	scheduler := newPrefetchScheduler(1, time.Second)
++	parent, stop := context.WithCancel(context.Background())
++	started := make(chan struct{})
++	stopped := make(chan struct{})
++	require.True(t, scheduler.scheduleWithContext(parent, "one", func(ctx context.Context) {
++		close(started)
++		<-ctx.Done()
++		close(stopped)
++	}))
++	<-started
++	stop()
++	require.Eventually(t, func() bool { select { case <-stopped: return true; default: return false } }, time.Second, time.Millisecond)
++	drainCtx, cancel := context.WithTimeout(context.Background(), time.Second)
++	defer cancel()
++	require.True(t, scheduler.drain(drainCtx))
++}
+diff --git a/internal/config/config_snapshot_test.go b/internal/config/config_snapshot_test.go
+new file mode 100644
+index 0000000..a5a9ec0
+--- /dev/null
++++ b/internal/config/config_snapshot_test.go
+@@ -0,0 +1,23 @@
++package config
++
++import (
++	"sync"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestSnapshotUsesIndependentRequestLock(t *testing.T) {
++	c := New()
++	c.Kiosk.HTTPTimeout = 20
++	snapshot := c.Snapshot()
++	require.NotSame(t, c.mu, snapshot.mu)
++	snapshot.Kiosk.HTTPTimeout = 1
++	require.Equal(t, 20, c.Kiosk.HTTPTimeout)
++
++	var wg sync.WaitGroup
++	for range 100 {
++		wg.Go(func() { _ = c.Snapshot() })
++	}
++	wg.Wait()
++}
