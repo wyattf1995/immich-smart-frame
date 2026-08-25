@@ -10,7 +10,7 @@ android {
     defaultConfig {
         applicationId = "com.wyattfleming.frameos"
         minSdk = 29
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 1
         versionName = "0.1.0-dev"
 
@@ -40,6 +40,9 @@ android {
         abortOnError = true
         checkReleaseBuilds = true
         warningsAsErrors = true
+        // AGP 9.1.1 requires Gradle 9.3.1; it is also within Kotlin 2.4's fully
+        // supported range. Keep the checksum-pinned wrapper until that stack moves.
+        disable += "AndroidGradlePluginVersion"
     }
 }
 

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="frame_ink">#F7F5F0</color>
+    <color name="frame_ink_muted">#D1CEC7</color>
+    <color name="frame_paper">#F7F5F0</color>
+    <color name="frame_dark">#181817</color>
+    <color name="frame_cobalt">#7DA2F5</color>
+</resources>
