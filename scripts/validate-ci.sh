@@ -14,6 +14,7 @@ sh_files=(
   scripts/run-trivy.sh
   scripts/test-frame-mode-router.sh
   scripts/test-deployment-input-snapshot.sh
+  scripts/test-check-frame-readiness.sh
   scripts/deployment-input-snapshot.sh
   scripts/check-frame-readiness.sh
   scripts/test-license-audit.sh

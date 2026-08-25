@@ -46,6 +46,28 @@ check() {
   fi
 }
 
+informational_check() {
+  local label="$1"
+  local unavailable_message="$2"
+  shift 2
+  if "$@"; then
+    printf 'ready (optional): %s\n' "$label"
+  else
+    printf 'informational: %s\n' "$unavailable_message"
+  fi
+}
+
+frameos_default_home() {
+  local resolved_home
+  resolved_home="$(adb -s "$adb_serial" shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME)" || return 1
+  [[ "$resolved_home" == 'com.wyattfleming.frameos/.MainActivity' ]]
+}
+
+frameos_resumed() {
+  adb -s "$adb_serial" shell dumpsys activity activities | \
+    grep -F 'mResumedActivity' | grep -Fq 'com.wyattfleming.frameos/.MainActivity'
+}
+
 compose=(docker compose -f "$compose_file")
 check 'Kiosk liveness (/livez)' "${compose[@]}" exec -T immich-kiosk /kiosk --livecheck
 check 'Kiosk dependency readiness (/readyz)' "${compose[@]}" exec -T immich-kiosk /kiosk --readycheck
@@ -63,7 +85,10 @@ fi
 if [[ -n "$adb_serial" ]]; then
   check 'Frame ADB transport' adb -s "$adb_serial" get-state
   check 'FrameOS package' adb -s "$adb_serial" shell pidof com.wyattfleming.frameos
-  check 'Key Mapper sysbridge' adb -s "$adb_serial" shell pidof keymapper_sysbridge
+  check 'FrameOS default HOME component' frameos_default_home
+  check 'FrameOS resumed activity' frameos_resumed
+  informational_check 'Key Mapper sysbridge' 'Key Mapper sysbridge is not running (FrameOS direct keys remain available)' \
+    adb -s "$adb_serial" shell pidof keymapper_sysbridge
   if [[ -n "$router_config" ]]; then
     check 'Frame router state' adb -s "$adb_serial" shell sh /data/local/tmp/frame-mode-router.sh status "$router_config"
   fi

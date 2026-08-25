@@ -54,7 +54,8 @@ state; it cannot prove OEM hardware input.
 
 This repository cannot prove that a UPS exists, that Unraid BIOS settings restore
 power automatically, that the array mounts, or that Android resumes wireless ADB
-after a reboot. On the tested locked Android 10 frame, wireless ADB and Key
-Mapper's sysbridge require the documented trusted-USB recovery path after an
-ordinary reboot. Treat those as operator prerequisites, not checks this script
-can manufacture.
+after a reboot. On the tested locked Android 10 frame, wireless ADB may require
+the documented trusted-USB recovery path after an ordinary reboot. The sampler
+reports Key Mapper's sysbridge as informational: direct raw-key FrameOS controls
+remain the supported path when sysbridge is absent. Treat those as operator
+prerequisites, not checks this script can manufacture.
