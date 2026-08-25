@@ -42,5 +42,26 @@ class FrameConfigurationTest {
             "https://home-assistant.example.invalid/local/frameos.html?v=3#calendar",
             configuration?.homeAssistantUrl,
         )
+        assertEquals("weather.home", configuration?.weatherEntityId)
+    }
+
+    @Test
+    fun `accepts only a normalized weather entity ID`() {
+        val valid = FrameConfiguration.from(
+            photosUrl = "https://photos.example.invalid/",
+            homeAssistantUrl = "https://home-assistant.example.invalid/local/frameos.html",
+            weatherEntityId = "  weather.forecast_home  ",
+        )
+
+        assertEquals("weather.forecast_home", valid?.weatherEntityId)
+        listOf("", "sensor.temperature", "weather.home/../../api/config", "weather.home?token=x").forEach { invalid ->
+            assertNull(
+                FrameConfiguration.from(
+                    photosUrl = "https://photos.example.invalid/",
+                    homeAssistantUrl = "https://home-assistant.example.invalid/local/frameos.html",
+                    weatherEntityId = invalid,
+                ),
+            )
+        }
     }
 }
