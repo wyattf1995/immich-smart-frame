@@ -70,8 +70,8 @@ class WeatherPresenter(
                 (current.windSpeed ?: nearestHourly?.windSpeed)?.let { speed ->
                     val unit = current.windSpeedUnit?.let { " $it" }.orEmpty()
                     val bearing = current.windBearing ?: nearestHourly?.windBearing
-                    val direction = bearing?.let { " · ${formatWindDirection(it)}" }.orEmpty()
-                    add(WeatherMetric("Wind", "${formatNumber(speed)}$unit$direction"))
+                    val label = bearing?.let { "Wind ${formatWindDirection(it)}" } ?: "Wind"
+                    add(WeatherMetric(label, "${formatNumber(speed)}$unit"))
                 }
                 current.pressure?.let { pressure ->
                     val unit = current.pressureUnit?.let { " $it" }.orEmpty()
