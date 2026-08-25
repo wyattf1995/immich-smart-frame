@@ -1,0 +1,19 @@
+diff --git a/internal/immich/immich_album_registry_test.go b/internal/immich/immich_album_registry_test.go
+index d4d4d4d..f6f6f6f 100644
+--- a/internal/immich/immich_album_registry_test.go
++++ b/internal/immich/immich_album_registry_test.go
+@@ -29,6 +29,14 @@ func TestAlbumRestrictionRegistryBoundsAndExpiresEntries(t *testing.T) {
+ 	require.Equal(t, 1, registry.size(), "expired restrictions should be pruned during the next cold insert")
+ }
+ 
++func TestWarmAlbumRestrictionRegistryAllocatesNothing(t *testing.T) {
++	registry := newAlbumRestrictionRegistry(4, time.Minute, time.Now)
++	requestConfig := config.Config{ExcludedAlbums: []string{"one", "two", "three"}}
++	registry.get(requestConfig)
++	allocations := testing.AllocsPerRun(1_000, func() { _ = registry.get(requestConfig) })
++	require.Zero(t, allocations)
++}
++
+ func BenchmarkWarmAlbumRestrictionRegistry(b *testing.B) {
+ 	registry := newAlbumRestrictionRegistry(4, time.Minute, time.Now)
+ 	requestConfig := config.Config{ExcludedAlbums: []string{"one", "two", "three"}}
