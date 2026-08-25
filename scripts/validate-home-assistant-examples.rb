@@ -119,6 +119,12 @@ unless history_card && history_card["hours_to_show"] == 24 &&
        history_card.fetch("entities", []).include?("weather.home")
   fail_validation("Weather must retain a 24-hour condition history")
 end
+
+activity_card = weather_cards.find { |card| card["type"] == "logbook" }
+unless activity_card && activity_card["hours_to_show"] == 24 &&
+       activity_card.dig("target", "entity_id") == ["weather.home"]
+  fail_validation("Weather must show the recent condition activity")
+end
 unless camera_view["type"] == "panel" && camera_view["animated_background"] == "neutral"
   fail_validation("Cameras must remain a neutral-background panel view")
 end
