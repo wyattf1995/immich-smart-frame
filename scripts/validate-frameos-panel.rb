@@ -55,6 +55,8 @@ required = [
   "state.pendingShadowHosts.forEach((host) =>",
   "state.pendingShadowHosts.delete(host)",
   "pendingShadowHosts: new Set()",
+  "shadowProbeExpired: false",
+  "state.shadowProbeExpired = true",
   "state.rootProbeTimer = window.setTimeout",
   "window.clearTimeout(state.rootProbeTimer)",
   "const readinessRequirements = Object.freeze({",
@@ -115,6 +117,9 @@ pending_probe = panel[/const schedulePendingShadowRootProbe = \(state\) => \{.*?
 abort("FrameOS panel wrapper is missing its bounded pending-shadow-root probe") unless pending_probe
 if pending_probe.include?("inspectAddedSubtree(state.documentRoot")
   abort("FrameOS panel wrapper must not rescan the complete document while probing pending shadow hosts")
+end
+unless pending_probe.include?("state.shadowProbeExpired")
+  abort("FrameOS panel wrapper must not restart pending-shadow probes after the route deadline")
 end
 
 forbidden = [
