@@ -69,6 +69,22 @@ class WeatherRepositoryTest {
     }
 
     @Test
+    fun `keeps stale cached weather visible when session renewal is unavailable`() {
+        val cache = RecordingWeatherCache(cached = CachedWeatherSnapshot(snapshot, savedAtEpochMillis = 1_000L))
+        val remote = FakeWeatherRemote(WeatherRemoteResult.Success(snapshot.copy()))
+        val repository = WeatherRepository(
+            remote,
+            cache,
+            clock = { 122_000L },
+            freshForMillis = 60_000L,
+        )
+
+        assertEquals(WeatherLoadResult.Stale(snapshot), repository.load("weather.home", ""))
+        assertEquals(0, remote.calls)
+        assertEquals("weather_auth_required", cache.lastErrorMessage)
+    }
+
+    @Test
     fun `reports offline without a cache and auth required without leaking the token`() {
         val offlineCache = RecordingWeatherCache()
         val offline = WeatherRepository(
