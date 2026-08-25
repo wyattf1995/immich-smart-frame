@@ -122,6 +122,18 @@ unless pending_probe.include?("state.shadowProbeExpired")
   abort("FrameOS panel wrapper must not restart pending-shadow probes after the route deadline")
 end
 
+heading_contrast = panel[/const applyHeadingContrast = \(element, state\) => \{.*?\n        \};\n\n        const cameraVideoIsDecoded/m]
+abort("FrameOS panel wrapper is missing heading-contrast handling") unless heading_contrast
+heading_style_lookup_index = heading_contrast.index('headingShadow.querySelector("#frameos-heading-contrast")')
+heading_style_append_index = heading_contrast.index("headingShadow.append(style)")
+unless heading_style_lookup_index && heading_style_append_index && heading_style_lookup_index < heading_style_append_index
+  abort("FrameOS panel wrapper must not inject duplicate heading-contrast styles")
+end
+
+unless panel.match?(/panel\.addEventListener\("load", \(\) => \{\s*const current = currentPanelView\(\);\s*if \(!current\) \{\s*cancelRouteWork\(\);/m)
+  abort("FrameOS panel wrapper must release active route work before handling a non-panel iframe load")
+end
+
 forbidden = [
   "fetch(",
   "XMLHttpRequest",
