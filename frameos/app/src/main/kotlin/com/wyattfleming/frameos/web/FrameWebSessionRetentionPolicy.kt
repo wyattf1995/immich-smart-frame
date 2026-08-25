@@ -22,6 +22,7 @@ class FrameWebSessionRetentionPolicy(
         const val TRIM_MEMORY_RUNNING_LOW = ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW
         const val TRIM_MEMORY_RUNNING_CRITICAL = ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL
         const val TRIM_MEMORY_BACKGROUND = ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
-        const val HIDDEN_HOME_TTL_MILLIS = 5 * 60 * 1_000L
+        // Keep ordinary Home/Calendar returns warm; memory pressure still evicts immediately.
+        const val HIDDEN_HOME_TTL_MILLIS = 30 * 60 * 1_000L
     }
 }
