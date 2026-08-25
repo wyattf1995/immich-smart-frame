@@ -49,9 +49,12 @@ required = [
   "const waitForRouteReady = (readyView) =>",
   "ROUTE_READY_TIMEOUT_MILLIS",
   "ROOT_SHADOW_PROBE_INTERVAL_MILLIS",
-  "const scheduleHomeAssistantRootProbe = (state) =>",
-  'state.documentRoot.querySelector("home-assistant")',
-  "homeAssistant?.shadowRoot",
+  "const schedulePendingShadowRootProbe = (state) =>",
+  'element.localName.includes("-")',
+  "state.pendingShadowHosts.add(element)",
+  "state.pendingShadowHosts.forEach((host) =>",
+  "state.pendingShadowHosts.delete(host)",
+  "pendingShadowHosts: new Set()",
   "state.rootProbeTimer = window.setTimeout",
   "window.clearTimeout(state.rootProbeTimer)",
   "const readinessRequirements = Object.freeze({",
@@ -100,12 +103,18 @@ wait_for_route_ready = panel[/const waitForRouteReady = \(readyView\) => \{.*?\n
 abort("FrameOS panel wrapper is missing waitForRouteReady") unless wait_for_route_ready
 deadline_index = wait_for_route_ready.index("state.deadlineTimer = window.setTimeout")
 initial_inspection_index = wait_for_route_ready.index("inspectAddedSubtree(documentRoot, state)")
-root_probe_index = wait_for_route_ready.index("scheduleHomeAssistantRootProbe(state)")
+root_probe_index = wait_for_route_ready.index("schedulePendingShadowRootProbe(state)")
 unless deadline_index && initial_inspection_index && deadline_index < initial_inspection_index
   abort("FrameOS panel wrapper must arm the deadline before synchronous initial readiness inspection")
 end
 unless root_probe_index && initial_inspection_index < root_probe_index
-  abort("FrameOS panel wrapper must probe for a late Home Assistant shadow root after initial inspection")
+  abort("FrameOS panel wrapper must probe pending custom-element shadow roots after initial inspection")
+end
+
+pending_probe = panel[/const schedulePendingShadowRootProbe = \(state\) => \{.*?\n        \};/m]
+abort("FrameOS panel wrapper is missing its bounded pending-shadow-root probe") unless pending_probe
+if pending_probe.include?("inspectAddedSubtree(state.documentRoot")
+  abort("FrameOS panel wrapper must not rescan the complete document while probing pending shadow hosts")
 end
 
 forbidden = [
