@@ -17,6 +17,7 @@ COPY backend-performance.patch /tmp/backend-performance.patch
 COPY weighted-curation-tests.patch /tmp/weighted-curation-tests.patch
 COPY performance-regression-tests.patch /tmp/performance-regression-tests.patch
 COPY strict-backend-regression-tests.patch /tmp/strict-backend-regression-tests.patch
+COPY date-pool-concurrency-tests.patch /tmp/date-pool-concurrency-tests.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -33,7 +34,9 @@ RUN cd /src \
     && git apply --check /tmp/performance-regression-tests.patch \
     && git apply /tmp/performance-regression-tests.patch \
     && git apply --check /tmp/strict-backend-regression-tests.patch \
-    && git apply /tmp/strict-backend-regression-tests.patch
+    && git apply /tmp/strict-backend-regression-tests.patch \
+    && git apply --check /tmp/date-pool-concurrency-tests.patch \
+    && git apply /tmp/date-pool-concurrency-tests.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
