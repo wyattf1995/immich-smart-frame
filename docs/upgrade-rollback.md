@@ -31,6 +31,12 @@ Then verify:
 - the active curation profile still works;
 - logs show no patch-application or startup failures.
 
+If the deployment also uses FrameOS, stage the new APK and router separately.
+Install the APK with `adb install -r` so configuration and encrypted sessions
+remain intact. Exercise Photos, Home, Weather, Cameras, and Calendar through a
+staged router path before renaming it into place. Keep the prior router and
+private config under distinct known-good names on the frame.
+
 ## Rollback flow
 
 If the new revision fails, roll back to the last known-good repository tag:
@@ -45,6 +51,12 @@ docker compose ps
 
 Rollback is safe because secrets and active config live outside Git in `.env`,
 `config/config.yaml`, and `secrets/immich_api_key`.
+
+FrameOS rollback is independent of the container rollback. Disable its two
+gesture rules, restore the verified legacy router/config pair with blank
+`FRAMEOS_*` settings, and confirm that Fully resumes Photos and Firefox resumes
+Home Assistant. Do not clear app data: that is not required to disable FrameOS
+and would remove authentication and recovery state.
 
 ## Versioning expectations
 

@@ -1,9 +1,15 @@
-# Optional Home Assistant wall panel
+# Home Assistant wall panel
 
-The frame can keep Immich photos in Fully Kiosk Browser while Firefox displays
-an optional Home Assistant dashboard. This companion setup is deliberately
-separate from the slideshow container: Immich Kiosk remains useful even when
-Home Assistant, Firefox, or the optional mappings are unavailable.
+FrameOS is the preferred full-screen host for the frame's Home Assistant
+dashboard. It embeds GeckoView, retains one authenticated Home Assistant
+session, and routes Home, Cameras, and Calendar through one same-origin iframe.
+That removes Firefox's address bar and avoids creating or reloading tabs during
+normal view changes. The earlier Fully Kiosk plus Firefox arrangement remains
+available as a rollback.
+
+The companion dashboard is still separate from the slideshow container:
+Immich Kiosk remains useful even when Home Assistant or the optional mappings
+are unavailable.
 
 The privacy-safe example reproduces one verified 1920x1080 deployment with
 three views and an ambient background feature:
@@ -23,19 +29,17 @@ and
 
 ## Verification boundary
 
-The dashboard, four simultaneous camera feeds in Firefox, calendar, animated
-backgrounds, and direct browser `Tab`/`Shift+Tab`/`Enter` navigation were
-verified on one Lenovo CD-3L501F running stock Android 10. The tested software
-was Home Assistant Core 2026.8.3, Firefox 154, Fully Kiosk Browser 1.61.2, and
-Key Mapper 4.3.1 FOSS.
+The dashboard, four simultaneous camera feeds, calendar, animated backgrounds,
+same-document Home Assistant routing, and direct `Tab`/`Shift+Tab`/`Enter`
+navigation were verified on one Lenovo CD-3L501F running stock Android 10.
+FrameOS direct routing and native Weather were also exercised on that mounted
+frame and an Android emulator. The tested Home Assistant release was Core
+2026.8.3.
 
-Physical volume/star handling remains **UNVERIFIED** end to end. The mappings
-are supplied for review and testing, not as a claim that every firmware build
-or orientation emits the same input. On the tested unit, an ordinary full
-reboot restored raw native-gesture events after Lenovo's OEM input path stopped
-emitting them, and both gesture directions then activated the pre-router
-destination mappings. The cyclic router mapping still needs a physical
-post-import test.
+Physical OEM gesture direction remains deployment-specific and is
+**UNVERIFIED** after any mapping, orientation, or router change until a person
+tests it on the mounted frame. The mappings are supplied for review and testing,
+not as a claim that every firmware build or orientation emits the same input.
 
 That reboot also stopped wireless ADB and Key Mapper's Expert Mode sysbridge.
 Fully returned automatically, but gesture mappings did not reconnect until the
@@ -43,16 +47,20 @@ official Key Mapper `start.sh` command was run through trusted USB ADB. Reboot
 only with that recovery path available; do not unlock or reset the frame for a
 gesture fault.
 
-## Why two browsers
+## Why FrameOS embeds GeckoView
 
-Fully Kiosk remains the photo browser because it provides a reliable fullscreen
-slideshow. On the tested stock firmware, Fully uses Android System WebView 74.
+On the tested stock firmware, Fully Kiosk uses Android System WebView 74.
 Nest's H.264 WebRTC sessions connected and received data there but decoded no
-video frames. Firefox's bundled GeckoView rendered four live feeds together,
-so Firefox hosts Home Assistant while Fully hosts Immich.
+video frames. Gecko rendered four live feeds together, so FrameOS embeds
+GeckoView for both the photo and Home Assistant surfaces while keeping their
+sessions isolated.
 
-This is a model-specific renderer result, not a general Fully Kiosk limitation.
-Use one browser when it can render all of your content.
+Only one session is attached and active at a time. Photos stays warm for quick
+return; Home Assistant stays authenticated and routes among Home, Cameras, and
+Calendar without recreating its iframe. Media is suspended when a surface is
+inactive, and leaving Cameras routes the shared Home Assistant surface away
+from the live grid so decoder resources can settle. This is a model-specific
+renderer result, not a general Fully Kiosk limitation.
 
 ## Home Assistant prerequisites
 
@@ -72,6 +80,36 @@ Keep Home Assistant private behind a trusted LAN, VPN, or authenticated reverse
 proxy. Never embed a token, password, public camera URL, or owner credential in
 the dashboard. Review [Security](../SECURITY.md) and
 [Device setup](device-setup.md#lock-down-the-frame-network) first.
+
+## Deploy the FrameOS wrapper
+
+Copy [`frameos-panel.html`](../examples/frameos/frameos-panel.html) and
+[`frameos-oauth.html`](../examples/frameos/frameos-oauth.html) to Home
+Assistant's `/config/www/` directory. The first becomes the warm dashboard
+wrapper at `/local/frameos-panel.html`; the second returns native Weather's
+OAuth result to the app.
+
+The wrapper contains exactly one full-viewport iframe. Its fragments map to the
+three dashboard routes:
+
+| Wrapper fragment | Home Assistant route |
+| --- | --- |
+| `#home` | `/wall-panel/home?kiosk` |
+| `#cameras` | `/wall-panel/cameras?kiosk` |
+| `#calendar` | `/wall-panel/calendar?kiosk` |
+
+When the Home Assistant shell is ready, changes use its history and
+`location-changed` event instead of reloading the iframe. Login and recovery
+pages intentionally fall back to one same-origin navigation. The wrapper adds
+no external scripts, stores no credentials, and has no visible steady-state
+chrome.
+
+Weather is deliberately native rather than another dashboard fragment. That
+lets it retain the last successful forecast, show all 24 hourly entries in
+automatic pages, and draw stable terrain with subtle condition-specific sun,
+cloud, rain, snow, fog, wind, night-sky, and shooting-star animation. Animated
+conditions redraw at a bounded 20 frames per second; static scenes sleep between
+hourly-page changes.
 
 ## Prepare the weather media
 
@@ -116,15 +154,17 @@ open. Avoid battery cameras or omit unreliable feeds. For Google Nest, current
 WebRTC models provide live views and event entities but not Home Assistant's
 server-side recording actions.
 
-## Optional physical-key navigation
+## Contextual physical-key navigation
 
-The example Key Mapper export encodes these browser-wide actions:
+The example Key Mapper export emits standard keyboard events. FrameOS assigns
+them by active view:
 
-| Physical input | Browser action |
-| --- | --- |
-| Volume Down | `Tab` |
-| Volume Up | `Shift+Tab` |
-| Star, observed as scan code 255 | `Enter` |
+| Physical input | Photos | Weather | Home / Cameras / Calendar |
+| --- | --- | --- | --- |
+| Volume Down | Next photo | Next hourly page | `Tab` |
+| Volume Up | Previous photo | Previous hourly page | `Shift+Tab` |
+| Star, observed as scan code 255 | Play/pause | Connect when needed | `Enter` |
+| Long Star | Home | Home | Home |
 
 Back up the existing Key Mapper configuration, import the example with
 **Append**, and review every rule before enabling it. On the tested calendar,
@@ -133,20 +173,21 @@ keyboard focus traversed Today, Previous, Next, Month, Day, then List (7 days).
 The star button may already have a recovery mapping used to approve Android's
 USB-debugging prompt. A second global scan-code-255 rule can interact with that
 action. Preserve the recovery path until a dialog-scoped replacement is proven,
-and treat the combined physical behavior as **UNVERIFIED** until tested.
+and verify the combined physical behavior on the mounted device.
 
 The tested frame also observed native gesture scan codes 249, 251, and 252.
 Their direction relationship can change with orientation, so record gestures
 on your own unit before assigning them. The optional
 [frame mode router](frame-mode-router.md) publishes two disabled scan-code
-examples and cycles Photos, Home, Cameras, and Calendar in either direction.
+examples and cycles Photos, Home, Weather, Cameras, and Calendar in either
+direction.
 
 ## Rollback and recovery
 
 - Export or back up Key Mapper before importing any mappings.
 - Save the current raw Lovelace configuration before replacing it.
 - Keep a USB-C OTG mouse as recovery input.
-- Do not clear Fully, Firefox, WebView, or Key Mapper data as a routine fix.
+- Do not clear Fully, Firefox, FrameOS, or Key Mapper data as a routine fix.
 - Wireless ADB does not survive reboot on the locked stock firmware. Rebooting
   can turn a browser problem into a new physical-access session.
 - Key Mapper Expert Mode also needs its displayed `start.sh` command after a

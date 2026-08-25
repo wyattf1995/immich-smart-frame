@@ -210,16 +210,20 @@ See [Device setup](docs/device-setup.md) and
 MediaTek-specific service failures encountered during testing. The device guide
 also covers VLAN and firewall isolation for a dedicated Android 10 frame.
 
-## Optional Home Assistant companion
+## Optional FrameOS and Home Assistant companion
 
-The same no-touch frame can keep Immich photos in Fully Kiosk Browser while
-Firefox displays a Home Assistant Home, camera, or calendar view. The optional
-[Home Assistant wall-panel guide](docs/home-assistant-wall-panel.md) includes a
-privacy-safe dashboard example, portable local weather-loop builder, and a
-reviewable Key Mapper profile. The separate
-[frame mode router](docs/frame-mode-router.md) can turn two repeatable gestures
-into a circular Photos/Home/Cameras/Calendar control. Home Assistant is not
-required for the slideshow.
+FrameOS can host the slideshow and Home Assistant in one full-screen Android
+app built for the no-touch Lenovo frame. It keeps separate warm Gecko sessions
+for Photos and Home Assistant, adds a native cached Weather view with subtle
+condition-driven animation, and routes Home, Cameras, and Calendar through one
+same-origin iframe without browser chrome or repeated tab loads.
+
+The [Home Assistant wall-panel guide](docs/home-assistant-wall-panel.md)
+includes the privacy-safe dashboard and local wrapper. The protected
+[FrameOS router](docs/frame-mode-router.md) turns two repeatable OEM gestures
+into the circular Photos/Home/Weather/Cameras/Calendar control and documents
+contextual volume/star behavior, deployment, verification, and legacy
+Fully-plus-Firefox rollback. Home Assistant remains optional for the slideshow.
 
 ## Validation
 

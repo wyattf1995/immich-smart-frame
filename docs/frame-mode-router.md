@@ -1,162 +1,214 @@
-# Gesture-driven frame mode router
+# Gesture-driven FrameOS router
 
-The optional router turns two repeatable hardware inputs into a circular set of
-display modes:
+FrameOS turns the Lenovo frame into one full-screen, no-touch application with
+five circular views:
 
 ```text
-Photos <-> Home <-> Cameras <-> Calendar <-> Photos
+Photos <-> Home <-> Weather <-> Cameras <-> Calendar <-> Photos
 ```
 
-Photos stays in Fully Kiosk Browser. The three Home Assistant views stay in a
-single Firefox task, and `--activity-reorder-to-front` avoids creating a new
-tab for every transition. The router records the current logical view in a
-small state file so the same two inputs work as forward and backward controls.
+The router translates the frame's two OEM gesture events into protected
+FrameOS commands. FrameOS then changes views without opening browser tabs or
+showing an address bar:
 
-This component is independent of the Immich Kiosk container. A router failure
-does not stop the normal photo slideshow.
+- Photos and Home Assistant each retain one warm Gecko session.
+- Home, Cameras, and Calendar share one Home Assistant iframe and change its
+  route in place.
+- Weather is native, caches the last forecast, and renders condition-specific
+  scenes without a browser.
+- Leaving a legacy browser releases its background media processes; subsequent
+  FrameOS-to-FrameOS transitions stay on the warm path.
+
+The old Fully Kiosk plus Firefox deployment remains a supported rollback. With
+the `FRAMEOS_*` settings blank, the same script uses the legacy four-view cycle
+without Weather.
 
 ## Verification boundary
 
-Direct `next`, `prev`, and `show` commands were exercised over ADB on one
-Lenovo CD-3L501F running stock Android 10 with Firefox 154, Fully Kiosk Browser
-1.61.2, and Key Mapper 4.3.1 FOSS. Repeated Android `VIEW` intents reused the
-existing Firefox tab in that test. The small post-navigation content swipe
-collapsed Firefox's toolbar on the Home, camera-grid, and fixed calendar
-layouts.
+The protected receiver, direct `show` commands for all five destinations, the
+forward/reverse cycle, warm Home Assistant routing, native Weather UI, and
+foreground recovery were exercised on a mounted Lenovo CD-3L501F running stock
+Android 10. The same five-view contract is covered by the repository tests and
+was also exercised on an Android emulator.
 
-The included scan-code rules are deliberately **disabled**. Lenovo gesture
-directions can change with frame rotation, firmware state, and the input device
-selected in Key Mapper. On the tested unit, a full device reboot restored raw
-gesture events after the OEM input path stopped emitting them, but the new
-cyclic mapping still requires one physical forward/backward test after import.
-Do not treat scan codes 251 and 252 as universal directions.
-
-Firefox's scroll response is a practical toolbar collapse, not a permanent
-fullscreen or browser-policy guarantee. A slow page load or future Firefox
-release can make the toolbar visible again.
+OEM gesture directions are still hardware input, not Android touch gestures.
+They can change with frame rotation, firmware state, and the input device
+selected in Key Mapper. Record and test one real gesture in each direction after
+installing the router. Do not treat scan codes 251 and 252 as universal
+directions.
 
 ## Files
 
 - [`frame-mode-router.sh`](../examples/frame-mode-router/frame-mode-router.sh)
-  contains the state machine and Android launch commands.
+  contains the five-view state machine and protected launch sequence.
 - [`frame-mode-router.example.conf`](../examples/frame-mode-router/frame-mode-router.example.conf)
-  keeps deployment URLs outside the reusable script.
+  keeps deployment values outside the reusable script.
 - [`keymapper-mode-router.example.json`](../examples/frame-mode-router/keymapper-mode-router.example.json)
-  contains two disabled Key Mapper rules for review.
+  contains two disabled Key Mapper gesture rules for review.
+- [`frameos-panel.html`](../examples/frameos/frameos-panel.html) is the
+  same-origin, single-iframe Home Assistant wrapper.
+- [`frameos-oauth.html`](../examples/frameos/frameos-oauth.html) is the local
+  OAuth return page used by native Weather.
 
-## Back up before changing Key Mapper
+## Back up first
 
-Export **all** existing Key Mapper rules and move the resulting ZIP off the
-frame. Verify that the ZIP opens and contains `data.json`. Preserve any rule
-that approves Android's USB-debugging dialog; that is a recovery path on this
-no-touch device.
+Export **all** existing Key Mapper rules and move the ZIP off the frame. Verify
+that it opens and contains `data.json`. Preserve any rule that approves the
+Android USB-debugging dialog; it is an important recovery path on a no-touch
+device.
 
-Use **Append** for the example import. `Replace` deletes the live rule list
-before inserting the imported list and should be reserved for a deliberate,
-verified full backup restore.
+Use **Append** for example imports. `Replace` deletes the live rule list and
+should be used only for a deliberate restore from a verified full backup.
+
+Also retain a known-good copy of the active router and config on the device.
+The router can be staged under a `.new` name, exercised directly, and renamed
+into place only after every view succeeds.
+
+## Install and provision FrameOS
+
+FrameOS requires JDK 17 and an Android SDK:
+
+```sh
+cd frameos
+./gradlew testDebugUnitTest lintDebug assembleDebug
+adb -s DEVICE_SERIAL install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Deploy the two local pages to Home Assistant's `/config/www/` directory so they
+are available as `/local/frameos-panel.html` and `/local/frameos-oauth.html`.
+Keep them same-origin with the configured Home Assistant URL.
+
+Initial provisioning goes through a receiver protected by Android's
+`android.permission.DUMP`; ordinary applications cannot send it. Run the
+broadcast from an explicitly targeted trusted ADB shell, then foreground the
+activity:
+
+```sh
+adb -s DEVICE_SERIAL shell am broadcast --user 0 \
+  -a com.wyattfleming.frameos.CONTROL \
+  -n com.wyattfleming.frameos/.control.FrameControlReceiver \
+  --es frameos.photos_url 'http://FRAME-LAN-HOST:3000/' \
+  --es frameos.home_assistant_url 'https://HOME-ASSISTANT-HOST/' \
+  --es frameos.weather_entity_id 'weather.forecast_home'
+adb -s DEVICE_SERIAL shell am start --activity-reorder-to-front \
+  -n com.wyattfleming.frameos/.MainActivity
+```
+
+Do not put a password, access token, camera URL, or other credential in these
+commands. Home Assistant authentication occurs in its own browser session, and
+native Weather stores the resulting OAuth session with Android Keystore.
 
 ## Install the router
 
-Prepare a private deployment copy of the example config on the computer:
+Prepare a private config from the example. Set all three `FRAMEOS_*` values:
 
 ```sh
-cp examples/frame-mode-router/frame-mode-router.example.conf /tmp/frame-mode-router.conf
-${EDITOR:-vi} /tmp/frame-mode-router.conf
+FRAMEOS_PACKAGE='com.wyattfleming.frameos'
+FRAMEOS_ACTIVITY='com.wyattfleming.frameos/.MainActivity'
+FRAMEOS_RECEIVER='com.wyattfleming.frameos/.control.FrameControlReceiver'
 ```
 
-Replace the three `example.invalid` URLs with the frame-accessible Home
-Assistant routes. Do not add a password, access token, camera URL, or other
-credential. The config is sourced as trusted shell input: write it yourself,
-keep it private, and never install one received from an untrusted source. Then
-install both files over an explicitly targeted USB ADB connection:
+The legacy Home, Cameras, and Calendar URLs remain syntactically required but
+are not opened while FrameOS is enabled. They may remain safe
+`https://*.invalid` placeholders in a FrameOS-only config. The config is
+sourced as trusted shell input, so write it yourself and never install one from
+an untrusted source.
+
+Stage and verify both files over an explicitly targeted ADB connection:
 
 ```sh
 adb -s DEVICE_SERIAL push examples/frame-mode-router/frame-mode-router.sh \
-  /data/local/tmp/frame-mode-router.sh
-adb -s DEVICE_SERIAL push /tmp/frame-mode-router.conf \
-  /data/local/tmp/frame-mode-router.conf
-adb -s DEVICE_SERIAL shell chmod 700 /data/local/tmp/frame-mode-router.sh
-adb -s DEVICE_SERIAL shell chmod 600 /data/local/tmp/frame-mode-router.conf
+  /data/local/tmp/frame-mode-router.sh.new
+adb -s DEVICE_SERIAL push /path/to/private-frame-mode-router.conf \
+  /data/local/tmp/frame-mode-router.conf.new
+adb -s DEVICE_SERIAL shell chmod 700 \
+  /data/local/tmp/frame-mode-router.sh.new
+adb -s DEVICE_SERIAL shell chmod 600 \
+  /data/local/tmp/frame-mode-router.conf.new
+
+adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh.new \
+  show photos /data/local/tmp/frame-mode-router.conf.new
+adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh.new \
+  show home /data/local/tmp/frame-mode-router.conf.new
+adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh.new \
+  show weather /data/local/tmp/frame-mode-router.conf.new
+adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh.new \
+  show cameras /data/local/tmp/frame-mode-router.conf.new
+adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh.new \
+  show calendar /data/local/tmp/frame-mode-router.conf.new
 ```
 
-Exercise every destination directly before assigning hardware input:
+After visual verification, atomically rename the staged files to
+`/data/local/tmp/frame-mode-router.sh` and
+`/data/local/tmp/frame-mode-router.conf`. Compare the deployed SHA-256 with the
+local source. Keep the prior known-good router under a distinct backup name.
 
-```sh
-adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh show photos
-adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh show home
-adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh show cameras
-adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh show calendar
-adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh status
-```
+The router's state and lock paths are under `/data/local/tmp`. Missing or
+malformed state safely defaults to Home. Rapid duplicate transitions are
+rejected by an atomic lock directory.
 
-The default state and lock paths are under `/data/local/tmp`. A foreground
-Fully activity always overrides stale state as `photos`; Firefox uses the last
-saved Home Assistant mode. Missing or malformed state safely defaults to
-`home`.
+## Contextual no-touch controls
 
-## Record and map the inputs
+Mode gestures and within-view controls remain separate:
 
-Keep USB attached and record the frame's actual events while performing one
-gesture in each direction:
+| Physical input | FrameOS action |
+| --- | --- |
+| Forward gesture | Next view in the five-view cycle |
+| Reverse gesture | Previous view in the five-view cycle |
+| Volume Down | Next photo, next Weather page, or `Tab` in Home Assistant |
+| Volume Up | Previous photo, previous Weather page, or `Shift+Tab` in Home Assistant |
+| Star | Primary action or `Enter` in Home Assistant |
+| Long Star | Return directly to Home |
+
+The native Weather view automatically rotates through all 24 forecast hours;
+the volume buttons move those pages manually. Calendar focus can reach its
+Today, previous/next, and view-mode controls. The same Tab/Enter behavior works
+for future focusable controls added to the Home and Cameras dashboards.
+
+## Record and map the gesture inputs
+
+Keep trusted ADB attached while recording the actual frame events:
 
 ```sh
 adb -s DEVICE_SERIAL shell getevent -lt
 ```
 
-Import the example JSON with **Append**, inspect both disabled rules, and
-retarget or swap their triggers to match the recorded device and direction.
-The actions must remain:
+Import the Key Mapper example with **Append**, inspect both disabled rules, and
+retarget or swap their triggers to the observed device and direction. Their
+actions must remain:
 
 ```text
 sh /data/local/tmp/frame-mode-router.sh next
 sh /data/local/tmp/frame-mode-router.sh prev
 ```
 
-Set each Key Mapper `Execute with ADB` timeout to at least 30,000 ms as a
-precaution for slow camera-page loads on this hardware. Enable the rules only
+Set `Execute with ADB` timeouts to at least 30,000 ms. Enable the rules only
 after confirming that no existing global rule uses the same trigger.
 
-The separate
-[physical-key navigation profile](home-assistant-wall-panel.md#optional-physical-key-navigation)
-can map Volume Down, Volume Up, and Star to `Tab`, `Shift+Tab`, and `Enter`
-inside a view. Keep those browser-focus actions separate from mode routing.
+## Reboot and recovery
 
-## Reboot and Expert Mode
-
-Key Mapper's accessibility setting and rule list persist, but Expert Mode's
-ADB sysbridge did not auto-start after an ordinary reboot on the tested Android
-10 firmware. With trusted USB ADB attached, open Key Mapper's Expert Mode page
-and run the exact command it displays. For Key Mapper 4.3.1 FOSS it was:
+Key Mapper's accessibility setting and rules persist, but its Expert Mode ADB
+sysbridge did not auto-start after an ordinary reboot on the tested Android 10
+firmware. With trusted ADB attached, open Key Mapper's Expert Mode page and run
+the exact command it displays. For Key Mapper 4.3.1 FOSS it was:
 
 ```sh
 adb -s DEVICE_SERIAL shell sh \
   /data/user_de/0/io.github.sds100.keymapper/start.sh
 ```
 
-Verify that Key Mapper says `Running`, no rule says `Trigger device not
-connected`, and the cloned gesture input exists before testing a swipe. This
-manual bridge step is also why the router is not a reboot-proof substitute for
-physical maintenance access.
+Verify that Key Mapper reports `Running`, its accessibility service is bound,
+and the gesture input device exists. Do not reboot this no-touch frame without
+a trusted USB recovery path. Wireless ADB is privileged shell access and did
+not survive reboot on the locked tested firmware; do not expose it to a
+general-purpose LAN.
 
-Wireless ADB is privileged shell access and did not survive reboot on the
-locked tested firmware. Do not depend on it for the Expert Mode restart, and do
-not leave TCP ADB enabled on a general-purpose LAN.
+If a command is interrupted and leaves the exact lock directory behind, first
+confirm that no router command is running, then remove only the configured
+lock directory.
 
-## Operation and recovery
-
-Rapid duplicate transitions are rejected by an atomic lock directory. If a
-process is interrupted and leaves that exact lock behind, first confirm that no
-router command is running, then remove only
-`/data/local/tmp/frame-mode-router.lock`.
-
-If the wrong direction opens:
-
-1. Disable both router rules.
-2. Confirm the raw scan code and input-device identity again.
-3. Swap the two triggers; do not rewrite the mode order.
-4. Re-enable one rule at a time and test the full loop.
-
-For rollback, disable the two router mappings and restore the verified Key
-Mapper export. The script and config can remain inert. Do not clear Fully,
-Firefox, WebView, or Key Mapper app data as routine troubleshooting; those
-actions remove useful sessions and recovery state.
+For rollback, disable the two gesture mappings and restore the verified Key
+Mapper export plus the known-good router/config pair. The legacy config keeps
+all `FRAMEOS_*` settings blank and resumes Fully for Photos and Firefox for
+Home Assistant. Do not clear Fully, Firefox, FrameOS, or Key Mapper app data as
+routine troubleshooting; that removes useful sessions and recovery state.
