@@ -55,6 +55,13 @@ class FrameWebSurface(
                     return GeckoResult.fromValue(if (allowed) AllowOrDeny.ALLOW else AllowOrDeny.DENY)
                 }
             }
+            session.permissionDelegate = object : GeckoSession.PermissionDelegate {
+                override fun onContentPermissionRequest(
+                    session: GeckoSession,
+                    perm: GeckoSession.PermissionDelegate.ContentPermission,
+                ): GeckoResult<Int>? = FrameContentPermissionPolicy.responseFor(perm.permission)
+                    ?.let { response -> GeckoResult.fromValue(response) }
+            }
             session.progressDelegate = object : GeckoSession.ProgressDelegate {
                 override fun onPageStart(session: GeckoSession, url: String) {
                     listener.onPageLoading(label, true)
