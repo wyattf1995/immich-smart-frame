@@ -130,12 +130,29 @@ class FrameWebSurface(
             }
         }
 
+        fun setActive(active: Boolean) = runWhenSessionUsable {
+            session.setActive(active)
+        }
+
+        fun setFocused(focused: Boolean) = runWhenSessionUsable {
+            session.setFocused(focused)
+        }
+
         fun close() {
+            if (!crashRecovery.canUseSession) return
             runCatching {
                 session.setFocused(false)
                 session.setActive(false)
                 session.stop()
                 session.close()
+            }.onFailure { crashRecovery.markClosedByContentProcess() }
+        }
+
+        private fun runWhenSessionUsable(operation: () -> Unit) {
+            if (!crashRecovery.canUseSession) return
+            runCatching(operation).onFailure {
+                crashRecovery.markClosedByContentProcess()
+                reportUnavailable(this)
             }
         }
     }
@@ -146,6 +163,7 @@ class FrameWebSurface(
     private var homeAssistantSession: ManagedSession? = null
     private var cameraSession: ManagedSession? = null
     private var attachedSlot: FrameWebSlot? = null
+    private var geckoAttachedSession: ManagedSession? = null
     private val hiddenHomeLifecycle = FrameWebHiddenSessionLifecycle()
     private var preloadDeactivation: Runnable? = null
     private val evictHiddenHome = Runnable { evictHiddenHomeIfExpired() }
@@ -167,11 +185,11 @@ class FrameWebSurface(
         scheduleHiddenHomeEviction()
         if (!managed.loadState.shouldRequest(url)) return
         preloadDeactivation?.let(::removeCallbacks)
-        managed.session.setActive(true)
+        managed.setActive(true)
         managed.request(url)
         val deactivate = Runnable {
             if (hiddenHomeLifecycle.isCurrentPreload(generation) && homeAssistantSession === managed && attachedSlot != slot) {
-                managed.session.setActive(false)
+                managed.setActive(false)
             }
         }
         preloadDeactivation = deactivate
@@ -190,22 +208,24 @@ class FrameWebSurface(
         }
         val managed = sessionFor(slot)
         allSessions().filter { it !== managed }.forEach {
-            it.session.setActive(false)
-            it.session.setFocused(false)
+            cancelRecovery(it)
+            it.setActive(false)
+            it.setFocused(false)
         }
         if (attachedSlot != slot) {
-            if (session != null) releaseSession()
+            if (session != null) releaseAttachedSession()
             setSession(managed.session)
+            geckoAttachedSession = managed
             attachedSlot = slot
         }
         visibility = View.VISIBLE
-        managed.session.setActive(true)
+        managed.setActive(true)
         if (managed.loadState.shouldRequest(url)) {
             cancelRecovery(managed)
             managed.recoveryAttempts = 0
             managed.request(url)
         }
-        managed.session.setFocused(takeFocus)
+        managed.setFocused(takeFocus)
         if (takeFocus) requestFocus()
         contentDescription = managed.label
         if (slot != FrameWebSlot.HOME_ASSISTANT) scheduleHiddenHomeEviction()
@@ -215,11 +235,12 @@ class FrameWebSurface(
         visibility = View.GONE
         if (attachedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
         allSessions().forEach {
-            it.session.setFocused(false)
-            it.session.setActive(false)
+            cancelRecovery(it)
+            it.setFocused(false)
+            it.setActive(false)
         }
         if (attachedSlot == FrameWebSlot.HOME_ASSISTANT && session != null) {
-            releaseSession()
+            releaseAttachedSession()
             attachedSlot = null
         }
         scheduleHiddenHomeEviction()
@@ -230,7 +251,7 @@ class FrameWebSurface(
             disposeCameraSession()
             return
         }
-        attachedSlot?.let { slot -> sessionFor(slot).session.setActive(active) }
+        attachedSlot?.let { slot -> sessionFor(slot).setActive(active) }
     }
 
     fun movePhoto(forward: Boolean): Boolean {
@@ -259,7 +280,7 @@ class FrameWebSurface(
         retryCallbacks.values.forEach(::removeCallbacks)
         retryCallbacks.clear()
         hiddenHomeLifecycle.onEvicted()
-        if (session != null) releaseSession()
+        if (session != null) releaseAttachedSession()
         cameraSession?.close()
         cameraSession = null
         homeAssistantSession?.close()
@@ -295,7 +316,7 @@ class FrameWebSurface(
     private fun disposeCameraSession() {
         val disposable = cameraSession ?: return
         if (attachedSlot == FrameWebSlot.CAMERAS) {
-            if (session != null) releaseSession()
+            if (session != null) releaseAttachedSession()
             attachedSlot = null
         }
         disposable.close()
@@ -331,13 +352,13 @@ class FrameWebSurface(
     private fun reportUnavailable(managed: ManagedSession) {
         managed.loadState.recordFailure()
         listener.onPageUnavailable(managed.label)
-        if (managed.retryPending) return
+        if (managed.retryPending || visibility != View.VISIBLE || managed !== attachedManagedSession()) return
         scheduleRecovery(managed)
     }
 
     private fun scheduleRecovery(managed: ManagedSession) {
         val url = fallbackUrlFor(managed.loadState.recoveryUrl()) ?: return
-        val retry = recoveryPolicy.nextRetry(managed.recoveryAttempts) ?: return
+        val retry = recoveryPolicy.nextRetry(managed.recoveryAttempts)
         managed.recoveryAttempts = retry.attempt
         managed.retryPending = true
         listener.onPageRecovery(managed.label, retry.attempt, retry.delayMillis)
@@ -360,6 +381,11 @@ class FrameWebSurface(
     private fun cancelRecovery(managed: ManagedSession) {
         retryCallbacks.remove(managed)?.let(::removeCallbacks)
         managed.retryPending = false
+    }
+
+    private fun releaseAttachedSession() {
+        if (geckoAttachedSession?.crashRecovery?.canUseSession == false) return
+        runCatching(::releaseSession).onSuccess { geckoAttachedSession = null }
     }
 
     private fun attachedManagedSession(): ManagedSession? = attachedSlot?.let(::sessionFor)

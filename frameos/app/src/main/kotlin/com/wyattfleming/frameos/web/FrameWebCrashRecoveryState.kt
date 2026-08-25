@@ -6,6 +6,8 @@ class FrameWebCrashRecoveryState {
         private set
     var requiresReopen: Boolean = false
         private set
+    val canUseSession: Boolean
+        get() = !requiresReopen
 
     fun markClosedByContentProcess() {
         requiresReopen = true
