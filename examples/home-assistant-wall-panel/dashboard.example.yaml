@@ -261,7 +261,7 @@ animated_background:
           pouring: /local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4
           rainy: /local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4
           snowy: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
-          snowy-rainy: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
+          snowy-rainy: /local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4
           sunny: /local/wallpanel-weather/sunny.mp4?v=9fb6f0f237b4
           windy: /local/wallpanel-weather/sunny.mp4?v=9fb6f0f237b4
           windy-variant: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4

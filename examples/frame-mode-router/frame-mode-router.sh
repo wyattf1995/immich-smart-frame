@@ -206,7 +206,7 @@ open_firefox_mode() {
 }
 
 firefox_is_resumed() {
-  dumpsys activity activities 2>/dev/null | grep -q "$FIREFOX_PACKAGE"
+  dumpsys activity activities 2>/dev/null | grep 'mResumedActivity' | grep -Fq "$FIREFOX_PACKAGE"
 }
 
 wait_for_firefox_ready() {

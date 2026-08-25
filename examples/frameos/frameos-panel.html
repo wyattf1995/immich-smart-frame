@@ -109,7 +109,7 @@
         const ROUTE_READY_TIMEOUT_MILLIS = 12_000;
         const readinessRequirements = Object.freeze({
           home: Object.freeze({
-            primaryHeadings: Object.freeze(["at a glance", "home status", "weather"]),
+            primaryHeadings: Object.freeze(["at a glance", "home status", "weather", "hourly forecast"]),
           }),
           cameras: Object.freeze({ cameraCards: 4, cameraPlayers: 4 }),
           calendar: Object.freeze({ calendarRoot: "ha-full-calendar" }),
@@ -164,16 +164,65 @@
           }
         };
 
-        const cancelRouteWork = () => {
-          if (!activeRouteWork) return;
-          window.clearTimeout(activeRouteWork.deadlineTimer);
-          activeRouteWork.observers.forEach((observer) => observer.disconnect());
-          activeRouteWork.videoListeners.forEach(([video, listener]) => {
+        const disconnectRouteObservers = (state) => {
+          state.observers.forEach((observer) => observer.disconnect());
+          state.observers.length = 0;
+        };
+
+        const removeVideoListeners = (state) => {
+          state.videoListeners.forEach(([video, listener]) => {
             video.removeEventListener("loadeddata", listener);
             video.removeEventListener("canplay", listener);
             video.removeEventListener("playing", listener);
           });
+          state.videoListeners.length = 0;
+        };
+
+        const releaseRouteEvidence = (state) => {
+          disconnectRouteObservers(state);
+          removeVideoListeners(state);
+          state.primaryHeadings.clear();
+          state.calendarRoot = null;
+          state.cameraCards.clear();
+          state.cameraPlayers.clear();
+          state.cameraVideos.clear();
+          state.decodedVideos.clear();
+        };
+
+        const cancelRouteWork = () => {
+          if (!activeRouteWork) return;
+          window.clearTimeout(activeRouteWork.deadlineTimer);
+          releaseRouteEvidence(activeRouteWork);
           activeRouteWork = null;
+        };
+
+        const isActivePanelElement = (element, documentRoot) => {
+          const belongsToDocument = element && element.isConnected && element.ownerDocument === documentRoot;
+          return Boolean(belongsToDocument && documentRoot === panel.contentDocument);
+        };
+
+        const pruneSet = (elements, documentRoot) => {
+          elements.forEach((element) => {
+            if (!isActivePanelElement(element, documentRoot)) elements.delete(element);
+          });
+        };
+
+        const pruneRouteEvidence = (state) => {
+          const { documentRoot } = state;
+          state.primaryHeadings.forEach((element, heading) => {
+            if (!isActivePanelElement(element, documentRoot)) state.primaryHeadings.delete(heading);
+          });
+          if (!isActivePanelElement(state.calendarRoot, documentRoot)) state.calendarRoot = null;
+          [state.cameraCards, state.cameraPlayers, state.cameraVideos, state.decodedVideos].forEach((elements) => {
+            pruneSet(elements, documentRoot);
+          });
+          state.videoListeners = state.videoListeners.filter(([video, listener]) => {
+            if (isActivePanelElement(video, documentRoot)) return true;
+            video.removeEventListener("loadeddata", listener);
+            video.removeEventListener("canplay", listener);
+            video.removeEventListener("playing", listener);
+            return false;
+          });
         };
 
         const headingText = (element) => {
@@ -213,6 +262,7 @@
         const cameraVideoIsDecoded = (video) => Number(video.readyState) >= 2;
 
         const updateCameraVideo = (video, state) => {
+          if (state.ready || !isActivePanelElement(video, state.documentRoot)) return;
           state.decodedVideos.add(video);
           evaluateRouteReadiness(state);
         };
@@ -222,6 +272,7 @@
           state.observedRoots.add(root);
           const observer = new MutationObserver((records) => {
             if (activeRouteWork !== state || view !== state.view) return;
+            pruneRouteEvidence(state);
             records.forEach((record) => {
               record.addedNodes.forEach((node) => inspectAddedSubtree(node, state));
             });
@@ -231,20 +282,23 @@
         };
 
         const inspectElement = (element, state) => {
+          if (!isActivePanelElement(element, state.documentRoot)) return;
           if (element.shadowRoot) {
             observeRoot(element.shadowRoot, state);
             inspectAddedSubtree(element.shadowRoot, state);
           }
           if (state.view === "home" && element.localName === "hui-heading-card") {
             applyHeadingContrast(element, state);
-            readinessRequirements.home.primaryHeadings.forEach((heading) => {
-              if (headingText(element).includes(heading)) state.primaryHeadings.add(heading);
-            });
+            if (!state.ready) {
+              readinessRequirements.home.primaryHeadings.forEach((heading) => {
+                if (headingText(element).includes(heading)) state.primaryHeadings.set(heading, element);
+              });
+            }
           }
-          if (state.view === "calendar" && element.localName === readinessRequirements.calendar.calendarRoot) {
+          if (!state.ready && state.view === "calendar" && element.localName === readinessRequirements.calendar.calendarRoot) {
             state.calendarRoot = element;
           }
-          if (state.view !== "cameras") return;
+          if (state.ready || state.view !== "cameras") return;
           if (element.localName === "hui-picture-entity-card") state.cameraCards.add(element);
           if (element.localName === "ha-web-rtc-player") state.cameraPlayers.add(element);
           if (element.localName !== "video") return;
@@ -268,12 +322,14 @@
         };
 
         const cameraConnectionDetail = (state) => {
+          pruneRouteEvidence(state);
           const requirement = readinessRequirements.cameras;
           const decoded = `${state.decodedVideos.size}/${state.cameraVideos.size || "?"} decoded`;
           return `${state.cameraCards.size}/${requirement.cameraCards} cards, ${state.cameraPlayers.size}/${requirement.cameraPlayers} players, ${decoded}`;
         };
 
         const routeHasContent = (state) => {
+          pruneRouteEvidence(state);
           if (currentPanelView() !== state.view) return false;
           if (state.view === "home") {
             return state.primaryHeadings.size === readinessRequirements.home.primaryHeadings.length;
@@ -294,6 +350,12 @@
           state.deadlineTimer = null;
           showReady(state.view);
           focusPanel();
+          if (state.view === "home") {
+            // The long-lived Home observer only needs weak contrast bookkeeping.
+            state.primaryHeadings.clear();
+          } else {
+            releaseRouteEvidence(state);
+          }
         };
 
         const evaluateRouteReadiness = (state) => {
@@ -319,7 +381,7 @@
             observedRoots: new WeakSet(),
             styledHeadings: new WeakSet(),
             styledHeadingShadows: new WeakSet(),
-            primaryHeadings: new Set(),
+            primaryHeadings: new Map(),
             calendarRoot: null,
             cameraCards: new Set(),
             cameraPlayers: new Set(),
@@ -327,6 +389,7 @@
             decodedVideos: new Set(),
             observedVideos: new WeakSet(),
             videoListeners: [],
+            documentRoot,
           };
           activeRouteWork = state;
           observeRoot(documentRoot, state);
