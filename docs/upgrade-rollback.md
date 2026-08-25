@@ -31,11 +31,12 @@ Then verify:
 - the active curation profile still works;
 - logs show no patch-application or startup failures.
 
-If the deployment also uses FrameOS, stage the new APK and router separately.
-Install the APK with `adb install -r` so configuration and encrypted sessions
-remain intact. Exercise Photos, Home, Weather, Cameras, and Calendar through a
-staged router path before renaming it into place. Keep the prior router and
-private config under distinct known-good names on the frame.
+If the deployment also uses FrameOS, stage the signed release APK and router
+separately. Verify the APK signature and install it with `adb install -r` using
+the same signing certificate so configuration and encrypted sessions remain
+intact. Exercise Photos, Home, Weather, Cameras, and Calendar through a staged
+router path before renaming it into place. Keep the prior APK, router, and
+private config under distinct known-good names off the frame.
 
 ## Rollback flow
 

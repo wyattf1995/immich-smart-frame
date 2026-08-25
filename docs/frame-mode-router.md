@@ -70,9 +70,18 @@ FrameOS requires JDK 17 and an Android SDK:
 
 ```sh
 cd frameos
-./gradlew testDebugUnitTest lintDebug assembleDebug
-adb -s DEVICE_SERIAL install -r app/build/outputs/apk/debug/app-debug.apk
+./gradlew testDebugUnitTest lintRelease assembleRelease
+# Sign app/build/outputs/apk/release/app-release-unsigned.apk with the
+# deployment keystore kept outside this repository.
+adb -s DEVICE_SERIAL install -r /path/to/signed-frameos-release.apk
 ```
+
+Use the debug APK only for emulator or temporary development work. The
+permanent wall display should run a signed release build: release rejects the
+debug-only activity extras, while the `android.permission.DUMP`-protected
+receiver remains available to the trusted shell router. Installing a newer APK
+with `-r` and the same signing certificate preserves configuration and encrypted
+sessions.
 
 Deploy the two local pages to Home Assistant's `/config/www/` directory so they
 are available as `/local/frameos-panel.html` and `/local/frameos-oauth.html`.
