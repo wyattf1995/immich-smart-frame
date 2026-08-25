@@ -32,6 +32,7 @@ class WeatherPresenterTest {
 
         assertEquals("79°F", presentation.temperature)
         assertEquals("Clear night", presentation.condition)
+        assertEquals(WeatherCondition.CLEAR_NIGHT, presentation.sceneCondition)
         assertEquals("67%", presentation.metrics.single { it.label == "Humidity" }.value)
         assertEquals("3.1 mph", presentation.metrics.single { it.label == "Wind" }.value)
         assertEquals(24, presentation.hourly.size)
