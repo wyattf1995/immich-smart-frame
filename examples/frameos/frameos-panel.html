@@ -195,6 +195,7 @@
         const releaseRouteEvidence = (state) => {
           window.clearTimeout(state.rootProbeTimer);
           state.rootProbeTimer = null;
+          state.pendingShadowHosts.clear();
           disconnectRouteObservers(state);
           removeVideoListeners(state);
           state.primaryHeadings.clear();
@@ -306,8 +307,12 @@
         const inspectElement = (element, state) => {
           if (!isActivePanelElement(element, state.documentRoot)) return;
           if (element.shadowRoot) {
+            state.pendingShadowHosts.delete(element);
             observeRoot(element.shadowRoot, state);
             inspectAddedSubtree(element.shadowRoot, state);
+          } else if (!state.ready && element.localName.includes("-")) {
+            state.pendingShadowHosts.add(element);
+            schedulePendingShadowRootProbe(state);
           }
           if (state.view === "home" && element.localName === "hui-heading-card") {
             applyHeadingContrast(element, state);
@@ -343,18 +348,26 @@
           evaluateRouteReadiness(state);
         };
 
-        const scheduleHomeAssistantRootProbe = (state) => {
-          if (activeRouteWork !== state || state.ready || state.rootProbeTimer !== null) return;
+        const schedulePendingShadowRootProbe = (state) => {
+          if (
+            activeRouteWork !== state ||
+            state.ready ||
+            state.rootProbeTimer !== null ||
+            state.pendingShadowHosts.size === 0
+          ) return;
           state.rootProbeTimer = window.setTimeout(() => {
             state.rootProbeTimer = null;
             if (activeRouteWork !== state || state.ready) return;
-            const homeAssistant = state.documentRoot.querySelector("home-assistant");
-            if (!homeAssistant?.shadowRoot) {
-              scheduleHomeAssistantRootProbe(state);
-              return;
-            }
-            observeRoot(homeAssistant.shadowRoot, state);
-            inspectAddedSubtree(homeAssistant.shadowRoot, state);
+            state.pendingShadowHosts.forEach((host) => {
+              if (!isActivePanelElement(host, state.documentRoot)) {
+                state.pendingShadowHosts.delete(host);
+              } else if (host.shadowRoot) {
+                state.pendingShadowHosts.delete(host);
+                observeRoot(host.shadowRoot, state);
+                inspectAddedSubtree(host.shadowRoot, state);
+              }
+            });
+            schedulePendingShadowRootProbe(state);
           }, ROOT_SHADOW_PROBE_INTERVAL_MILLIS);
         };
 
@@ -385,6 +398,7 @@
           state.ready = true;
           window.clearTimeout(state.rootProbeTimer);
           state.rootProbeTimer = null;
+          state.pendingShadowHosts.clear();
           window.clearTimeout(state.deadlineTimer);
           state.deadlineTimer = null;
           showReady(state.view);
@@ -419,6 +433,7 @@
             rootProbeTimer: null,
             observers: [],
             observedRoots: new WeakSet(),
+            pendingShadowHosts: new Set(),
             styledHeadings: new WeakSet(),
             styledHeadingShadows: new WeakSet(),
             primaryHeadings: new Map(),
@@ -436,6 +451,7 @@
             if (activeRouteWork !== state || state.ready) return;
             window.clearTimeout(state.rootProbeTimer);
             state.rootProbeTimer = null;
+            state.pendingShadowHosts.clear();
             const detail = state.view === "cameras" ? cameraConnectionDetail(state) : "content is still loading";
             showStillConnecting(state.view, detail);
             focusPanel();
@@ -444,7 +460,7 @@
           // The initial document gets one bounded traversal. Afterwards each
           // observer only inspects the subtree that Home Assistant just added.
           inspectAddedSubtree(documentRoot, state);
-          scheduleHomeAssistantRootProbe(state);
+          schedulePendingShadowRootProbe(state);
         };
 
         const navigatePanel = (nextView) => {
