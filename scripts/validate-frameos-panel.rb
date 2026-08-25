@@ -20,10 +20,18 @@ required = [
   'aria-live="polite"',
   'id="loading"',
   "panel.contentWindow.focus()",
-  "const routeHasContent = (readyView) =>",
   "const waitForRouteReady = (readyView) =>",
   "ROUTE_READY_TIMEOUT_MILLIS",
-  "ROUTE_READY_POLL_MILLIS",
+  "const readinessRequirements = Object.freeze({",
+  "primaryHeadings",
+  "cameraCards",
+  "cameraPlayers",
+  "decodedVideos",
+  "new MutationObserver(",
+  "const inspectAddedSubtree = (node, state) =>",
+  "const cancelRouteWork = () =>",
+  "new WeakSet()",
+  "still connecting",
   "panel.src = nextPath",
 ]
 required.each do |contract|
@@ -36,6 +44,9 @@ abort("FrameOS panel wrapper iframe must select its initial route dynamically") 
 abort("FrameOS panel wrapper must not expose a weather web route") if panel.include?("/wall-panel/weather")
 abort("FrameOS panel wrapper must not include browser toolbar workarounds") if panel.match?(/requestFullscreen|scroll-rail|min-height:\s*calc/)
 abort("FrameOS panel wrapper must not declare readiness on a fixed 180ms delay") if panel.match?(/setTimeout\(\(\)\s*=>\s*\{\s*showReady.*?180\s*\)/m)
+abort("FrameOS panel wrapper must not retry full-DOM readiness scans every 100ms") if panel.include?("ROUTE_READY_POLL_MILLIS")
+abort("FrameOS panel wrapper must use its route observer for heading contrast") if panel.include?("startHeadingContrast")
+abort("FrameOS panel wrapper must disconnect route observers when superseded") unless panel.include?("observer.disconnect()")
 
 forbidden = [
   "fetch(",

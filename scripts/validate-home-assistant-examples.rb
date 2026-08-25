@@ -191,6 +191,12 @@ unless background_urls.all? { |url| url.is_a?(String) && url.start_with?("/local
   fail_validation("all background assets must use local /local/wallpanel-weather/ URLs")
 end
 
+weather_video_urls = [weather_group["default_url"], *weather_group.fetch("state_url").values]
+                      .select { |url| url.end_with?(".mp4") || url.include?(".mp4?") }
+unless weather_video_urls.all? { |url| url.match?(%r{\A/local/wallpanel-weather/[a-z-]+\.mp4\?v=[0-9a-f]{12,64}\z}) }
+  fail_validation("weather MP4 URLs must carry generated SHA-256 cache fingerprints")
+end
+
 keymapper = JSON.parse(File.read(FILES.fetch(:keymapper)))
 unless keymapper["keymap_db_version"] == 22 && keymapper["app_version"] == 259
   fail_validation("Key Mapper export must remain compatible with verified app/database versions")
@@ -227,6 +233,11 @@ fail_validation("loop builder must use a portable script-relative default") unle
 fail_validation("loop builder must keep foreground terrain fixed") if loop_builder.include?("zoompan")
 unless loop_builder.include?("between(t,7,9)") && loop_builder.include?("between(t,21,22.8)")
   fail_validation("clear-night loop must retain two occasional shooting-star windows")
+end
+unless loop_builder.include?("asset_fingerprint") &&
+       loop_builder.include?("dashboard.example.yaml") &&
+       loop_builder.include?("?v=")
+  fail_validation("loop builder must update dashboard MP4 URLs with their generated fingerprint")
 end
 
 guide = File.read(FILES.fetch(:guide))
