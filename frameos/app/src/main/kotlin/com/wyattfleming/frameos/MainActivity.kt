@@ -1,6 +1,8 @@
 package com.wyattfleming.frameos
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.Color
 import android.graphics.Typeface
@@ -8,6 +10,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.net.Uri
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
@@ -26,19 +29,56 @@ import com.wyattfleming.frameos.navigation.FrameIntent
 import com.wyattfleming.frameos.navigation.FrameMode
 import com.wyattfleming.frameos.navigation.FrameReducer
 import com.wyattfleming.frameos.navigation.FrameState
+import com.wyattfleming.frameos.navigation.ContextualFrameAction
+import com.wyattfleming.frameos.navigation.ContextualInputMapper
 import com.wyattfleming.frameos.navigation.PhysicalInputMapper
-import com.wyattfleming.frameos.ui.DemoContentView
+import com.wyattfleming.frameos.auth.AndroidKeystoreOAuthSessionStore
+import com.wyattfleming.frameos.auth.HomeAssistantOAuthClient
+import com.wyattfleming.frameos.auth.HomeAssistantOAuthEndpoint
+import com.wyattfleming.frameos.auth.OAuthCallbackVerifier
+import com.wyattfleming.frameos.auth.OAuthState
+import com.wyattfleming.frameos.auth.PendingOAuthStateStore
+import com.wyattfleming.frameos.auth.SharedPreferencesPendingOAuthStateStore
+import com.wyattfleming.frameos.config.FrameConfiguration
+import com.wyattfleming.frameos.config.FrameConfigurationStore
+import com.wyattfleming.frameos.security.FrameExternalControlPolicy
 import com.wyattfleming.frameos.ui.WeatherContentView
 import com.wyattfleming.frameos.ui.dp
+import com.wyattfleming.frameos.weather.HomeAssistantWeatherEndpoint
+import com.wyattfleming.frameos.weather.HomeAssistantWeatherParser
+import com.wyattfleming.frameos.weather.HomeAssistantWeatherRemote
+import com.wyattfleming.frameos.weather.SharedPreferencesWeatherCache
+import com.wyattfleming.frameos.weather.UrlConnectionHomeAssistantTransport
+import com.wyattfleming.frameos.weather.WeatherCoordinator
+import com.wyattfleming.frameos.weather.WeatherPresentation
+import com.wyattfleming.frameos.weather.WeatherPresenter
+import com.wyattfleming.frameos.weather.WeatherRepository
+import com.wyattfleming.frameos.web.FrameSurfaceRouter
+import com.wyattfleming.frameos.web.FrameSurfaceTarget
+import com.wyattfleming.frameos.web.FrameWebSlot
+import com.wyattfleming.frameos.web.FrameWebSurface
+import java.net.URI
+import java.security.SecureRandom
+import java.time.ZoneId
+import java.util.Locale
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import kotlin.math.abs
 
 class MainActivity : Activity() {
     private val reducer = FrameReducer()
     private val inputMapper = PhysicalInputMapper()
+    private val contextualInputMapper = ContextualInputMapper()
     private val handler = Handler(Looper.getMainLooper())
+    private val ioExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val secureRandom = SecureRandom()
+    private val externalControlPolicy by lazy {
+        FrameExternalControlPolicy(
+            debuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0,
+        )
+    }
 
     private lateinit var root: FrameLayout
-    private lateinit var content: DemoContentView
     private lateinit var weatherContent: WeatherContentView
     private lateinit var hud: LinearLayout
     private lateinit var hudLabel: TextView
@@ -46,9 +86,23 @@ class MainActivity : Activity() {
     private lateinit var loading: LinearLayout
 
     private var state = FrameState()
+    private var lastRenderedMode = state.mode
     private var starLongPressed = false
     private var volumeUpPressed = false
     private var volumeDownPressed = false
+    private lateinit var configurationStore: FrameConfigurationStore
+    private var configuration: FrameConfiguration? = null
+    private var oauthClient: HomeAssistantOAuthClient? = null
+    private var oauthEndpoint: HomeAssistantOAuthEndpoint? = null
+    private var oauthCallbackPageUrl: String? = null
+    private var pendingOAuthStateStore: PendingOAuthStateStore? = null
+    private var callbackVerifier: OAuthCallbackVerifier? = null
+    private var weatherCoordinator: WeatherCoordinator? = null
+    private var weatherNeedsAuthentication = false
+    private var weatherRequestGeneration = 0
+    private var surfaceRouter: FrameSurfaceRouter? = null
+    private var webSurface: FrameWebSurface? = null
+    private val slowPageLoads = mutableMapOf<String, Runnable>()
 
     private val hideHud = Runnable {
         hud.animate()
@@ -84,21 +138,96 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        configurationStore = FrameConfigurationStore(this)
+        val savedConfiguration = configurationStore.read()
+        configuration = if (externalControlPolicy.acceptsProvisioning(savedConfiguration != null)) {
+            persistProvisioning(intent) ?: savedConfiguration
+        } else {
+            savedConfiguration
+        }
         buildUi()
+        initializeWeatherRuntime()
         enterImmersiveMode()
         render(state, announce = false)
+        handleOAuthCallback(intent)
+        handleFrameCommand(intent)
         showStartupTransition()
         scheduleIdleReset()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOAuthCallback(intent)
+        handleFrameCommand(intent)
     }
 
     override fun onResume() {
         super.onResume()
         enterImmersiveMode()
+        render(state, announce = false)
+    }
+
+    override fun onPause() {
+        webSurface?.setContentActive(false)
+        super.onPause()
     }
 
     override fun onDestroy() {
+        weatherRequestGeneration += 1
+        ioExecutor.shutdownNow()
         handler.removeCallbacksAndMessages(null)
+        webSurface?.destroy()
         super.onDestroy()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        return when (val action = contextualInputMapper.map(state.mode, event.keyCode, event.isShiftPressed)) {
+            is ContextualFrameAction.PhotoStep -> {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    if (webSurface?.movePhoto(action.forward) == true) {
+                        showHud(if (action.forward) "Next photo" else "Previous photo")
+                    }
+                    scheduleIdleReset()
+                }
+                true
+            }
+            is ContextualFrameAction.WeatherPageStep -> {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    weatherContent.moveHourlyPage(action.forward)?.let(::showHud)
+                    scheduleIdleReset()
+                }
+                true
+            }
+            is ContextualFrameAction.ForwardToWeb -> {
+                val forwarded = if (action.keyCode != event.keyCode) {
+                    KeyEvent(
+                        event.downTime,
+                        event.eventTime,
+                        event.action,
+                        action.keyCode,
+                        event.repeatCount,
+                        event.metaState,
+                        event.deviceId,
+                        event.scanCode,
+                        event.flags,
+                        event.source,
+                    )
+                } else {
+                    event
+                }
+                val handled = forwardToWeb(forwarded)
+                if (handled) scheduleIdleReset()
+                handled || super.dispatchKeyEvent(event)
+            }
+            ContextualFrameAction.PrimaryAction -> {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    dispatch(FrameIntent.PrimaryAction)
+                }
+                true
+            }
+            null -> super.dispatchKeyEvent(event)
+        }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean =
@@ -140,7 +269,7 @@ class MainActivity : Activity() {
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
         when (keyCode) {
             KeyEvent.KEYCODE_STAR -> {
-                if (!starLongPressed) dispatch(FrameIntent.PrimaryAction)
+                if (!starLongPressed) handleStarRelease(event)
                 starLongPressed = false
                 return true
             }
@@ -162,14 +291,35 @@ class MainActivity : Activity() {
                 handled
             }
         }
-        content = DemoContentView(this)
         weatherContent = WeatherContentView(this).apply { visibility = View.GONE }
         val fullScreenLayout = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
         )
-        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
-            root.addView(content, fullScreenLayout)
+        val activeConfiguration = configuration
+        if (activeConfiguration != null) {
+            val runtime = (application as FrameOsApplication).geckoRuntime
+            val webListener = object : FrameWebSurface.Listener {
+                override fun onPageLoading(label: String, loading: Boolean) {
+                    runOnUiThread { updatePageLoading(label, loading) }
+                }
+
+                override fun onPageUnavailable(label: String) {
+                    runOnUiThread {
+                        updatePageLoading(label, false)
+                        if (isWebLabelActive(label)) showHud("$label is temporarily unavailable")
+                    }
+                }
+            }
+            surfaceRouter = FrameSurfaceRouter(activeConfiguration)
+            webSurface = FrameWebSurface(
+                context = this,
+                runtime = runtime,
+                photosUrl = activeConfiguration.photosUrl,
+                homeAssistantUrl = activeConfiguration.homeAssistantUrl,
+                listener = webListener,
+            )
+            root.addView(webSurface, fullScreenLayout)
             root.addView(weatherContent, fullScreenLayout)
         } else {
             root.addView(buildConfigurationView(), fullScreenLayout)
@@ -300,27 +450,247 @@ class MainActivity : Activity() {
                 .start()
             showHud()
         }, STARTUP_READY_MILLIS)
+        handler.postDelayed({
+            val router = surfaceRouter ?: return@postDelayed
+            webSurface?.preload(FrameWebSlot.HOME_ASSISTANT, router.homeAssistantRestingUrl())
+        }, WEB_PRELOAD_DELAY_MILLIS)
     }
 
     private fun dispatch(intent: FrameIntent) {
+        if (intent == FrameIntent.PrimaryAction && state.mode == FrameMode.WEATHER && weatherNeedsAuthentication) {
+            beginWeatherAuthorization()
+            scheduleIdleReset()
+            return
+        }
         val transition = reducer.reduce(state, intent)
         val modeChanged = transition.state.mode != state.mode
         state = transition.state
         applyBrightness(state.brightnessOverridePercent)
         render(state, announce = modeChanged)
+        if (modeChanged && state.mode == FrameMode.WEATHER) refreshWeather()
         transition.effects.forEach(::applyEffect)
         scheduleIdleReset()
     }
 
     private fun render(next: FrameState, announce: Boolean) {
-        content.mode = next.mode
-        val showWeather = next.mode == FrameMode.WEATHER && weatherContent.parent != null
-        weatherContent.visibility = if (showWeather) View.VISIBLE else View.GONE
-        content.visibility = if (showWeather) View.GONE else View.VISIBLE
-        val activeContent: View = if (showWeather) weatherContent else content
-        if (announce) activeContent.animate().alpha(0.82f).setDuration(70).withEndAction {
-            activeContent.animate().alpha(1f).setDuration(180).start()
-        }.start()
+        val router = surfaceRouter ?: return
+        val previousMode = lastRenderedMode
+        lastRenderedMode = next.mode
+        val restingUrl = router.homeAssistantRestingUrl().takeIf { previousMode == FrameMode.CAMERAS }
+        when (val target = router.target(next.mode)) {
+            is FrameSurfaceTarget.Web -> when (target.slot) {
+                FrameWebSlot.PHOTOS -> {
+                    weatherContent.visibility = View.GONE
+                    webSurface?.show(target.slot, target.url, takeFocus = false)
+                    webSurface?.setContentActive(!next.photosPaused)
+                    root.requestFocus()
+                }
+                FrameWebSlot.HOME_ASSISTANT -> {
+                    weatherContent.visibility = View.GONE
+                    webSurface?.show(target.slot, target.url, takeFocus = true)
+                }
+            }
+            FrameSurfaceTarget.NativeWeather -> {
+                webSurface?.hide(restingUrl)
+                weatherContent.visibility = View.VISIBLE
+                root.requestFocus()
+                if (announce) weatherContent.animate().alpha(0.82f).setDuration(70).withEndAction {
+                    weatherContent.animate().alpha(1f).setDuration(180).start()
+                }.start()
+            }
+        }
+    }
+
+    private fun updatePageLoading(label: String, loading: Boolean) {
+        slowPageLoads.remove(label)?.let(handler::removeCallbacks)
+        if (!loading) return
+        val delayedHud = Runnable {
+            slowPageLoads.remove(label)
+            if (isWebLabelActive(label)) showHud("Loading $label…")
+        }
+        slowPageLoads[label] = delayedHud
+        handler.postDelayed(delayedHud, SLOW_PAGE_LOAD_MILLIS)
+    }
+
+    private fun isWebLabelActive(label: String): Boolean = when (label) {
+        FrameMode.PHOTOS.label -> state.mode == FrameMode.PHOTOS
+        "Home Assistant" -> state.mode in HOME_ASSISTANT_MODES
+        else -> false
+    }
+
+    private fun handleFrameCommand(intent: Intent) {
+        if (!externalControlPolicy.acceptsCommands()) {
+            intent.removeExtra(EXTRA_FRAME_COMMAND)
+            intent.removeExtra(EXTRA_FRAME_MODE)
+            return
+        }
+        val command = intent.getStringExtra(EXTRA_FRAME_COMMAND)?.lowercase(Locale.ROOT)
+        val requestedMode = intent.getStringExtra(EXTRA_FRAME_MODE)?.uppercase(Locale.ROOT)
+            ?.let { name -> FrameMode.entries.firstOrNull { it.name == name } }
+        intent.removeExtra(EXTRA_FRAME_COMMAND)
+        intent.removeExtra(EXTRA_FRAME_MODE)
+
+        when {
+            requestedMode != null -> showMode(requestedMode)
+            command == "next" -> dispatch(FrameIntent.NextMode)
+            command == "previous" || command == "prev" -> dispatch(FrameIntent.PreviousMode)
+            command == "home" -> dispatch(FrameIntent.GoHome)
+        }
+    }
+
+    private fun showMode(mode: FrameMode) {
+        val changed = state.mode != mode
+        state = state.copy(
+            mode = mode,
+            photosPaused = if (mode == FrameMode.PHOTOS) false else state.photosPaused,
+        )
+        render(state, announce = changed)
+        if (mode == FrameMode.WEATHER) refreshWeather()
+        if (changed) showHud()
+        scheduleIdleReset()
+    }
+
+    private fun persistProvisioning(intent: Intent): FrameConfiguration? {
+        if (!intent.hasExtra(EXTRA_PHOTOS_URL) && !intent.hasExtra(EXTRA_HOME_ASSISTANT_URL)) return null
+        val provisioned = FrameConfiguration.from(
+            photosUrl = intent.getStringExtra(EXTRA_PHOTOS_URL).orEmpty(),
+            homeAssistantUrl = intent.getStringExtra(EXTRA_HOME_ASSISTANT_URL).orEmpty(),
+            weatherEntityId = intent.getStringExtra(EXTRA_WEATHER_ENTITY_ID).orEmpty().ifBlank { DEFAULT_WEATHER_ENTITY_ID },
+        ) ?: return null
+        configurationStore.write(provisioned)
+        return provisioned
+    }
+
+    private fun initializeWeatherRuntime() {
+        val activeConfiguration = configuration ?: return
+        try {
+            val callbackPageUrl = callbackPageUrl(activeConfiguration.homeAssistantUrl)
+            val transport = UrlConnectionHomeAssistantTransport()
+            val sessionStore = AndroidKeystoreOAuthSessionStore(this, callbackPageUrl)
+            val endpoint = HomeAssistantOAuthEndpoint.fromDisplayUrl(activeConfiguration.homeAssistantUrl)
+            val pendingStateStore = SharedPreferencesPendingOAuthStateStore(this)
+            val client = HomeAssistantOAuthClient(
+                endpoint = endpoint,
+                callbackPageUrl = callbackPageUrl,
+                transport = transport,
+                store = sessionStore,
+                clock = System::currentTimeMillis,
+            )
+            oauthEndpoint = endpoint
+            oauthCallbackPageUrl = callbackPageUrl
+            pendingOAuthStateStore = pendingStateStore
+            oauthClient = client
+            callbackVerifier = OAuthCallbackVerifier(pendingStateStore)
+            weatherCoordinator = WeatherCoordinator(
+                accessTokenProvider = client,
+                repository = WeatherRepository(
+                    remote = HomeAssistantWeatherRemote(
+                        endpoint = HomeAssistantWeatherEndpoint.fromDisplayUrl(activeConfiguration.homeAssistantUrl),
+                        transport = transport,
+                        parser = HomeAssistantWeatherParser(),
+                    ),
+                    cache = SharedPreferencesWeatherCache(this),
+                    clock = System::currentTimeMillis,
+                    freshForMillis = WEATHER_CACHE_FRESH_MILLIS,
+                ),
+                presenter = WeatherPresenter(ZoneId.systemDefault(), Locale.getDefault()),
+                entityId = activeConfiguration.weatherEntityId,
+            )
+            weatherNeedsAuthentication = sessionStore.read() == null
+            weatherContent.presentation = WeatherPresentation(
+                emptyMessage = if (weatherNeedsAuthentication) {
+                    "Weather needs Home Assistant sign-in"
+                } else {
+                    "Loading the latest forecast"
+                },
+            )
+        } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
+            weatherNeedsAuthentication = false
+            weatherContent.presentation = WeatherPresentation(
+                emptyMessage = "Weather needs a secure Home Assistant URL",
+            )
+        }
+    }
+
+    private fun refreshWeather() {
+        val coordinator = weatherCoordinator ?: return
+        val generation = ++weatherRequestGeneration
+        ioExecutor.execute {
+            val presentation = try {
+                coordinator.refresh()
+            } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
+                WeatherPresentation(emptyMessage = "Weather is temporarily unavailable")
+            }
+            handler.post {
+                if (generation != weatherRequestGeneration || isFinishing || isDestroyed) return@post
+                weatherContent.presentation = presentation
+                weatherNeedsAuthentication = presentation.emptyMessage == "Weather needs Home Assistant sign-in"
+            }
+        }
+    }
+
+    private fun beginWeatherAuthorization() {
+        val endpoint = oauthEndpoint ?: return
+        val callbackPageUrl = oauthCallbackPageUrl ?: return
+        val pendingStateStore = pendingOAuthStateStore ?: return
+        val randomBytes = ByteArray(OAUTH_STATE_BYTES).also(secureRandom::nextBytes)
+        val state = OAuthState.fromCryptographicBytes(randomBytes)
+        pendingStateStore.write(state)
+        val authorization = endpoint.authorizationRequest(callbackPageUrl, state)
+        weatherContent.presentation = WeatherPresentation(emptyMessage = "Continue sign-in in the browser")
+        weatherNeedsAuthentication = false
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(authorization.url)))
+        } catch (error: ActivityNotFoundException) {
+            pendingStateStore.consume()
+            weatherNeedsAuthentication = true
+            weatherContent.presentation = WeatherPresentation(emptyMessage = "Weather needs Home Assistant sign-in")
+        }
+    }
+
+    private fun handleOAuthCallback(intent: Intent) {
+        val callbackUrl = intent.dataString ?: return
+        val verifier = callbackVerifier ?: return
+        val code = verifier.verify(callbackUrl) ?: run {
+            setIntent(Intent(this, MainActivity::class.java))
+            weatherNeedsAuthentication = true
+            weatherContent.presentation = WeatherPresentation(emptyMessage = "Weather needs Home Assistant sign-in")
+            showHud("Sign-in link expired")
+            return
+        }
+        setIntent(Intent(this, MainActivity::class.java))
+        state = state.copy(mode = FrameMode.WEATHER)
+        render(state, announce = false)
+        weatherContent.presentation = WeatherPresentation(emptyMessage = "Connecting to Home Assistant")
+        weatherNeedsAuthentication = false
+        val client = oauthClient ?: return
+        val generation = ++weatherRequestGeneration
+        ioExecutor.execute {
+            val success = client.exchangeAuthorizationCode(code.code)
+            handler.post {
+                if (generation != weatherRequestGeneration || isFinishing || isDestroyed) return@post
+                if (success) {
+                    refreshWeather()
+                } else {
+                    weatherNeedsAuthentication = true
+                    weatherContent.presentation = WeatherPresentation(emptyMessage = "Weather needs Home Assistant sign-in")
+                    showHud("Home Assistant sign-in failed")
+                }
+            }
+        }
+    }
+
+    private fun callbackPageUrl(homeAssistantUrl: String): String {
+        val configured = URI(homeAssistantUrl)
+        return URI(
+            configured.scheme,
+            null,
+            configured.host,
+            configured.port,
+            HomeAssistantOAuthEndpoint.CALLBACK_PATH,
+            null,
+            null,
+        ).toASCIIString()
     }
 
     private fun applyEffect(effect: FrameEffect) {
@@ -328,6 +698,27 @@ class MainActivity : Activity() {
             is FrameEffect.AnnounceMode -> showHud()
             is FrameEffect.AnnounceMessage -> showHud(effect.message)
         }
+    }
+
+    private fun handleStarRelease(source: KeyEvent) {
+        when (val action = contextualInputMapper.mapStarRelease(state.mode)) {
+            is ContextualFrameAction.ForwardToWeb -> {
+                val eventTime = source.eventTime
+                val down = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, action.keyCode, 0)
+                val up = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_UP, action.keyCode, 0)
+                forwardToWeb(down)
+                forwardToWeb(up)
+                scheduleIdleReset()
+            }
+            ContextualFrameAction.PrimaryAction -> dispatch(FrameIntent.PrimaryAction)
+            else -> Unit
+        }
+    }
+
+    private fun forwardToWeb(event: KeyEvent): Boolean {
+        val surface = webSurface ?: return false
+        surface.requestFocus()
+        return surface.dispatchKeyEvent(event)
     }
 
     private fun showHud(message: String = state.mode.label) {
@@ -399,9 +790,20 @@ class MainActivity : Activity() {
     private companion object {
         const val STARTUP_SPINNER_DELAY_MILLIS = 350L
         const val STARTUP_READY_MILLIS = 1_100L
+        const val WEB_PRELOAD_DELAY_MILLIS = 2_000L
+        const val SLOW_PAGE_LOAD_MILLIS = 450L
         const val HUD_FADE_IN_MILLIS = 160L
         const val HUD_FADE_OUT_MILLIS = 220L
         const val HUD_VISIBLE_MILLIS = 1_500L
         const val IDLE_TIMEOUT_MILLIS = 15 * 60 * 1_000L
+        const val WEATHER_CACHE_FRESH_MILLIS = 5 * 60 * 1_000L
+        const val OAUTH_STATE_BYTES = 32
+        const val DEFAULT_WEATHER_ENTITY_ID = "weather.home"
+        const val EXTRA_PHOTOS_URL = "frameos.photos_url"
+        const val EXTRA_HOME_ASSISTANT_URL = "frameos.home_assistant_url"
+        const val EXTRA_WEATHER_ENTITY_ID = "frameos.weather_entity_id"
+        const val EXTRA_FRAME_COMMAND = "frameos.command"
+        const val EXTRA_FRAME_MODE = "frameos.mode"
+        val HOME_ASSISTANT_MODES = setOf(FrameMode.HOME, FrameMode.CAMERAS, FrameMode.CALENDAR)
     }
 }

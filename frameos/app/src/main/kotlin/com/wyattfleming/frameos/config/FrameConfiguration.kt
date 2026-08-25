@@ -1,6 +1,7 @@
 package com.wyattfleming.frameos.config
 
 import com.wyattfleming.frameos.security.FrameUrlPolicy
+import java.net.URI
 
 data class FrameConfiguration(
     val photosUrl: String,
@@ -19,6 +20,7 @@ data class FrameConfiguration(
             val normalizedWeatherEntityId = weatherEntityId.trim()
             if (!urlPolicy.isSafeConfigurationUrl(normalizedPhotosUrl)) return null
             if (!urlPolicy.isSafeConfigurationUrl(normalizedHomeAssistantUrl)) return null
+            if (!URI(normalizedHomeAssistantUrl).scheme.equals("https", ignoreCase = true)) return null
             if (!WEATHER_ENTITY_PATTERN.matches(normalizedWeatherEntityId)) return null
 
             return FrameConfiguration(

@@ -2,6 +2,7 @@ package com.wyattfleming.frameos.auth
 
 import com.wyattfleming.frameos.weather.HomeAssistantHttpRequest
 import com.wyattfleming.frameos.weather.HomeAssistantHttpTransport
+import com.wyattfleming.frameos.weather.WeatherAccessTokenProvider
 
 class OAuthSession(
     val accessToken: String,
@@ -23,7 +24,7 @@ class HomeAssistantOAuthClient(
     private val transport: HomeAssistantHttpTransport,
     private val store: OAuthSessionStore,
     private val clock: () -> Long,
-) {
+) : WeatherAccessTokenProvider {
     fun exchangeAuthorizationCode(code: String): Boolean = try {
         val response = execute(endpoint.tokenRequestBody(callbackPageUrl, code)) ?: return false
         val tokens = endpoint.parseTokenResponse(response)
@@ -39,7 +40,7 @@ class HomeAssistantOAuthClient(
         false
     }
 
-    fun validAccessToken(): String? {
+    override fun validAccessToken(): String? {
         val session = store.read() ?: return null
         if (session.expiresAtEpochMillis - clock() > EXPIRY_LEEWAY_MILLIS) return session.accessToken
         return refresh(session)

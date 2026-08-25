@@ -22,7 +22,6 @@ class ContextualInputMapper {
 
         if (mode in HOME_ASSISTANT_MODES) {
             return when (keyCode) {
-                KeyEvent.KEYCODE_STAR -> ContextualFrameAction.ForwardToWeb(KeyEvent.KEYCODE_ENTER)
                 KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DPAD_CENTER -> ContextualFrameAction.ForwardToWeb(keyCode)
                 else -> null
             }
@@ -32,6 +31,12 @@ class ContextualInputMapper {
             KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DPAD_CENTER -> ContextualFrameAction.PrimaryAction
             else -> null
         }
+    }
+
+    fun mapStarRelease(mode: FrameMode): ContextualFrameAction = if (mode in HOME_ASSISTANT_MODES) {
+        ContextualFrameAction.ForwardToWeb(KeyEvent.KEYCODE_ENTER)
+    } else {
+        ContextualFrameAction.PrimaryAction
     }
 
     private companion object {

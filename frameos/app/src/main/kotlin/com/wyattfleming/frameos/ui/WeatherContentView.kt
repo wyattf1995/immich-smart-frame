@@ -28,6 +28,7 @@ class WeatherContentView(context: Context) : View(context) {
             if (field.sceneCondition != value.sceneCondition) sceneEpochMillis = SystemClock.uptimeMillis()
             field = value
             pageEpochMillis = SystemClock.uptimeMillis()
+            pageAnchorIndex = 0
             contentDescription = value.emptyMessage ?: "${value.condition}, ${value.temperature}. ${value.status}"
             invalidate()
         }
@@ -36,11 +37,26 @@ class WeatherContentView(context: Context) : View(context) {
     private val terrainPath = Path()
     private val hourlyPager = WeatherHourlyPager(WeatherRenderCadence.HOURLY_PAGE_SIZE)
     private var pageEpochMillis = SystemClock.uptimeMillis()
+    private var pageAnchorIndex = 0
     private var sceneEpochMillis = SystemClock.uptimeMillis()
 
     init {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
         contentDescription = "Clear night, 79°F. Preview weather"
+    }
+
+    fun moveHourlyPage(forward: Boolean): String? {
+        val pageCount = hourlyPager.pageCount(presentation.hourly)
+        if (pageCount <= 1) return null
+        val currentPage = currentHourlyPageIndex(pageCount, SystemClock.uptimeMillis())
+        pageAnchorIndex = Math.floorMod(currentPage + if (forward) 1 else -1, pageCount)
+        pageEpochMillis = SystemClock.uptimeMillis()
+        invalidate()
+
+        val page = hourlyPager.page(presentation.hourly, pageAnchorIndex)
+        val first = pageAnchorIndex * WeatherRenderCadence.HOURLY_PAGE_SIZE + 1
+        val last = minOf(first + page.size - 1, presentation.hourly.size)
+        return "Hours $first–$last"
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -319,11 +335,7 @@ class WeatherContentView(context: Context) : View(context) {
         val card = RectF(width * 0.05f, height * 0.59f, width * 0.95f, height * 0.91f)
         drawCard(canvas, card)
         val pageCount = hourlyPager.pageCount(presentation.hourly)
-        val pageIndex = if (pageCount <= 1) {
-            0
-        } else {
-            ((SystemClock.uptimeMillis() - pageEpochMillis) / WeatherRenderCadence.HOURLY_PAGE_DURATION_MILLIS).toInt()
-        }
+        val pageIndex = currentHourlyPageIndex(pageCount, SystemClock.uptimeMillis())
         val items = hourlyPager.page(presentation.hourly, pageIndex)
         val normalizedPage = Math.floorMod(pageIndex, pageCount)
         val rangeStart = normalizedPage * WeatherRenderCadence.HOURLY_PAGE_SIZE + 1
@@ -341,6 +353,12 @@ class WeatherContentView(context: Context) : View(context) {
                 drawCenteredText(canvas, precipitation, center, card.top + card.height() * 0.91f, 13f, 0xFF91C9FF.toInt(), true)
             }
         }
+    }
+
+    private fun currentHourlyPageIndex(pageCount: Int, now: Long): Int = if (pageCount <= 1) {
+        0
+    } else {
+        pageAnchorIndex + ((now - pageEpochMillis) / WeatherRenderCadence.HOURLY_PAGE_DURATION_MILLIS).toInt()
     }
 
     private fun drawMetric(canvas: Canvas, metric: WeatherMetric, x: Float, y: Float) {
