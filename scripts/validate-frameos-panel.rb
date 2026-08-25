@@ -1,11 +1,37 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
+require "digest"
+
 root = File.expand_path("..", __dir__)
 panel_path = File.join(root, "examples", "frameos", "frameos-panel.html")
+router_path = File.join(
+  root,
+  "frameos",
+  "app",
+  "src",
+  "main",
+  "kotlin",
+  "com",
+  "wyattfleming",
+  "frameos",
+  "web",
+  "FrameSurfaceRouter.kt"
+)
 abort("missing FrameOS panel wrapper: #{panel_path}") unless File.file?(panel_path)
+abort("missing FrameOS surface router: #{router_path}") unless File.file?(router_path)
 
 panel = File.read(panel_path)
+router = File.read(router_path)
+
+expected_wrapper_version = Digest::SHA256.file(panel_path).hexdigest[0, 12]
+actual_wrapper_version = router[/const val WRAPPER_VERSION = "([^"]+)"/, 1]
+unless actual_wrapper_version == expected_wrapper_version
+  abort(
+    "FrameOS wrapper cache version #{actual_wrapper_version.inspect} must match " \
+    "the panel SHA-256 prefix #{expected_wrapper_version.inspect}"
+  )
+end
 
 required = [
   "default-src 'none'",
