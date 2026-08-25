@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.os.SystemClock
@@ -15,12 +17,14 @@ import com.wyattfleming.frameos.weather.WeatherForecastItem
 import com.wyattfleming.frameos.weather.WeatherHourlyPager
 import com.wyattfleming.frameos.weather.WeatherMetric
 import com.wyattfleming.frameos.weather.WeatherPresentation
+import com.wyattfleming.frameos.weather.sceneProfile
 import kotlin.math.cos
 import kotlin.math.sin
 
 class WeatherContentView(context: Context) : View(context) {
     var presentation: WeatherPresentation = previewPresentation()
         set(value) {
+            if (field.sceneCondition != value.sceneCondition) sceneEpochMillis = SystemClock.uptimeMillis()
             field = value
             pageEpochMillis = SystemClock.uptimeMillis()
             contentDescription = value.emptyMessage ?: "${value.condition}, ${value.temperature}. ${value.status}"
@@ -28,8 +32,10 @@ class WeatherContentView(context: Context) : View(context) {
         }
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val terrainPath = Path()
     private val hourlyPager = WeatherHourlyPager(HOURLY_SLOTS_PER_PAGE)
     private var pageEpochMillis = SystemClock.uptimeMillis()
+    private var sceneEpochMillis = SystemClock.uptimeMillis()
 
     init {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
@@ -38,39 +44,229 @@ class WeatherContentView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        drawBackground(canvas)
+        drawBackground(canvas, (SystemClock.uptimeMillis() - sceneEpochMillis) / 1_000f)
         drawText(canvas, "Weather", width * 0.05f, height * 0.10f, 40f, Color.WHITE, true)
 
         val emptyMessage = presentation.emptyMessage
         if (emptyMessage != null) {
             drawEmptyState(canvas, emptyMessage)
-            return
+        } else {
+            drawText(canvas, presentation.status, width * 0.05f, height * 0.145f, 19f, MUTED)
+            drawCurrent(canvas)
+            drawDaily(canvas)
+            drawHourly(canvas)
         }
 
-        drawText(canvas, presentation.status, width * 0.05f, height * 0.145f, 19f, MUTED)
-        drawCurrent(canvas)
-        drawDaily(canvas)
-        drawHourly(canvas)
+        if (isShown && (presentation.sceneCondition.sceneProfile().animated || presentation.hourly.size > HOURLY_SLOTS_PER_PAGE)) {
+            postInvalidateDelayed(FRAME_DELAY_MILLIS)
+        }
     }
 
-    private fun drawBackground(canvas: Canvas) {
-        val colors = when (presentation.hourly.firstOrNull()?.condition) {
+    private fun drawBackground(canvas: Canvas, elapsedSeconds: Float) {
+        val condition = presentation.sceneCondition
+        val profile = condition.sceneProfile()
+        val colors = when (condition) {
             WeatherCondition.SUNNY -> intArrayOf(0xFF226AA0.toInt(), 0xFF69A9C6.toInt(), 0xFFD9A466.toInt())
             WeatherCondition.RAINY, WeatherCondition.POURING, WeatherCondition.LIGHTNING_RAINY ->
                 intArrayOf(0xFF182431.toInt(), 0xFF33495B.toInt(), 0xFF48545D.toInt())
-            WeatherCondition.CLOUDY, WeatherCondition.PARTLY_CLOUDY ->
+            WeatherCondition.CLOUDY, WeatherCondition.PARTLY_CLOUDY, WeatherCondition.FOG,
+            WeatherCondition.WINDY, WeatherCondition.WINDY_VARIANT ->
                 intArrayOf(0xFF26374B.toInt(), 0xFF61758A.toInt(), 0xFF8B8584.toInt())
+            WeatherCondition.SNOWY, WeatherCondition.SNOWY_RAINY, WeatherCondition.HAIL ->
+                intArrayOf(0xFF26384A.toInt(), 0xFF718597.toInt(), 0xFFB9C7D1.toInt())
             else -> intArrayOf(0xFF101A2D.toInt(), 0xFF223957.toInt(), 0xFF5D5265.toInt())
         }
         paint.shader = LinearGradient(0f, 0f, width.toFloat(), height.toFloat(), colors, null, Shader.TileMode.CLAMP)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
         paint.shader = null
-        paint.color = 0x12FFFFFF
-        repeat(18) { index ->
-            val x = width * ((index * 47 % 100) / 100f)
-            val y = height * (0.04f + (index * 29 % 40) / 100f)
-            canvas.drawCircle(x, y, dp(if (index % 4 == 0) 1.8f else 1.1f), paint)
+
+        when {
+            profile.sunlight -> drawSunlight(canvas, elapsedSeconds)
+            profile.stars -> drawNightSky(canvas, elapsedSeconds, profile.shootingStars)
+            profile.rainIntensity > 0 -> {
+                drawMovingClouds(canvas, elapsedSeconds, profile.cloudSpeedMultiplier, condition == WeatherCondition.PARTLY_CLOUDY)
+                drawRain(canvas, elapsedSeconds, heavy = profile.rainIntensity == 2, lightning = profile.lightning)
+            }
+            profile.snow -> {
+                drawMovingClouds(canvas, elapsedSeconds, profile.cloudSpeedMultiplier, partlyCloudy = false)
+                drawSnow(canvas, elapsedSeconds)
+            }
+            profile.fog -> drawFog(canvas, elapsedSeconds)
+            profile.clouds -> drawMovingClouds(
+                canvas,
+                elapsedSeconds,
+                profile.cloudSpeedMultiplier,
+                condition == WeatherCondition.PARTLY_CLOUDY,
+            )
         }
+        drawFixedTerrain(canvas)
+    }
+
+    private fun drawSunlight(canvas: Canvas, elapsedSeconds: Float) {
+        val pulse = 0.92f + sin(elapsedSeconds * 0.35f) * 0.04f
+        paint.shader = RadialGradient(
+            width * 0.82f,
+            height * 0.16f,
+            width * 0.30f * pulse,
+            intArrayOf(0x70FFF2B0, 0x18FFF2B0, Color.TRANSPARENT),
+            floatArrayOf(0f, 0.45f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+        paint.shader = null
+    }
+
+    private fun drawNightSky(canvas: Canvas, elapsedSeconds: Float, shootingStars: Int) {
+        repeat(26) { index ->
+            val twinkle = ((sin(elapsedSeconds * 0.7f + index * 1.9f) + 1f) * 0.5f)
+            paint.color = Color.argb((55 + twinkle * 105).toInt(), 236, 243, 255)
+            val x = width * ((index * 47 % 101) / 100f)
+            val y = height * (0.035f + (index * 29 % 46) / 100f)
+            canvas.drawCircle(x, y, dp(if (index % 5 == 0) 1.8f else 1.1f), paint)
+        }
+        if (shootingStars > 0) {
+            drawShootingStar(canvas, elapsedSeconds, phaseOffset = 0f, startX = 0.68f, startY = 0.10f)
+        }
+        if (shootingStars > 1) {
+            drawShootingStar(canvas, elapsedSeconds, phaseOffset = 14f, startX = 0.25f, startY = 0.20f)
+        }
+    }
+
+    private fun drawShootingStar(
+        canvas: Canvas,
+        elapsedSeconds: Float,
+        phaseOffset: Float,
+        startX: Float,
+        startY: Float,
+    ) {
+        val phase = (elapsedSeconds + phaseOffset) % SHOOTING_STAR_CYCLE_SECONDS
+        if (phase > SHOOTING_STAR_DURATION_SECONDS) return
+        val progress = phase / SHOOTING_STAR_DURATION_SECONDS
+        val opacity = (sin(progress * Math.PI) * 190).toInt().coerceIn(0, 190)
+        val headX = width * (startX + progress * 0.16f)
+        val headY = height * (startY + progress * 0.10f)
+        paint.style = Paint.Style.STROKE
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeWidth = dp(2f)
+        paint.shader = LinearGradient(
+            headX - width * 0.075f,
+            headY - height * 0.047f,
+            headX,
+            headY,
+            Color.TRANSPARENT,
+            Color.argb(opacity, 245, 249, 255),
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawLine(headX - width * 0.075f, headY - height * 0.047f, headX, headY, paint)
+        paint.shader = null
+        paint.style = Paint.Style.FILL
+        paint.strokeCap = Paint.Cap.BUTT
+    }
+
+    private fun drawMovingClouds(
+        canvas: Canvas,
+        elapsedSeconds: Float,
+        speedMultiplier: Float,
+        partlyCloudy: Boolean,
+    ) {
+        val speed = 7f * speedMultiplier
+        repeat(4) { index ->
+            val cloudWidth = dp(170f + index * 28f)
+            val span = width + cloudWidth * 2f
+            val x = ((width * (index * 0.29f) + elapsedSeconds * dp(speed) * (1f + index * 0.08f)) % span) - cloudWidth
+            val y = height * (0.08f + (index % 3) * 0.13f)
+            val alpha = if (partlyCloudy) 32 + index * 5 else 48 + index * 7
+            drawSceneCloud(canvas, x, y, cloudWidth, alpha)
+        }
+    }
+
+    private fun drawSceneCloud(canvas: Canvas, centerX: Float, centerY: Float, radius: Float, alpha: Int) {
+        paint.color = Color.argb(alpha.coerceIn(0, 255), 238, 243, 248)
+        canvas.drawCircle(centerX - radius * 0.42f, centerY, radius * 0.33f, paint)
+        canvas.drawCircle(centerX, centerY - radius * 0.15f, radius * 0.43f, paint)
+        canvas.drawCircle(centerX + radius * 0.46f, centerY, radius * 0.31f, paint)
+        canvas.drawRoundRect(
+            RectF(centerX - radius * 0.72f, centerY, centerX + radius * 0.75f, centerY + radius * 0.30f),
+            radius * 0.16f,
+            radius * 0.16f,
+            paint,
+        )
+    }
+
+    private fun drawRain(canvas: Canvas, elapsedSeconds: Float, heavy: Boolean, lightning: Boolean) {
+        paint.style = Paint.Style.STROKE
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeWidth = dp(if (heavy) 1.7f else 1.25f)
+        paint.color = if (heavy) 0x728FCBFF else 0x528FCBFF
+        repeat(if (heavy) 44 else 28) { index ->
+            val x = width * ((index * 37 % 101) / 100f)
+            val y = height * (((index * 23 % 100) / 100f + elapsedSeconds * (0.34f + index % 5 * 0.018f)) % 1f)
+            canvas.drawLine(x, y, x - dp(7f), y + dp(if (heavy) 28f else 20f), paint)
+        }
+        paint.strokeCap = Paint.Cap.BUTT
+        paint.style = Paint.Style.FILL
+        if (lightning) {
+            val phase = elapsedSeconds % 12f
+            if (phase < 0.12f) {
+                paint.color = Color.argb(((0.12f - phase) / 0.12f * 42).toInt(), 225, 237, 255)
+                canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+            }
+        }
+    }
+
+    private fun drawSnow(canvas: Canvas, elapsedSeconds: Float) {
+        repeat(34) { index ->
+            val drift = sin(elapsedSeconds * 0.55f + index) * width * 0.006f
+            val x = width * ((index * 43 % 103) / 102f) + drift
+            val y = height * (((index * 31 % 100) / 100f + elapsedSeconds * (0.035f + index % 4 * 0.005f)) % 1f)
+            paint.color = Color.argb(95 + index % 4 * 22, 245, 249, 255)
+            canvas.drawCircle(x, y, dp(1.4f + index % 3 * 0.5f), paint)
+        }
+    }
+
+    private fun drawFog(canvas: Canvas, elapsedSeconds: Float) {
+        repeat(4) { index ->
+            val bandWidth = width * 0.70f
+            val span = width + bandWidth
+            val x = ((index * width * 0.31f + elapsedSeconds * dp(5f + index)) % span) - bandWidth
+            paint.shader = LinearGradient(
+                x,
+                0f,
+                x + bandWidth,
+                0f,
+                intArrayOf(Color.TRANSPARENT, 0x38EEF3F6, Color.TRANSPARENT),
+                null,
+                Shader.TileMode.CLAMP,
+            )
+            canvas.drawRect(0f, height * (0.14f + index * 0.16f), width.toFloat(), height * (0.24f + index * 0.16f), paint)
+            paint.shader = null
+        }
+    }
+
+    private fun drawFixedTerrain(canvas: Canvas) {
+        terrainPath.reset()
+        terrainPath.moveTo(0f, height.toFloat())
+        terrainPath.lineTo(0f, height * 0.82f)
+        terrainPath.lineTo(width * 0.12f, height * 0.72f)
+        terrainPath.lineTo(width * 0.23f, height * 0.84f)
+        terrainPath.lineTo(width * 0.40f, height * 0.76f)
+        terrainPath.lineTo(width * 0.58f, height * 0.87f)
+        terrainPath.lineTo(width * 0.76f, height * 0.78f)
+        terrainPath.lineTo(width.toFloat(), height * 0.85f)
+        terrainPath.lineTo(width.toFloat(), height.toFloat())
+        terrainPath.close()
+        paint.color = 0x4D111A24
+        canvas.drawPath(terrainPath, paint)
+
+        terrainPath.reset()
+        terrainPath.moveTo(0f, height.toFloat())
+        terrainPath.lineTo(0f, height * 0.91f)
+        terrainPath.cubicTo(width * 0.22f, height * 0.82f, width * 0.42f, height * 0.96f, width * 0.62f, height * 0.88f)
+        terrainPath.cubicTo(width * 0.79f, height * 0.82f, width * 0.90f, height * 0.92f, width.toFloat(), height * 0.87f)
+        terrainPath.lineTo(width.toFloat(), height.toFloat())
+        terrainPath.close()
+        paint.color = 0x8F0D151D.toInt()
+        canvas.drawPath(terrainPath, paint)
     }
 
     private fun drawEmptyState(canvas: Canvas, message: String) {
@@ -85,7 +281,7 @@ class WeatherContentView(context: Context) : View(context) {
         val card = RectF(width * 0.05f, height * 0.17f, width * 0.42f, height * 0.55f)
         drawCard(canvas, card)
         drawText(canvas, "CURRENT CONDITIONS", card.left + dp(24f), card.top + dp(36f), 15f, MUTED, true)
-        val condition = presentation.hourly.firstOrNull()?.condition ?: WeatherCondition.UNKNOWN
+        val condition = presentation.sceneCondition
         drawWeatherIcon(canvas, condition, card.left + card.width() * 0.18f, card.top + card.height() * 0.42f, dp(38f))
         drawText(canvas, presentation.temperature, card.left + card.width() * 0.34f, card.top + card.height() * 0.48f, 62f, Color.WHITE, true)
         drawText(canvas, presentation.condition, card.left + card.width() * 0.34f, card.top + card.height() * 0.61f, 23f, Color.WHITE, true)
@@ -135,7 +331,6 @@ class WeatherContentView(context: Context) : View(context) {
                 drawCenteredText(canvas, precipitation, center, card.top + card.height() * 0.91f, 13f, 0xFF91C9FF.toInt(), true)
             }
         }
-        if (pageCount > 1 && visibility == VISIBLE) postInvalidateDelayed(1_000L)
     }
 
     private fun drawMetric(canvas: Canvas, metric: WeatherMetric, x: Float, y: Float) {
@@ -238,11 +433,15 @@ class WeatherContentView(context: Context) : View(context) {
     private companion object {
         const val HOURLY_SLOTS_PER_PAGE = 12
         const val PAGE_DURATION_MILLIS = 10_000L
+        const val FRAME_DELAY_MILLIS = 50L
+        const val SHOOTING_STAR_CYCLE_SECONDS = 30f
+        const val SHOOTING_STAR_DURATION_SECONDS = 1.35f
         const val MUTED = 0xFFD1D7E0.toInt()
 
         fun previewPresentation(): WeatherPresentation = WeatherPresentation(
             temperature = "79°F",
             condition = "Clear night",
+            sceneCondition = WeatherCondition.CLEAR_NIGHT,
             status = "Preview · live connection pending",
             metrics = listOf(
                 WeatherMetric("Humidity", "67%"),

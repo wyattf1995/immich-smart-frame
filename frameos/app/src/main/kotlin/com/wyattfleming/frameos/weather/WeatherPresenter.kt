@@ -20,6 +20,7 @@ data class WeatherForecastItem(
 data class WeatherPresentation(
     val temperature: String = "",
     val condition: String = "",
+    val sceneCondition: WeatherCondition = WeatherCondition.UNKNOWN,
     val status: String = "",
     val metrics: List<WeatherMetric> = emptyList(),
     val daily: List<WeatherForecastItem> = emptyList(),
@@ -56,6 +57,7 @@ class WeatherPresenter(
         return WeatherPresentation(
             temperature = formatTemperature(current.temperature, current.temperatureUnit),
             condition = current.displayCondition,
+            sceneCondition = current.condition,
             status = if (stale) "Offline · updated $updateTime" else "Updated $updateTime",
             metrics = buildList {
                 current.humidity?.let { add(WeatherMetric("Humidity", "${formatNumber(it)}%")) }
