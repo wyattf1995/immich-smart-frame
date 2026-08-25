@@ -1,0 +1,46 @@
+diff --git a/internal/immich/immich_date_pool_test.go b/internal/immich/immich_date_pool_test.go
+index 2e5fe97..90212b3 100644
+--- a/internal/immich/immich_date_pool_test.go
++++ b/internal/immich/immich_date_pool_test.go
+@@ -21,9 +21,12 @@ func TestDatePoolRegistryConcurrentConsumersShareRefresh(t *testing.T) {
+ 	var refreshes atomic.Int32
+ 	start := make(chan struct{})
+ 	fetch := func(context.Context) ([]Asset, error) {
+-		refreshes.Add(1)
++		generation := refreshes.Add(1)
+ 		<-start
+-		return []Asset{{ID: "one"}, {ID: "two"}, {ID: "two"}, {ID: "three"}, {ID: "four"}}, nil
++		if generation == 1 {
++			return []Asset{{ID: "one"}, {ID: "two"}, {ID: "two"}, {ID: "three"}, {ID: "four"}}, nil
++		}
++		return []Asset{{ID: "five"}, {ID: "six"}, {ID: "six"}, {ID: "seven"}, {ID: "eight"}}, nil
+ 	}
+ 
+ 	seen := make(chan string, 4)
+@@ -49,6 +52,26 @@ func TestDatePoolRegistryConcurrentConsumersShareRefresh(t *testing.T) {
+ 	}
+ 	require.Len(t, unique, 4)
+ 	require.EqualValues(t, 1, refreshes.Load(), "one empty generation must cause one backing refresh")
++
++	secondSeen := make(chan string, 4)
++	for range 4 {
++		workers.Add(1)
++		go func() {
++			defer workers.Done()
++			asset, ok, err := registry.take(context.Background(), "key", time.Minute, fetch)
++			require.NoError(t, err)
++			require.True(t, ok)
++			secondSeen <- asset.ID
++		}()
++	}
++	workers.Wait()
++	close(secondSeen)
++	for id := range secondSeen {
++		require.False(t, unique[id], "candidate %q was returned across concurrent generations", id)
++		unique[id] = true
++	}
++	require.Len(t, unique, 8)
++	require.EqualValues(t, 2, refreshes.Load(), "concurrent exhaustion must cause exactly one additional backing refresh")
+ }
+ 
+ func TestDatePoolRegistryBoundsAndPrunesExpiredEntries(t *testing.T) {

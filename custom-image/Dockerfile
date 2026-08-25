@@ -22,6 +22,7 @@ COPY date-pool-concurrency-tests.patch /tmp/date-pool-concurrency-tests.patch
 COPY backend-test-fixtures.patch /tmp/backend-test-fixtures.patch
 COPY album-registry-tests.patch /tmp/album-registry-tests.patch
 COPY backend-hard-timeout-tests.patch /tmp/backend-hard-timeout-tests.patch
+COPY date-pool-exhaustion-tests.patch /tmp/date-pool-exhaustion-tests.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -48,7 +49,9 @@ RUN cd /src \
 	&& git apply --check /tmp/album-registry-tests.patch \
 	&& git apply /tmp/album-registry-tests.patch \
 	&& git apply --check /tmp/backend-hard-timeout-tests.patch \
-	&& git apply /tmp/backend-hard-timeout-tests.patch
+	&& git apply /tmp/backend-hard-timeout-tests.patch \
+	&& git apply --check /tmp/date-pool-exhaustion-tests.patch \
+	&& git apply /tmp/date-pool-exhaustion-tests.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
