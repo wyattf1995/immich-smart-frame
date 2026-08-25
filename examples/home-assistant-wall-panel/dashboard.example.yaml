@@ -155,6 +155,16 @@ views:
             grid_options:
               columns: 12
               rows: auto
+          - type: logbook
+            title: Recent condition changes
+            target:
+              entity_id:
+                - weather.home
+            hours_to_show: 24
+            name_detail: none
+            grid_options:
+              columns: 12
+              rows: auto
     animated_background: weather
 
   - title: Live Cameras
