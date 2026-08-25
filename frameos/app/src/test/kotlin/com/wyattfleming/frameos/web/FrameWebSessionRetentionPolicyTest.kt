@@ -18,7 +18,7 @@ class FrameWebSessionRetentionPolicyTest {
         val policy = FrameWebSessionRetentionPolicy(hiddenTtlMillis = 60_000L)
 
         assertTrue(policy.shouldEvictForTrimMemory(FrameWebSessionRetentionPolicy.TRIM_MEMORY_RUNNING_LOW))
-        assertFalse(policy.shouldEvictForTrimMemory(FrameWebSessionRetentionPolicy.TRIM_MEMORY_UI_HIDDEN - 1))
+        assertFalse(policy.shouldEvictForTrimMemory(FrameWebSessionRetentionPolicy.TRIM_MEMORY_RUNNING_LOW - 1))
         assertTrue(policy.camerasAreDisposable)
     }
 }
