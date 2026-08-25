@@ -158,12 +158,14 @@ Mode gestures and within-view controls remain separate:
 | Volume Down | Next photo, next Weather page, or `Tab` in Home Assistant |
 | Volume Up | Previous photo, previous Weather page, or `Shift+Tab` in Home Assistant |
 | Star | Primary action or `Enter` in Home Assistant |
-| Long Star | Return directly to Home |
+| Long raw Star, when not converted by Key Mapper | Return directly to Home |
 
 The native Weather view automatically rotates through all 24 forecast hours;
 the volume buttons move those pages manually. Calendar focus can reach its
 Today, previous/next, and view-mode controls. The same Tab/Enter behavior works
 for future focusable controls added to the Home and Cameras dashboards.
+The supplied Key Mapper profile converts Star to Enter, so its normal physical
+deployment does not claim a separate long-press shortcut.
 
 ## Record and map the gesture inputs
 
