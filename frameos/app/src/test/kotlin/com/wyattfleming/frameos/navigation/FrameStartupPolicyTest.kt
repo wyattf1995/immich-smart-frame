@@ -7,10 +7,10 @@ import org.junit.Test
 
 class FrameStartupPolicyTest {
     @Test
-    fun `reboot starts at Home with no stale local overrides`() {
+    fun `reboot starts at Photos with no stale local overrides`() {
         val state = FrameStartupPolicy.initialState()
 
-        assertEquals(FrameMode.HOME, state.mode)
+        assertEquals(FrameMode.PHOTOS, state.mode)
         assertFalse(state.photosPaused)
         assertNull(state.brightnessOverridePercent)
     }
