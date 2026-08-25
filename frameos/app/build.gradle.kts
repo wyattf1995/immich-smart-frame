@@ -50,4 +50,5 @@ dependencies {
     implementation("org.mozilla.geckoview:geckoview-arm64-v8a:154.0.20260814215756")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20251224")
 }
