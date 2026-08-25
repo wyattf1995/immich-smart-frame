@@ -55,12 +55,13 @@ esac
 : "${FIREFOX_PACKAGE:?FIREFOX_PACKAGE is required}"
 
 FRAMEOS_PACKAGE="${FRAMEOS_PACKAGE:-}"
+FRAMEOS_ACTIVITY="${FRAMEOS_ACTIVITY:-}"
 FRAMEOS_RECEIVER="${FRAMEOS_RECEIVER:-}"
 FRAMEOS_CONTROL_ACTION="${FRAMEOS_CONTROL_ACTION:-com.wyattfleming.frameos.CONTROL}"
 frameos_enabled=0
-if [ -n "$FRAMEOS_PACKAGE" ] || [ -n "$FRAMEOS_RECEIVER" ]; then
-  [ -n "$FRAMEOS_PACKAGE" ] && [ -n "$FRAMEOS_RECEIVER" ] || \
-    fail 'FRAMEOS_PACKAGE and FRAMEOS_RECEIVER must be configured together'
+if [ -n "$FRAMEOS_PACKAGE" ] || [ -n "$FRAMEOS_ACTIVITY" ] || [ -n "$FRAMEOS_RECEIVER" ]; then
+  [ -n "$FRAMEOS_PACKAGE" ] && [ -n "$FRAMEOS_ACTIVITY" ] && [ -n "$FRAMEOS_RECEIVER" ] || \
+    fail 'FRAMEOS_PACKAGE, FRAMEOS_ACTIVITY, and FRAMEOS_RECEIVER must be configured together'
   frameos_enabled=1
 fi
 
@@ -90,6 +91,14 @@ case "$FRAMEOS_RECEIVER" in
   '') ;;
   */*) ;;
   *) fail 'FRAMEOS_RECEIVER must be an Android package/receiver component' ;;
+esac
+case "$FRAMEOS_ACTIVITY" in
+  '') ;;
+  */*) ;;
+  *) fail 'FRAMEOS_ACTIVITY must be an Android package/activity component' ;;
+esac
+case "$FRAMEOS_ACTIVITY" in
+  *[!A-Za-z0-9._/]*) fail 'FRAMEOS_ACTIVITY contains unsupported characters' ;;
 esac
 case "$FRAMEOS_RECEIVER" in
   *[!A-Za-z0-9._/]*) fail 'FRAMEOS_RECEIVER contains unsupported characters' ;;
@@ -198,7 +207,9 @@ open_frameos_mode() {
   am broadcast --user 0 \
     -a "$FRAMEOS_CONTROL_ACTION" \
     -n "$FRAMEOS_RECEIVER" \
-    --es frameos.mode "$frameos_mode" >/dev/null 2>&1
+    --es frameos.mode "$frameos_mode" >/dev/null 2>&1 || return 1
+  am start --activity-reorder-to-front \
+    -n "$FRAMEOS_ACTIVITY" >/dev/null 2>&1
 }
 
 show_mode() {
