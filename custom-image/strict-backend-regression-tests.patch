@@ -65,7 +65,7 @@ new file mode 100644
 index 0000000..4444444
 --- /dev/null
 +++ b/internal/immich/immich_context_retry_test.go
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,28 @@
 +package immich
 +
 +import (
