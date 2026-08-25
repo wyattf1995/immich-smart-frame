@@ -103,7 +103,7 @@ Build and start the service:
 
 ```sh
 docker compose build immich-kiosk
-docker compose up -d
+docker compose up -d --wait --wait-timeout 120
 docker compose ps
 ```
 
@@ -237,7 +237,12 @@ After setup, run:
 
 The validator checks public-repository hygiene, configuration/profile weights,
 the Home Assistant companion examples, Compose rendering, patch applicability,
-and the patched Go tests. This repository intentionally runs its release gates
+and the patched Go tests. `scripts/deployment-input-snapshot.sh` creates and
+verifies a protected, versioned snapshot of the ignored environment, active
+config, API-key file, and offline assets before an upgrade or rollback.
+`scripts/check-frame-readiness.sh` is a read-only, cron-friendly monitor hook;
+it reports Kiosk liveness and dependency readiness separately and never restarts
+a service. This repository intentionally runs its release gates
 locally; the checked-in GitHub Actions workflow remains inert while repository
 Actions are disabled. Use
 `./scripts/validate.sh --static` to skip the Docker image build.
@@ -267,7 +272,7 @@ rollbacks. Each tag identifies the exact upstream Immich Kiosk pin, local
 patches, and documentation state that were validated together.
 
 See [CHANGELOG.md](CHANGELOG.md), [Upgrade and rollback](docs/upgrade-rollback.md),
-[Maintainer releases](docs/releasing.md), and [GOVERNANCE.md](GOVERNANCE.md)
+[Maintainer releases](docs/releasing.md), [Resilience operations](docs/resilience-operations.md), and [GOVERNANCE.md](GOVERNANCE.md)
 for the release process and support expectations.
 
 ## Project status

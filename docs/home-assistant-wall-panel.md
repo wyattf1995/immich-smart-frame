@@ -113,6 +113,12 @@ players, plus decoded video where Gecko exposes it. A slow camera route keeps
 a small nonblocking “still connecting” message with card/player/decode counts
 instead of declaring a single structural node ready or leaving a blank overlay.
 
+The example also distinguishes missing data from an empty schedule: Today shows
+an explicit time/date-unavailable message, Up next identifies unavailable
+calendar integrations, and Weather suppresses sunrise/sunset formatting until
+both source entities have values. This avoids displaying `unknown`, an invalid
+timestamp, or a misleading “No upcoming events” during an integration outage.
+
 Weather is deliberately native rather than another dashboard fragment. That
 lets it retain the last successful forecast, show all 24 hourly entries in
 automatic pages, and draw stable terrain with subtle condition-specific sun,

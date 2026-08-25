@@ -13,6 +13,9 @@ services:
     image: ${KIOSK_IMAGE:-local/immich-smart-frame:0.1.0}
     container_name: ${KIOSK_CONTAINER_NAME:-immich-kiosk}
     restart: unless-stopped
+    # The application drains requests on SIGTERM. Keep this above its own
+    # shutdown grace period; Docker sends SIGKILL only after this interval.
+    stop_grace_period: 30s
     cpus: ${KIOSK_CPUS:-3.0}
     mem_limit: ${KIOSK_MEMORY_LIMIT:-1g}
     tty: true
@@ -38,7 +41,9 @@ services:
     tmpfs:
       - /tmp:mode=1777,noexec,nosuid,nodev
     healthcheck:
-      test: ["CMD", "/kiosk", "--healthcheck"]
+      # /livez is process liveness only. Dependency readiness is probed by the
+      # external monitor so an Immich outage cannot trigger a restart loop.
+      test: ["CMD", "/kiosk", "--livecheck"]
       interval: 30s
       timeout: 5s
       retries: 3
