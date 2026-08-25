@@ -56,11 +56,12 @@ docker run --rm \
     npx --yes license-checker-rseidelsohn@5.0.1 --json > /reports/node-licenses.json
   '
 
-ruby <<'RUBY' "$report_dir/node-licenses.json"
+ruby - "$report_dir/node-licenses.json" <<'RUBY'
 require "json"
 
 allowed = %w[
   0bsd
+  agpl-3.0-only
   apache-2.0
   bsd-2-clause
   bsd-3-clause
