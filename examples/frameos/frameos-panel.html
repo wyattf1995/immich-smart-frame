@@ -227,8 +227,13 @@
             if (!isActivePanelElement(element, documentRoot)) state.primaryHeadings.delete(heading);
           });
           if (!isActivePanelElement(state.calendarRoot, documentRoot)) state.calendarRoot = null;
-          [state.cameraCards, state.cameraPlayers, state.cameraVideos, state.decodedVideos].forEach((elements) => {
+          [state.cameraCards, state.cameraPlayers, state.cameraVideos].forEach((elements) => {
             pruneSet(elements, documentRoot);
+          });
+          state.decodedVideos.forEach((video) => {
+            if (!isActivePanelElement(video, documentRoot) || !cameraVideoIsDecoded(video)) {
+              state.decodedVideos.delete(video);
+            }
           });
           state.videoListeners = state.videoListeners.filter(([video, listener]) => {
             if (isActivePanelElement(video, documentRoot)) return true;
