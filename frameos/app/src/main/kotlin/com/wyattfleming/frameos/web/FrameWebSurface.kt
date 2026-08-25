@@ -101,14 +101,23 @@ class FrameWebSurface(
                 throw error
             }
         }
+
+        fun close() {
+            session.setFocused(false)
+            session.setActive(false)
+            session.stop()
+            session.close()
+        }
     }
 
-    private val sessions = mapOf(
+    private val persistentSessions = mapOf(
         FrameWebSlot.PHOTOS to ManagedSession(photosUrl, "Photos"),
         FrameWebSlot.HOME_ASSISTANT to ManagedSession(homeAssistantUrl, "Home Assistant"),
     )
+    private var cameraSession: ManagedSession? = null
     private var attachedSlot: FrameWebSlot? = null
     private var hiddenGeneration = 0
+    private var preloadGeneration = 0
 
     init {
         setBackgroundColor(Color.BLACK)
@@ -120,16 +129,26 @@ class FrameWebSurface(
     }
 
     fun preload(slot: FrameWebSlot, url: String) {
-        val managed = sessions.getValue(slot)
+        require(slot.canPreload) { "$slot cannot be preloaded" }
+        val managed = persistentSessions.getValue(slot)
         if (!managed.loadState.shouldRequest(url)) return
+        val generation = ++preloadGeneration
+        managed.session.setActive(true)
         managed.request(url)
-        managed.session.setActive(false)
+        postDelayed({
+            if (generation == preloadGeneration && attachedSlot != slot) {
+                managed.session.setActive(false)
+            }
+        }, PRELOAD_ACTIVE_MILLIS)
     }
 
     fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean) {
         hiddenGeneration += 1
-        val managed = sessions.getValue(slot)
-        sessions.filterKeys { it != slot }.values.forEach {
+        if (attachedSlot == FrameWebSlot.CAMERAS && slot != FrameWebSlot.CAMERAS) {
+            disposeCameraSession()
+        }
+        val managed = sessionFor(slot)
+        allSessions().filter { it !== managed }.forEach {
             it.session.setActive(false)
             it.session.setFocused(false)
         }
@@ -146,26 +165,22 @@ class FrameWebSurface(
         contentDescription = managed.label
     }
 
-    fun hide(restingHomeAssistantUrl: String? = null) {
-        val generation = ++hiddenGeneration
+    fun hide() {
+        hiddenGeneration += 1
         visibility = View.GONE
-        sessions.values.forEach { it.session.setFocused(false) }
-        val homeAssistant = sessions.getValue(FrameWebSlot.HOME_ASSISTANT)
-        if (restingHomeAssistantUrl != null && homeAssistant.loadState.shouldRequest(restingHomeAssistantUrl)) {
-            homeAssistant.session.setActive(true)
-            homeAssistant.request(restingHomeAssistantUrl)
-            postDelayed({
-                if (generation == hiddenGeneration && visibility != View.VISIBLE) {
-                    sessions.values.forEach { it.session.setActive(false) }
-                }
-            }, BACKGROUND_ROUTE_SETTLE_MILLIS)
-        } else {
-            sessions.values.forEach { it.session.setActive(false) }
+        if (attachedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
+        persistentSessions.values.forEach {
+            it.session.setFocused(false)
+            it.session.setActive(false)
         }
     }
 
     fun setContentActive(active: Boolean) {
-        attachedSlot?.let { slot -> sessions.getValue(slot).session.setActive(active) }
+        if (!active && attachedSlot == FrameWebSlot.CAMERAS) {
+            disposeCameraSession()
+            return
+        }
+        attachedSlot?.let { slot -> sessionFor(slot).session.setActive(active) }
     }
 
     fun movePhoto(forward: Boolean): Boolean {
@@ -189,11 +204,36 @@ class FrameWebSurface(
 
     fun destroy() {
         if (session != null) releaseSession()
-        sessions.values.forEach { it.session.close() }
+        cameraSession?.close()
+        cameraSession = null
+        persistentSessions.values.forEach(ManagedSession::close)
+    }
+
+    private fun sessionFor(slot: FrameWebSlot): ManagedSession = when (slot) {
+        FrameWebSlot.PHOTOS, FrameWebSlot.HOME_ASSISTANT -> persistentSessions.getValue(slot)
+        FrameWebSlot.CAMERAS -> cameraSession ?: ManagedSession(
+            configuredUrl = persistentSessions.getValue(FrameWebSlot.HOME_ASSISTANT).configuredUrl,
+            label = "Cameras",
+        ).also { cameraSession = it }
+    }
+
+    private fun allSessions(): List<ManagedSession> = buildList {
+        addAll(persistentSessions.values)
+        cameraSession?.let(::add)
+    }
+
+    private fun disposeCameraSession() {
+        val disposable = cameraSession ?: return
+        if (attachedSlot == FrameWebSlot.CAMERAS) {
+            if (session != null) releaseSession()
+            attachedSlot = null
+        }
+        disposable.close()
+        cameraSession = null
     }
 
     private companion object {
-        const val BACKGROUND_ROUTE_SETTLE_MILLIS = 800L
+        const val PRELOAD_ACTIVE_MILLIS = 12_000L
         const val PHOTO_TAP_MILLIS = 36L
     }
 }

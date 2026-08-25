@@ -71,7 +71,6 @@
     <iframe
       id="panel"
       title="Home Assistant family display"
-      src="/wall-panel/home?kiosk"
       allow="autoplay; fullscreen"
       referrerpolicy="same-origin"
       tabindex="0"
@@ -96,9 +95,12 @@
         const panel = document.getElementById("panel");
         const loading = document.getElementById("loading");
         const status = document.getElementById("status");
+        const ROUTE_READY_TIMEOUT_MILLIS = 12_000;
+        const ROUTE_READY_POLL_MILLIS = 100;
         let view = allowedViews.has(location.hash.slice(1)) ? location.hash.slice(1) : "home";
         let loadedView = null;
         let contrastTimer = null;
+        let readinessGeneration = 0;
 
         const announce = (message) => {
           status.textContent = message;
@@ -136,6 +138,50 @@
           } catch (_error) {
             return null;
           }
+        };
+
+        const routeHasContent = (readyView) => {
+          if (currentPanelView() !== readyView) return false;
+
+          let documentRoot;
+          try {
+            documentRoot = panel.contentDocument;
+          } catch (_error) {
+            return false;
+          }
+          if (!documentRoot) return false;
+
+          const expectedElements = Object.freeze({
+            home: new Set(["hui-heading-card"]),
+            cameras: new Set(["hui-picture-entity-card", "ha-web-rtc-player", "video"]),
+            calendar: new Set(["hui-calendar-card", "ha-full-calendar"]),
+          });
+          const expected = expectedElements[readyView];
+          const roots = [documentRoot];
+          while (roots.length > 0) {
+            const root = roots.pop();
+            for (const element of root.querySelectorAll("*")) {
+              if (expected.has(element.localName)) return true;
+              if (element.shadowRoot) roots.push(element.shadowRoot);
+            }
+          }
+          return false;
+        };
+
+        const waitForRouteReady = (readyView) => {
+          const generation = ++readinessGeneration;
+          const deadline = Date.now() + ROUTE_READY_TIMEOUT_MILLIS;
+          const check = () => {
+            if (generation !== readinessGeneration || view !== readyView) return;
+            if (routeHasContent(readyView) || Date.now() >= deadline) {
+              showReady(readyView);
+              focusPanel();
+              startHeadingContrast();
+              return;
+            }
+            window.setTimeout(check, ROUTE_READY_POLL_MILLIS);
+          };
+          check();
         };
 
         const applyHeadingContrast = () => {
@@ -194,9 +240,9 @@
         };
 
         const navigatePanel = (nextView) => {
+          readinessGeneration += 1;
           if (loadedView === nextView) {
-            showReady(nextView);
-            focusPanel();
+            waitForRouteReady(nextView);
             return;
           }
 
@@ -210,11 +256,7 @@
               childWindow.history.pushState(null, "", nextPath);
               childWindow.dispatchEvent(new childWindow.Event("location-changed"));
               loadedView = nextView;
-              window.setTimeout(() => {
-                showReady(nextView);
-                focusPanel();
-                startHeadingContrast();
-              }, 180);
+              waitForRouteReady(nextView);
               return;
             }
           } catch (_error) {
@@ -235,6 +277,11 @@
         panel.addEventListener("load", () => {
           const current = currentPanelView();
           if (!current) {
+            try {
+              if (panel.contentWindow.location.href === "about:blank") return;
+            } catch (_error) {
+              // A non-panel navigation is handled as a sign-in or recovery page below.
+            }
             loading.hidden = true;
             announce("Home Assistant ready for sign-in");
             focusPanel();
@@ -246,9 +293,7 @@
             navigatePanel(view);
             return;
           }
-          showReady(current);
-          focusPanel();
-          startHeadingContrast();
+          waitForRouteReady(current);
         });
 
         window.addEventListener("hashchange", () => {

@@ -90,7 +90,6 @@ class MainActivity : Activity() {
     private lateinit var loading: LinearLayout
 
     private var state = FrameState()
-    private var lastRenderedMode = state.mode
     private var starLongPressed = false
     private var volumeUpPressed = false
     private var volumeDownPressed = false
@@ -121,6 +120,12 @@ class MainActivity : Activity() {
     }
     private val expireIdle = Runnable { dispatch(FrameIntent.IdleExpired) }
     private val refreshVisibleWeather = Runnable { refreshWeather() }
+    private val preloadCalendar = Runnable {
+        if (state.mode !in BACKGROUND_PRELOAD_MODES || !activityResumed) return@Runnable
+        surfaceRouter?.calendarPreloadTarget()?.let { target ->
+            webSurface?.preload(target.slot, target.url)
+        }
+    }
 
     private val gestureDetector by lazy {
         GestureDetector(
@@ -192,6 +197,7 @@ class MainActivity : Activity() {
     override fun onPause() {
         activityResumed = false
         handler.removeCallbacks(refreshVisibleWeather)
+        handler.removeCallbacks(preloadCalendar)
         webSurface?.setContentActive(false)
         super.onPause()
     }
@@ -473,10 +479,6 @@ class MainActivity : Activity() {
                 .start()
             showHud()
         }, STARTUP_READY_MILLIS)
-        handler.postDelayed({
-            val router = surfaceRouter ?: return@postDelayed
-            webSurface?.preload(FrameWebSlot.HOME_ASSISTANT, router.homeAssistantRestingUrl())
-        }, WEB_PRELOAD_DELAY_MILLIS)
     }
 
     private fun dispatch(intent: FrameIntent) {
@@ -497,9 +499,6 @@ class MainActivity : Activity() {
 
     private fun render(next: FrameState, announce: Boolean) {
         val router = surfaceRouter ?: return
-        val previousMode = lastRenderedMode
-        lastRenderedMode = next.mode
-        val restingUrl = router.homeAssistantRestingUrl().takeIf { previousMode == FrameMode.CAMERAS }
         when (val target = router.target(next.mode)) {
             is FrameSurfaceTarget.Web -> when (target.slot) {
                 FrameWebSlot.PHOTOS -> {
@@ -508,13 +507,13 @@ class MainActivity : Activity() {
                     webSurface?.setContentActive(!next.photosPaused)
                     root.requestFocus()
                 }
-                FrameWebSlot.HOME_ASSISTANT -> {
+                FrameWebSlot.HOME_ASSISTANT, FrameWebSlot.CAMERAS -> {
                     weatherContent.visibility = View.GONE
                     webSurface?.show(target.slot, target.url, takeFocus = true)
                 }
             }
             FrameSurfaceTarget.NativeWeather -> {
-                webSurface?.hide(restingUrl)
+                webSurface?.hide()
                 weatherContent.visibility = View.VISIBLE
                 root.requestFocus()
                 if (announce) weatherContent.animate().alpha(0.82f).setDuration(70).withEndAction {
@@ -522,7 +521,15 @@ class MainActivity : Activity() {
                 }.start()
             }
         }
+        scheduleCalendarPreload()
         scheduleWeatherRefresh()
+    }
+
+    private fun scheduleCalendarPreload() {
+        handler.removeCallbacks(preloadCalendar)
+        if (state.mode in BACKGROUND_PRELOAD_MODES && activityResumed) {
+            handler.postDelayed(preloadCalendar, CALENDAR_PRELOAD_DELAY_MILLIS)
+        }
     }
 
     private fun updatePageLoading(label: String, loading: Boolean) {
@@ -539,6 +546,7 @@ class MainActivity : Activity() {
     private fun isWebLabelActive(label: String): Boolean = when (label) {
         FrameMode.PHOTOS.label -> state.mode == FrameMode.PHOTOS
         "Home Assistant" -> state.mode in HOME_ASSISTANT_MODES
+        FrameMode.CAMERAS.label -> state.mode == FrameMode.CAMERAS
         else -> false
     }
 
@@ -850,7 +858,7 @@ class MainActivity : Activity() {
     private companion object {
         const val STARTUP_SPINNER_DELAY_MILLIS = 350L
         const val STARTUP_READY_MILLIS = 1_100L
-        const val WEB_PRELOAD_DELAY_MILLIS = 2_000L
+        const val CALENDAR_PRELOAD_DELAY_MILLIS = 2_000L
         const val SLOW_PAGE_LOAD_MILLIS = 450L
         const val HUD_FADE_IN_MILLIS = 160L
         const val HUD_FADE_OUT_MILLIS = 220L
@@ -859,6 +867,7 @@ class MainActivity : Activity() {
         const val WEATHER_CACHE_FRESH_MILLIS = 5 * 60 * 1_000L
         const val OAUTH_STATE_BYTES = 32
         const val DEFAULT_WEATHER_ENTITY_ID = "weather.home"
-        val HOME_ASSISTANT_MODES = setOf(FrameMode.HOME, FrameMode.CAMERAS, FrameMode.CALENDAR)
+        val HOME_ASSISTANT_MODES = setOf(FrameMode.HOME, FrameMode.CALENDAR)
+        val BACKGROUND_PRELOAD_MODES = setOf(FrameMode.PHOTOS, FrameMode.WEATHER)
     }
 }
