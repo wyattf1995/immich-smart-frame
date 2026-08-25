@@ -28,8 +28,12 @@ class FrameUrlPolicyTest {
             "file:///data/local/private.html",
             "javascript:alert(1)",
             "https://home-assistant.example.invalid/?access_token=secret",
+            "https://home-assistant.example.invalid/?ACCESS_TOKEN=secret",
+            "https://home-assistant.example.invalid/?%61ccess_token=secret",
             "https://home-assistant.example.invalid/?api_key=secret",
             "https://home-assistant.example.invalid/?password=secret",
+            "https://home-assistant.example.invalid/?token=secret",
+            "https://home-assistant.example.invalid/#authorization=secret",
         )
 
         rejected.forEach { url -> assertFalse(url, policy.isSafeConfigurationUrl(url)) }
@@ -49,6 +53,28 @@ class FrameUrlPolicyTest {
             policy.isAllowedTopLevelNavigation(
                 configuredUrl = configured,
                 requestedUrl = "https://login.example.com/phish",
+            ),
+        )
+        assertFalse(
+            policy.isAllowedTopLevelNavigation(
+                configuredUrl = configured,
+                requestedUrl = "https://home-assistant.example.invalid.evil.test/phish",
+            ),
+        )
+    }
+
+    @Test
+    fun `default ports normalize but explicit different ports do not`() {
+        assertTrue(
+            policy.isAllowedTopLevelNavigation(
+                configuredUrl = "https://home-assistant.example.invalid/frameos",
+                requestedUrl = "https://home-assistant.example.invalid:443/wall-panel/home",
+            ),
+        )
+        assertFalse(
+            policy.isAllowedTopLevelNavigation(
+                configuredUrl = "https://home-assistant.example.invalid/frameos",
+                requestedUrl = "https://home-assistant.example.invalid:8443/wall-panel/home",
             ),
         )
     }
