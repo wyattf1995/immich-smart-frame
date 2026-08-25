@@ -20,6 +20,7 @@ COPY strict-backend-regression-tests.patch /tmp/strict-backend-regression-tests.
 COPY date-pool-concurrency-tests.patch /tmp/date-pool-concurrency-tests.patch
 COPY backend-test-fixtures.patch /tmp/backend-test-fixtures.patch
 COPY album-registry-tests.patch /tmp/album-registry-tests.patch
+COPY backend-hard-timeout-tests.patch /tmp/backend-hard-timeout-tests.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -29,8 +30,8 @@ RUN cd /src \
     && git apply --unidiff-zero /tmp/runtime-hardening.patch \
     && git apply --check /tmp/album-penalties.patch \
     && git apply /tmp/album-penalties.patch \
-    && git apply --check /tmp/backend-performance.patch \
-    && git apply /tmp/backend-performance.patch \
+	&& git apply --check /tmp/backend-performance.patch \
+	&& git apply /tmp/backend-performance.patch \
     && git apply --check --unidiff-zero /tmp/weighted-curation-tests.patch \
     && git apply --unidiff-zero /tmp/weighted-curation-tests.patch \
     && git apply --check /tmp/performance-regression-tests.patch \
@@ -42,7 +43,9 @@ RUN cd /src \
 	&& git apply --check /tmp/backend-test-fixtures.patch \
 	&& git apply /tmp/backend-test-fixtures.patch \
 	&& git apply --check /tmp/album-registry-tests.patch \
-	&& git apply /tmp/album-registry-tests.patch
+	&& git apply /tmp/album-registry-tests.patch \
+	&& git apply --check /tmp/backend-hard-timeout-tests.patch \
+	&& git apply /tmp/backend-hard-timeout-tests.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
