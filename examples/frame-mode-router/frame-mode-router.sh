@@ -207,6 +207,12 @@ open_frameos_mode() {
   if pidof "$fully_package" >/dev/null 2>&1; then
     am force-stop "$fully_package" >/dev/null 2>&1 || true
   fi
+  # FrameOS embeds its own Gecko runtime. Retire the legacy Firefox task once
+  # mode routing leaves it so its tabs and media processes do not consume the
+  # frame's limited memory in the background.
+  if pidof "$FIREFOX_PACKAGE" >/dev/null 2>&1; then
+    am force-stop "$FIREFOX_PACKAGE" >/dev/null 2>&1 || true
+  fi
   am broadcast --user 0 \
     -a "$FRAMEOS_CONTROL_ACTION" \
     -n "$FRAMEOS_RECEIVER" \
