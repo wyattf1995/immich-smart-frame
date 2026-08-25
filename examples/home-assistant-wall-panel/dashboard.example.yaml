@@ -15,7 +15,7 @@ views:
             icon: mdi:calendar-today
           - type: markdown
             content: |-
-              {% set date_value = as_datetime(states('sensor.date')) %}
+              {% set date_value = as_datetime(states('sensor.date'), none) %}
               {% if has_value('sensor.time') and has_value('sensor.date') and date_value %}
               # {{ states('sensor.time') }}
               ## {{ as_timestamp(date_value) | timestamp_custom('%A, %B %-d') }}
@@ -44,7 +44,7 @@ views:
                   {% set all_day = state_attr(calendar.entity, 'all_day') | default(false, true) %}
                   {% set location = state_attr(calendar.entity, 'location') %}
                   {% if message and start_time %}
-                    {% set start = as_datetime(start_time) %}
+                    {% set start = as_datetime(start_time, none) %}
                     {% if start %}
                       {% set agenda.events = agenda.events + [{'calendar': calendar.name, 'message': message, 'start': start, 'all_day': all_day, 'location': location}] %}
                     {% endif %}

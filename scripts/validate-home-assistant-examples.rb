@@ -143,13 +143,15 @@ end
 unless today_markdown &&
        today_markdown.fetch("content").include?("has_value('sensor.time')") &&
        today_markdown.fetch("content").include?("has_value('sensor.date')") &&
+       today_markdown.fetch("content").include?("as_datetime(states('sensor.date'), none)") &&
        today_markdown.fetch("content").include?("Time and date are temporarily unavailable")
-  fail_validation("Today must explicitly handle unavailable time or date entities")
+  fail_validation("Today must safely handle unavailable time or date entities before formatting")
 end
 calendar_entities = %w[calendar.family calendar.personal calendar.birthdays calendar.holidays]
 unless up_next_markdown &&
        calendar_entities.all? { |entity| up_next_markdown.fetch("content").include?(entity) } &&
        up_next_markdown.fetch("content").include?("state_attr(calendar.entity, 'start_time')") &&
+       up_next_markdown.fetch("content").include?("as_datetime(start_time, none)") &&
        up_next_markdown.fetch("content").include?("state_attr(calendar.entity, 'all_day')") &&
        up_next_markdown.fetch("content").include?("event.all_day") &&
        up_next_markdown.fetch("content").include?("'%a, %b %-d'") &&
