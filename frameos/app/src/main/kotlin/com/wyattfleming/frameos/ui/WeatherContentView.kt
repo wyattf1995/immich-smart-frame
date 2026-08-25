@@ -13,6 +13,7 @@ import android.os.SystemClock
 import android.util.TypedValue
 import android.view.View
 import com.wyattfleming.frameos.weather.WeatherCondition
+import com.wyattfleming.frameos.weather.WeatherDetailPagination
 import com.wyattfleming.frameos.weather.WeatherForecastItem
 import com.wyattfleming.frameos.weather.WeatherHourlyPager
 import com.wyattfleming.frameos.weather.WeatherMetric
@@ -40,6 +41,7 @@ class WeatherContentView(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val terrainPath = Path()
     private val hourlyPager = WeatherHourlyPager(WeatherRenderCadence.HOURLY_PAGE_SIZE)
+    private val metricPager = WeatherHourlyPager(WeatherDetailPagination.METRICS_PER_PAGE)
     private var pageEpochMillis = SystemClock.uptimeMillis()
     private var pageAnchorIndex = 0
     private var sceneEpochMillis = SystemClock.uptimeMillis()
@@ -74,7 +76,7 @@ class WeatherContentView(context: Context) : View(context) {
             drawEmptyState(canvas, emptyMessage)
         } else {
             drawText(canvas, presentation.status, width * 0.05f, height * 0.145f, 19f, MUTED)
-            drawCurrent(canvas)
+            drawCurrent(canvas, now)
             drawDaily(canvas)
             drawHourly(canvas)
         }
@@ -303,23 +305,27 @@ class WeatherContentView(context: Context) : View(context) {
         drawCenteredText(canvas, detail, width * 0.50f, height * 0.60f, 19f, MUTED)
     }
 
-    private fun drawCurrent(canvas: Canvas) {
+    private fun drawCurrent(canvas: Canvas, now: Long) {
         val card = RectF(width * 0.05f, height * 0.17f, width * 0.42f, height * 0.55f)
         drawCard(canvas, card)
-        drawText(canvas, "CURRENT CONDITIONS", card.left + dp(24f), card.top + dp(36f), 15f, MUTED, true)
+        val forecastPageIndex = currentHourlyPageIndex(hourlyPager.pageCount(presentation.hourly), now)
+        val metricPageCount = WeatherDetailPagination.pageCount(presentation.metrics.size)
+        val metricPageIndex = WeatherDetailPagination.pageIndex(forecastPageIndex, presentation.metrics.size)
+        val metricHeading = if (metricPageCount > 1) {
+            "CURRENT CONDITIONS · ${metricPageIndex + 1}/$metricPageCount"
+        } else {
+            "CURRENT CONDITIONS"
+        }
+        drawText(canvas, metricHeading, card.left + dp(24f), card.top + dp(36f), 15f, MUTED, true)
         val condition = presentation.sceneCondition
         drawWeatherIcon(canvas, condition, card.left + card.width() * 0.18f, card.top + card.height() * 0.42f, dp(38f))
         drawText(canvas, presentation.temperature, card.left + card.width() * 0.34f, card.top + card.height() * 0.48f, 62f, Color.WHITE, true)
         drawText(canvas, presentation.condition, card.left + card.width() * 0.34f, card.top + card.height() * 0.61f, 23f, Color.WHITE, true)
 
-        val metrics = presentation.metrics.take(8)
-        val columns = minOf(4, maxOf(metrics.size, 1))
+        val metrics = metricPager.page(presentation.metrics, metricPageIndex)
         metrics.forEachIndexed { index, metric ->
-            val column = index % columns
-            val row = index / columns
-            val x = card.left + dp(24f) + column * (card.width() - dp(48f)) / columns
-            val y = card.bottom - dp(if (row == 0 && metrics.size > columns) 108f else 52f)
-            drawMetric(canvas, metric, x, y)
+            val x = card.left + dp(24f) + index * (card.width() - dp(48f)) / maxOf(metrics.size, 1)
+            drawMetric(canvas, metric, x, card.bottom - dp(58f))
         }
     }
 
