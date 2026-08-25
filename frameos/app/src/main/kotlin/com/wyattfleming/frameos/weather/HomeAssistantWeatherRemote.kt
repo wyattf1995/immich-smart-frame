@@ -7,6 +7,7 @@ import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CancellationException
 
 data class HomeAssistantHttpRequest(
     val method: String,
@@ -32,9 +33,12 @@ class HomeAssistantWeatherRemote(
     private val requestTimeoutMillis: Long = TOTAL_REQUEST_TIMEOUT_MILLIS,
 ) : WeatherRemote {
     private val activeFutures = ConcurrentHashMap.newKeySet<Future<*>>()
+    private val activeRequestLock = Any()
+    private var cancellationRequested = false
 
     override fun fetch(entityId: String, bearerToken: String): WeatherRemoteResult {
         if (bearerToken.isBlank()) return WeatherRemoteResult.AuthRequired(AUTH_REQUIRED)
+        synchronized(activeRequestLock) { cancellationRequested = false }
         var completed = false
         return try {
             val headers = mapOf(
@@ -42,18 +46,15 @@ class HomeAssistantWeatherRemote(
                 "Authorization" to "Bearer $bearerToken",
             )
             val deadline = WeatherRequestDeadline(timeoutMillis = requestTimeoutMillis)
-            val currentFuture = requestExecutor.submit<WeatherCurrent> {
+            val currentFuture = submitTracked<WeatherCurrent> {
                 parser.parseCurrentState(entityId, execute(HomeAssistantHttpRequest("GET", endpoint.stateUrl(entityId), headers)).body)
             }
-            activeFutures += currentFuture
-            val dailyFuture = requestExecutor.submit<List<WeatherForecast>> {
+            val dailyFuture = submitTracked<List<WeatherForecast>> {
                 fetchForecast(entityId, WeatherForecastType.DAILY, headers)
             }
-            activeFutures += dailyFuture
-            val hourlyFuture = requestExecutor.submit<List<WeatherForecast>> {
+            val hourlyFuture = submitTracked<List<WeatherForecast>> {
                 fetchForecast(entityId, WeatherForecastType.HOURLY, headers)
             }
-            activeFutures += hourlyFuture
             val current = await(currentFuture, deadline)
             val daily = await(dailyFuture, deadline)
             val hourly = await(hourlyFuture, deadline)
@@ -87,9 +88,17 @@ class HomeAssistantWeatherRemote(
     }
 
     private fun cancelOutstandingRequests(disconnect: Boolean) {
-        activeFutures.forEach { future -> future.cancel(true) }
-        activeFutures.clear()
+        val futures = synchronized(activeRequestLock) {
+            if (disconnect) cancellationRequested = true
+            activeFutures.toList().also { activeFutures.clear() }
+        }
+        futures.forEach { future -> future.cancel(true) }
         if (disconnect) (transport as? CancellableHomeAssistantHttpTransport)?.cancelInFlight()
+    }
+
+    private fun <T> submitTracked(task: () -> T): Future<T> = synchronized(activeRequestLock) {
+        if (cancellationRequested) throw CancellationException("Weather request cancelled")
+        requestExecutor.submit(task).also(activeFutures::add)
     }
 
     private fun fetchForecast(
