@@ -1,5 +1,5 @@
 diff --git a/internal/immich/immich_date.go b/internal/immich/immich_date.go
-index 1359588..ed74660 100644
+index 1359588..46b5e3a 100644
 --- a/internal/immich/immich_date.go
 +++ b/internal/immich/immich_date.go
 @@ -8,9 +8,9 @@ import (
@@ -13,12 +13,13 @@ index 1359588..ed74660 100644
  	"time"
  
  	"charm.land/log/v2"
-@@ -19,6 +19,38 @@ import (
+@@ -19,6 +19,39 @@ import (
  	"github.com/google/go-querystring/query"
  )
  
 +type dateCandidatePool struct {
 +	mu         sync.Mutex
++	refillMu   sync.Mutex
 +	candidates []Asset
 +}
 +
@@ -52,7 +53,7 @@ index 1359588..ed74660 100644
  // RandomAssetInDateRange retrieves a random asset from the Immich API within the specified date range.
  // Parameters:
  //   - dateRange: A string in the format "YYYY-MM-DD_to_YYYY-MM-DD" or using "today" for current date
-@@ -100,13 +132,33 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+@@ -100,13 +133,37 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
  			return err
  		}
  
@@ -69,29 +70,33 @@ index 1359588..ed74660 100644
 +		if pool == nil {
 +			pool = newDateCandidatePool(nil)
 +			cache.Set(poolKey, pool, a.requestConfig.Duration, a.requestConfig.CacheDuration)
++			pool.refillMu.Lock()
++			err = json.Unmarshal(apiBody, &immichAssets)
++			if err != nil {
++				pool.refillMu.Unlock()
++				_, _, err = immichAPIFail(immichAssets, err, apiBody, apiURL.String())
++				return err
++			}
++			pool.refill(immichAssets)
++			pool.refillMu.Unlock()
  		}
  
 -		apiCacheKey := cache.APICacheKey(apiURL.String(), deviceID, a.requestConfig.SelectedUser)
 +		if candidate, ok := pool.take(); ok {
 +			immichAssets = []Asset{candidate}
 +		} else {
-+			err = json.Unmarshal(apiBody, &immichAssets)
-+			if err != nil {
-+				_, _, err = immichAPIFail(immichAssets, err, apiBody, apiURL.String())
-+				return err
-+			}
-+			pool.refill(immichAssets)
-+			candidate, ok := pool.take()
-+			if !ok {
-+				cache.Delete(apiCacheKey)
-+				continue
-+			}
-+			immichAssets = []Asset{candidate}
++			// The decoded pool is authoritative: when it drains, discard the raw
++			// API response before retrying so a refill cannot recycle candidates.
++			pool.refillMu.Lock()
++			cache.Delete(apiCacheKey)
++			cache.Delete(poolKey)
++			pool.refillMu.Unlock()
++			continue
 +		}
  
  		if len(immichAssets) == 0 {
  			log.Debug(requestID + " No assets left in cache. Refreshing and trying again")
-@@ -119,7 +171,7 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+@@ -119,7 +176,7 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
  			wantedAssetType = AllAssetTypes
  		}
  
@@ -100,7 +105,7 @@ index 1359588..ed74660 100644
  
  			asset.Bucket = kiosk.SourceDateRange
  			asset.requestConfig = a.requestConfig
-@@ -129,19 +181,6 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+@@ -129,19 +186,6 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
  				continue
  			}
  
@@ -121,10 +126,27 @@ index 1359588..ed74660 100644
  
  			*a = asset
 diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
-index b8da962..8071c81 100644
+index b8da962..032d433 100644
 --- a/internal/immich/immich_helpers.go
 +++ b/internal/immich/immich_helpers.go
-@@ -743,42 +743,61 @@ func (a *Asset) hasValidFilterExcludeFaces(requestID, deviceID string) bool {
+@@ -15,6 +15,7 @@ import (
+ 	"reflect"
+ 	"slices"
+ 	"strings"
++	"sync"
+ 	"time"
+ 
+ 	"charm.land/log/v2"
+@@ -26,6 +27,8 @@ import (
+ 	"github.com/google/go-querystring/query"
+ )
+ 
++var compiledAlbumPenaltyFactors sync.Map
++
+ // immichAPIFail handles failures in Immich API calls by unmarshaling the error response,
+ // logging the error, and returning a formatted error along with the original value.
+ func immichAPIFail[T APIResponse](value T, err error, body []byte, apiURL string) (T, string, error) {
+@@ -743,42 +746,67 @@ func (a *Asset) hasValidFilterExcludeFaces(requestID, deviceID string) bool {
  // Returns:
  //   - bool: true if asset is not in any excluded albums, false otherwise
  func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
@@ -159,9 +181,15 @@ index b8da962..8071c81 100644
 +	if requestConfig.CurationProfile == "" {
 +		return nil
 +	}
++	cacheKey := fmt.Sprintf("%p:%s", requestConfig.Curation.Profiles, strings.ToLower(strings.TrimSpace(requestConfig.CurationProfile)))
++	if cached, ok := compiledAlbumPenaltyFactors.Load(cacheKey); ok {
++		return cached.(map[string]float64)
++	}
 +	for name, profile := range requestConfig.Curation.Profiles {
 +		if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(requestConfig.CurationProfile)) {
-+			return albumPenaltyFactors(profile.AlbumPenalties)
++			factors := albumPenaltyFactors(profile.AlbumPenalties)
++			actual, _ := compiledAlbumPenaltyFactors.LoadOrStore(cacheKey, factors)
++			return actual.(map[string]float64)
  		}
  	}
 -
@@ -205,7 +233,7 @@ index b8da962..8071c81 100644
  func acceptsAlbumPenalty(albums Albums, penalties []config.AlbumPenalty, roll float64) bool {
  	return roll < albumPenaltyFactor(albums, penalties)
  }
-@@ -796,7 +815,7 @@ func albumPenaltyRoll(assetID, requestID string) float64 {
+@@ -796,7 +824,7 @@ func albumPenaltyRoll(assetID, requestID string) float64 {
  }
  
  func acceptsAlbumPenaltyForAsset(albums Albums, penalties []config.AlbumPenalty, assetID, requestID string) bool {

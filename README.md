@@ -291,6 +291,6 @@ See [LICENSE](LICENSE), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and
 The upstream project is not responsible for these device-specific patches or
 support requests. Please reproduce problems against upstream before filing an
 upstream issue.
-The Compose defaults cap the kiosk at one CPU and 512 MiB RAM. They are
-deliberately conservative for the frame host; tune `KIOSK_CPUS` and
+The Compose defaults cap the kiosk at two CPUs and 1 GiB RAM, which leaves
+headroom for the NAS-hosted kiosk. Tune `KIOSK_CPUS` and
 `KIOSK_MEMORY_LIMIT` only after observing steady-state memory headroom.

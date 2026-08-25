@@ -6,8 +6,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/ci-lib.sh"
 
 temp_root=""
-if [[ -n "${PATCHED_UPSTREAM_DIR:-}" ]]; then
-  source_dir="$PATCHED_UPSTREAM_DIR"
+shared_source_dir="${PATCHED_UPSTREAM_DIR:-}"
+if [[ -n "$shared_source_dir" ]]; then
+  source_dir="$shared_source_dir"
   report_dir="$(mktemp -d)"
   trap 'rm -rf "$report_dir"' EXIT
 else
@@ -18,7 +19,7 @@ else
 fi
 mkdir -p "$report_dir"
 
-if [[ -z "$PATCHED_UPSTREAM_DIR" ]]; then
+if [[ -z "$shared_source_dir" ]]; then
   ci_prepare_upstream_source "$source_dir" >/dev/null
 fi
 
