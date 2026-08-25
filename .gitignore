@@ -8,3 +8,14 @@ offline-assets/
 examples/home-assistant-wall-panel/weather/source/
 examples/home-assistant-wall-panel/weather/output/
 examples/home-assistant-wall-panel/weather/preview/
+
+# FrameOS Android build and local provisioning state.
+frameos/.gradle/
+frameos/.kotlin/
+frameos/local.properties
+frameos/**/build/
+frameos/**/*.apk
+frameos/**/*.aab
+frameos/**/*.jks
+frameos/**/*.keystore
+frameos/frameos.local.properties

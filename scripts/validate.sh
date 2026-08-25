@@ -37,6 +37,7 @@ required_files=(
   scripts/run-govulncheck.sh
   scripts/run-trivy.sh
   scripts/test-frame-mode-router.sh
+  scripts/validate-frameos.sh
   scripts/validate-home-assistant-examples.rb
   scripts/validate-ci.sh
 )
@@ -89,6 +90,8 @@ fi
 ./scripts/validate-ci.sh
 
 ./scripts/test-frame-mode-router.sh
+
+./scripts/validate-frameos.sh
 
 docker compose --env-file .env.example config --quiet
 

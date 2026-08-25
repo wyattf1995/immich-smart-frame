@@ -1,0 +1,50 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "com.wyattfleming.frameos"
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "com.wyattfleming.frameos"
+        minSdk = 29
+        targetSdk = 36
+        versionCode = 1
+        versionName = "0.1.0-dev"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = false
+    }
+
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = true
+        warningsAsErrors = true
+    }
+}
+
+dependencies {
+    implementation("org.mozilla.geckoview:geckoview-arm64-v8a:154.0.20260814215756")
+
+    testImplementation("junit:junit:4.13.2")
+}

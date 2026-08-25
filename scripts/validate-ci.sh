@@ -13,6 +13,7 @@ sh_files=(
   scripts/run-govulncheck.sh
   scripts/run-trivy.sh
   scripts/test-frame-mode-router.sh
+  scripts/validate-frameos.sh
   scripts/validate-ci.sh
   scripts/validate.sh
 )
