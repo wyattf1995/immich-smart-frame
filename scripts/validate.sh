@@ -38,6 +38,7 @@ required_files=(
   scripts/run-trivy.sh
   scripts/test-frame-mode-router.sh
   scripts/validate-frameos.sh
+  scripts/validate-frameos-control-receiver.rb
   scripts/validate-frameos-oauth-callback.rb
   scripts/validate-frameos-panel.rb
   scripts/validate-home-assistant-examples.rb
@@ -95,6 +96,7 @@ fi
 
 ./scripts/validate-frameos.sh
 
+ruby scripts/validate-frameos-control-receiver.rb
 ruby scripts/validate-frameos-oauth-callback.rb
 ruby scripts/validate-frameos-panel.rb
 
