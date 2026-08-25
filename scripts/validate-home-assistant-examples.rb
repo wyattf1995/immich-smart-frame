@@ -144,8 +144,16 @@ calendar_entities = %w[calendar.family calendar.personal calendar.birthdays cale
 unless up_next_markdown &&
        calendar_entities.all? { |entity| up_next_markdown.fetch("content").include?(entity) } &&
        up_next_markdown.fetch("content").include?("state_attr(calendar.entity, 'start_time')") &&
+       up_next_markdown.fetch("content").include?("state_attr(calendar.entity, 'all_day')") &&
+       up_next_markdown.fetch("content").include?("event.all_day") &&
+       up_next_markdown.fetch("content").include?("timestamp_custom('%a, %b %-d')") &&
+       up_next_markdown.fetch("content").include?("timestamp_custom('%-I:%M %p')") &&
+       up_next_markdown.fetch("content").include?("All day") &&
        up_next_markdown.fetch("content").include?("events[:4]")
   fail_validation("Up next must derive a bounded agenda from calendar state attributes")
+end
+if up_next_markdown && up_next_markdown.fetch("content").include?("timestamp_custom('%a %-I:%M %p')")
+  fail_validation("Up next must show month/day before time and never imply midnight for all-day events")
 end
 if home_markdown.any? { |card| card.fetch("content", "").match?(/sun_next|sunrise|sunset/i) }
   fail_validation("Home must not duplicate sunrise or sunset details")
