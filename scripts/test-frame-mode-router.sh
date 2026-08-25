@@ -200,7 +200,8 @@ assert_file_contains 'am force-stop org.mozilla.firefox' "$log" \
   'FrameOS must release the legacy Firefox process when it is alive'
 assert_file_contains 'am start --activity-reorder-to-front -n com.wyattfleming.frameos/.MainActivity' "$log" \
   'the shell router must foreground FrameOS after queuing its protected command'
-assert_file_not_contains 'org.mozilla.firefox' "$log" 'FrameOS transitions must not launch Firefox'
+assert_file_not_contains 'am start --activity-reorder-to-front -a android.intent.action.VIEW' "$log" \
+  'FrameOS transitions must not launch Firefox'
 assert_file_not_contains 'de.ozerov.fully/.FullyActivity' "$log" 'FrameOS Photos must not launch Fully'
 assert_eq home "$(tr -d '\r\n' < "$state")" 'FrameOS next must persist Home'
 
