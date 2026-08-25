@@ -27,6 +27,7 @@ required = [
   "primaryHeadings",
   "cameraCards",
   "cameraPlayers",
+  "cameraVideos: 4",
   "decodedVideos",
   "new MutationObserver(",
   "const inspectAddedSubtree = (node, state) =>",
@@ -34,6 +35,8 @@ required = [
   "const isActivePanelElement = (element, documentRoot) =>",
   "element.isConnected && element.ownerDocument === documentRoot",
   "const pruneRouteEvidence = (state) =>",
+  "const pruneRouteObservers = (state) =>",
+  "state.observers.push({ root, observer });",
   "primaryHeadings: new Map()",
   "const disconnectRouteObservers = (state) =>",
   "const removeVideoListeners = (state) =>",
@@ -55,6 +58,11 @@ abort("FrameOS panel wrapper must not retry full-DOM readiness scans every 100ms
 abort("FrameOS panel wrapper must use its route observer for heading contrast") if panel.include?("startHeadingContrast")
 abort("FrameOS panel wrapper must disconnect route observers when superseded") unless panel.include?("observer.disconnect()")
 abort("FrameOS panel wrapper must discard strong camera evidence after ready") unless panel.include?("releaseRouteEvidence(state)")
+abort("FrameOS panel wrapper must require all four decoded camera videos") unless panel.include?("state.cameraVideos.size >= requirement.cameraVideos")
+abort("FrameOS panel wrapper must not treat absent camera videos as ready") if panel.include?("state.cameraVideos.size === 0")
+unless panel.match?(/showStillConnecting\(state\.view, detail\);\s*focusPanel\(\);/m)
+  abort("FrameOS panel wrapper must focus the panel after a nonblocking readiness timeout")
+end
 
 forbidden = [
   "fetch(",

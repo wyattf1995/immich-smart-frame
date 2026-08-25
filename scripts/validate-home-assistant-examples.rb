@@ -204,7 +204,9 @@ weather_video_urls = [weather_group["default_url"], *weather_group.fetch("state_
 unless weather_video_urls.all? { |url| url.match?(%r{\A/local/wallpanel-weather/[a-z-]+\.mp4\?v=[0-9a-f]{12,64}\z}) }
   fail_validation("weather MP4 URLs must carry generated SHA-256 cache fingerprints")
 end
-unless weather_group.fetch("state_url").fetch("snowy-rainy") == "/local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4"
+default_fingerprint = weather_group.fetch("default_url")[/\?v=([0-9a-f]{12,64})\z/, 1]
+unless default_fingerprint &&
+       weather_group.fetch("state_url").fetch("snowy-rainy") == "/local/wallpanel-weather/rainy.mp4?v=#{default_fingerprint}"
   fail_validation("snowy-rainy must retain the rainy MP4 mapping while its cache fingerprint changes")
 end
 
@@ -254,7 +256,7 @@ end
 Dir.mktmpdir("weather-fingerprint-test") do |temporary_dir|
   copied_dashboard = File.join(temporary_dir, "dashboard.example.yaml")
   FileUtils.cp(FILES.fetch(:dashboard), copied_dashboard)
-  fingerprint = "0123456789ab"
+  fingerprint = "fedcba987654"
   2.times do
     output, status = Open3.capture2e(
       "bash", FILES.fetch(:loop_builder), "--rewrite-dashboard", copied_dashboard, fingerprint
