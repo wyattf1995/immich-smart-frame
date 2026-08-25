@@ -17,6 +17,7 @@ import com.wyattfleming.frameos.weather.WeatherForecastItem
 import com.wyattfleming.frameos.weather.WeatherHourlyPager
 import com.wyattfleming.frameos.weather.WeatherMetric
 import com.wyattfleming.frameos.weather.WeatherPresentation
+import com.wyattfleming.frameos.weather.WeatherRenderCadence
 import com.wyattfleming.frameos.weather.sceneProfile
 import kotlin.math.cos
 import kotlin.math.sin
@@ -33,7 +34,7 @@ class WeatherContentView(context: Context) : View(context) {
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val terrainPath = Path()
-    private val hourlyPager = WeatherHourlyPager(HOURLY_SLOTS_PER_PAGE)
+    private val hourlyPager = WeatherHourlyPager(WeatherRenderCadence.HOURLY_PAGE_SIZE)
     private var pageEpochMillis = SystemClock.uptimeMillis()
     private var sceneEpochMillis = SystemClock.uptimeMillis()
 
@@ -44,7 +45,8 @@ class WeatherContentView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        drawBackground(canvas, (SystemClock.uptimeMillis() - sceneEpochMillis) / 1_000f)
+        val now = SystemClock.uptimeMillis()
+        drawBackground(canvas, (now - sceneEpochMillis) / 1_000f)
         drawText(canvas, "Weather", width * 0.05f, height * 0.10f, 40f, Color.WHITE, true)
 
         val emptyMessage = presentation.emptyMessage
@@ -57,8 +59,12 @@ class WeatherContentView(context: Context) : View(context) {
             drawHourly(canvas)
         }
 
-        if (isShown && (presentation.sceneCondition.sceneProfile().animated || presentation.hourly.size > HOURLY_SLOTS_PER_PAGE)) {
-            postInvalidateDelayed(FRAME_DELAY_MILLIS)
+        if (isShown) {
+            WeatherRenderCadence.nextDelayMillis(
+                sceneAnimated = presentation.sceneCondition.sceneProfile().animated,
+                hourlyItemCount = presentation.hourly.size,
+                pageElapsedMillis = now - pageEpochMillis,
+            )?.let(::postInvalidateDelayed)
         }
     }
 
@@ -313,10 +319,14 @@ class WeatherContentView(context: Context) : View(context) {
         val card = RectF(width * 0.05f, height * 0.59f, width * 0.95f, height * 0.91f)
         drawCard(canvas, card)
         val pageCount = hourlyPager.pageCount(presentation.hourly)
-        val pageIndex = if (pageCount <= 1) 0 else ((SystemClock.uptimeMillis() - pageEpochMillis) / PAGE_DURATION_MILLIS).toInt()
+        val pageIndex = if (pageCount <= 1) {
+            0
+        } else {
+            ((SystemClock.uptimeMillis() - pageEpochMillis) / WeatherRenderCadence.HOURLY_PAGE_DURATION_MILLIS).toInt()
+        }
         val items = hourlyPager.page(presentation.hourly, pageIndex)
         val normalizedPage = Math.floorMod(pageIndex, pageCount)
-        val rangeStart = normalizedPage * HOURLY_SLOTS_PER_PAGE + 1
+        val rangeStart = normalizedPage * WeatherRenderCadence.HOURLY_PAGE_SIZE + 1
         val rangeEnd = minOf(rangeStart + items.size - 1, presentation.hourly.size)
         drawText(canvas, "HOURLY FORECAST", card.left + dp(24f), card.top + dp(36f), 15f, MUTED, true)
         if (presentation.hourly.isNotEmpty()) {
@@ -431,9 +441,6 @@ class WeatherContentView(context: Context) : View(context) {
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
 
     private companion object {
-        const val HOURLY_SLOTS_PER_PAGE = 12
-        const val PAGE_DURATION_MILLIS = 10_000L
-        const val FRAME_DELAY_MILLIS = 50L
         const val SHOOTING_STAR_CYCLE_SECONDS = 30f
         const val SHOOTING_STAR_DURATION_SECONDS = 1.35f
         const val MUTED = 0xFFD1D7E0.toInt()
