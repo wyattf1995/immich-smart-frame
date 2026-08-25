@@ -35,6 +35,7 @@ COPY resilience-lifecycle-tests.patch /tmp/resilience-lifecycle-tests.patch
 COPY resilience-timeout-prewarm-tests.patch /tmp/resilience-timeout-prewarm-tests.patch
 COPY resilience-timeout-bounds-tests.patch /tmp/resilience-timeout-bounds-tests.patch
 COPY readiness-selection-tests.patch /tmp/readiness-selection-tests.patch
+COPY readiness-selection-array-tests.patch /tmp/readiness-selection-array-tests.patch
 COPY resilience-backend.patch /tmp/resilience-backend.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
@@ -89,6 +90,8 @@ RUN cd /src \
 	&& git apply --unidiff-zero /tmp/resilience-timeout-bounds-tests.patch \
 	&& git apply --check --unidiff-zero /tmp/readiness-selection-tests.patch \
 	&& git apply --unidiff-zero /tmp/readiness-selection-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/readiness-selection-array-tests.patch \
+	&& git apply --unidiff-zero /tmp/readiness-selection-array-tests.patch \
 	&& git apply --check --unidiff-zero /tmp/resilience-backend.patch \
 	&& git apply --unidiff-zero /tmp/resilience-backend.patch
 
