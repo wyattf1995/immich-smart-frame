@@ -107,6 +107,7 @@
         const loading = document.getElementById("loading");
         const status = document.getElementById("status");
         const ROUTE_READY_TIMEOUT_MILLIS = 12_000;
+        const ROOT_SHADOW_PROBE_INTERVAL_MILLIS = 50;
         const readinessRequirements = Object.freeze({
           home: Object.freeze({
             primaryHeadings: Object.freeze(["today", "up next", "home status"]),
@@ -192,6 +193,8 @@
         };
 
         const releaseRouteEvidence = (state) => {
+          window.clearTimeout(state.rootProbeTimer);
+          state.rootProbeTimer = null;
           disconnectRouteObservers(state);
           removeVideoListeners(state);
           state.primaryHeadings.clear();
@@ -340,6 +343,21 @@
           evaluateRouteReadiness(state);
         };
 
+        const scheduleHomeAssistantRootProbe = (state) => {
+          if (activeRouteWork !== state || state.ready || state.rootProbeTimer !== null) return;
+          state.rootProbeTimer = window.setTimeout(() => {
+            state.rootProbeTimer = null;
+            if (activeRouteWork !== state || state.ready) return;
+            const homeAssistant = state.documentRoot.querySelector("home-assistant");
+            if (!homeAssistant?.shadowRoot) {
+              scheduleHomeAssistantRootProbe(state);
+              return;
+            }
+            observeRoot(homeAssistant.shadowRoot, state);
+            inspectAddedSubtree(homeAssistant.shadowRoot, state);
+          }, ROOT_SHADOW_PROBE_INTERVAL_MILLIS);
+        };
+
         const cameraConnectionDetail = (state) => {
           pruneRouteEvidence(state);
           const requirement = readinessRequirements.cameras;
@@ -365,6 +383,8 @@
         const finishRouteReady = (state) => {
           if (activeRouteWork !== state || state.ready) return;
           state.ready = true;
+          window.clearTimeout(state.rootProbeTimer);
+          state.rootProbeTimer = null;
           window.clearTimeout(state.deadlineTimer);
           state.deadlineTimer = null;
           showReady(state.view);
@@ -396,6 +416,7 @@
             view: readyView,
             ready: false,
             deadlineTimer: null,
+            rootProbeTimer: null,
             observers: [],
             observedRoots: new WeakSet(),
             styledHeadings: new WeakSet(),
@@ -413,6 +434,8 @@
           activeRouteWork = state;
           state.deadlineTimer = window.setTimeout(() => {
             if (activeRouteWork !== state || state.ready) return;
+            window.clearTimeout(state.rootProbeTimer);
+            state.rootProbeTimer = null;
             const detail = state.view === "cameras" ? cameraConnectionDetail(state) : "content is still loading";
             showStillConnecting(state.view, detail);
             focusPanel();
@@ -421,6 +444,7 @@
           // The initial document gets one bounded traversal. Afterwards each
           // observer only inspects the subtree that Home Assistant just added.
           inspectAddedSubtree(documentRoot, state);
+          scheduleHomeAssistantRootProbe(state);
         };
 
         const navigatePanel = (nextView) => {
