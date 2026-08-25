@@ -735,7 +735,7 @@ index 57e5f76..01776b8 100644
  			log.Error("OfflineMode: DownloadOfflineAssets", "err", downloadErr)
  		}
 diff --git a/internal/routes/routes_prefetch.go b/internal/routes/routes_prefetch.go
-index 0acffdb..97f4876 100644
+index 0acffdb..f043b76 100644
 --- a/internal/routes/routes_prefetch.go
 +++ b/internal/routes/routes_prefetch.go
 @@ -2,8 +2,13 @@ package routes
@@ -776,7 +776,7 @@ index 0acffdb..97f4876 100644
  	if _, loaded := s.inFlight.LoadOrStore(key, struct{}{}); loaded {
  		return false
  	}
-@@ -31,13 +46,51 @@ func (s *prefetchScheduler) schedule(key string, work func(context.Context)) boo
+@@ -31,13 +46,53 @@ func (s *prefetchScheduler) schedule(key string, work func(context.Context)) boo
  		s.inFlight.Delete(key)
  		return false
  	}
@@ -827,7 +827,9 @@ index 0acffdb..97f4876 100644
 +
 +// DrainAssetPrefetch waits for shutdown-cancelled prefetch workers to exit.
 +func DrainAssetPrefetch(ctx context.Context) bool {
-+	return assetPrefetchScheduler.drain(ctx) && offlinePrefetchScheduler.drain(ctx)
++	assetDrained := assetPrefetchScheduler.drain(ctx)
++	offlineDrained := offlinePrefetchScheduler.drain(ctx)
++	return assetDrained && offlineDrained
 +}
 diff --git a/internal/routes/routes_webhooks.go b/internal/routes/routes_webhooks.go
 index 3b85b57..2e990c0 100644
