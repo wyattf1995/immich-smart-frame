@@ -14,8 +14,8 @@ are unavailable.
 The privacy-safe example reproduces one verified 1920x1080 deployment with
 three views and an ambient background feature:
 
-- a two-column Home view with time, sunrise/sunset, status, and daily/hourly
-  weather;
+- a two-column Home view with a large current time/date, a lightweight agenda
+  from the four calendar entities, and status cards;
 - a four-camera 2x2 live grid;
 - a full-screen monthly calendar;
 - local, weather-state-driven background videos with fixed terrain and subtle
@@ -106,7 +106,8 @@ chrome.
 
 Readiness uses one initial light/shadow-DOM traversal, then scoped mutation
 observers for newly added subtrees and shadow roots; it does not repeatedly
-rescan the full dashboard. Home waits for the primary headings, Calendar waits
+rescan the full dashboard. Home waits for its three primary headings (`Today`,
+`Up next`, and `Home status`), Calendar waits
 for its rendered calendar root, and Cameras waits for all four cards and
 players, plus decoded video where Gecko exposes it. A slow camera route keeps
 a small nonblocking “still connecting” message with card/player/decode counts
@@ -155,8 +156,13 @@ Replace every generic entity below before importing the raw dashboard YAML:
 | `camera.camera_1` through `camera.camera_4` | Four reliable camera entities |
 | `calendar.family`, `calendar.personal`, `calendar.birthdays`, `calendar.holidays` | Calendars you intend to show |
 
-The time/date and next-sun-event entities must also exist. Remove any optional
-card whose entity your installation does not provide.
+The time/date entities must also exist. Home's **Up next** card reads only the
+already-exposed `message`, `start_time`, `all_day`, and `location` state
+attributes from each of the four calendar entities. It sorts one next item per
+calendar and renders at most four items. Timed events show `Tue, Sep 15 · 6:00
+PM`; all-day events show `Tue, Sep 15 · All day`, never a misleading midnight
+time. It does not call a calendar service or fetch a separate event feed.
+Remove any optional card whose entity your installation does not provide.
 
 Create a UI-managed dashboard, open its raw configuration editor, and paste the
 adapted `dashboard.example.yaml`. The built-in Calendar card defaults to Month;

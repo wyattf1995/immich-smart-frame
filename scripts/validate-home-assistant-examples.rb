@@ -117,11 +117,54 @@ unless home_view["type"] == "sections" && home_view["max_columns"] == 2 &&
        home_view["animated_background"] == "weather"
   fail_validation("Home must remain the verified two-column weather view")
 end
-home_headings = home_view.fetch("sections", []).flat_map { |section| section.fetch("cards", []) }
-                         .select { |card| card["type"] == "heading" }
-                         .map { |card| card["heading"] }
-unless home_headings == ["At a glance", "Home status", "Weather", "Hourly forecast"]
-  fail_validation("Home readiness headings must match the deployed heading cards exactly")
+home_sections = home_view.fetch("sections", [])
+home_heading_sections = home_sections.map do |section|
+  section.fetch("cards", []).select { |card| card["type"] == "heading" }.map { |card| card["heading"] }
+end
+unless home_heading_sections == [["Today", "Up next"], ["Home status"]]
+  fail_validation("Home must keep Today and Up next on the left, and Home status on the right")
+end
+unless home_sections.length == 2
+  fail_validation("Home must remain a two-column layout with two sections")
+end
+
+home_cards = dashboard_nodes.call(home_view)
+home_markdown = home_cards.select { |node| node["type"] == "markdown" }
+unless home_markdown.length == 2
+  fail_validation("Home must contain only the Today and Up next markdown cards")
+end
+today_markdown = home_markdown.find { |card| card.fetch("content", "").include?("sensor.time") }
+up_next_content = home_markdown.map { |card| card.fetch("content", "") }
+                         .find { |content| content.include?("state_attr(calendar.entity, 'message')") }
+up_next_markdown = home_markdown.find { |card| card.fetch("content", "") == up_next_content }
+unless today_markdown && today_markdown.fetch("content").include?("sensor.date")
+  fail_validation("Today must show the existing time and date entities")
+end
+calendar_entities = %w[calendar.family calendar.personal calendar.birthdays calendar.holidays]
+unless up_next_markdown &&
+       calendar_entities.all? { |entity| up_next_markdown.fetch("content").include?(entity) } &&
+       up_next_markdown.fetch("content").include?("state_attr(calendar.entity, 'start_time')") &&
+       up_next_markdown.fetch("content").include?("state_attr(calendar.entity, 'all_day')") &&
+       up_next_markdown.fetch("content").include?("event.all_day") &&
+       up_next_markdown.fetch("content").include?("timestamp_custom('%a, %b %-d')") &&
+       up_next_markdown.fetch("content").include?("timestamp_custom('%-I:%M %p')") &&
+       up_next_markdown.fetch("content").include?("All day") &&
+       up_next_markdown.fetch("content").include?("events[:4]")
+  fail_validation("Up next must derive a bounded agenda from calendar state attributes")
+end
+if up_next_markdown && up_next_markdown.fetch("content").include?("timestamp_custom('%a %-I:%M %p')")
+  fail_validation("Up next must show month/day before time and never imply midnight for all-day events")
+end
+if home_markdown.any? { |card| card.fetch("content", "").match?(/sun_next|sunrise|sunset/i) }
+  fail_validation("Home must not duplicate sunrise or sunset details")
+end
+if dashboard_nodes.call(home_view).any? { |node| node["type"] == "weather-forecast" }
+  fail_validation("Home must not duplicate daily or hourly weather forecast cards")
+end
+home_entities = home_cards.map { |node| node["entity"] }.compact.to_set
+unless home_entities == Set["binary_sensor.internet_status", "vacuum.robot_cleaner", "sensor.robot_battery",
+                            "sensor.robot_cleaning_progress", "sensor.last_successful_backup"]
+  fail_validation("Home must retain only the existing Internet, Roborock, and backup cards")
 end
 unless weather_view["type"] == "sections" && weather_view["max_columns"] == 2 &&
        weather_view["animated_background"] == "weather"
@@ -170,6 +213,7 @@ end
 
 entity_ids = File.read(FILES.fetch(:dashboard))
                  .scan(/\b(?:binary_sensor|calendar|camera|sensor|vacuum|weather)\.[a-z0-9_]+\b/)
+                 .reject { |entity| %w[calendar.entity calendar.name].include?(entity) }
                  .to_set
 unless entity_ids == EXPECTED_ENTITIES
   fail_validation("entity placeholders #{entity_ids.to_a.sort.inspect}, expected #{EXPECTED_ENTITIES.to_a.sort.inspect}")

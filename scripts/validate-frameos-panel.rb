@@ -23,7 +23,7 @@ required = [
   "const waitForRouteReady = (readyView) =>",
   "ROUTE_READY_TIMEOUT_MILLIS",
   "const readinessRequirements = Object.freeze({",
-  'primaryHeadings: Object.freeze(["at a glance", "home status", "weather", "hourly forecast"])',
+  'primaryHeadings: Object.freeze(["today", "up next", "home status"])',
   "primaryHeadings",
   "cameraCards",
   "cameraPlayers",

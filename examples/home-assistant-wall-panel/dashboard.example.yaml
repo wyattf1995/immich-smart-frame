@@ -11,15 +11,60 @@ views:
       - type: grid
         cards:
           - type: heading
-            heading: At a glance
-            icon: mdi:home-outline
+            heading: Today
+            icon: mdi:calendar-today
           - type: markdown
             content: |-
-              # {{ states('sensor.time') }} · {{ as_timestamp(states('sensor.date')) | timestamp_custom('%a, %b %d') }}
-              **🌅 Sunrise {{ as_timestamp(states('sensor.sun_next_rising')) | timestamp_custom('%-I:%M %p') }} · 🌇 Sunset {{ as_timestamp(states('sensor.sun_next_setting')) | timestamp_custom('%-I:%M %p') }}**
+              # {{ states('sensor.time') }}
+              ## {{ as_timestamp(states('sensor.date')) | timestamp_custom('%A, %B %-d') }}
             grid_options:
               columns: 12
               rows: auto
+          - type: heading
+            heading: Up next
+            icon: mdi:calendar-clock
+          - type: markdown
+            content: |-
+              {% set calendars = [
+                {'entity': 'calendar.family', 'name': 'Family'},
+                {'entity': 'calendar.personal', 'name': 'Personal'},
+                {'entity': 'calendar.birthdays', 'name': 'Birthdays'},
+                {'entity': 'calendar.holidays', 'name': 'Holidays'}
+              ] %}
+              {% set agenda = namespace(events=[]) %}
+              {% for calendar in calendars %}
+                {% set message = state_attr(calendar.entity, 'message') %}
+                {% set start_time = state_attr(calendar.entity, 'start_time') %}
+                {% set all_day = state_attr(calendar.entity, 'all_day') | default(false, true) %}
+                {% set location = state_attr(calendar.entity, 'location') %}
+                {% if message and start_time %}
+                  {% set start = as_datetime(start_time) %}
+                  {% if start %}
+                    {% set agenda.events = agenda.events + [{'calendar': calendar.name, 'message': message, 'start': start, 'all_day': all_day, 'location': location}] %}
+                  {% endif %}
+                {% endif %}
+              {% endfor %}
+              {% set events = agenda.events | sort(attribute='start') %}
+              {% if events %}
+                {% for event in events[:4] %}
+                  {% set event_date = as_timestamp(event.start) | timestamp_custom('%a, %b %-d') %}
+                  {% if event.all_day %}
+              - **{{ event_date }} · All day** — {{ event.message }} · {{ event.calendar }}{% if event.location %} · {{ event.location }}{% endif %}
+                  {% else %}
+              - **{{ event_date }} · {{ as_timestamp(event.start) | timestamp_custom('%-I:%M %p') }}** — {{ event.message }} · {{ event.calendar }}{% if event.location %} · {{ event.location }}{% endif %}
+                  {% endif %}
+                {% endfor %}
+              {% else %}
+              _No upcoming events_
+              {% endif %}
+            grid_options:
+              columns: 12
+              rows: auto
+      - type: grid
+        cards:
+          - type: heading
+            heading: Home status
+            icon: mdi:home-heart
           - type: tile
             entity: binary_sensor.internet_status
             name: Internet
@@ -29,9 +74,6 @@ views:
             grid_options:
               columns: 12
               rows: 1
-          - type: heading
-            heading: Home status
-            icon: mdi:home-heart
           - type: glance
             columns: 3
             show_name: true
@@ -62,30 +104,6 @@ views:
             grid_options:
               columns: 12
               rows: 1
-      - type: grid
-        cards:
-          - type: heading
-            heading: Weather
-            icon: mdi:weather-partly-cloudy
-          - type: weather-forecast
-            entity: weather.home
-            show_current: true
-            show_forecast: true
-            forecast_type: daily
-            grid_options:
-              columns: 12
-              rows: auto
-          - type: heading
-            heading: Hourly forecast
-            icon: mdi:clock-outline
-          - type: weather-forecast
-            entity: weather.home
-            show_current: false
-            show_forecast: true
-            forecast_type: hourly
-            grid_options:
-              columns: 12
-              rows: auto
     animated_background: weather
 
   - title: Weather
