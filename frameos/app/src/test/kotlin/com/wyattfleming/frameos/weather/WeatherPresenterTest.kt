@@ -35,7 +35,7 @@ class WeatherPresenterTest {
         assertEquals(WeatherCondition.CLEAR_NIGHT, presentation.sceneCondition)
         assertEquals("67%", presentation.metrics.single { it.label == "Humidity" }.value)
         assertEquals("82°F", presentation.metrics.single { it.label == "Feels like" }.value)
-        assertEquals("3.1 mph · SSW", presentation.metrics.single { it.label == "Wind" }.value)
+        assertEquals("3.1 mph", presentation.metrics.single { it.label == "Wind SSW" }.value)
         assertEquals("67°F", presentation.metrics.single { it.label == "Dew point" }.value)
         assertEquals("45%", presentation.metrics.single { it.label == "Cloud cover" }.value)
         assertEquals("6.5", presentation.metrics.single { it.label == "UV index" }.value)
