@@ -13,8 +13,9 @@ class FrameWebCrashRecoveryState {
         requiresReopen = true
     }
 
-    fun reopenIfRequired(): Boolean {
+    fun reopenIfRequired(openSession: () -> Unit): Boolean {
         if (!requiresReopen) return false
+        openSession()
         generation += 1
         requiresReopen = false
         return true

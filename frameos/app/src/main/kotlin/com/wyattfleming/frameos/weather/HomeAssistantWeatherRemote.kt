@@ -40,7 +40,7 @@ class HomeAssistantWeatherRemote(
         if (bearerToken.isBlank()) return WeatherRemoteResult.AuthRequired(AUTH_REQUIRED)
         val primaryResult = fetchFrom(endpoint, entityId, bearerToken)
         return if (primaryResult is WeatherRemoteResult.Offline && fallbackEndpoint != null) {
-            fetchFrom(fallbackEndpoint, entityId, bearerToken)
+            fetchFrom(fallbackEndpoint, entityId, bearerToken = null)
         } else {
             primaryResult
         }
@@ -49,7 +49,7 @@ class HomeAssistantWeatherRemote(
     private fun fetchFrom(
         requestEndpoint: HomeAssistantWeatherEndpoint,
         entityId: String,
-        bearerToken: String,
+        bearerToken: String?,
     ): WeatherRemoteResult {
         val batch = synchronized(batchLock) {
             if (activeBatch != null) return WeatherRemoteResult.Offline(REQUEST_IN_PROGRESS)
@@ -57,10 +57,10 @@ class HomeAssistantWeatherRemote(
         }
         var completed = false
         return try {
-            val headers = mapOf(
-                "Accept" to "application/json",
-                "Authorization" to "Bearer $bearerToken",
-            )
+            val headers = buildMap {
+                put("Accept", "application/json")
+                bearerToken?.let { put("Authorization", "Bearer $it") }
+            }
             val deadline = WeatherRequestDeadline(timeoutMillis = requestTimeoutMillis)
             val currentFuture = submitTracked(batch) {
                 parser.parseCurrentState(entityId, execute(HomeAssistantHttpRequest("GET", requestEndpoint.stateUrl(entityId), headers)).body)

@@ -116,8 +116,7 @@ class FrameWebSurface(
             require(urlPolicy.isAllowedTopLevelNavigation(configuredUrls, url)) { "Unsafe $label navigation" }
             loadState.recordRequest(url)
             try {
-                if (crashRecovery.reopenIfRequired()) {
-                    session.open(frameRuntime)
+                if (crashRecovery.reopenIfRequired { session.open(frameRuntime) }) {
                     // Recovery retries run only for an attached, visible session.
                     session.setActive(true)
                     session.setFocused(false)
