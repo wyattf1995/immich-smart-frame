@@ -70,6 +70,11 @@ if [ -n "${FRAME_ROUTER_FIREFOX_READY_AFTER:-}" ]; then
   fi
   exit 0
 fi
+if [ "${FRAME_ROUTER_FOREGROUND:-}" = background-firefox ]; then
+  printf '%s\n' '  mResumedActivity: ActivityRecord{42 u0 com.example.launcher/.MainActivity}'
+  printf '%s\n' '  mLastPausedActivity: ActivityRecord{42 u0 org.mozilla.firefox/org.mozilla.gecko.BrowserApp}'
+  exit 0
+fi
 if [ -n "${FRAME_ROUTER_FIREFOX_STARTED:-}" ] && [ -f "$FRAME_ROUTER_FIREFOX_STARTED" ]; then
   printf '%s\n' '  mResumedActivity: ActivityRecord{42 u0 org.mozilla.firefox/org.mozilla.gecko.BrowserApp}'
   exit 0
@@ -353,6 +358,13 @@ assert_file_count 'sleep 1' "$log" 3 \
   'a never-ready Firefox activity must use only bounded poll sleeps'
 assert_file_not_contains 'input swipe 100 1000 100 500 100' "$log" \
   'a never-ready Firefox activity must not swipe an unrelated foreground surface'
+
+: > "$log"
+FRAME_ROUTER_FOREGROUND=background-firefox run_router show home
+assert_file_count 'sleep 1' "$log" 3 \
+  'a background Firefox task must not satisfy the resumed-activity readiness probe'
+assert_file_not_contains 'input swipe 100 1000 100 500 100' "$log" \
+  'a background Firefox task must not receive a toolbar-collapse swipe'
 
 : > "$log"
 FRAME_ROUTER_FOREGROUND=fully run_router next

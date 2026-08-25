@@ -23,6 +23,7 @@ required = [
   "const waitForRouteReady = (readyView) =>",
   "ROUTE_READY_TIMEOUT_MILLIS",
   "const readinessRequirements = Object.freeze({",
+  'primaryHeadings: Object.freeze(["at a glance", "home status", "weather", "hourly forecast"])',
   "primaryHeadings",
   "cameraCards",
   "cameraPlayers",
@@ -30,6 +31,12 @@ required = [
   "new MutationObserver(",
   "const inspectAddedSubtree = (node, state) =>",
   "const cancelRouteWork = () =>",
+  "const isActivePanelElement = (element, documentRoot) =>",
+  "element.isConnected && element.ownerDocument === documentRoot",
+  "const pruneRouteEvidence = (state) =>",
+  "primaryHeadings: new Map()",
+  "const disconnectRouteObservers = (state) =>",
+  "const removeVideoListeners = (state) =>",
   "new WeakSet()",
   "still connecting",
   "panel.src = nextPath",
@@ -47,6 +54,7 @@ abort("FrameOS panel wrapper must not declare readiness on a fixed 180ms delay")
 abort("FrameOS panel wrapper must not retry full-DOM readiness scans every 100ms") if panel.include?("ROUTE_READY_POLL_MILLIS")
 abort("FrameOS panel wrapper must use its route observer for heading contrast") if panel.include?("startHeadingContrast")
 abort("FrameOS panel wrapper must disconnect route observers when superseded") unless panel.include?("observer.disconnect()")
+abort("FrameOS panel wrapper must discard strong camera evidence after ready") unless panel.include?("releaseRouteEvidence(state)")
 
 forbidden = [
   "fetch(",

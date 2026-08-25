@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
 require "json"
+require "fileutils"
 require "open3"
 require "set"
+require "tmpdir"
 require "yaml"
 
 REPO_ROOT = File.expand_path("..", __dir__)
@@ -115,6 +117,12 @@ unless home_view["type"] == "sections" && home_view["max_columns"] == 2 &&
        home_view["animated_background"] == "weather"
   fail_validation("Home must remain the verified two-column weather view")
 end
+home_headings = home_view.fetch("sections", []).flat_map { |section| section.fetch("cards", []) }
+                         .select { |card| card["type"] == "heading" }
+                         .map { |card| card["heading"] }
+unless home_headings == ["At a glance", "Home status", "Weather", "Hourly forecast"]
+  fail_validation("Home readiness headings must match the deployed heading cards exactly")
+end
 unless weather_view["type"] == "sections" && weather_view["max_columns"] == 2 &&
        weather_view["animated_background"] == "weather"
   fail_validation("Weather must be a two-column forecast view with a weather-driven background")
@@ -196,6 +204,9 @@ weather_video_urls = [weather_group["default_url"], *weather_group.fetch("state_
 unless weather_video_urls.all? { |url| url.match?(%r{\A/local/wallpanel-weather/[a-z-]+\.mp4\?v=[0-9a-f]{12,64}\z}) }
   fail_validation("weather MP4 URLs must carry generated SHA-256 cache fingerprints")
 end
+unless weather_group.fetch("state_url").fetch("snowy-rainy") == "/local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4"
+  fail_validation("snowy-rainy must retain the rainy MP4 mapping while its cache fingerprint changes")
+end
 
 keymapper = JSON.parse(File.read(FILES.fetch(:keymapper)))
 unless keymapper["keymap_db_version"] == 22 && keymapper["app_version"] == 259
@@ -238,6 +249,25 @@ unless loop_builder.include?("asset_fingerprint") &&
        loop_builder.include?("dashboard.example.yaml") &&
        loop_builder.include?("?v=")
   fail_validation("loop builder must update dashboard MP4 URLs with their generated fingerprint")
+end
+
+Dir.mktmpdir("weather-fingerprint-test") do |temporary_dir|
+  copied_dashboard = File.join(temporary_dir, "dashboard.example.yaml")
+  FileUtils.cp(FILES.fetch(:dashboard), copied_dashboard)
+  fingerprint = "0123456789ab"
+  2.times do
+    output, status = Open3.capture2e(
+      "bash", FILES.fetch(:loop_builder), "--rewrite-dashboard", copied_dashboard, fingerprint
+    )
+    fail_validation("fingerprint rewrite failed: #{output}") unless status.success?
+  end
+  rewritten_weather = YAML.load_file(copied_dashboard).fetch("animated_background")
+                          .fetch("groups").find { |group| group["name"] == "weather" }.fetch("config")
+  rewritten_urls = [rewritten_weather.fetch("default_url"), *rewritten_weather.fetch("state_url").values]
+  unless rewritten_urls.all? { |url| url.match?(%r{\.mp4\?v=#{fingerprint}\z}) } &&
+         rewritten_weather.fetch("state_url").fetch("snowy-rainy") == "/local/wallpanel-weather/rainy.mp4?v=#{fingerprint}"
+    fail_validation("fingerprint rewrite must be idempotent and preserve every weather-state mapping")
+  end
 end
 
 guide = File.read(FILES.fetch(:guide))
