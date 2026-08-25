@@ -2,21 +2,11 @@ diff --git a/internal/immich/immich_date.go b/internal/immich/immich_date.go
 index 1359588..46b5e3a 100644
 --- a/internal/immich/immich_date.go
 +++ b/internal/immich/immich_date.go
-@@ -8,9 +8,9 @@ import (
- 	"net/http"
- 	"net/url"
- 	"regexp"
+@@ -11 +10,0 @@ import (
 -	"slices"
- 	"strconv"
- 	"strings"
+@@ -13,0 +13 @@ import (
 +	"sync"
- 	"time"
- 
- 	"charm.land/log/v2"
-@@ -19,6 +19,39 @@ import (
- 	"github.com/google/go-querystring/query"
- )
- 
+@@ -21,0 +22,33 @@ import (
 +type dateCandidatePool struct {
 +	mu         sync.Mutex
 +	refillMu   sync.Mutex
@@ -50,13 +40,7 @@ index 1359588..46b5e3a 100644
 +
 +func dateCandidatePoolKey(apiCacheKey string) string { return "date-candidates:" + apiCacheKey }
 +
- // RandomAssetInDateRange retrieves a random asset from the Immich API within the specified date range.
- // Parameters:
- //   - dateRange: A string in the format "YYYY-MM-DD_to_YYYY-MM-DD" or using "today" for current date
-@@ -100,13 +133,37 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
- 			return err
- 		}
- 
+@@ -103,4 +136,18 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
 -		err = json.Unmarshal(apiBody, &immichAssets)
 -		if err != nil {
 -			_, _, err = immichAPIFail(immichAssets, err, apiBody, apiURL.String())
@@ -79,8 +63,7 @@ index 1359588..46b5e3a 100644
 +			}
 +			pool.refill(immichAssets)
 +			pool.refillMu.Unlock()
- 		}
- 
+@@ -109 +156,11 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
 -		apiCacheKey := cache.APICacheKey(apiURL.String(), deviceID, a.requestConfig.SelectedUser)
 +		if candidate, ok := pool.take(); ok {
 +			immichAssets = []Asset{candidate}
@@ -93,22 +76,10 @@ index 1359588..46b5e3a 100644
 +			pool.refillMu.Unlock()
 +			continue
 +		}
- 
- 		if len(immichAssets) == 0 {
- 			log.Debug(requestID + " No assets left in cache. Refreshing and trying again")
-@@ -119,7 +176,7 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
- 			wantedAssetType = AllAssetTypes
- 		}
- 
+@@ -122 +179 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
 -		for immichAssetIndex, asset := range immichAssets {
 +		for _, asset := range immichAssets {
- 
- 			asset.Bucket = kiosk.SourceDateRange
- 			asset.requestConfig = a.requestConfig
-@@ -129,19 +186,6 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
- 				continue
- 			}
- 
+@@ -132,13 +188,0 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
 -			if a.requestConfig.Kiosk.Cache {
 -				// Remove the current asset from the slice
 -				immichAssetsToCache := slices.Delete(immichAssets, immichAssetIndex, immichAssetIndex+1)
@@ -122,35 +93,17 @@ index 1359588..46b5e3a 100644
 -				cache.Set(apiCacheKey, jsonBytes, a.requestConfig.Duration, a.requestConfig.CacheDuration)
 -			}
 -
- 			asset.BucketID = dateRange
- 
- 			*a = asset
 diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
 index b8da962..3e4197a 100644
 --- a/internal/immich/immich_helpers.go
 +++ b/internal/immich/immich_helpers.go
-@@ -15,6 +15,7 @@ import (
- 	"reflect"
- 	"slices"
- 	"strings"
+@@ -17,0 +18 @@ import (
 +	"sync"
- 	"time"
- 
- 	"charm.land/log/v2"
-@@ -26,6 +27,9 @@ import (
- 	"github.com/google/go-querystring/query"
- )
- 
+@@ -28,0 +30,3 @@ import (
 +var compiledAlbumPenaltyFactors sync.Map
 +var compiledAlbumRestrictions sync.Map
 +
- // immichAPIFail handles failures in Immich API calls by unmarshaling the error response,
- // logging the error, and returning a formatted error along with the original value.
- func immichAPIFail[T APIResponse](value T, err error, body []byte, apiURL string) (T, string, error) {
-@@ -179,7 +183,13 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
- 					"error_type", fmt.Sprintf("%T", resErr),
- 					"error", resErr)
- 			}
+@@ -182 +186,7 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
 -			time.Sleep(time.Duration(1<<attempts) * time.Second)
 +			backoff := time.NewTimer(time.Duration(1<<attempts) * time.Second)
 +			select {
@@ -159,22 +112,13 @@ index b8da962..3e4197a 100644
 +				return responseBody, contentType, false, ctx.Err()
 +			case <-backoff.C:
 +			}
- 			continue
- 		}
- 
-@@ -743,42 +753,89 @@ func (a *Asset) hasValidFilterExcludeFaces(requestID, deviceID string) bool {
- // Returns:
- //   - bool: true if asset is not in any excluded albums, false otherwise
- func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
+@@ -745,0 +756,5 @@ func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
 +	restrictions := selectedAlbumRestrictions(a.requestConfig)
 +	if len(restrictions.excluded) == 0 && len(restrictions.penalties) == 0 {
 +		return true
 +	}
 +
- 	if len(a.AppearsIn) == 0 {
- 		a.AlbumsThatContainAsset(requestID, deviceID)
- 	}
- 
+@@ -750,5 +765,2 @@ func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
 -	if slices.ContainsFunc(a.AppearsIn, func(album Album) bool {
 -		return slices.Contains(a.requestConfig.ExcludedAlbums, album.ID)
 -	}) {
@@ -182,7 +126,7 @@ index b8da962..3e4197a 100644
 -	}
 +	return restrictions.allows(a.AppearsIn, a.ID, requestID)
 +}
- 
+@@ -756,5 +768,9 @@ func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
 -	var penalties []config.AlbumPenalty
 -	for name, profile := range a.requestConfig.Curation.Profiles {
 -		if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(a.requestConfig.CurationProfile)) {
@@ -197,11 +141,10 @@ index b8da962..3e4197a 100644
 +	for _, album := range albums {
 +		if _, excluded := r.excluded[album.ID]; excluded {
 +			return false
- 		}
- 	}
+@@ -762,0 +779,2 @@ func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
 +	return albumPenaltyRoll(assetID, requestID) < albumPenaltyFactorForAlbums(albums, r.penalties)
 +}
- 
+@@ -764 +782,12 @@ func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
 -	return acceptsAlbumPenaltyForAsset(a.AppearsIn, penalties, a.ID, requestID)
 +func selectedAlbumRestrictions(requestConfig config.Config) albumRestrictions {
 +	cacheKey := fmt.Sprintf("%p:%s:%s", requestConfig.Curation.Profiles, strings.ToLower(strings.TrimSpace(requestConfig.CurationProfile)), strings.Join(requestConfig.ExcludedAlbums, "\x00"))
@@ -215,8 +158,7 @@ index b8da962..3e4197a 100644
 +	restrictions := albumRestrictions{excluded: excluded, penalties: selectedAlbumPenaltyFactors(requestConfig)}
 +	actual, _ := compiledAlbumRestrictions.LoadOrStore(cacheKey, restrictions)
 +	return actual.(albumRestrictions)
- }
- 
+@@ -767,2 +796,20 @@ func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
 -func albumPenaltyFactor(albums Albums, penalties []config.AlbumPenalty) float64 {
 -	factor := 1.0
 +func selectedAlbumPenaltyFactors(requestConfig config.Config) map[string]float64 {
@@ -239,13 +181,13 @@ index b8da962..3e4197a 100644
 +
 +func albumPenaltyFactors(penalties []config.AlbumPenalty) map[string]float64 {
 +	factors := make(map[string]float64, len(penalties))
- 	for _, penalty := range penalties {
+@@ -770,2 +817,3 @@ func albumPenaltyFactor(albums Albums, penalties []config.AlbumPenalty) float64
 -		if penalty.Factor <= 0 || penalty.Factor > factor {
 -			continue
 +		key := strings.ToLower(strings.TrimSpace(penalty.Album))
 +		if key != "" && penalty.Factor > 0 {
 +			factors[key] = penalty.Factor
- 		}
+@@ -773,4 +821,9 @@ func albumPenaltyFactor(albums Albums, penalties []config.AlbumPenalty) float64
 -		if slices.ContainsFunc(albums, func(album Album) bool {
 -			return strings.EqualFold(album.ID, penalty.Album)
 -		}) {
@@ -259,35 +201,19 @@ index b8da962..3e4197a 100644
 +	for _, album := range albums {
 +		if candidate, ok := factors[strings.ToLower(album.ID)]; ok && candidate < factor {
 +			factor = candidate
- 		}
- 	}
- 	return factor
- }
- 
+@@ -781,0 +835,4 @@ func albumPenaltyFactor(albums Albums, penalties []config.AlbumPenalty) float64
 +func albumPenaltyFactor(albums Albums, penalties []config.AlbumPenalty) float64 {
 +	return albumPenaltyFactorForAlbums(albums, albumPenaltyFactors(penalties))
 +}
 +
- func acceptsAlbumPenalty(albums Albums, penalties []config.AlbumPenalty, roll float64) bool {
- 	return roll < albumPenaltyFactor(albums, penalties)
- }
-@@ -796,7 +853,7 @@ func albumPenaltyRoll(assetID, requestID string) float64 {
- }
- 
- func acceptsAlbumPenaltyForAsset(albums Albums, penalties []config.AlbumPenalty, assetID, requestID string) bool {
+@@ -799 +856 @@ func acceptsAlbumPenaltyForAsset(albums Albums, penalties []config.AlbumPenalty,
 -	return acceptsAlbumPenalty(albums, penalties, albumPenaltyRoll(assetID, requestID))
 +	return albumPenaltyRoll(assetID, requestID) < albumPenaltyFactorForAlbums(albums, albumPenaltyFactors(penalties))
- }
- 
- // hasValidPeople checks if the asset contains any excluded people.
 diff --git a/internal/immich/immich_memories.go b/internal/immich/immich_memories.go
 index 95939de..3d9ba8a 100644
 --- a/internal/immich/immich_memories.go
 +++ b/internal/immich/immich_memories.go
-@@ -198,9 +198,17 @@ func memoriesCount(memories MemoriesResponse) int {
- // Returns:
- //   - int: Total number of assets, or 0 if error occurs
- func (a *Asset) MemoriesAssetsCount(requestID, deviceID string) int {
+@@ -200,0 +201,9 @@ func (a *Asset) MemoriesAssetsCount(requestID, deviceID string) int {
 +	pastDays := max(a.requestConfig.PastMemoryDays, 0)
 +	availabilityKey := cache.APICacheKey(fmt.Sprintf("memories-availability:%s:%d", a.requestConfig.ImmichURL, pastDays), deviceID, a.requestConfig.SelectedUser)
 +	if cachedCount, found := cache.Get(availabilityKey); found {
@@ -297,94 +223,46 @@ index 95939de..3d9ba8a 100644
 +		cache.Delete(availabilityKey)
 +	}
 +
- 	var m MemoriesResponse
- 	var err error
+@@ -203 +211,0 @@ func (a *Asset) MemoriesAssetsCount(requestID, deviceID string) int {
 -	pastDays := max(a.requestConfig.PastMemoryDays, 0)
- 
- 	if pastDays > 0 {
- 		m, _, err = a.memoriesWithPastDays(requestID, deviceID, true, pastDays)
-@@ -212,7 +220,11 @@ func (a *Asset) MemoriesAssetsCount(requestID, deviceID string) int {
- 		return 0
- 	}
- 
+@@ -215 +223,5 @@ func (a *Asset) MemoriesAssetsCount(requestID, deviceID string) int {
 -	return memoriesCount(m)
 +	count := memoriesCount(m)
 +	// Availability is only a bounded hint for bucket weighting. A later memory
 +	// selection still handles an empty/refreshed response safely.
 +	cache.SetWithExpiration(availabilityKey, count, time.Minute)
 +	return count
- }
- 
- // updateMemoryCache updates the cache by removing used assets from memories.
 diff --git a/internal/routes/routes_asset.go b/internal/routes/routes_asset.go
 index ea80d9f..8721a47 100644
 --- a/internal/routes/routes_asset.go
 +++ b/internal/routes/routes_asset.go
-@@ -64,7 +64,7 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
- 		// get and use prefetch data (if found)
- 		if requestConfig.Kiosk.PreFetch {
- 			if cachedViewData := fromCache(requestCtx.URL.String(), deviceID); cachedViewData != nil {
+@@ -67 +67 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
 -				go assetPreFetch(com, requestData, requestCtx)
 +				scheduleAssetPrefetch(com, requestData, requestCtx)
- 				go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, cachedViewData[0])
- 
- 				return renderCachedViewData(c, cachedViewData, &requestConfig, requestID, deviceID, com.Secret())
-@@ -72,14 +72,14 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
- 			log.Debug(requestID, "deviceID", deviceID, "cache miss for new image")
- 		}
- 
+@@ -75 +75 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
 -		viewData, err := generateViewData(requestConfig, requestCtx, requestID, deviceID, false)
 +		viewData, err := generateViewData(com.Context(), requestConfig, requestCtx, requestID, deviceID, false)
- 		if err != nil {
- 			t := i18n.T()
- 			return RenderError(c, err, t("retrieving_asset"), requestConfig.Duration)
- 		}
- 
- 		if requestConfig.Kiosk.PreFetch {
+@@ -82 +82 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
 -			go assetPreFetch(com, requestData, requestCtx)
 +			scheduleAssetPrefetch(com, requestData, requestCtx)
- 		}
- 
- 		go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, viewData)
 diff --git a/internal/routes/routes_asset_helpers.go b/internal/routes/routes_asset_helpers.go
 index a9a2c41..43572b0 100644
 --- a/internal/routes/routes_asset_helpers.go
 +++ b/internal/routes/routes_asset_helpers.go
-@@ -602,6 +602,10 @@ func DrawFaceOnImage(img image.Image, i *immich.Asset) image.Image {
- //   - ViewImageData containing the processed image and metadata
- //   - Error if any step fails
- func processViewImageData(requestConfig config.Config, c common.ContextCopy, isPrefetch bool, options common.ViewImageDataOptions) (common.ViewImageData, error) {
+@@ -604,0 +605,4 @@ func processViewImageData(requestConfig config.Config, c common.ContextCopy, isP
 +	return processViewImageDataWithContext(context.Background(), requestConfig, c, isPrefetch, options)
 +}
 +
 +func processViewImageDataWithContext(ctx context.Context, requestConfig config.Config, c common.ContextCopy, isPrefetch bool, options common.ViewImageDataOptions) (common.ViewImageData, error) {
- 	// Initialize request metadata
- 	metadata := requestMetadata{
- 		requestID: utils.ColorizeRequestID(c.ResponseHeader.Get(echo.HeaderXRequestID)),
-@@ -609,7 +613,7 @@ func processViewImageData(requestConfig config.Config, c common.ContextCopy, isP
- 		urlString: c.URL.String(),
- 	}
- 
+@@ -612 +616 @@ func processViewImageData(requestConfig config.Config, c common.ContextCopy, isP
 -	immichAsset := setupImmichAsset(requestConfig, options.ImageOrientation)
 +	immichAsset := setupImmichAsset(ctx, requestConfig, options.ImageOrientation)
- 
- 	// Handle relative asset configuration if needed
- 	if options.RelativeAssetWanted {
-@@ -654,8 +658,8 @@ func processViewImageData(requestConfig config.Config, c common.ContextCopy, isP
- 
- // setupImmichAsset creates and configures a new ImmichAsset based on the provided config
- // and orientation settings
+@@ -657,2 +661,2 @@ func processViewImageData(requestConfig config.Config, c common.ContextCopy, isP
 -func setupImmichAsset(config config.Config, orientation immich.ImageOrientation) immich.Asset {
 -	asset := immich.New(context.Background(), config)
 +func setupImmichAsset(ctx context.Context, config config.Config, orientation immich.ImageOrientation) immich.Asset {
 +	asset := immich.New(ctx, config)
- 	if orientation == immich.PortraitOrientation || orientation == immich.LandscapeOrientation {
- 		asset.RatioWanted = orientation
- 	}
-@@ -736,16 +740,21 @@ func ProcessViewImageDataWithOptions(requestConfig config.Config, c common.Conte
- func assetToCache(ctx context.Context, viewDataToAdd common.ViewData, requestConfig *config.Config, deviceID string, requestData *common.RouteRequestData, c common.ContextCopy) {
- 	cache.AssetToCache(viewDataToAdd, requestConfig, deviceID, c.URL.String())
- 
+@@ -739 +743,6 @@ func assetToCache(ctx context.Context, viewDataToAdd common.ViewData, requestCon
 -	go webhooks.Trigger(ctx, requestData, KioskVersion, webhooks.PrefetchAsset, viewDataToAdd)
 +	webhooks.Trigger(ctx, requestData, KioskVersion, webhooks.PrefetchAsset, viewDataToAdd)
 +}
@@ -392,103 +270,46 @@ index a9a2c41..43572b0 100644
 +func scheduleAssetPrefetch(common *common.Common, requestData *common.RouteRequestData, c common.ContextCopy) {
 +	key := requestData.DeviceID + "\x00" + c.URL.String()
 +	assetPrefetchScheduler.schedule(key, func(ctx context.Context) { assetPreFetch(ctx, common, requestData, c) })
- }
- 
- // assetPreFetch handles prefetching assets for the current request
+@@ -743 +752 @@ func assetToCache(ctx context.Context, viewDataToAdd common.ViewData, requestCon
 -func assetPreFetch(common *common.Common, requestData *common.RouteRequestData, c common.ContextCopy) {
 +func assetPreFetch(ctx context.Context, common *common.Common, requestData *common.RouteRequestData, c common.ContextCopy) {
- 	requestConfig := requestData.RequestConfig
- 	requestID := requestData.RequestID
- 	deviceID := requestData.DeviceID
- 
+@@ -748 +757 @@ func assetPreFetch(common *common.Common, requestData *common.RouteRequestData,
 -	viewDataToAdd, err := generateViewData(requestConfig, c, requestID, deviceID, true)
 +	viewDataToAdd, err := generateViewData(ctx, requestConfig, c, requestID, deviceID, true)
- 	if err != nil {
- 		log.Error("generateViewData", "prefetch", true, "err", err)
- 		return
-@@ -799,11 +808,11 @@ func renderCachedViewData(c *echo.Context, cachedViewData []common.ViewData, req
- // fetchSecondSplitViewAsset attempts to retrieve a second asset for split view layouts that is different from the first asset.
- // It tries up to three times to obtain a unique asset and appends it to the provided ViewData if successful.
- // Returns an error if asset retrieval fails.
+@@ -802 +811 @@ func renderCachedViewData(c *echo.Context, cachedViewData []common.ViewData, req
 -func fetchSecondSplitViewAsset(viewData *common.ViewData, viewDataSplitView common.ViewImageData, requestConfig config.Config, c common.ContextCopy, isPrefetch bool, options common.ViewImageDataOptions) error {
 +func fetchSecondSplitViewAsset(ctx context.Context, viewData *common.ViewData, viewDataSplitView common.ViewImageData, requestConfig config.Config, c common.ContextCopy, isPrefetch bool, options common.ViewImageDataOptions) error {
- 	const maxImageRetrievalAttempts = 3
- 
- 	for range maxImageRetrievalAttempts {
+@@ -806 +815 @@ func fetchSecondSplitViewAsset(viewData *common.ViewData, viewDataSplitView comm
 -		viewDataSplitViewSecond, err := ProcessViewImageDataWithOptions(requestConfig, c, isPrefetch, options)
 +		viewDataSplitViewSecond, err := processViewImageDataWithContext(ctx, requestConfig, c, isPrefetch, options)
- 		if err != nil {
- 			return err
- 		}
-@@ -827,7 +836,7 @@ func determineLayoutMode(layout string, clientHeight, clientWidth int) string {
- 
- // generateViewData prepares view data for a kiosk page request based on the specified layout and client display dimensions.
- // It selects and processes one or two assets as needed for the layout, handling orientation and split view logic, and returns the resulting ViewData or an error.
+@@ -830 +839 @@ func determineLayoutMode(layout string, clientHeight, clientWidth int) string {
 -func generateViewData(requestConfig config.Config, c common.ContextCopy, requestID, deviceID string, isPrefetch bool) (common.ViewData, error) {
 +func generateViewData(ctx context.Context, requestConfig config.Config, c common.ContextCopy, requestID, deviceID string, isPrefetch bool) (common.ViewData, error) {
- 	viewData := common.ViewData{
- 		RequestID: requestID,
- 		DeviceID:  deviceID,
-@@ -844,14 +853,14 @@ func generateViewData(requestConfig config.Config, c common.ContextCopy, request
- 		if requestConfig.Layout == kiosk.LayoutPortrait {
- 			options.ImageOrientation = immich.PortraitOrientation
- 		}
+@@ -847 +856 @@ func generateViewData(requestConfig config.Config, c common.ContextCopy, request
 -		viewDataSingle, err := ProcessViewImageDataWithOptions(requestConfig, c, isPrefetch, options)
 +		viewDataSingle, err := processViewImageDataWithContext(ctx, requestConfig, c, isPrefetch, options)
- 		if err != nil {
- 			return viewData, err
- 		}
- 		viewData.Assets = append(viewData.Assets, viewDataSingle)
- 
- 	case kiosk.LayoutSplitview:
+@@ -854 +863 @@ func generateViewData(requestConfig config.Config, c common.ContextCopy, request
 -		viewDataSplitView, err := ProcessViewImageData(requestConfig, c, isPrefetch)
 +		viewDataSplitView, err := processViewImageDataWithContext(ctx, requestConfig, c, isPrefetch, common.ViewImageDataOptions{})
- 		if err != nil {
- 			return viewData, err
- 		}
-@@ -869,12 +878,12 @@ func generateViewData(requestConfig config.Config, c common.ContextCopy, request
- 		}
- 
- 		// Second image
+@@ -872 +881 @@ func generateViewData(requestConfig config.Config, c common.ContextCopy, request
 -		if secondAssetErr := fetchSecondSplitViewAsset(&viewData, viewDataSplitView, requestConfig, c, isPrefetch, options); secondAssetErr != nil {
 +		if secondAssetErr := fetchSecondSplitViewAsset(ctx, &viewData, viewDataSplitView, requestConfig, c, isPrefetch, options); secondAssetErr != nil {
- 			return viewData, secondAssetErr
- 		}
- 
- 	case kiosk.LayoutSplitviewLandscape:
+@@ -877 +886 @@ func generateViewData(requestConfig config.Config, c common.ContextCopy, request
 -		viewDataSplitView, err := ProcessViewImageData(requestConfig, c, isPrefetch)
 +		viewDataSplitView, err := processViewImageDataWithContext(ctx, requestConfig, c, isPrefetch, common.ViewImageDataOptions{})
- 		if err != nil {
- 			return viewData, err
- 		}
-@@ -892,12 +901,12 @@ func generateViewData(requestConfig config.Config, c common.ContextCopy, request
- 		}
- 
- 		// Second image
+@@ -895 +904 @@ func generateViewData(requestConfig config.Config, c common.ContextCopy, request
 -		if secondAssetErr := fetchSecondSplitViewAsset(&viewData, viewDataSplitView, requestConfig, c, isPrefetch, options); secondAssetErr != nil {
 +		if secondAssetErr := fetchSecondSplitViewAsset(ctx, &viewData, viewDataSplitView, requestConfig, c, isPrefetch, options); secondAssetErr != nil {
- 			return viewData, secondAssetErr
- 		}
- 
- 	default:
+@@ -900 +909 @@ func generateViewData(requestConfig config.Config, c common.ContextCopy, request
 -		viewDataSingle, err := ProcessViewImageData(requestConfig, c, isPrefetch)
 +		viewDataSingle, err := processViewImageDataWithContext(ctx, requestConfig, c, isPrefetch, common.ViewImageDataOptions{})
- 		if err != nil {
- 			return viewData, err
- 		}
 diff --git a/internal/routes/routes_offline.go b/internal/routes/routes_offline.go
 index df73edd..57e5f76 100644
 --- a/internal/routes/routes_offline.go
 +++ b/internal/routes/routes_offline.go
-@@ -217,7 +217,7 @@ func downloadOfflineAssets(requestConfig config.Config, requestCtx common.Contex
- 					return err
- 				}
- 
+@@ -220 +220 @@ func downloadOfflineAssets(requestConfig config.Config, requestCtx common.Contex
 -				viewData, err := generateViewData(requestConfig, requestCtx, requestID, deviceID, false)
 +				viewData, err := generateViewData(com.Context(), requestConfig, requestCtx, requestID, deviceID, false)
- 				if err != nil {
- 					log.Error("SaveOfflineAsset: generateViewData", "err", err)
- 					if errorCount.Add(1) > fileExistsTolerance*2 {
 diff --git a/internal/routes/routes_prefetch.go b/internal/routes/routes_prefetch.go
 new file mode 100644
 index 0000000..0acffdb

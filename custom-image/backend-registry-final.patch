@@ -2,23 +2,11 @@ diff --git a/internal/immich/immich_date.go b/internal/immich/immich_date.go
 index 46b5e3a..a04c31a 100644
 --- a/internal/immich/immich_date.go
 +++ b/internal/immich/immich_date.go
-@@ -1,6 +1,7 @@
- package immich
- 
- import (
+@@ -3,0 +4 @@ import (
 +	"context"
- 	"crypto/sha256"
- 	"encoding/json"
- 	"errors"
-@@ -15,42 +16,224 @@ import (
- 
- 	"charm.land/log/v2"
- 	"github.com/damongolding/immich-kiosk/internal/cache"
+@@ -17,0 +19 @@ import (
 +	"github.com/damongolding/immich-kiosk/internal/config"
- 	"github.com/damongolding/immich-kiosk/internal/kiosk"
- 	"github.com/google/go-querystring/query"
- )
- 
+@@ -21,0 +24,9 @@ import (
 +const (
 +	defaultDatePoolRegistrySize = 128
 +	maxDateCandidates           = 200
@@ -28,16 +16,13 @@ index 46b5e3a..a04c31a 100644
 +
 +type datePoolFetch func(context.Context) ([]Asset, error)
 +
- type dateCandidatePool struct {
- 	mu         sync.Mutex
+@@ -24 +34,0 @@ type dateCandidatePool struct {
 -	refillMu   sync.Mutex
- 	candidates []Asset
+@@ -25,0 +36,3 @@ type dateCandidatePool struct {
 +	expiresAt  time.Time
 +	refreshing bool
 +	ready      chan struct{}
- }
- 
- func newDateCandidatePool(candidates []Asset) *dateCandidatePool {
+@@ -29 +42,88 @@ func newDateCandidatePool(candidates []Asset) *dateCandidatePool {
 -	return &dateCandidatePool{candidates: candidates}
 +	return &dateCandidatePool{candidates: uniqueDateCandidates(candidates, maxDateCandidates)}
 +}
@@ -127,24 +112,17 @@ index 46b5e3a..a04c31a 100644
 +	p.mu.Lock()
 +	defer p.mu.Unlock()
 +	return !p.expiresAt.IsZero() && !now.Before(p.expiresAt) && !p.refreshing
- }
- 
+@@ -32,2 +131,0 @@ func newDateCandidatePool(candidates []Asset) *dateCandidatePool {
 -// take removes a candidate before validation, so a cached candidate is never
 -// decoded or evaluated twice. Removing the last item is O(1).
- func (p *dateCandidatePool) take() (Asset, bool) {
- 	p.mu.Lock()
- 	defer p.mu.Unlock()
- 	if len(p.candidates) == 0 {
- 		return Asset{}, false
- 	}
+@@ -40,5 +138 @@ func (p *dateCandidatePool) take() (Asset, bool) {
 -	last := len(p.candidates) - 1
 -	asset := p.candidates[last]
 -	p.candidates[last] = Asset{}
 -	p.candidates = p.candidates[:last]
 -	return asset, true
 +	return popDateCandidate(&p.candidates), true
- }
- 
+@@ -47,4 +141,87 @@ func (p *dateCandidatePool) take() (Asset, bool) {
 -func (p *dateCandidatePool) refill(candidates []Asset) {
 -	p.mu.Lock()
 -	p.candidates = candidates
@@ -199,9 +177,8 @@ index 46b5e3a..a04c31a 100644
 +		p.mu.Unlock()
 +		return asset, true, nil
 +	}
- }
- 
--func dateCandidatePoolKey(apiCacheKey string) string { return "date-candidates:" + apiCacheKey }
++}
++
 +func popDateCandidate(candidates *[]Asset) Asset {
 +	last := len(*candidates) - 1
 +	asset := (*candidates)[last]
@@ -237,8 +214,8 @@ index 46b5e3a..a04c31a 100644
 +		return 1
 +	}
 +	return min(configured, maxDateCandidates)
-+}
-+
+@@ -53 +230,7 @@ func (p *dateCandidatePool) refill(candidates []Asset) {
+-func dateCandidatePoolKey(apiCacheKey string) string { return "date-candidates:" + apiCacheKey }
 +func dateCandidatePoolTTL(requestConfig config.Config) time.Duration {
 +	return max(
 +		(time.Duration(requestConfig.Duration)*time.Second)+time.Minute,
@@ -246,13 +223,7 @@ index 46b5e3a..a04c31a 100644
 +		5*time.Minute,
 +	)
 +}
- 
- // RandomAssetInDateRange retrieves a random asset from the Immich API within the specified date range.
- // Parameters:
-@@ -82,119 +265,104 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
- 		log.Debug(requestID+" Getting Random asset", "from", dateStartHuman, "to", dateEndHuman)
- 	}
- 
+@@ -85,17 +268,4 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
 -	for range MaxRetries {
 -
 -		var immichAssets []Asset
@@ -270,24 +241,15 @@ index 46b5e3a..a04c31a 100644
 -			WithPeople:  true,
 -			Size:        a.requestConfig.Kiosk.FetchedAssetsSize,
 -		}
--
--		// Include videos if show videos is enabled
--		if a.requestConfig.ShowVideos {
--			requestBody.Type = ""
--		}
--
--		if a.requestConfig.ShowArchived {
--			requestBody.WithArchived = true
--		}
--
--		filterFavorites(&requestBody, a.requestConfig.FilterFavorites)
 +	u, err := url.Parse(a.requestConfig.ImmichURL)
 +	if err != nil {
 +		return fmt.Errorf("parsing url: %w", err)
 +	}
- 
--		// convert body to queries so url is unique and can be cached
--		queries, _ := query.Values(requestBody)
+@@ -103,4 +273,30 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+-		// Include videos if show videos is enabled
+-		if a.requestConfig.ShowVideos {
+-			requestBody.Type = ""
+-		}
 +	requestBody := SearchRandomBody{
 +		Type:        string(ImageType),
 +		TakenAfter:  dateStart.Format(time.RFC3339),
@@ -318,35 +280,37 @@ index 46b5e3a..a04c31a 100644
 +	if marshalErr != nil {
 +		return fmt.Errorf("marshaling request body: %w", marshalErr)
 +	}
- 
--		apiURL := url.URL{
--			Scheme:   u.Scheme,
--			Host:     u.Host,
--			Path:     "api/search/random",
--			RawQuery: fmt.Sprintf("kiosk=%x", sha256.Sum256([]byte(queries.Encode()))),
+@@ -108,2 +304,6 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+-		if a.requestConfig.ShowArchived {
+-			requestBody.WithArchived = true
 +	fetchCandidates := func(ctx context.Context) ([]Asset, error) {
 +		var candidates []Asset
 +		apiBody, _, _, callErr := a.immichAPICall(ctx, http.MethodPost, apiURL.String(), jsonBody)
 +		if callErr != nil {
 +			_, _, callErr = immichAPIFail(candidates, callErr, apiBody, apiURL.String())
 +			return nil, callErr
- 		}
+@@ -111,11 +311,3 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
 -
--		jsonBody, marshalErr := json.Marshal(requestBody)
--		if marshalErr != nil {
--			return fmt.Errorf("marshaling request body: %w", marshalErr)
+-		filterFavorites(&requestBody, a.requestConfig.FilterFavorites)
+-
+-		// convert body to queries so url is unique and can be cached
+-		queries, _ := query.Values(requestBody)
+-
+-		apiURL := url.URL{
+-			Scheme:   u.Scheme,
+-			Host:     u.Host,
+-			Path:     "api/search/random",
+-			RawQuery: fmt.Sprintf("kiosk=%x", sha256.Sum256([]byte(queries.Encode()))),
 +		if unmarshalErr := json.Unmarshal(apiBody, &candidates); unmarshalErr != nil {
 +			_, _, unmarshalErr = immichAPIFail(candidates, unmarshalErr, apiBody, apiURL.String())
 +			return nil, unmarshalErr
- 		}
+@@ -122,0 +315,2 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
 +		return candidates, nil
 +	}
- 
--		immichAPICall := withImmichAPICache(a.immichAPICall, requestID, deviceID, a.requestConfig, immichAssets)
--		apiBody, _, _, err := immichAPICall(a.ctx, http.MethodPost, apiURL.String(), jsonBody)
--		if err != nil {
--			_, _, err = immichAPIFail(immichAssets, err, apiBody, apiURL.String())
--			return err
+@@ -124,3 +318,10 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+-		jsonBody, marshalErr := json.Marshal(requestBody)
+-		if marshalErr != nil {
+-			return fmt.Errorf("marshaling request body: %w", marshalErr)
 +	wantedAssetType := ImageOnlyAssetTypes
 +	if a.requestConfig.ShowVideos {
 +		wantedAssetType = AllAssetTypes
@@ -357,12 +321,19 @@ index 46b5e3a..a04c31a 100644
 +		asset.ctx = a.ctx
 +		if !asset.isValidAsset(requestID, deviceID, wantedAssetType, a.RatioWanted) {
 +			return false
- 		}
+@@ -127,0 +329,4 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
 +		asset.BucketID = dateRange
 +		*a = asset
 +		return true
 +	}
- 
+@@ -129,22 +334,5 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+-		immichAPICall := withImmichAPICache(a.immichAPICall, requestID, deviceID, a.requestConfig, immichAssets)
+-		apiBody, _, _, err := immichAPICall(a.ctx, http.MethodPost, apiURL.String(), jsonBody)
+-		if err != nil {
+-			_, _, err = immichAPIFail(immichAssets, err, apiBody, apiURL.String())
+-			return err
+-		}
+-
 -		apiCacheKey := cache.APICacheKey(apiURL.String(), deviceID, a.requestConfig.SelectedUser)
 -		poolKey := dateCandidatePoolKey(apiCacheKey)
 -		var pool *dateCandidatePool
@@ -383,7 +354,7 @@ index 46b5e3a..a04c31a 100644
 +			candidates, fetchErr := fetchCandidates(a.ctx)
 +			if fetchErr != nil {
 +				return fetchErr
- 			}
+@@ -152,25 +340,6 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
 -			pool.refill(immichAssets)
 -			pool.refillMu.Unlock()
 -		}
@@ -415,10 +386,10 @@ index 46b5e3a..a04c31a 100644
 +				}
 +			}
 +			log.Debug(requestID + " No viable assets returned. Fetching a fresh response")
- 		}
+@@ -177,0 +347,2 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
 +		return fmt.Errorf("no assets found for '%s'. Max retries reached", dateRange)
 +	}
- 
+@@ -179,8 +350,13 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
 -		for _, asset := range immichAssets {
 -
 -			asset.Bucket = kiosk.SourceDateRange
@@ -440,29 +411,23 @@ index 46b5e3a..a04c31a 100644
 +			}
 +			if useCandidate(candidate) {
 +				return nil
- 			}
+@@ -188,6 +363,0 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
 -
 -			asset.BucketID = dateRange
 -
 -			*a = asset
 -
 -			return nil
- 		}
+@@ -195,3 +365 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
 -
 -		log.Debug(requestID + " No viable assets left in cache. Refreshing and trying again")
 -		cache.Delete(apiCacheKey)
 +		log.Debug(requestID + " No viable decoded candidates. Refreshing the exhausted pool")
- 	}
- 
- 	return fmt.Errorf("no assets found for '%s'. Max retries reached", dateRange)
 diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
 index 3e4197a..78e7a02 100644
 --- a/internal/immich/immich_helpers.go
 +++ b/internal/immich/immich_helpers.go
-@@ -27,8 +27,47 @@ import (
- 	"github.com/google/go-querystring/query"
- )
- 
+@@ -30,2 +30,41 @@ import (
 -var compiledAlbumPenaltyFactors sync.Map
 -var compiledAlbumRestrictions sync.Map
 +const (
@@ -506,13 +471,7 @@ index 3e4197a..78e7a02 100644
 +		now:        now,
 +	}
 +}
- 
- // immichAPIFail handles failures in Immich API calls by unmarshaling the error response,
- // logging the error, and returning a formatted error along with the original value.
-@@ -780,32 +819,92 @@ func (r albumRestrictions) allows(albums Albums, assetID, requestID string) bool
- }
- 
- func selectedAlbumRestrictions(requestConfig config.Config) albumRestrictions {
+@@ -783,3 +822,42 @@ func selectedAlbumRestrictions(requestConfig config.Config) albumRestrictions {
 -	cacheKey := fmt.Sprintf("%p:%s:%s", requestConfig.Curation.Profiles, strings.ToLower(strings.TrimSpace(requestConfig.CurationProfile)), strings.Join(requestConfig.ExcludedAlbums, "\x00"))
 -	if cached, ok := compiledAlbumRestrictions.Load(cacheKey); ok {
 -		return cached.(albumRestrictions)
@@ -558,7 +517,7 @@ index 3e4197a..78e7a02 100644
 +			oldest = entry.lastAccess
 +			hasOldest = true
 +		}
- 	}
+@@ -786,0 +865,29 @@ func selectedAlbumRestrictions(requestConfig config.Config) albumRestrictions {
 +	if len(r.entries) >= r.maxEntries && hasOldest {
 +		delete(r.entries, oldestKey)
 +	}
@@ -588,30 +547,18 @@ index 3e4197a..78e7a02 100644
 +}
 +
 +func compileAlbumRestrictions(requestConfig config.Config) albumRestrictions {
- 	excluded := make(map[string]struct{}, len(requestConfig.ExcludedAlbums))
- 	for _, albumID := range requestConfig.ExcludedAlbums {
- 		excluded[albumID] = struct{}{}
- 	}
+@@ -791,3 +898 @@ func selectedAlbumRestrictions(requestConfig config.Config) albumRestrictions {
 -	restrictions := albumRestrictions{excluded: excluded, penalties: selectedAlbumPenaltyFactors(requestConfig)}
 -	actual, _ := compiledAlbumRestrictions.LoadOrStore(cacheKey, restrictions)
 -	return actual.(albumRestrictions)
 +	return albumRestrictions{excluded: excluded, penalties: selectedAlbumPenaltyFactors(requestConfig)}
- }
- 
- func selectedAlbumPenaltyFactors(requestConfig config.Config) map[string]float64 {
- 	if requestConfig.CurationProfile == "" {
- 		return nil
- 	}
+@@ -800,4 +904,0 @@ func selectedAlbumPenaltyFactors(requestConfig config.Config) map[string]float64
 -	cacheKey := fmt.Sprintf("%p:%s", requestConfig.Curation.Profiles, strings.ToLower(strings.TrimSpace(requestConfig.CurationProfile)))
 -	if cached, ok := compiledAlbumPenaltyFactors.Load(cacheKey); ok {
 -		return cached.(map[string]float64)
 -	}
- 	for name, profile := range requestConfig.Curation.Profiles {
- 		if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(requestConfig.CurationProfile)) {
+@@ -806,3 +907 @@ func selectedAlbumPenaltyFactors(requestConfig config.Config) map[string]float64
 -			factors := albumPenaltyFactors(profile.AlbumPenalties)
 -			actual, _ := compiledAlbumPenaltyFactors.LoadOrStore(cacheKey, factors)
 -			return actual.(map[string]float64)
 +			return albumPenaltyFactors(profile.AlbumPenalties)
- 		}
- 	}
- 	return nil
