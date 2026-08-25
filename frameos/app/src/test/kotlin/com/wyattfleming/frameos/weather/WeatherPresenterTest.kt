@@ -34,7 +34,12 @@ class WeatherPresenterTest {
         assertEquals("Clear night", presentation.condition)
         assertEquals(WeatherCondition.CLEAR_NIGHT, presentation.sceneCondition)
         assertEquals("67%", presentation.metrics.single { it.label == "Humidity" }.value)
-        assertEquals("3.1 mph", presentation.metrics.single { it.label == "Wind" }.value)
+        assertEquals("82°F", presentation.metrics.single { it.label == "Feels like" }.value)
+        assertEquals("3.1 mph · SSW", presentation.metrics.single { it.label == "Wind" }.value)
+        assertEquals("67°F", presentation.metrics.single { it.label == "Dew point" }.value)
+        assertEquals("45%", presentation.metrics.single { it.label == "Cloud cover" }.value)
+        assertEquals("6.5", presentation.metrics.single { it.label == "UV index" }.value)
+        assertEquals(8, presentation.metrics.size)
         assertEquals(24, presentation.hourly.size)
         assertEquals("Midnight", presentation.hourly.first().time)
         assertEquals("11 PM", presentation.hourly.last().time)
@@ -68,6 +73,10 @@ class WeatherPresenterTest {
             visibility = 10.0,
             visibilityUnit = "mi",
             updatedAtEpochMillis = 1_777_173_720_000L,
+            apparentTemperature = 82.0,
+            dewPoint = 67.0,
+            cloudCoverage = 45.0,
+            uvIndex = 6.5,
         ),
         daily = (0 until 7).map { day ->
             WeatherForecast(

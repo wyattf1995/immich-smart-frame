@@ -91,6 +91,20 @@ dashboard = YAML.load_file(FILES.fetch(:dashboard))
 views = dashboard["views"]
 fail_validation("dashboard views must be an array") unless views.is_a?(Array)
 
+dashboard_nodes = lambda do |value|
+  case value
+  when Hash
+    [value] + value.values.flat_map { |child| dashboard_nodes.call(child) }
+  when Array
+    value.flat_map { |child| dashboard_nodes.call(child) }
+  else
+    []
+  end
+end
+if dashboard_nodes.call(dashboard).any? { |node| node.dig("tap_action", "action") == "more-info" }
+  fail_validation("display-only wall-panel cards must not open a more-info dialog")
+end
+
 view_paths = views.map { |view| view["path"] }
 unless view_paths == EXPECTED_VIEW_PATHS
   fail_validation("view paths #{view_paths.inspect}, expected #{EXPECTED_VIEW_PATHS.inspect}")
@@ -131,6 +145,10 @@ unless activity_card && activity_card["hours_to_show"] == 24 &&
 end
 unless camera_view["type"] == "panel" && camera_view["animated_background"] == "neutral"
   fail_validation("Cameras must remain a neutral-background panel view")
+end
+camera_cards = dashboard_nodes.call(camera_view).select { |node| node["type"] == "picture-entity" }
+unless camera_cards.length == 4 && camera_cards.all? { |card| card.dig("tap_action", "action") == "none" }
+  fail_validation("all four display-only camera cards must disable tap actions")
 end
 unless calendar_view["type"] == "panel" && calendar_view["animated_background"] == "neutral"
   fail_validation("Calendar must remain a neutral-background panel view")
