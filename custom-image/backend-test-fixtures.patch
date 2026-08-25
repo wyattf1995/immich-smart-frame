@@ -1,35 +1,20 @@
 diff --git a/internal/immich/immich_date_pool_test.go b/internal/immich/immich_date_pool_test.go
-index fc4bdec..c12ff9e 100644
+index fc4bdec..2e5fe97 100644
 --- a/internal/immich/immich_date_pool_test.go
 +++ b/internal/immich/immich_date_pool_test.go
-@@ -5,6 +5,7 @@ import (
- 	"encoding/json"
- 	"net/http"
- 	"net/http/httptest"
+@@ -7,0 +8 @@ import (
 +	"path"
- 	"sync"
- 	"sync/atomic"
- 	"testing"
-@@ -111,6 +112,11 @@ func dateAssetServer(t *testing.T, calls *atomic.Int32) *httptest.Server {
- func dateAssetServer(t *testing.T, calls *atomic.Int32) *httptest.Server {
- 	t.Helper()
- 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+@@ -113,0 +115,5 @@ func dateAssetServer(t *testing.T, calls *atomic.Int32) *httptest.Server {
 +		if r.URL.Path != "/api/search/random" {
 +			asset := Asset{ID: path.Base(r.URL.Path), Type: ImageType, ExifInfo: ExifInfo{ExifImageHeight: 1080, ExifImageWidth: 1920}}
 +			require.NoError(t, json.NewEncoder(w).Encode(asset))
 +			return
 +		}
- 		call := calls.Add(1)
- 		w.Header().Set("Content-Type", "application/json")
- 		assets := []Asset{
 diff --git a/internal/routes/routes_prefetch_context_test.go b/internal/routes/routes_prefetch_context_test.go
-index 5555555..b3c1c9c 100644
+index 8cb2f11..f10ba46 100644
 --- a/internal/routes/routes_prefetch_context_test.go
 +++ b/internal/routes/routes_prefetch_context_test.go
-@@ -28,12 +28,28 @@ func TestAssetPreFetchPassesDeadlineToBlockingHTTPTransport(t *testing.T) {
- 	require.NoError(t, err)
- 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
- 	defer cancel()
+@@ -31 +31,9 @@ func TestAssetPreFetchPassesDeadlineToBlockingHTTPTransport(t *testing.T) {
 -	requestData := &common.RouteRequestData{RequestID: "request-a", DeviceID: "device-a", RequestConfig: config.Config{ImmichURL: "http://immich.test"}}
 +	requestConfig := config.Config{
 +		ImmichURL:       "http://immich.test",
@@ -40,9 +25,7 @@ index 5555555..b3c1c9c 100644
 +		Kiosk: config.KioskSettings{FetchedAssetsSize: 1},
 +	}
 +	requestData := &common.RouteRequestData{RequestID: "request-a", DeviceID: "device-a", RequestConfig: requestConfig}
- 	requestCopy := common.ContextCopy{URL: *requestURL, RequestHeader: http.Header{"kiosk-device-id": []string{"device-a"}}, ResponseHeader: make(http.Header)}
- 
- 	assetPreFetch(ctx, nil, requestData, requestCopy)
+@@ -35 +43,8 @@ func TestAssetPreFetchPassesDeadlineToBlockingHTTPTransport(t *testing.T) {
 -	require.Eventually(t, func() bool { select { case <-cancelled: return true; default: return false } }, time.Second, 5*time.Millisecond)
 +	require.Eventually(t, func() bool {
 +		select {
@@ -52,8 +35,5 @@ index 5555555..b3c1c9c 100644
 +			return false
 +		}
 +	}, time.Second, 5*time.Millisecond)
- }
- 
- type routesRoundTripFunc func(*http.Request) (*http.Response, error)
+@@ -38,0 +54 @@ type routesRoundTripFunc func(*http.Request) (*http.Response, error)
 +
- func (f routesRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

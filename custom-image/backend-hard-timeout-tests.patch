@@ -1,20 +1,8 @@
 diff --git a/internal/routes/routes_prefetch_context_test.go b/internal/routes/routes_prefetch_context_test.go
-index b3c1c9c..e5e5e5e 100644
+index f10ba46..968c2ce 100644
 --- a/internal/routes/routes_prefetch_context_test.go
 +++ b/internal/routes/routes_prefetch_context_test.go
-@@ -39,6 +39,7 @@ func TestAssetPreFetchPassesDeadlineToBlockingHTTPTransport(t *testing.T) {
- 	requestData := &common.RouteRequestData{RequestID: "request-a", DeviceID: "device-a", RequestConfig: requestConfig}
- 	requestCopy := common.ContextCopy{URL: *requestURL, RequestHeader: http.Header{"kiosk-device-id": []string{"device-a"}}, ResponseHeader: make(http.Header)}
- 
+@@ -41,0 +42 @@ func TestAssetPreFetchPassesDeadlineToBlockingHTTPTransport(t *testing.T) {
 +	started := time.Now()
- 	assetPreFetch(ctx, nil, requestData, requestCopy)
- 	require.Eventually(t, func() bool {
- 		select {
-@@ -50,6 +51,7 @@ func TestAssetPreFetchPassesDeadlineToBlockingHTTPTransport(t *testing.T) {
- 			return false
- 		}
- 	}, time.Second, 5*time.Millisecond)
+@@ -50,0 +52 @@ func TestAssetPreFetchPassesDeadlineToBlockingHTTPTransport(t *testing.T) {
 +	require.Less(t, time.Since(started), 250*time.Millisecond, "cancellation must bound the complete prefetch call")
- }
- 
- type routesRoundTripFunc func(*http.Request) (*http.Response, error)
