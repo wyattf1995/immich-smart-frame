@@ -1,0 +1,21 @@
+diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
+index 3e4197a..a7a7a7a 100644
+--- a/internal/immich/immich_helpers.go
++++ b/internal/immich/immich_helpers.go
+@@ -17,6 +17,7 @@ import (
+ 	"strings"
+ 	"sync"
+ 	"time"
++	"unsafe"
+ 
+ 	"charm.land/log/v2"
+ 	"github.com/damongolding/immich-kiosk/internal/cache"
+@@ -880,7 +881,7 @@ func albumRestrictionKey(requestConfig config.Config) albumRestrictionCacheKey {
+ 	}
+ 	var excludedPointer uintptr
+ 	if len(requestConfig.ExcludedAlbums) > 0 {
+-		excludedPointer = reflect.ValueOf(requestConfig.ExcludedAlbums).Pointer()
++		excludedPointer = uintptr(unsafe.Pointer(unsafe.SliceData(requestConfig.ExcludedAlbums)))
+ 	}
+ 	return albumRestrictionCacheKey{
+ 		profiles:       profilesPointer,
