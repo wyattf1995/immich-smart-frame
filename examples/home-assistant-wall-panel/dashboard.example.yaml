@@ -82,6 +82,81 @@ views:
               rows: auto
     animated_background: weather
 
+  - title: Weather
+    path: weather
+    icon: mdi:weather-partly-cloudy
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Current conditions
+            icon: mdi:home-thermometer-outline
+          - type: weather-forecast
+            entity: weather.home
+            show_current: true
+            show_forecast: false
+            grid_options:
+              columns: 12
+              rows: auto
+          - type: markdown
+            content: |-
+              {% set humidity = state_attr('weather.home', 'humidity') %}
+              {% set wind = state_attr('weather.home', 'wind_speed') %}
+              {% set wind_unit = state_attr('weather.home', 'wind_speed_unit') or '' %}
+              {% set bearing = state_attr('weather.home', 'wind_bearing') %}
+              {% set pressure = state_attr('weather.home', 'pressure') %}
+              {% set pressure_unit = state_attr('weather.home', 'pressure_unit') or '' %}
+              {% set apparent = state_attr('weather.home', 'apparent_temperature') %}
+              {% set temperature_unit = state_attr('weather.home', 'temperature_unit') or '' %}
+              {% set visibility = state_attr('weather.home', 'visibility') %}
+              {% set visibility_unit = state_attr('weather.home', 'visibility_unit') or '' %}
+
+              | Humidity | Wind | Pressure |
+              | :--- | :--- | :--- |
+              | **{{ humidity ~ '%' if humidity is not none else '—' }}** | **{% if wind is not none %}{{ wind }} {{ wind_unit }}{% if bearing is not none %} ({{ bearing }}){% endif %}{% else %}—{% endif %}** | **{{ pressure ~ ' ' ~ pressure_unit if pressure is not none else '—' }}** |
+
+              | Feels like | Visibility | Sun |
+              | :--- | :--- | :--- |
+              | **{{ apparent ~ temperature_unit if apparent is not none else '—' }}** | **{{ visibility ~ ' ' ~ visibility_unit if visibility is not none else '—' }}** | **🌅 {{ as_timestamp(states('sensor.sun_next_rising')) | timestamp_custom('%-I:%M %p') }} · 🌇 {{ as_timestamp(states('sensor.sun_next_setting')) | timestamp_custom('%-I:%M %p') }}** |
+            grid_options:
+              columns: 12
+              rows: auto
+          - type: history-graph
+            title: Past 24 hours
+            hours_to_show: 24
+            entities:
+              - weather.home
+            grid_options:
+              columns: 12
+              rows: auto
+      - type: grid
+        cards:
+          - type: heading
+            heading: Daily forecast
+            icon: mdi:calendar-week
+          - type: weather-forecast
+            entity: weather.home
+            show_current: false
+            show_forecast: true
+            forecast_type: daily
+            grid_options:
+              columns: 12
+              rows: auto
+          - type: heading
+            heading: Hourly forecast
+            icon: mdi:clock-outline
+          - type: weather-forecast
+            entity: weather.home
+            show_current: false
+            show_forecast: true
+            forecast_type: hourly
+            grid_options:
+              columns: 12
+              rows: auto
+    animated_background: weather
+
   - title: Live Cameras
     path: cameras
     icon: mdi:cctv
