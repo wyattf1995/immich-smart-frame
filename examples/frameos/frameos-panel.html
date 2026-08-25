@@ -411,16 +411,16 @@
             documentRoot,
           };
           activeRouteWork = state;
-          observeRoot(documentRoot, state);
-          // The initial document gets one bounded traversal. Afterwards each
-          // observer only inspects the subtree that Home Assistant just added.
-          inspectAddedSubtree(documentRoot, state);
           state.deadlineTimer = window.setTimeout(() => {
             if (activeRouteWork !== state || state.ready) return;
             const detail = state.view === "cameras" ? cameraConnectionDetail(state) : "content is still loading";
             showStillConnecting(state.view, detail);
             focusPanel();
           }, ROUTE_READY_TIMEOUT_MILLIS);
+          observeRoot(documentRoot, state);
+          // The initial document gets one bounded traversal. Afterwards each
+          // observer only inspects the subtree that Home Assistant just added.
+          inspectAddedSubtree(documentRoot, state);
         };
 
         const navigatePanel = (nextView) => {
