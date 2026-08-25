@@ -25,6 +25,7 @@ COPY album-registry-tests.patch /tmp/album-registry-tests.patch
 COPY backend-hard-timeout-tests.patch /tmp/backend-hard-timeout-tests.patch
 COPY date-pool-exhaustion-tests.patch /tmp/date-pool-exhaustion-tests.patch
 COPY album-registry-allocation-tests.patch /tmp/album-registry-allocation-tests.patch
+COPY backend-test-gofmt.patch /tmp/backend-test-gofmt.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -42,22 +43,24 @@ RUN cd /src \
 	&& git apply /tmp/backend-registry-allocation.patch \
     && git apply --check --unidiff-zero /tmp/weighted-curation-tests.patch \
     && git apply --unidiff-zero /tmp/weighted-curation-tests.patch \
-    && git apply --check /tmp/performance-regression-tests.patch \
-    && git apply /tmp/performance-regression-tests.patch \
-    && git apply --check /tmp/strict-backend-regression-tests.patch \
-    && git apply /tmp/strict-backend-regression-tests.patch \
-	&& git apply --check /tmp/date-pool-concurrency-tests.patch \
-	&& git apply /tmp/date-pool-concurrency-tests.patch \
-	&& git apply --check /tmp/backend-test-fixtures.patch \
-	&& git apply /tmp/backend-test-fixtures.patch \
-	&& git apply --check /tmp/album-registry-tests.patch \
-	&& git apply /tmp/album-registry-tests.patch \
-	&& git apply --check /tmp/backend-hard-timeout-tests.patch \
-	&& git apply /tmp/backend-hard-timeout-tests.patch \
-	&& git apply --check /tmp/date-pool-exhaustion-tests.patch \
-	&& git apply /tmp/date-pool-exhaustion-tests.patch \
-	&& git apply --check /tmp/album-registry-allocation-tests.patch \
-	&& git apply /tmp/album-registry-allocation-tests.patch
+    && git apply --check --unidiff-zero /tmp/performance-regression-tests.patch \
+    && git apply --unidiff-zero /tmp/performance-regression-tests.patch \
+    && git apply --check --unidiff-zero /tmp/strict-backend-regression-tests.patch \
+    && git apply --unidiff-zero /tmp/strict-backend-regression-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/date-pool-concurrency-tests.patch \
+	&& git apply --unidiff-zero /tmp/date-pool-concurrency-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/backend-test-fixtures.patch \
+	&& git apply --unidiff-zero /tmp/backend-test-fixtures.patch \
+	&& git apply --check --unidiff-zero /tmp/album-registry-tests.patch \
+	&& git apply --unidiff-zero /tmp/album-registry-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/backend-hard-timeout-tests.patch \
+	&& git apply --unidiff-zero /tmp/backend-hard-timeout-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/date-pool-exhaustion-tests.patch \
+	&& git apply --unidiff-zero /tmp/date-pool-exhaustion-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/album-registry-allocation-tests.patch \
+	&& git apply --unidiff-zero /tmp/album-registry-allocation-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/backend-test-gofmt.patch \
+	&& git apply --unidiff-zero /tmp/backend-test-gofmt.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
