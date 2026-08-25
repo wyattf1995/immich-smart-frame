@@ -140,6 +140,12 @@ up_next_markdown = home_markdown.find { |card| card.fetch("content", "") == up_n
 unless today_markdown && today_markdown.fetch("content").include?("sensor.date")
   fail_validation("Today must show the existing time and date entities")
 end
+unless today_markdown &&
+       today_markdown.fetch("content").include?("has_value('sensor.time')") &&
+       today_markdown.fetch("content").include?("has_value('sensor.date')") &&
+       today_markdown.fetch("content").include?("Time and date are temporarily unavailable")
+  fail_validation("Today must explicitly handle unavailable time or date entities")
+end
 calendar_entities = %w[calendar.family calendar.personal calendar.birthdays calendar.holidays]
 unless up_next_markdown &&
        calendar_entities.all? { |entity| up_next_markdown.fetch("content").include?(entity) } &&
@@ -153,7 +159,10 @@ unless up_next_markdown &&
        up_next_markdown.fetch("content").include?("now().year") &&
        up_next_markdown.fetch("content").include?("timestamp_custom('%-I:%M %p')") &&
        up_next_markdown.fetch("content").include?("All day") &&
-       up_next_markdown.fetch("content").include?("events[:4]")
+       up_next_markdown.fetch("content").include?("events[:4]") &&
+       up_next_markdown.fetch("content").include?("has_value(calendar.entity)") &&
+       up_next_markdown.fetch("content").include?("Calendar data is temporarily unavailable") &&
+       up_next_markdown.fetch("content").include?("Unavailable calendars:")
   fail_validation("Up next must derive a bounded agenda from calendar state attributes")
 end
 if up_next_markdown && up_next_markdown.fetch("content").include?("timestamp_custom('%a %-I:%M %p')")
@@ -185,6 +194,14 @@ unless weather_forecasts.any? { |card| card["show_current"] == true } &&
 end
 unless hourly_forecast && hourly_forecast["forecast_slots"] == 12
   fail_validation("Weather must expose a twelve-slot hourly forecast")
+end
+
+weather_detail = weather_cards.find { |card| card["type"] == "markdown" && card.fetch("content", "").include?("sensor.sun_next_rising") }
+unless weather_detail &&
+       weather_detail.fetch("content").include?("has_value('sensor.sun_next_rising')") &&
+       weather_detail.fetch("content").include?("has_value('sensor.sun_next_setting')") &&
+       weather_detail.fetch("content").include?("Sun times unavailable")
+  fail_validation("Weather sun times must guard unavailable or invalid timestamps")
 end
 
 history_card = weather_cards.find { |card| card["type"] == "history-graph" }

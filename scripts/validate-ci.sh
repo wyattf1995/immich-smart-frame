@@ -13,6 +13,9 @@ sh_files=(
   scripts/run-govulncheck.sh
   scripts/run-trivy.sh
   scripts/test-frame-mode-router.sh
+  scripts/test-deployment-input-snapshot.sh
+  scripts/deployment-input-snapshot.sh
+  scripts/check-frame-readiness.sh
   scripts/test-license-audit.sh
   scripts/validate-frameos.sh
   scripts/validate-ci.sh
@@ -146,6 +149,24 @@ end
 unless File.read("scripts/run-gitleaks.sh").include?("grep -Eq '(^|[^[:digit:]])0 commits scanned([^[:digit:]]|$)'")
   warn "Gitleaks zero-history guard must not reject multi-digit commit counts ending in zero"
   exit 1
+end
+
+compose = YAML.load_file("docker-compose.yaml")
+kiosk = compose.fetch("services").fetch("immich-kiosk")
+unless kiosk.dig("healthcheck", "test") == ["CMD", "/kiosk", "--livecheck"]
+  warn "Compose liveness must use the backend-defined /livez CLI probe"
+  exit 1
+end
+unless kiosk["stop_grace_period"] == "30s"
+  warn "Compose must reserve a 30-second application shutdown grace period"
+  exit 1
+end
+
+%w[scripts/deployment-input-snapshot.sh scripts/check-frame-readiness.sh].each do |file|
+  unless File.file?(file) && File.executable?(file)
+    warn "missing executable deployment resilience tool: #{file}"
+    exit 1
+  end
 end
 
 router_example_files = [
