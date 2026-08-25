@@ -38,6 +38,7 @@ required_files=(
   scripts/run-trivy.sh
   scripts/test-frame-mode-router.sh
   scripts/validate-frameos.sh
+  scripts/validate-frameos-oauth-callback.rb
   scripts/validate-home-assistant-examples.rb
   scripts/validate-ci.sh
 )
@@ -92,6 +93,8 @@ fi
 ./scripts/test-frame-mode-router.sh
 
 ./scripts/validate-frameos.sh
+
+ruby scripts/validate-frameos-oauth-callback.rb
 
 docker compose --env-file .env.example config --quiet
 
