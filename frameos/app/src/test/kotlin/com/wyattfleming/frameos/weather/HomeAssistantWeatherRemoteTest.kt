@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Collections
 
 class HomeAssistantWeatherRemoteTest {
     private val endpoint = HomeAssistantWeatherEndpoint.fromDisplayUrl(
@@ -13,11 +14,16 @@ class HomeAssistantWeatherRemoteTest {
 
     @Test
     fun `gets current conditions then posts daily and hourly return_response forecasts`() {
-        val transport = RecordingTransport(
-            HomeAssistantHttpResponse(200, currentPayload),
-            HomeAssistantHttpResponse(200, dailyEnvelope),
-            HomeAssistantHttpResponse(200, hourlyEnvelope),
-        )
+        val transport = RecordingTransport(responseForRequest = { request ->
+            when {
+                request.method == "GET" -> HomeAssistantHttpResponse(200, currentPayload)
+                request.body == "{\"entity_id\":\"weather.home\",\"type\":\"daily\"}" ->
+                    HomeAssistantHttpResponse(200, dailyEnvelope)
+                request.body == "{\"entity_id\":\"weather.home\",\"type\":\"hourly\"}" ->
+                    HomeAssistantHttpResponse(200, hourlyEnvelope)
+                else -> error("Unexpected weather request: $request")
+            }
+        })
         val remote = HomeAssistantWeatherRemote(endpoint, transport, HomeAssistantWeatherParser())
 
         val result = remote.fetch("weather.home", token)
@@ -26,20 +32,24 @@ class HomeAssistantWeatherRemoteTest {
         assertEquals(89.0, success.snapshot.current.temperature, 0.0)
         assertEquals(1, success.snapshot.daily.size)
         assertEquals(1, success.snapshot.hourly.size)
-        assertEquals("GET", transport.requests[0].method)
-        assertEquals("https://home.example.invalid:8123/api/states/weather.home", transport.requests[0].url)
-        assertEquals("Bearer $token", transport.requests[0].headers["Authorization"])
-        assertEquals("POST", transport.requests[1].method)
+        assertEquals(3, transport.requests.size)
+        val current = transport.requests.single { it.method == "GET" }
+        assertEquals("https://home.example.invalid:8123/api/states/weather.home", current.url)
+        assertEquals("Bearer $token", current.headers["Authorization"])
+        val daily = transport.requests.single { it.body == "{\"entity_id\":\"weather.home\",\"type\":\"daily\"}" }
+        assertEquals("POST", daily.method)
         assertEquals(
             "https://home.example.invalid:8123/api/services/weather/get_forecasts?return_response",
-            transport.requests[1].url,
+            daily.url,
         )
-        assertEquals("{\"entity_id\":\"weather.home\",\"type\":\"daily\"}", transport.requests[1].body)
-        assertEquals("POST", transport.requests[2].method)
+        assertEquals("{\"entity_id\":\"weather.home\",\"type\":\"daily\"}", daily.body)
+        val hourly = transport.requests.single { it.body == "{\"entity_id\":\"weather.home\",\"type\":\"hourly\"}" }
+        assertEquals("POST", hourly.method)
         assertEquals(
-            "{\"entity_id\":\"weather.home\",\"type\":\"hourly\"}",
-            transport.requests[2].body,
+            "https://home.example.invalid:8123/api/services/weather/get_forecasts?return_response",
+            hourly.url,
         )
+        assertEquals("{\"entity_id\":\"weather.home\",\"type\":\"hourly\"}", hourly.body)
     }
 
     @Test
@@ -78,14 +88,18 @@ class HomeAssistantWeatherRemoteTest {
     private class RecordingTransport(
         vararg responses: HomeAssistantHttpResponse,
         private val throws: Throwable? = null,
+        private val responseForRequest: ((HomeAssistantHttpRequest) -> HomeAssistantHttpResponse)? = null,
     ) : HomeAssistantHttpTransport {
-        val requests = mutableListOf<HomeAssistantHttpRequest>()
+        val requests = Collections.synchronizedList(mutableListOf<HomeAssistantHttpRequest>())
         private val queue = ArrayDeque(responses.asList())
+        private val responseLock = Any()
 
         override fun execute(request: HomeAssistantHttpRequest): HomeAssistantHttpResponse {
             requests += request
             throws?.let { throw it }
-            return queue.removeFirst()
+            return responseForRequest?.invoke(request) ?: synchronized(responseLock) {
+                if (queue.size == 1) queue.first() else queue.removeFirst()
+            }
         }
     }
 
