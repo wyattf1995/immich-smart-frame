@@ -155,6 +155,51 @@ write_manifest() {
   done < <(find "$offline_assets" -type f -print | LC_ALL=C sort)
 }
 
+assert_manifest_relative_path() {
+  local path="$1"
+  case "$path" in
+    ''|/*|.|..|./*|../*|*/./*|*/../*|*/|*'//'*)
+      fail "snapshot manifest contains an unsafe payload path: $path"
+      ;;
+  esac
+}
+
+validate_snapshot_payload() {
+  local manifest_paths payload_paths line hash path payload relative
+  local manifest_count unique_count
+  manifest_paths="$(mktemp "${TMPDIR:-/tmp}/deployment-input-manifest-paths.XXXXXX")"
+  payload_paths="$(mktemp "${TMPDIR:-/tmp}/deployment-input-payload-paths.XXXXXX")"
+  manifest_count=0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == *"  "* ]] || fail 'snapshot manifest has an invalid entry'
+    hash="${line%%  *}"
+    path="${line#*  }"
+    [[ "$hash" =~ ^[0-9a-fA-F]{64}$ ]] || fail 'snapshot manifest has an invalid SHA-256 value'
+    assert_manifest_relative_path "$path"
+    payload="$snapshot_dir/inputs/$path"
+    [[ -f "$payload" && ! -L "$payload" ]] || fail "snapshot payload is missing a regular file: $path"
+    [[ "$(sha256 "$payload")" == "$hash" ]] || fail "snapshot payload hash does not match manifest: $path"
+    printf '%s\n' "$path" >> "$manifest_paths"
+    manifest_count=$((manifest_count + 1))
+  done < "$snapshot_dir/manifest.sha256"
+  [[ "$manifest_count" -gt 0 ]] || fail 'snapshot manifest is empty'
+
+  unique_count="$(LC_ALL=C sort -u "$manifest_paths" | wc -l | tr -d '[:space:]')"
+  [[ "$unique_count" == "$manifest_count" ]] || fail 'snapshot manifest contains duplicate payload paths'
+
+  while IFS= read -r payload; do
+    relative="${payload#"$snapshot_dir/inputs"/}"
+    assert_manifest_relative_path "$relative"
+    printf '%s\n' "$relative" >> "$payload_paths"
+  done < <(find "$snapshot_dir/inputs" -type f -print | LC_ALL=C sort)
+
+  while IFS= read -r relative; do
+    grep -Fqx -- "$relative" "$manifest_paths" || fail "snapshot payload has an unlisted file: $relative"
+  done < "$payload_paths"
+  rm -f "$manifest_paths" "$payload_paths"
+}
+
 case "$action" in
   create)
     [[ ! -e "$snapshot_dir" ]] || fail "snapshot target already exists: $snapshot_dir"
@@ -202,6 +247,7 @@ case "$action" in
     if [[ -n "$(find "$snapshot_dir/inputs" -type l -print -quit)" ]]; then
       fail 'snapshot inputs must not contain symlinks'
     fi
+    validate_snapshot_payload
     snapshot_env="$snapshot_dir/inputs/.env"
     [[ -f "$snapshot_env" && ! -L "$snapshot_env" ]] || fail 'snapshot is missing a regular .env'
     restore_config_file="$(resolve_input_path "$(env_value_from "$snapshot_env" KIOSK_CONFIG_FILE ./config/config.yaml)")"

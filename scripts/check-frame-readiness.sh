@@ -58,9 +58,10 @@ informational_check() {
 }
 
 frameos_default_home() {
-  local resolved_home
+  local resolved_home home_component
   resolved_home="$(adb -s "$adb_serial" shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME)" || return 1
-  [[ "$resolved_home" == 'com.wyattfleming.frameos/.MainActivity' ]]
+  home_component="$(printf '%s\n' "$resolved_home" | tr -d '\r' | awk 'NF { component = $0 } END { print component }')"
+  [[ "$home_component" == 'com.wyattfleming.frameos/.MainActivity' ]]
 }
 
 frameos_resumed() {
