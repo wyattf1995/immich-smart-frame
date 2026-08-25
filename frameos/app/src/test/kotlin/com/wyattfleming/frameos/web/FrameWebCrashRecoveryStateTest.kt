@@ -18,4 +18,15 @@ class FrameWebCrashRecoveryStateTest {
         assertFalse(state.requiresReopen)
         assertFalse(state.reopenIfRequired())
     }
+
+    @Test
+    fun `closed content session rejects lifecycle operations until reopened`() {
+        val state = FrameWebCrashRecoveryState()
+
+        state.markClosedByContentProcess()
+
+        assertFalse(state.canUseSession)
+        assertTrue(state.reopenIfRequired())
+        assertTrue(state.canUseSession)
+    }
 }
