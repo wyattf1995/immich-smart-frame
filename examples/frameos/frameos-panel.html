@@ -274,12 +274,15 @@
             element.style.setProperty("--secondary-text-color", "rgba(255,255,255,.92)", "important");
             state.styledHeadings.add(element);
           }
-          if (element.shadowRoot && !state.styledHeadingShadows.has(element.shadowRoot)) {
-            const style = element.ownerDocument.createElement("style");
-            style.id = "frameos-heading-contrast";
-            style.textContent = ":host,*{color:#fff!important;text-shadow:0 1px 3px rgba(0,0,0,.9)}";
-            element.shadowRoot.append(style);
-            state.styledHeadingShadows.add(element.shadowRoot);
+          const headingShadow = element.shadowRoot;
+          if (headingShadow && !state.styledHeadingShadows.has(headingShadow)) {
+            if (!headingShadow.querySelector("#frameos-heading-contrast")) {
+              const style = element.ownerDocument.createElement("style");
+              style.id = "frameos-heading-contrast";
+              style.textContent = ":host,*{color:#fff!important;text-shadow:0 1px 3px rgba(0,0,0,.9)}";
+              headingShadow.append(style);
+            }
+            state.styledHeadingShadows.add(headingShadow);
           }
         };
 
@@ -506,6 +509,7 @@
         panel.addEventListener("load", () => {
           const current = currentPanelView();
           if (!current) {
+            cancelRouteWork();
             try {
               if (panel.contentWindow.location.href === "about:blank") return;
             } catch (_error) {
