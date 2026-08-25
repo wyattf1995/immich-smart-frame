@@ -108,7 +108,7 @@ end
 
 weather_cards = weather_view.fetch("sections", []).flat_map { |section| section.fetch("cards", []) }
 weather_forecasts = weather_cards.select { |card| card["type"] == "weather-forecast" }
-forecast_types = weather_forecasts.filter_map { |card| card["forecast_type"] }.to_set
+forecast_types = weather_forecasts.map { |card| card["forecast_type"] }.compact.to_set
 unless weather_forecasts.any? { |card| card["show_current"] == true } &&
        forecast_types == Set["daily", "hourly"]
   fail_validation("Weather must show current conditions plus daily and hourly forecasts")
