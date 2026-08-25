@@ -102,6 +102,19 @@ class WeatherRepositoryTest {
     }
 
     @Test
+    fun `expires stale weather after its bounded fallback lifetime`() {
+        val repository = WeatherRepository(
+            remote = FakeWeatherRemote(WeatherRemoteResult.Offline("network unavailable")),
+            cache = RecordingWeatherCache(cached = CachedWeatherSnapshot(snapshot, savedAtEpochMillis = 1_000L)),
+            clock = { 62_000L },
+            freshForMillis = 1_000L,
+            maxStaleMillis = 60_000L,
+        )
+
+        assertEquals(WeatherLoadResult.Offline, repository.refresh("weather.home", "access-token"))
+    }
+
+    @Test
     fun `reports offline without a cache and auth required without leaking the token`() {
         val offlineCache = RecordingWeatherCache()
         val offline = WeatherRepository(
