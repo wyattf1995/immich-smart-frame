@@ -33,6 +33,14 @@ class OAuthTokens(
     override fun toString(): String = "OAuthTokens(redacted)"
 }
 
+class OAuthAccessToken(
+    val accessToken: String,
+    val tokenType: String,
+    val expiresInSeconds: Long,
+) {
+    override fun toString(): String = "OAuthAccessToken(redacted)"
+}
+
 class HomeAssistantOAuthEndpoint private constructor(
     private val origin: URI,
 ) {
@@ -65,6 +73,16 @@ class HomeAssistantOAuthEndpoint private constructor(
         ).joinToString("&") { (key, value) -> "${encode(key)}=${encode(value)}" }
     }
 
+    fun refreshTokenRequestBody(callbackPageUrl: String, refreshToken: String): String {
+        val callback = requireCallback(callbackPageUrl)
+        require(refreshToken.isNotBlank()) { "Refresh token is required" }
+        return listOf(
+            "grant_type" to "refresh_token",
+            "refresh_token" to refreshToken,
+            "client_id" to callback,
+        ).joinToString("&") { (key, value) -> "${encode(key)}=${encode(value)}" }
+    }
+
     fun parseTokenResponse(payload: String): OAuthTokens {
         val root = JSONObject(payload)
         val accessToken = root.getString("access_token").takeIf(String::isNotBlank)
@@ -76,6 +94,17 @@ class HomeAssistantOAuthEndpoint private constructor(
         val expiresIn = root.getLong("expires_in")
         require(expiresIn > 0L) { "Token expiry must be positive" }
         return OAuthTokens(accessToken, refreshToken, tokenType, expiresIn)
+    }
+
+    fun parseRefreshTokenResponse(payload: String): OAuthAccessToken {
+        val root = JSONObject(payload)
+        val accessToken = root.getString("access_token").takeIf(String::isNotBlank)
+            ?: throw IllegalArgumentException("Access token missing")
+        val tokenType = root.getString("token_type")
+        require(tokenType == "Bearer") { "Unsupported token type" }
+        val expiresIn = root.getLong("expires_in")
+        require(expiresIn > 0L) { "Token expiry must be positive" }
+        return OAuthAccessToken(accessToken, tokenType, expiresIn)
     }
 
     private fun requireCallback(callbackPageUrl: String): String {
