@@ -34,6 +34,7 @@ class DemoContentView(context: Context) : View(context) {
         when (mode) {
             FrameMode.PHOTOS -> drawPhotos(canvas)
             FrameMode.HOME -> drawHome(canvas)
+            FrameMode.WEATHER -> drawWeather(canvas)
             FrameMode.CAMERAS -> drawCameras(canvas)
             FrameMode.CALENDAR -> drawCalendar(canvas)
         }
@@ -99,6 +100,79 @@ class DemoContentView(context: Context) : View(context) {
         drawText(canvas, "High 78°   Low 59°", width * 0.71f, height * 0.50f, 20f, 0xFFD9DEE7.toInt())
         drawMetric(canvas, "Sunrise", "6:28 AM", width * 0.55f, height * 0.65f)
         drawMetric(canvas, "Sunset", "7:46 PM", width * 0.75f, height * 0.65f)
+    }
+
+    private fun drawWeather(canvas: Canvas) {
+        paint.shader = LinearGradient(
+            0f,
+            0f,
+            width.toFloat(),
+            height.toFloat(),
+            intArrayOf(Color.rgb(18, 27, 43), Color.rgb(35, 52, 77), Color.rgb(92, 72, 76)),
+            null,
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+        paint.shader = null
+
+        drawText(canvas, "Weather", width * 0.055f, height * 0.105f, 40f, Color.WHITE, true)
+        drawText(canvas, "Home  ·  Updated 8:42 PM", width * 0.055f, height * 0.15f, 20f, 0xFFD1D7E0.toInt())
+
+        drawMoon(canvas, width * 0.105f, height * 0.31f, dp(46f))
+        drawText(canvas, "79°", width * 0.165f, height * 0.35f, 82f, Color.WHITE, true)
+        drawText(canvas, "Clear night", width * 0.165f, height * 0.405f, 26f, Color.WHITE, true)
+        drawText(canvas, "High 94°  ·  Low 76°", width * 0.165f, height * 0.45f, 19f, 0xFFD1D7E0.toInt())
+
+        drawCard(canvas, RectF(width * 0.05f, height * 0.50f, width * 0.42f, height * 0.66f))
+        drawText(canvas, "CURRENT CONDITIONS", width * 0.07f, height * 0.545f, 15f, 0xFFB7C0CE.toInt(), true)
+        drawWeatherMetric(canvas, "Humidity", "67%", width * 0.07f, height * 0.585f)
+        drawWeatherMetric(canvas, "Wind", "3 mph SSW", width * 0.185f, height * 0.585f)
+        drawWeatherMetric(canvas, "Pressure", "29.93 inHg", width * 0.31f, height * 0.585f)
+
+        drawCard(canvas, RectF(width * 0.05f, height * 0.69f, width * 0.42f, height * 0.88f))
+        drawText(canvas, "PAST 24 HOURS", width * 0.07f, height * 0.735f, 15f, 0xFFB7C0CE.toInt(), true)
+        val history = RectF(width * 0.07f, height * 0.775f, width * 0.40f, height * 0.815f)
+        paint.color = 0xFF6B49A8.toInt()
+        canvas.drawRoundRect(RectF(history.left, history.top, history.left + history.width() * 0.42f, history.bottom), dp(7f), dp(7f), paint)
+        paint.color = 0xFF7892A2.toInt()
+        canvas.drawRect(history.left + history.width() * 0.42f, history.top, history.left + history.width() * 0.55f, history.bottom, paint)
+        paint.color = 0xFFF2B82C.toInt()
+        canvas.drawRoundRect(RectF(history.left + history.width() * 0.55f, history.top, history.right, history.bottom), dp(7f), dp(7f), paint)
+        drawText(canvas, "12 AM", history.left, height * 0.855f, 15f, 0xFFB7C0CE.toInt())
+        drawText(canvas, "6 AM", history.left + history.width() * 0.31f, height * 0.855f, 15f, 0xFFB7C0CE.toInt())
+        drawText(canvas, "Noon", history.left + history.width() * 0.58f, height * 0.855f, 15f, 0xFFB7C0CE.toInt())
+        drawText(canvas, "Now", history.right - dp(34f), height * 0.855f, 15f, 0xFFB7C0CE.toInt())
+
+        val forecastCard = RectF(width * 0.46f, height * 0.16f, width * 0.95f, height * 0.88f)
+        drawCard(canvas, forecastCard)
+        drawText(canvas, "Daily forecast", width * 0.49f, height * 0.225f, 27f, Color.WHITE, true)
+        val days = listOf("Mon", "Tue", "Wed", "Thu", "Fri")
+        val highs = listOf("94°", "96°", "99°", "101°", "90°")
+        val lows = listOf("76°", "73°", "74°", "83°", "76°")
+        val dailyLeft = width * 0.49f
+        val dailyWidth = width * 0.43f
+        days.forEachIndexed { index, day ->
+            val center = dailyLeft + dailyWidth * (index + 0.5f) / days.size
+            drawCenteredText(canvas, day, center, height * 0.295f, 18f, 0xFFD1D7E0.toInt(), true)
+            drawSun(canvas, center, height * 0.365f, dp(if (index == 0 || index == 3) 21f else 18f))
+            drawCenteredText(canvas, highs[index], center, height * 0.445f, 27f, Color.WHITE, true)
+            drawCenteredText(canvas, lows[index], center, height * 0.485f, 18f, 0xFFADB7C6.toInt())
+        }
+
+        paint.color = 0x33FFFFFF
+        canvas.drawRect(width * 0.49f, height * 0.535f, width * 0.92f, height * 0.537f, paint)
+        drawText(canvas, "Hourly forecast", width * 0.49f, height * 0.605f, 27f, Color.WHITE, true)
+        val hours = listOf("Now", "10 PM", "Midnight", "2 AM", "4 AM")
+        val temperatures = listOf("79°", "78°", "76°", "74°", "73°")
+        hours.forEachIndexed { index, hour ->
+            val center = dailyLeft + dailyWidth * (index + 0.5f) / hours.size
+            drawCenteredText(canvas, hour, center, height * 0.675f, 16f, 0xFFD1D7E0.toInt(), true)
+            drawMoon(canvas, center, height * 0.735f, dp(18f))
+            drawCenteredText(canvas, temperatures[index], center, height * 0.81f, 25f, Color.WHITE, true)
+        }
+
+        drawText(canvas, "Sunrise 6:28 AM", width * 0.055f, height * 0.945f, 17f, 0xFFD1D7E0.toInt())
+        drawText(canvas, "Sunset 7:46 PM", width * 0.28f, height * 0.945f, 17f, 0xFFD1D7E0.toInt())
     }
 
     private fun drawCameras(canvas: Canvas) {
@@ -206,6 +280,52 @@ class DemoContentView(context: Context) : View(context) {
         paint.color = 0xFFCEDCFA.toInt()
         canvas.drawRoundRect(RectF(x, y, x + eventWidth, y + dp(42f)), dp(8f), dp(8f), paint)
         drawText(canvas, label, x + dp(10f), y + dp(27f), 16f, 0xFF273A63.toInt(), true)
+    }
+
+    private fun drawWeatherMetric(canvas: Canvas, label: String, value: String, x: Float, y: Float) {
+        drawText(canvas, label, x, y, 15f, 0xFFB7C0CE.toInt())
+        drawText(canvas, value, x, y + dp(26f), 19f, Color.WHITE, true)
+    }
+
+    private fun drawSun(canvas: Canvas, centerX: Float, centerY: Float, radius: Float) {
+        paint.color = 0xFFFFDA59.toInt()
+        canvas.drawCircle(centerX, centerY, radius, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = dp(2f)
+        repeat(8) { index ->
+            val angle = Math.toRadians(index * 45.0)
+            val inner = radius * 1.35f
+            val outer = radius * 1.7f
+            canvas.drawLine(
+                centerX + (kotlin.math.cos(angle) * inner).toFloat(),
+                centerY + (kotlin.math.sin(angle) * inner).toFloat(),
+                centerX + (kotlin.math.cos(angle) * outer).toFloat(),
+                centerY + (kotlin.math.sin(angle) * outer).toFloat(),
+                paint,
+            )
+        }
+        paint.style = Paint.Style.FILL
+    }
+
+    private fun drawMoon(canvas: Canvas, centerX: Float, centerY: Float, radius: Float) {
+        paint.color = 0xFFFFE78A.toInt()
+        canvas.drawCircle(centerX, centerY, radius, paint)
+        paint.color = Color.rgb(29, 38, 55)
+        canvas.drawCircle(centerX + radius * 0.42f, centerY - radius * 0.18f, radius * 0.84f, paint)
+    }
+
+    private fun drawCenteredText(
+        canvas: Canvas,
+        text: String,
+        centerX: Float,
+        baseline: Float,
+        sizeSp: Float,
+        color: Int,
+        medium: Boolean = false,
+    ) {
+        paint.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sizeSp, resources.displayMetrics)
+        paint.typeface = android.graphics.Typeface.create("sans", if (medium) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+        drawText(canvas, text, centerX - paint.measureText(text) / 2f, baseline, sizeSp, color, medium)
     }
 
     private fun drawText(

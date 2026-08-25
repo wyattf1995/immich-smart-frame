@@ -6,6 +6,7 @@ object HomeAssistantRoute {
     fun urlFor(baseUrl: String, mode: FrameMode): String? {
         val fragment = when (mode) {
             FrameMode.HOME -> "home"
+            FrameMode.WEATHER -> "weather"
             FrameMode.CAMERAS -> "cameras"
             FrameMode.CALENDAR -> "calendar"
             FrameMode.PHOTOS -> return null
