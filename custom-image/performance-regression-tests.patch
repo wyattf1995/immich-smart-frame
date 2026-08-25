@@ -1,0 +1,83 @@
+diff --git a/internal/immich/immich_performance_test.go b/internal/immich/immich_performance_test.go
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/internal/immich/immich_performance_test.go
+@@ -0,0 +1,42 @@
++package immich
++
++import (
++	"testing"
++
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/stretchr/testify/assert"
++)
++
++func TestAlbumPenaltyFactorsResolveOnceAndUseMinimumFactor(t *testing.T) {
++	factors := albumPenaltyFactors([]config.AlbumPenalty{{Album: "Casual", Factor: 0.6}, {Album: "featured", Factor: 0.2}})
++
++	assert.Equal(t, 0.6, factors["casual"])
++	assert.Equal(t, 0.2, factors["featured"])
++	assert.Equal(t, 0.2, albumPenaltyFactorForAlbums(Albums{{ID: "CASUAL"}, {ID: "Featured"}}, factors))
++}
++
++func TestDateCandidatePoolConsumesCandidatesOnlyOnce(t *testing.T) {
++	pool := newDateCandidatePool([]Asset{{ID: "one"}, {ID: "two"}, {ID: "three"}})
++	seen := map[string]bool{}
++	for range 3 {
++		asset, ok := pool.take()
++		assert.True(t, ok)
++		assert.False(t, seen[asset.ID], "candidate %q was evaluated more than once", asset.ID)
++		seen[asset.ID] = true
++	}
++	_, ok := pool.take()
++	assert.False(t, ok)
++	assert.Len(t, seen, 3)
++}
++
++func BenchmarkAlbumPenaltyFactorLookup(b *testing.B) {
++	factors := albumPenaltyFactors([]config.AlbumPenalty{{Album: "target", Factor: 0.2}})
++	albums := Albums{{ID: "one"}, {ID: "two"}, {ID: "target"}}
++	b.ReportAllocs()
++	b.ResetTimer()
++	for range b.N {
++		if albumPenaltyFactorForAlbums(albums, factors) != 0.2 {
++			b.Fatal("unexpected penalty factor")
++		}
++	}
++}
+diff --git a/internal/routes/routes_prefetch_test.go b/internal/routes/routes_prefetch_test.go
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/internal/routes/routes_prefetch_test.go
+@@ -0,0 +1,29 @@
++package routes
++
++import (
++	"context"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestPrefetchSchedulerDeduplicatesAndBackpressuresBurst(t *testing.T) {
++	scheduler := newPrefetchScheduler(2, time.Second)
++	started := make(chan string, 2)
++	release := make(chan struct{})
++	var completed sync.WaitGroup
++	completed.Add(2)
++	work := func(key string) func(context.Context) { return func(context.Context) { started <- key; <-release; completed.Done() } }
++
++	assert.True(t, scheduler.schedule("device-a\\x00/url-a", work("a")))
++	assert.False(t, scheduler.schedule("device-a\\x00/url-a", work("duplicate")))
++	assert.True(t, scheduler.schedule("device-a\\x00/url-b", work("b")))
++	assert.False(t, scheduler.schedule("device-a\\x00/url-c", work("backpressured")))
++	require.Eventually(t, func() bool { return len(started) == 2 }, time.Second, 10*time.Millisecond)
++	close(release)
++	completed.Wait()
++	assert.True(t, scheduler.schedule("device-a\\x00/url-c", func(context.Context) {}))
++}

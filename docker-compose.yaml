@@ -13,6 +13,8 @@ services:
     image: ${KIOSK_IMAGE:-local/immich-smart-frame:0.1.0}
     container_name: ${KIOSK_CONTAINER_NAME:-immich-kiosk}
     restart: unless-stopped
+    cpus: ${KIOSK_CPUS:-3.0}
+    mem_limit: ${KIOSK_MEMORY_LIMIT:-1g}
     tty: true
     environment:
       LANG: en_US.UTF-8

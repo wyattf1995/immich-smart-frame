@@ -5,11 +5,14 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/ci-lib.sh
 source "$script_dir/ci-lib.sh"
 
-temp_root="$(mktemp -d)"
-trap 'rm -rf "$temp_root"' EXIT
-
-source_dir="$temp_root/upstream"
-ci_prepare_upstream_source "$source_dir" >/dev/null
+if [[ -n "${PATCHED_UPSTREAM_DIR:-}" ]]; then
+  source_dir="$PATCHED_UPSTREAM_DIR"
+else
+  temp_root="$(mktemp -d)"
+  trap 'rm -rf "$temp_root"' EXIT
+  source_dir="$temp_root/upstream"
+  ci_prepare_upstream_source "$source_dir" >/dev/null
+fi
 
 docker run --rm \
   --entrypoint /bin/bash \

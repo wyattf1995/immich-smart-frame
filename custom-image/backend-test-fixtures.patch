@@ -1,0 +1,39 @@
+diff --git a/internal/immich/immich_date_pool_test.go b/internal/immich/immich_date_pool_test.go
+index fc4bdec..2e5fe97 100644
+--- a/internal/immich/immich_date_pool_test.go
++++ b/internal/immich/immich_date_pool_test.go
+@@ -7,0 +8 @@ import (
++	"path"
+@@ -113,0 +115,5 @@ func dateAssetServer(t *testing.T, calls *atomic.Int32) *httptest.Server {
++		if r.URL.Path != "/api/search/random" {
++			asset := Asset{ID: path.Base(r.URL.Path), Type: ImageType, ExifInfo: ExifInfo{ExifImageHeight: 1080, ExifImageWidth: 1920}}
++			require.NoError(t, json.NewEncoder(w).Encode(asset))
++			return
++		}
+diff --git a/internal/routes/routes_prefetch_context_test.go b/internal/routes/routes_prefetch_context_test.go
+index 8cb2f11..f10ba46 100644
+--- a/internal/routes/routes_prefetch_context_test.go
++++ b/internal/routes/routes_prefetch_context_test.go
+@@ -31 +31,9 @@ func TestAssetPreFetchPassesDeadlineToBlockingHTTPTransport(t *testing.T) {
+-	requestData := &common.RouteRequestData{RequestID: "request-a", DeviceID: "device-a", RequestConfig: config.Config{ImmichURL: "http://immich.test"}}
++	requestConfig := config.Config{
++		ImmichURL:       "http://immich.test",
++		CurationProfile: "deadline",
++		Curation: config.CurationSettings{Profiles: map[string]config.CurationProfile{
++			"deadline": {Sources: []config.CuratedSource{{Type: "date", Value: "last-30", Weight: 1}}},
++		}},
++		Kiosk: config.KioskSettings{FetchedAssetsSize: 1},
++	}
++	requestData := &common.RouteRequestData{RequestID: "request-a", DeviceID: "device-a", RequestConfig: requestConfig}
+@@ -35 +43,8 @@ func TestAssetPreFetchPassesDeadlineToBlockingHTTPTransport(t *testing.T) {
+-	require.Eventually(t, func() bool { select { case <-cancelled: return true; default: return false } }, time.Second, 5*time.Millisecond)
++	require.Eventually(t, func() bool {
++		select {
++		case <-cancelled:
++			return true
++		default:
++			return false
++		}
++	}, time.Second, 5*time.Millisecond)
+@@ -38,0 +54 @@ type routesRoundTripFunc func(*http.Request) (*http.Response, error)
++

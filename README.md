@@ -189,7 +189,9 @@ reviewable patch files:
 3. `runtime-hardening.patch` updates vulnerable Go dependencies, bounds client
    image dimensions, and normalizes curation input.
 4. `album-penalties.patch` adds validated, profile-specific soft de-ranking.
-5. `weighted-curation-tests.patch` guards curation, normalization, dimensions,
+5. `backend-performance.patch` makes album filtering and date pools linear and
+   bounded, caches memories availability briefly, and caps concurrent prefetch.
+6. `weighted-curation-tests.patch` guards curation, normalization, dimensions,
    and exact weights.
 
 The build asserts the tag's expected commit, checks that every patch still
@@ -289,3 +291,6 @@ See [LICENSE](LICENSE), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and
 The upstream project is not responsible for these device-specific patches or
 support requests. Please reproduce problems against upstream before filing an
 upstream issue.
+The Compose defaults cap the kiosk at three CPUs and 1 GiB RAM, which leaves
+headroom for the NAS-hosted kiosk. Tune `KIOSK_CPUS` and
+`KIOSK_MEMORY_LIMIT` only after observing steady-state memory headroom.

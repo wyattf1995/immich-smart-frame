@@ -44,10 +44,19 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Prepare patched upstream once
+        run: |
+          source scripts/ci-lib.sh
+          ci_prepare_upstream_source "$RUNNER_TEMP/patched-upstream"
+
       - name: Audit patched upstream dependency licenses
+        env:
+          PATCHED_UPSTREAM_DIR: ${{ runner.temp }}/patched-upstream
         run: ./scripts/audit-licenses.sh
 
       - name: Run govulncheck against the patched upstream tree
+        env:
+          PATCHED_UPSTREAM_DIR: ${{ runner.temp }}/patched-upstream
         run: ./scripts/run-govulncheck.sh
 
   image-audit:
