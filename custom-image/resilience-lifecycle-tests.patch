@@ -1,0 +1,100 @@
+diff --git a/main_resilience_test.go b/main_resilience_test.go
+index e312e71..669ae05 100644
+--- a/main_resilience_test.go
++++ b/main_resilience_test.go
+@@ -84,6 +84,35 @@ func TestRequestTimeMiddlewareConfigReadsAreSnapshotGuarded(t *testing.T) {
+ 	}
+ }
+ 
++func TestPasswordHotReloadAndHealthProbesBypassKeyAuth(t *testing.T) {
++	base := config.New()
++	e := echo.New()
++	e.GET("/protected", func(c *echo.Context) error { return c.String(http.StatusOK, "OK") })
++	registerHealthRoutes(e, base)
++	addMiddleware(e, base)
++
++	request := func(path, password string) int {
++		req := httptest.NewRequest(http.MethodGet, path, nil)
++		if password != "" {
++			req.Header.Set("Authorization", password)
++		}
++		rec := httptest.NewRecorder()
++		e.ServeHTTP(rec, req)
++		return rec.Code
++	}
++	require.Equal(t, http.StatusOK, request("/protected", ""))
++
++	base.Kiosk.Password = "rotated"
++	require.Equal(t, http.StatusUnauthorized, request("/protected", ""))
++	require.Equal(t, http.StatusOK, request("/protected", "rotated"))
++	for _, path := range []string{"/health", "/livez", "/readyz"} {
++		require.NotEqual(t, http.StatusUnauthorized, request(path, ""))
++	}
++
++	base.Kiosk.Password = ""
++	require.Equal(t, http.StatusOK, request("/protected", ""))
++}
++
+ func TestHealthcheckCLIAndServerLimits(t *testing.T) {
+ 	endpoint, ok := checkEndpoint([]string{"--healthcheck"})
+ 	require.True(t, ok)
+diff --git a/internal/routes/routes_resilience_coverage_test.go b/internal/routes/routes_resilience_coverage_test.go
+index 46a4b36..46166ad 100644
+--- a/internal/routes/routes_resilience_coverage_test.go
++++ b/internal/routes/routes_resilience_coverage_test.go
+@@ -6,6 +6,7 @@ import (
+ 	"net/http"
+ 	"os"
+ 	"path/filepath"
++	"strings"
+ 	"sync/atomic"
+ 	"testing"
+ 	"time"
+@@ -96,3 +97,21 @@ func TestOfflinePrewarmIsDeduplicatedShutdownBoundedAndDrained(t *testing.T) {
+ 	defer drainCancel()
+ 	require.True(t, DrainAssetPrefetch(drainCtx))
+ }
++
++func TestOfflineEmptyCacheUsesTrackedPrewarmScheduler(t *testing.T) {
++	source, err := os.ReadFile("routes_offline.go")
++	require.NoError(t, err)
++	functionStart := strings.Index(string(source), "func handleNoOfflineAssets")
++	require.NotEqual(t, -1, functionStart)
++	functionSource := string(source)[functionStart:]
++	require.Contains(t, functionSource, "scheduleOfflinePrewarm(com, requestConfig, requestCtx, requestID, deviceID)")
++	require.NotContains(t, functionSource, "go func(c common.ContextCopy)")
++}
++
++func TestPrefetchSchedulerRejectsAdmissionOnceDrainBegins(t *testing.T) {
++	scheduler := newPrefetchScheduler(1, time.Second)
++	drainCtx, cancel := context.WithTimeout(context.Background(), time.Second)
++	defer cancel()
++	require.True(t, scheduler.drain(drainCtx))
++	require.False(t, scheduler.scheduleWithContext(context.Background(), "after-drain", func(context.Context) {}))
++}
+diff --git a/internal/immich/immich_resilience_coverage_test.go b/internal/immich/immich_resilience_coverage_test.go
+index 0cfd494..4f25cc4 100644
+--- a/internal/immich/immich_resilience_coverage_test.go
++++ b/internal/immich/immich_resilience_coverage_test.go
+@@ -31,6 +31,20 @@ func TestRetryAfterIsAProviderMinimumAndUnsafeTransportIsNotReplayed(t *testing.
+ 	require.Equal(t, 1, calls)
+ }
+ 
++func TestImmichAPICallBoundsUnsetTimeout(t *testing.T) {
++	original := HTTPClient
++	t.Cleanup(func() { HTTPClient = original })
++	HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
++		deadline, ok := r.Context().Deadline()
++		require.True(t, ok)
++		require.LessOrEqual(t, time.Until(deadline), defaultAPICallTimeout)
++		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`))}, nil
++	})}
++	asset := New(context.Background(), config.Config{ImmichAPIKey: "key"})
++	_, _, _, err := asset.immichAPICall(context.Background(), http.MethodGet, "http://immich.test/api/assets", nil)
++	require.NoError(t, err)
++}
++
+ func TestReadinessCachesRecentSuccessAndBacksOffFailures(t *testing.T) {
+ 	original := HTTPClient
+ 	t.Cleanup(func() { HTTPClient = original })
+
