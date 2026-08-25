@@ -46,15 +46,23 @@ class OAuthCallbackVerifier(
     }
 
     private fun parseQuery(rawQuery: String): Map<String, List<String>>? = try {
-        rawQuery.split('&')
-            .filter(String::isNotBlank)
-            .map { pair ->
-                val separator = pair.indexOf('=')
-                val rawKey = if (separator < 0) pair else pair.substring(0, separator)
-                val rawValue = if (separator < 0) "" else pair.substring(separator + 1)
-                decode(rawKey) to decode(rawValue)
+        buildMap {
+            var start = 0
+            while (start <= rawQuery.length) {
+                val end = rawQuery.indexOf('&', start).let { if (it < 0) rawQuery.length else it }
+                if (end > start) {
+                    val pair = rawQuery.substring(start, end)
+                    val separator = pair.indexOf('=')
+                    val key = decode(if (separator < 0) pair else pair.substring(0, separator))
+                    val value = decode(if (separator < 0) "" else pair.substring(separator + 1))
+                    val values = get(key)?.toMutableList() ?: mutableListOf()
+                    values += value
+                    put(key, values)
+                }
+                if (end == rawQuery.length) break
+                start = end + 1
             }
-            .groupBy({ it.first }, { it.second })
+        }
     } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
         null
     }

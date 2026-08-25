@@ -4,12 +4,20 @@ import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URI
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
 
-class UrlConnectionHomeAssistantTransport : HomeAssistantHttpTransport {
+interface CancellableHomeAssistantHttpTransport : HomeAssistantHttpTransport {
+    fun cancelInFlight()
+}
+
+class UrlConnectionHomeAssistantTransport : CancellableHomeAssistantHttpTransport {
+    private val connections = ConcurrentHashMap.newKeySet<HttpURLConnection>()
+
     override fun execute(request: HomeAssistantHttpRequest): HomeAssistantHttpResponse {
         val uri = requireSafeHttpsUrl(request.url)
         require(request.method == "GET" || request.method == "POST") { "Unsupported HTTP method" }
         val connection = uri.toURL().openConnection() as HttpURLConnection
+        connections += connection
         return try {
             connection.requestMethod = request.method
             connection.instanceFollowRedirects = false
@@ -32,9 +40,12 @@ class UrlConnectionHomeAssistantTransport : HomeAssistantHttpTransport {
             val stream = if (statusCode in 200..299) connection.inputStream else connection.errorStream
             HomeAssistantHttpResponse(statusCode, stream?.use(::readBoundedUtf8).orEmpty())
         } finally {
+            connections -= connection
             connection.disconnect()
         }
     }
+
+    override fun cancelInFlight() = connections.forEach(HttpURLConnection::disconnect)
 
     override fun toString(): String = "UrlConnectionHomeAssistantTransport(redacted)"
 

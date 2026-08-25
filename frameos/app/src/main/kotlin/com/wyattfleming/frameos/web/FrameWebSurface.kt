@@ -2,6 +2,7 @@ package com.wyattfleming.frameos.web
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.view.accessibility.AccessibilityManager
 import android.graphics.Color
 import android.os.SystemClock
 import android.view.MotionEvent
@@ -29,6 +30,9 @@ class FrameWebSurface(
     }
 
     private val frameRuntime = runtime
+    private val retentionPolicy = FrameWebSessionRetentionPolicy()
+    private val requiresFullAccessibilityTree = context.getSystemService(AccessibilityManager::class.java)
+        ?.isTouchExplorationEnabled == true
 
     private inner class ManagedSession(
         val configuredUrl: String,
@@ -38,7 +42,7 @@ class FrameWebSurface(
             GeckoSessionSettings().apply {
                 setAllowJavascript(true)
                 setDisplayMode(GeckoSessionSettings.DISPLAY_MODE_FULLSCREEN)
-                setFullAccessibilityTree(true)
+                setFullAccessibilityTree(requiresFullAccessibilityTree)
                 setSuspendMediaWhenInactive(true)
             },
         )
@@ -110,14 +114,15 @@ class FrameWebSurface(
         }
     }
 
-    private val persistentSessions = mapOf(
-        FrameWebSlot.PHOTOS to ManagedSession(photosUrl, "Photos"),
-        FrameWebSlot.HOME_ASSISTANT to ManagedSession(homeAssistantUrl, "Home Assistant"),
-    )
+    private val photosSession = ManagedSession(photosUrl, "Photos")
+    private val homeAssistantUrl = homeAssistantUrl
+    private var homeAssistantSession: ManagedSession? = null
     private var cameraSession: ManagedSession? = null
     private var attachedSlot: FrameWebSlot? = null
     private var hiddenGeneration = 0
-    private var preloadGeneration = 0
+    private val hiddenHomeLifecycle = FrameWebHiddenSessionLifecycle()
+    private var preloadDeactivation: Runnable? = null
+    private val evictHiddenHome = Runnable { evictHiddenHomeIfExpired() }
 
     init {
         setBackgroundColor(Color.BLACK)
@@ -130,20 +135,30 @@ class FrameWebSurface(
 
     fun preload(slot: FrameWebSlot, url: String) {
         require(slot.canPreload) { "$slot cannot be preloaded" }
-        val managed = persistentSessions.getValue(slot)
+        val managed = sessionFor(slot)
+        val generation = hiddenHomeLifecycle.onHomePreloaded(SystemClock.uptimeMillis())
+        scheduleHiddenHomeEviction()
         if (!managed.loadState.shouldRequest(url)) return
-        val generation = ++preloadGeneration
+        preloadDeactivation?.let(::removeCallbacks)
         managed.session.setActive(true)
         managed.request(url)
-        postDelayed({
-            if (generation == preloadGeneration && attachedSlot != slot) {
+        val deactivate = Runnable {
+            if (hiddenHomeLifecycle.isCurrentPreload(generation) && homeAssistantSession === managed && attachedSlot != slot) {
                 managed.session.setActive(false)
             }
-        }, PRELOAD_ACTIVE_MILLIS)
+        }
+        preloadDeactivation = deactivate
+        postDelayed(deactivate, PRELOAD_ACTIVE_MILLIS)
     }
 
     fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean) {
         hiddenGeneration += 1
+        if (slot == FrameWebSlot.HOME_ASSISTANT) {
+            removeCallbacks(evictHiddenHome)
+            hiddenHomeLifecycle.onHomeShown()
+        } else {
+            hiddenHomeLifecycle.onNonHomeShown()
+        }
         if (attachedSlot == FrameWebSlot.CAMERAS && slot != FrameWebSlot.CAMERAS) {
             disposeCameraSession()
         }
@@ -163,16 +178,22 @@ class FrameWebSurface(
         managed.session.setFocused(takeFocus)
         if (takeFocus) requestFocus()
         contentDescription = managed.label
+        if (slot != FrameWebSlot.HOME_ASSISTANT) scheduleHiddenHomeEviction()
     }
 
     fun hide() {
         hiddenGeneration += 1
         visibility = View.GONE
         if (attachedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
-        persistentSessions.values.forEach {
+        allSessions().forEach {
             it.session.setFocused(false)
             it.session.setActive(false)
         }
+        if (attachedSlot == FrameWebSlot.HOME_ASSISTANT && session != null) {
+            releaseSession()
+            attachedSlot = null
+        }
+        scheduleHiddenHomeEviction()
     }
 
     fun setContentActive(active: Boolean) {
@@ -203,22 +224,35 @@ class FrameWebSurface(
     }
 
     fun destroy() {
+        removeCallbacks(evictHiddenHome)
+        preloadDeactivation?.let(::removeCallbacks)
+        preloadDeactivation = null
+        hiddenHomeLifecycle.onEvicted()
         if (session != null) releaseSession()
         cameraSession?.close()
         cameraSession = null
-        persistentSessions.values.forEach(ManagedSession::close)
+        homeAssistantSession?.close()
+        homeAssistantSession = null
+        photosSession.close()
+    }
+
+    fun trimMemory(level: Int) {
+        if (retentionPolicy.shouldEvictForTrimMemory(level)) evictHiddenHome()
     }
 
     private fun sessionFor(slot: FrameWebSlot): ManagedSession = when (slot) {
-        FrameWebSlot.PHOTOS, FrameWebSlot.HOME_ASSISTANT -> persistentSessions.getValue(slot)
+        FrameWebSlot.PHOTOS -> photosSession
+        FrameWebSlot.HOME_ASSISTANT -> homeAssistantSession ?: ManagedSession(homeAssistantUrl, "Home Assistant")
+            .also { homeAssistantSession = it }
         FrameWebSlot.CAMERAS -> cameraSession ?: ManagedSession(
-            configuredUrl = persistentSessions.getValue(FrameWebSlot.HOME_ASSISTANT).configuredUrl,
+            configuredUrl = homeAssistantUrl,
             label = "Cameras",
         ).also { cameraSession = it }
     }
 
     private fun allSessions(): List<ManagedSession> = buildList {
-        addAll(persistentSessions.values)
+        add(photosSession)
+        homeAssistantSession?.let(::add)
         cameraSession?.let(::add)
     }
 
@@ -230,6 +264,30 @@ class FrameWebSurface(
         }
         disposable.close()
         cameraSession = null
+    }
+
+    private fun scheduleHiddenHomeEviction() {
+        homeAssistantSession ?: return
+        if (attachedSlot == FrameWebSlot.HOME_ASSISTANT) return
+        hiddenHomeLifecycle.onHomeHidden(SystemClock.uptimeMillis())
+        val hiddenSince = requireNotNull(hiddenHomeLifecycle.hiddenSinceMillis)
+        removeCallbacks(evictHiddenHome)
+        postDelayed(evictHiddenHome, (FrameWebSessionRetentionPolicy.HIDDEN_HOME_TTL_MILLIS - (SystemClock.uptimeMillis() - hiddenSince)).coerceAtLeast(0L))
+    }
+
+    private fun evictHiddenHomeIfExpired() {
+        val hiddenSince = hiddenHomeLifecycle.hiddenSinceMillis ?: return
+        if (retentionPolicy.shouldEvictHiddenHome(SystemClock.uptimeMillis(), hiddenSince)) evictHiddenHome()
+    }
+
+    private fun evictHiddenHome() {
+        if (attachedSlot == FrameWebSlot.HOME_ASSISTANT) return
+        removeCallbacks(evictHiddenHome)
+        preloadDeactivation?.let(::removeCallbacks)
+        preloadDeactivation = null
+        hiddenHomeLifecycle.onEvicted()
+        homeAssistantSession?.close()
+        homeAssistantSession = null
     }
 
     private companion object {

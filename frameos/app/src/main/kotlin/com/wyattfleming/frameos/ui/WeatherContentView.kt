@@ -62,6 +62,9 @@ class WeatherContentView(context: Context) : View(context) {
     private var sunlightGradient: RadialGradient? = null
     private var sunlightGradientWidth = -1
     private var sunlightGradientHeight = -1
+    private var shootingStarGradient: LinearGradient? = null
+    private var shootingStarGradientWidth = -1
+    private var shootingStarGradientHeight = -1
     private var pageEpochMillis = SystemClock.uptimeMillis()
     private var pageAnchorIndex = 0
     private var sceneEpochMillis = SystemClock.uptimeMillis()
@@ -159,6 +162,9 @@ class WeatherContentView(context: Context) : View(context) {
         sunlightGradient = null
         sunlightGradientWidth = -1
         sunlightGradientHeight = -1
+        shootingStarGradient = null
+        shootingStarGradientWidth = -1
+        shootingStarGradientHeight = -1
     }
 
     private fun drawBackground(canvas: Canvas, elapsedSeconds: Float) {
@@ -277,17 +283,27 @@ class WeatherContentView(context: Context) : View(context) {
         paint.style = Paint.Style.STROKE
         paint.strokeCap = Paint.Cap.ROUND
         paint.strokeWidth = dp(2f)
-        paint.shader = LinearGradient(
-            headX - width * 0.075f,
-            headY - height * 0.047f,
-            headX,
-            headY,
+        if (shootingStarGradient == null || shootingStarGradientWidth != width || shootingStarGradientHeight != height) {
+            shootingStarGradient = LinearGradient(
+            0f,
+            0f,
+            width * 0.075f,
+            height * 0.047f,
             Color.TRANSPARENT,
-            Color.argb(opacity, 245, 249, 255),
+            Color.WHITE,
             Shader.TileMode.CLAMP,
-        )
+            )
+            shootingStarGradientWidth = width
+            shootingStarGradientHeight = height
+        }
+        shaderMatrix.setTranslate(headX - width * 0.075f, headY - height * 0.047f)
+        shootingStarGradient?.setLocalMatrix(shaderMatrix)
+        paint.shader = shootingStarGradient
+        paint.alpha = opacity
         canvas.drawLine(headX - width * 0.075f, headY - height * 0.047f, headX, headY, paint)
         paint.shader = null
+        paint.alpha = 255
+        shootingStarGradient?.setLocalMatrix(null)
         paint.style = Paint.Style.FILL
         paint.strokeCap = Paint.Cap.BUTT
     }
