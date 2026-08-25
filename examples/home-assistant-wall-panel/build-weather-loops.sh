@@ -97,3 +97,31 @@ for weather in sunny cloudy rainy clear-night; do
     -show_entries format=filename,duration,size:stream=codec_name,profile,width,height,pix_fmt,r_frame_rate \
     -of json "$output_dir/$weather.mp4"
 done
+
+checksum_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+asset_fingerprint="$({
+  for weather in sunny cloudy rainy clear-night; do
+    checksum_file "$output_dir/$weather.mp4"
+  done
+} | if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | awk '{print substr($1, 1, 12)}')"
+
+# Home Assistant serves /local files for 31 days. Update every MP4 URL only
+# after all encodes succeed, so an asset replacement always gets a fresh URL
+# without preloading the inactive weather variants.
+dashboard_path="$script_dir/dashboard.example.yaml"
+dashboard_tmp="$dashboard_path.tmp.$$"
+cp "$dashboard_path" "$dashboard_tmp"
+for weather in sunny cloudy rainy clear-night; do
+  sed "s#${weather}\\.mp4\\(\\?v=[0-9a-f]*\\)\\{0,1\\}#${weather}.mp4?v=${asset_fingerprint}#g" \
+    "$dashboard_tmp" > "$dashboard_tmp.next"
+  mv "$dashboard_tmp.next" "$dashboard_tmp"
+done
+mv "$dashboard_tmp" "$dashboard_path"
+printf 'updated weather MP4 URLs with fingerprint %s\n' "$asset_fingerprint"

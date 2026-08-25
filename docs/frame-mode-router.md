@@ -156,6 +156,14 @@ The router's state and lock paths are under `/data/local/tmp`. Missing or
 malformed state safely defaults to Home. Rapid duplicate transitions are
 rejected by an atomic lock directory.
 
+Direct `show MODE` commands do not first inspect the foreground task: they
+send the requested FrameOS command immediately. Legacy Firefox `show` commands
+make one immediate resumed-activity check, then at most three configurable
+one-second checks (`FIREFOX_READY_MAX_PROBES=4` and
+`FIREFOX_READY_POLL_SECONDS=1` by default). The toolbar-collapse swipe runs
+only after Firefox is actually resumed; a bounded timeout preserves the selected
+mode without swiping an unrelated foreground surface.
+
 ## Contextual no-touch controls
 
 Mode gestures and within-view controls remain separate:

@@ -248,23 +248,23 @@ animated_background:
     - name: weather
       config:
         entity: weather.home
-        default_url: /local/wallpanel-weather/cloudy.mp4
+        default_url: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
         state_url:
-          clear-night: /local/wallpanel-weather/clear-night.mp4
-          cloudy: /local/wallpanel-weather/cloudy.mp4
-          exceptional: /local/wallpanel-weather/sunny.mp4
-          fog: /local/wallpanel-weather/cloudy.mp4
-          hail: /local/wallpanel-weather/rainy.mp4
-          lightning: /local/wallpanel-weather/rainy.mp4
-          lightning-rainy: /local/wallpanel-weather/rainy.mp4
-          partlycloudy: /local/wallpanel-weather/cloudy.mp4
-          pouring: /local/wallpanel-weather/rainy.mp4
-          rainy: /local/wallpanel-weather/rainy.mp4
-          snowy: /local/wallpanel-weather/cloudy.mp4
-          snowy-rainy: /local/wallpanel-weather/rainy.mp4
-          sunny: /local/wallpanel-weather/sunny.mp4
-          windy: /local/wallpanel-weather/sunny.mp4
-          windy-variant: /local/wallpanel-weather/cloudy.mp4
+          clear-night: /local/wallpanel-weather/clear-night.mp4?v=9fb6f0f237b4
+          cloudy: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
+          exceptional: /local/wallpanel-weather/sunny.mp4?v=9fb6f0f237b4
+          fog: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
+          hail: /local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4
+          lightning: /local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4
+          lightning-rainy: /local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4
+          partlycloudy: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
+          pouring: /local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4
+          rainy: /local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4
+          snowy: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
+          snowy-rainy: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
+          sunny: /local/wallpanel-weather/sunny.mp4?v=9fb6f0f237b4
+          windy: /local/wallpanel-weather/sunny.mp4?v=9fb6f0f237b4
+          windy-variant: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
     - name: neutral
       config:
         default_url: /local/wallpanel-weather/neutral.png

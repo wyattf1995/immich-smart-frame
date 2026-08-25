@@ -54,6 +54,17 @@
         display: none;
       }
 
+      #loading.still-connecting {
+        inset: auto 1.25rem 1.25rem;
+        width: fit-content;
+        min-height: 0;
+        padding: 0.65rem 0.9rem;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 0.75rem;
+        background: rgba(16, 23, 34, 0.84);
+        font-size: clamp(0.9rem, 1.6vw, 1.2rem);
+      }
+
       #status {
         position: fixed;
         width: 1px;
@@ -96,11 +107,16 @@
         const loading = document.getElementById("loading");
         const status = document.getElementById("status");
         const ROUTE_READY_TIMEOUT_MILLIS = 12_000;
-        const ROUTE_READY_POLL_MILLIS = 100;
+        const readinessRequirements = Object.freeze({
+          home: Object.freeze({
+            primaryHeadings: Object.freeze(["at a glance", "home status", "weather"]),
+          }),
+          cameras: Object.freeze({ cameraCards: 4, cameraPlayers: 4 }),
+          calendar: Object.freeze({ calendarRoot: "ha-full-calendar" }),
+        });
         let view = allowedViews.has(location.hash.slice(1)) ? location.hash.slice(1) : "home";
         let loadedView = null;
-        let contrastTimer = null;
-        let readinessGeneration = 0;
+        let activeRouteWork = null;
 
         const announce = (message) => {
           status.textContent = message;
@@ -108,8 +124,16 @@
 
         const showLoading = (nextView) => {
           loading.textContent = `Opening ${labels[nextView]}…`;
+          loading.classList.remove("still-connecting");
           loading.hidden = false;
           announce(`Loading ${labels[nextView]}`);
+        };
+
+        const showStillConnecting = (nextView, detail) => {
+          loading.textContent = `${labels[nextView]} still connecting${detail ? ` (${detail})` : ""}…`;
+          loading.classList.add("still-connecting");
+          loading.hidden = false;
+          announce(`${labels[nextView]} still connecting${detail ? `: ${detail}` : ""}`);
         };
 
         const showReady = (readyView) => {
@@ -140,107 +164,184 @@
           }
         };
 
-        const routeHasContent = (readyView) => {
-          if (currentPanelView() !== readyView) return false;
-
-          let documentRoot;
-          try {
-            documentRoot = panel.contentDocument;
-          } catch (_error) {
-            return false;
-          }
-          if (!documentRoot) return false;
-
-          const expectedElements = Object.freeze({
-            home: new Set(["hui-heading-card"]),
-            cameras: new Set(["hui-picture-entity-card", "ha-web-rtc-player", "video"]),
-            calendar: new Set(["hui-calendar-card", "ha-full-calendar"]),
+        const cancelRouteWork = () => {
+          if (!activeRouteWork) return;
+          window.clearTimeout(activeRouteWork.deadlineTimer);
+          activeRouteWork.observers.forEach((observer) => observer.disconnect());
+          activeRouteWork.videoListeners.forEach(([video, listener]) => {
+            video.removeEventListener("loadeddata", listener);
+            video.removeEventListener("canplay", listener);
+            video.removeEventListener("playing", listener);
           });
-          const expected = expectedElements[readyView];
-          const roots = [documentRoot];
-          while (roots.length > 0) {
-            const root = roots.pop();
-            for (const element of root.querySelectorAll("*")) {
-              if (expected.has(element.localName)) return true;
-              if (element.shadowRoot) roots.push(element.shadowRoot);
-            }
+          activeRouteWork = null;
+        };
+
+        const headingText = (element) => {
+          const candidates = [
+            element.heading,
+            element.getAttribute("heading"),
+            element._config?.heading,
+            element.textContent,
+            element.shadowRoot?.textContent,
+          ];
+          return candidates.filter((candidate) => typeof candidate === "string").join(" ").toLowerCase();
+        };
+
+        const applyHeadingContrast = (element, state) => {
+          if (state.view !== "home" || element.localName !== "hui-heading-card") return;
+          if (!state.styledHeadings.has(element)) {
+            element.style.setProperty(
+              "background",
+              "linear-gradient(90deg, rgba(9, 15, 24, 0.82), rgba(9, 15, 24, 0.58))",
+              "important",
+            );
+            element.style.setProperty("border-radius", "14px", "important");
+            element.style.setProperty("box-shadow", "inset 0 0 0 1px rgba(255,255,255,.1)", "important");
+            element.style.setProperty("--primary-text-color", "#fff", "important");
+            element.style.setProperty("--secondary-text-color", "rgba(255,255,255,.92)", "important");
+            state.styledHeadings.add(element);
           }
-          return false;
+          if (element.shadowRoot && !state.styledHeadingShadows.has(element.shadowRoot)) {
+            const style = element.ownerDocument.createElement("style");
+            style.id = "frameos-heading-contrast";
+            style.textContent = ":host,*{color:#fff!important;text-shadow:0 1px 3px rgba(0,0,0,.9)}";
+            element.shadowRoot.append(style);
+            state.styledHeadingShadows.add(element.shadowRoot);
+          }
+        };
+
+        const cameraVideoIsDecoded = (video) => Number(video.readyState) >= 2;
+
+        const updateCameraVideo = (video, state) => {
+          state.decodedVideos.add(video);
+          evaluateRouteReadiness(state);
+        };
+
+        const observeRoot = (root, state) => {
+          if (state.observedRoots.has(root)) return;
+          state.observedRoots.add(root);
+          const observer = new MutationObserver((records) => {
+            if (activeRouteWork !== state || view !== state.view) return;
+            records.forEach((record) => {
+              record.addedNodes.forEach((node) => inspectAddedSubtree(node, state));
+            });
+          });
+          observer.observe(root, { childList: true, subtree: true });
+          state.observers.push(observer);
+        };
+
+        const inspectElement = (element, state) => {
+          if (element.shadowRoot) {
+            observeRoot(element.shadowRoot, state);
+            inspectAddedSubtree(element.shadowRoot, state);
+          }
+          if (state.view === "home" && element.localName === "hui-heading-card") {
+            applyHeadingContrast(element, state);
+            readinessRequirements.home.primaryHeadings.forEach((heading) => {
+              if (headingText(element).includes(heading)) state.primaryHeadings.add(heading);
+            });
+          }
+          if (state.view === "calendar" && element.localName === readinessRequirements.calendar.calendarRoot) {
+            state.calendarRoot = element;
+          }
+          if (state.view !== "cameras") return;
+          if (element.localName === "hui-picture-entity-card") state.cameraCards.add(element);
+          if (element.localName === "ha-web-rtc-player") state.cameraPlayers.add(element);
+          if (element.localName !== "video") return;
+          state.cameraVideos.add(element);
+          if (cameraVideoIsDecoded(element)) state.decodedVideos.add(element);
+          if (state.observedVideos.has(element)) return;
+          const listener = () => updateCameraVideo(element, state);
+          state.observedVideos.add(element);
+          state.videoListeners.push([element, listener]);
+          element.addEventListener("loadeddata", listener);
+          element.addEventListener("canplay", listener);
+          element.addEventListener("playing", listener);
+        };
+
+        const inspectAddedSubtree = (node, state) => {
+          if (!node || (node.nodeType !== 1 && node.nodeType !== 9 && node.nodeType !== 11)) return;
+          if (node.nodeType === 1) inspectElement(node, state);
+          if (!node.querySelectorAll) return;
+          node.querySelectorAll("*").forEach((element) => inspectElement(element, state));
+          evaluateRouteReadiness(state);
+        };
+
+        const cameraConnectionDetail = (state) => {
+          const requirement = readinessRequirements.cameras;
+          const decoded = `${state.decodedVideos.size}/${state.cameraVideos.size || "?"} decoded`;
+          return `${state.cameraCards.size}/${requirement.cameraCards} cards, ${state.cameraPlayers.size}/${requirement.cameraPlayers} players, ${decoded}`;
+        };
+
+        const routeHasContent = (state) => {
+          if (currentPanelView() !== state.view) return false;
+          if (state.view === "home") {
+            return state.primaryHeadings.size === readinessRequirements.home.primaryHeadings.length;
+          }
+          if (state.view === "calendar") return Boolean(state.calendarRoot);
+          const requirement = readinessRequirements.cameras;
+          const cameraStructureReady = state.cameraCards.size >= requirement.cameraCards &&
+            state.cameraPlayers.size >= requirement.cameraPlayers;
+          const decodedVideoReady = state.cameraVideos.size === 0 ||
+            state.decodedVideos.size === state.cameraVideos.size;
+          return cameraStructureReady && decodedVideoReady;
+        };
+
+        const finishRouteReady = (state) => {
+          if (activeRouteWork !== state || state.ready) return;
+          state.ready = true;
+          window.clearTimeout(state.deadlineTimer);
+          state.deadlineTimer = null;
+          showReady(state.view);
+          focusPanel();
+        };
+
+        const evaluateRouteReadiness = (state) => {
+          if (activeRouteWork !== state || state.ready) return;
+          if (routeHasContent(state)) finishRouteReady(state);
         };
 
         const waitForRouteReady = (readyView) => {
-          const generation = ++readinessGeneration;
-          const deadline = Date.now() + ROUTE_READY_TIMEOUT_MILLIS;
-          const check = () => {
-            if (generation !== readinessGeneration || view !== readyView) return;
-            if (routeHasContent(readyView) || Date.now() >= deadline) {
-              showReady(readyView);
-              focusPanel();
-              startHeadingContrast();
-              return;
-            }
-            window.setTimeout(check, ROUTE_READY_POLL_MILLIS);
-          };
-          check();
-        };
-
-        const applyHeadingContrast = () => {
-          if (view !== "home") return true;
-
+          cancelRouteWork();
           let documentRoot;
           try {
             documentRoot = panel.contentDocument;
           } catch (_error) {
-            return true;
+            return;
           }
-          if (!documentRoot) return false;
+          if (!documentRoot) return;
 
-          let styled = 0;
-          const roots = [documentRoot];
-          while (roots.length > 0) {
-            const root = roots.pop();
-            for (const element of root.querySelectorAll("*")) {
-              if (element.shadowRoot) roots.push(element.shadowRoot);
-              if (element.localName !== "hui-heading-card") continue;
-
-              element.style.setProperty(
-                "background",
-                "linear-gradient(90deg, rgba(9, 15, 24, 0.82), rgba(9, 15, 24, 0.58))",
-                "important",
-              );
-              element.style.setProperty("border-radius", "14px", "important");
-              element.style.setProperty("box-shadow", "inset 0 0 0 1px rgba(255,255,255,.1)", "important");
-              element.style.setProperty("--primary-text-color", "#fff", "important");
-              element.style.setProperty("--secondary-text-color", "rgba(255,255,255,.92)", "important");
-
-              if (element.shadowRoot && !element.shadowRoot.querySelector("#frameos-heading-contrast")) {
-                const style = documentRoot.createElement("style");
-                style.id = "frameos-heading-contrast";
-                style.textContent = ":host,*{color:#fff!important;text-shadow:0 1px 3px rgba(0,0,0,.9)}";
-                element.shadowRoot.append(style);
-              }
-              styled += 1;
-            }
-          }
-          return styled >= 2;
-        };
-
-        const startHeadingContrast = () => {
-          window.clearTimeout(contrastTimer);
-          if (view !== "home") return;
-
-          let attempts = 0;
-          const applyUntilReady = () => {
-            attempts += 1;
-            if (!applyHeadingContrast() && attempts < 16) {
-              contrastTimer = window.setTimeout(applyUntilReady, 500);
-            }
+          const state = {
+            view: readyView,
+            ready: false,
+            deadlineTimer: null,
+            observers: [],
+            observedRoots: new WeakSet(),
+            styledHeadings: new WeakSet(),
+            styledHeadingShadows: new WeakSet(),
+            primaryHeadings: new Set(),
+            calendarRoot: null,
+            cameraCards: new Set(),
+            cameraPlayers: new Set(),
+            cameraVideos: new Set(),
+            decodedVideos: new Set(),
+            observedVideos: new WeakSet(),
+            videoListeners: [],
           };
-          applyUntilReady();
+          activeRouteWork = state;
+          observeRoot(documentRoot, state);
+          // The initial document gets one bounded traversal. Afterwards each
+          // observer only inspects the subtree that Home Assistant just added.
+          inspectAddedSubtree(documentRoot, state);
+          state.deadlineTimer = window.setTimeout(() => {
+            if (activeRouteWork !== state || state.ready) return;
+            const detail = state.view === "cameras" ? cameraConnectionDetail(state) : "content is still loading";
+            showStillConnecting(state.view, detail);
+          }, ROUTE_READY_TIMEOUT_MILLIS);
         };
 
         const navigatePanel = (nextView) => {
-          readinessGeneration += 1;
+          cancelRouteWork();
           if (loadedView === nextView) {
             waitForRouteReady(nextView);
             return;
