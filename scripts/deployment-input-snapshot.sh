@@ -227,6 +227,11 @@ case "$action" in
     snapshot_mode="$(file_mode "$snapshot_dir")"
     [[ "$snapshot_mode" == 700 ]] || fail "snapshot directory must be mode 700, got $snapshot_mode"
     [[ -f "$snapshot_dir/manifest.sha256" && ! -L "$snapshot_dir/manifest.sha256" ]] || fail "missing snapshot manifest: $snapshot_dir/manifest.sha256"
+    [[ -d "$snapshot_dir/inputs" && ! -L "$snapshot_dir/inputs" ]] || fail 'snapshot is missing a regular inputs directory'
+    if [[ -n "$(find "$snapshot_dir/inputs" -type l -print -quit)" ]]; then
+      fail 'snapshot inputs must not contain symlinks'
+    fi
+    validate_snapshot_payload
     current_manifest="$(mktemp "${TMPDIR:-/tmp}/deployment-input-manifest.XXXXXX")"
     trap 'rm -f "$current_manifest"' EXIT
     write_manifest "$current_manifest"
