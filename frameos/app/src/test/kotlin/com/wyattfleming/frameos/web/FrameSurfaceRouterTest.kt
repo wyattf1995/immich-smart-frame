@@ -3,6 +3,7 @@ package com.wyattfleming.frameos.web
 import com.wyattfleming.frameos.config.FrameConfiguration
 import com.wyattfleming.frameos.navigation.FrameMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -27,25 +28,34 @@ class FrameSurfaceRouterTest {
     }
 
     @Test
-    fun `Home Assistant views share one versioned warm surface`() {
-        val targets = listOf(FrameMode.HOME, FrameMode.CAMERAS, FrameMode.CALENDAR)
-            .map(router::target)
-            .map { it as FrameSurfaceTarget.Web }
+    fun `Home and Calendar stay warm while Cameras use a disposable surface`() {
+        val home = router.target(FrameMode.HOME) as FrameSurfaceTarget.Web
+        val cameras = router.target(FrameMode.CAMERAS) as FrameSurfaceTarget.Web
+        val calendar = router.target(FrameMode.CALENDAR) as FrameSurfaceTarget.Web
 
         assertEquals(
             listOf("home", "cameras", "calendar"),
-            targets.map { it.url.substringAfterLast('#') },
+            listOf(home, cameras, calendar).map { it.url.substringAfterLast('#') },
         )
-        assertTrue(targets.all { it.slot == FrameWebSlot.HOME_ASSISTANT })
-        assertEquals(1, targets.map { it.url.substringBefore('#') }.distinct().size)
+        assertEquals(FrameWebSlot.HOME_ASSISTANT, home.slot)
+        assertEquals(FrameWebSlot.CAMERAS, cameras.slot)
+        assertEquals(FrameWebSlot.HOME_ASSISTANT, calendar.slot)
+        assertEquals(1, listOf(home, cameras, calendar).map { it.url.substringBefore('#') }.distinct().size)
+
+        assertTrue(FrameWebSlot.PHOTOS.isPersistent)
+        assertTrue(FrameWebSlot.HOME_ASSISTANT.isPersistent)
+        assertFalse(FrameWebSlot.CAMERAS.isPersistent)
+        assertFalse(FrameWebSlot.PHOTOS.canPreload)
+        assertTrue(FrameWebSlot.HOME_ASSISTANT.canPreload)
+        assertFalse(FrameWebSlot.CAMERAS.canPreload)
     }
 
     @Test
-    fun `weather remains a native surface and HA rests on home`() {
+    fun `weather remains native and the hidden HA surface preloads Calendar`() {
         assertEquals(FrameSurfaceTarget.NativeWeather, router.target(FrameMode.WEATHER))
         assertEquals(
-            router.target(FrameMode.HOME),
-            FrameSurfaceTarget.Web(FrameWebSlot.HOME_ASSISTANT, router.homeAssistantRestingUrl()),
+            router.target(FrameMode.CALENDAR),
+            router.calendarPreloadTarget(),
         )
     }
 }
