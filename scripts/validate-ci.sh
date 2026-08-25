@@ -13,6 +13,7 @@ sh_files=(
   scripts/run-govulncheck.sh
   scripts/run-trivy.sh
   scripts/test-frame-mode-router.sh
+  scripts/test-license-audit.sh
   scripts/validate-frameos.sh
   scripts/validate-ci.sh
   scripts/validate.sh
@@ -20,6 +21,8 @@ sh_files=(
 
 bash -n "${sh_files[@]}"
 shellcheck -x "${sh_files[@]}"
+
+./scripts/test-license-audit.sh
 
 # shellcheck source=scripts/ci-lib.sh
 source scripts/ci-lib.sh
