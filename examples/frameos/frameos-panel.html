@@ -111,7 +111,7 @@
           home: Object.freeze({
             primaryHeadings: Object.freeze(["at a glance", "home status", "weather", "hourly forecast"]),
           }),
-          cameras: Object.freeze({ cameraCards: 4, cameraPlayers: 4 }),
+          cameras: Object.freeze({ cameraCards: 4, cameraPlayers: 4, cameraVideos: 4 }),
           calendar: Object.freeze({ calendarRoot: "ha-full-calendar" }),
         });
         let view = allowedViews.has(location.hash.slice(1)) ? location.hash.slice(1) : "home";
@@ -164,8 +164,21 @@
           }
         };
 
+        const isLiveObservationRoot = (root, state) => {
+          if (root === state.documentRoot) return root === panel.contentDocument;
+          return Boolean(root?.host && isActivePanelElement(root.host, state.documentRoot));
+        };
+
+        const pruneRouteObservers = (state) => {
+          state.observers = state.observers.filter(({ root, observer }) => {
+            if (isLiveObservationRoot(root, state)) return true;
+            observer.disconnect();
+            return false;
+          });
+        };
+
         const disconnectRouteObservers = (state) => {
-          state.observers.forEach((observer) => observer.disconnect());
+          state.observers.forEach(({ observer }) => observer.disconnect());
           state.observers.length = 0;
         };
 
@@ -209,6 +222,7 @@
 
         const pruneRouteEvidence = (state) => {
           const { documentRoot } = state;
+          pruneRouteObservers(state);
           state.primaryHeadings.forEach((element, heading) => {
             if (!isActivePanelElement(element, documentRoot)) state.primaryHeadings.delete(heading);
           });
@@ -278,7 +292,7 @@
             });
           });
           observer.observe(root, { childList: true, subtree: true });
-          state.observers.push(observer);
+          state.observers.push({ root, observer });
         };
 
         const inspectElement = (element, state) => {
@@ -324,7 +338,7 @@
         const cameraConnectionDetail = (state) => {
           pruneRouteEvidence(state);
           const requirement = readinessRequirements.cameras;
-          const decoded = `${state.decodedVideos.size}/${state.cameraVideos.size || "?"} decoded`;
+          const decoded = `${state.decodedVideos.size}/${requirement.cameraVideos} decoded`;
           return `${state.cameraCards.size}/${requirement.cameraCards} cards, ${state.cameraPlayers.size}/${requirement.cameraPlayers} players, ${decoded}`;
         };
 
@@ -338,8 +352,8 @@
           const requirement = readinessRequirements.cameras;
           const cameraStructureReady = state.cameraCards.size >= requirement.cameraCards &&
             state.cameraPlayers.size >= requirement.cameraPlayers;
-          const decodedVideoReady = state.cameraVideos.size === 0 ||
-            state.decodedVideos.size === state.cameraVideos.size;
+          const decodedVideoReady = state.cameraVideos.size >= requirement.cameraVideos &&
+            state.decodedVideos.size >= requirement.cameraVideos;
           return cameraStructureReady && decodedVideoReady;
         };
 
@@ -400,6 +414,7 @@
             if (activeRouteWork !== state || state.ready) return;
             const detail = state.view === "cameras" ? cameraConnectionDetail(state) : "content is still loading";
             showStillConnecting(state.view, detail);
+            focusPanel();
           }, ROUTE_READY_TIMEOUT_MILLIS);
         };
 
