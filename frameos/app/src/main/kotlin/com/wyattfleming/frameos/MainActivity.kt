@@ -28,6 +28,7 @@ import com.wyattfleming.frameos.navigation.FrameReducer
 import com.wyattfleming.frameos.navigation.FrameState
 import com.wyattfleming.frameos.navigation.PhysicalInputMapper
 import com.wyattfleming.frameos.ui.DemoContentView
+import com.wyattfleming.frameos.ui.WeatherContentView
 import com.wyattfleming.frameos.ui.dp
 import kotlin.math.abs
 
@@ -38,6 +39,7 @@ class MainActivity : Activity() {
 
     private lateinit var root: FrameLayout
     private lateinit var content: DemoContentView
+    private lateinit var weatherContent: WeatherContentView
     private lateinit var hud: LinearLayout
     private lateinit var hudLabel: TextView
     private lateinit var hudPosition: TextView
@@ -161,12 +163,14 @@ class MainActivity : Activity() {
             }
         }
         content = DemoContentView(this)
+        weatherContent = WeatherContentView(this).apply { visibility = View.GONE }
         val fullScreenLayout = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
         )
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             root.addView(content, fullScreenLayout)
+            root.addView(weatherContent, fullScreenLayout)
         } else {
             root.addView(buildConfigurationView(), fullScreenLayout)
         }
@@ -310,8 +314,12 @@ class MainActivity : Activity() {
 
     private fun render(next: FrameState, announce: Boolean) {
         content.mode = next.mode
-        if (announce) content.animate().alpha(0.82f).setDuration(70).withEndAction {
-            content.animate().alpha(1f).setDuration(180).start()
+        val showWeather = next.mode == FrameMode.WEATHER && weatherContent.parent != null
+        weatherContent.visibility = if (showWeather) View.VISIBLE else View.GONE
+        content.visibility = if (showWeather) View.GONE else View.VISIBLE
+        val activeContent: View = if (showWeather) weatherContent else content
+        if (announce) activeContent.animate().alpha(0.82f).setDuration(70).withEndAction {
+            activeContent.animate().alpha(1f).setDuration(180).start()
         }.start()
     }
 
