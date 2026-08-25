@@ -212,8 +212,9 @@ unless loop_builder.include?("between(t,7,9)") && loop_builder.include?("between
 end
 
 guide = File.read(FILES.fetch(:guide))
-unless guide.include?("UNVERIFIED") && guide.include?("Firefox") && guide.include?("Fully Kiosk")
-  fail_validation("guide must preserve verification boundaries and the two-browser architecture")
+required_architecture_terms = ["UNVERIFIED", "FrameOS", "GeckoView", "Firefox", "Fully Kiosk"]
+unless required_architecture_terms.all? { |term| guide.include?(term) }
+  fail_validation("guide must preserve physical verification boundaries, FrameOS, and legacy rollback")
 end
 
 weather_readme = File.read(FILES.fetch(:weather_readme))
