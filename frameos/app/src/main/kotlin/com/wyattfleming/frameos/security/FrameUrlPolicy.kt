@@ -1,6 +1,8 @@
 package com.wyattfleming.frameos.security
 
 import java.net.URI
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 
 class FrameUrlPolicy {
     fun isSafeConfigurationUrl(value: String): Boolean {
@@ -8,11 +10,8 @@ class FrameUrlPolicy {
         if (uri.scheme.lowercase() !in ALLOWED_SCHEMES) return false
         if (uri.host.isNullOrBlank() || uri.userInfo != null) return false
 
-        return uri.rawQuery
-            ?.split('&')
-            ?.map { parameter -> parameter.substringBefore('=').lowercase() }
-            ?.none { key -> SECRET_QUERY_KEYS.any(key::contains) }
-            ?: true
+        return !containsSecretParameters(uri.rawQuery) &&
+            !containsSecretParameters(uri.rawFragment)
     }
 
     fun isAllowedTopLevelNavigation(configuredUrl: String, requestedUrl: String): Boolean {
@@ -27,6 +26,30 @@ class FrameUrlPolicy {
 
     private fun String.parseUri(): URI? = runCatching { URI(this) }.getOrNull()
 
+    private fun containsSecretParameters(rawParameters: String?): Boolean {
+        if (rawParameters.isNullOrBlank()) return false
+
+        return rawParameters
+            .split('&', ';')
+            .map { parameter -> parameter.substringBefore('=').decodeParameterName() }
+            .any { key ->
+                key in SECRET_QUERY_KEYS ||
+                    key.endsWith("_token") ||
+                    key.endsWith("_key") ||
+                    SECRET_QUERY_KEYS.any(key::contains)
+            }
+    }
+
+    private fun String.decodeParameterName(): String {
+        var decoded = this
+        repeat(MAX_DECODE_PASSES) {
+            decoded = runCatching {
+                URLDecoder.decode(decoded, StandardCharsets.UTF_8.name())
+            }.getOrDefault(decoded)
+        }
+        return decoded.trim().lowercase()
+    }
+
     private fun URI.effectivePort(): Int = when {
         port >= 0 -> port
         scheme.equals("https", ignoreCase = true) -> 443
@@ -36,6 +59,16 @@ class FrameUrlPolicy {
 
     private companion object {
         val ALLOWED_SCHEMES = setOf("http", "https")
-        val SECRET_QUERY_KEYS = setOf("access_token", "api_key", "password", "secret")
+        val SECRET_QUERY_KEYS = setOf(
+            "access_token",
+            "api_key",
+            "auth",
+            "authorization",
+            "credential",
+            "password",
+            "secret",
+            "token",
+        )
+        const val MAX_DECODE_PASSES = 2
     }
 }
