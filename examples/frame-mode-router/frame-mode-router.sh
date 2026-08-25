@@ -61,6 +61,8 @@ FRAMEOS_CONTROL_ACTION="${FRAMEOS_CONTROL_ACTION:-com.wyattfleming.frameos.CONTR
 FIREFOX_READY_MAX_PROBES="${FIREFOX_READY_MAX_PROBES:-4}"
 FIREFOX_READY_POLL_SECONDS="${FIREFOX_READY_POLL_SECONDS:-1}"
 LOCK_LEASE_SECONDS="${LOCK_LEASE_SECONDS:-90}"
+LOCK_PROC_ROOT="${FRAME_ROUTER_PROC_ROOT:-/proc}"
+LOCK_TEST_PROCESS_START_TOKEN="${FRAME_ROUTER_PROCESS_START_TOKEN:-}"
 frameos_enabled=0
 if [ -n "$FRAMEOS_PACKAGE" ] || [ -n "$FRAMEOS_ACTIVITY" ] || [ -n "$FRAMEOS_RECEIVER" ]; then
   [ -n "$FRAMEOS_PACKAGE" ] && [ -n "$FRAMEOS_ACTIVITY" ] && [ -n "$FRAMEOS_RECEIVER" ] || \
@@ -284,12 +286,33 @@ fi
 
 read_lock_owner() {
   [ -f "$LOCK_DIR" ] || return 1
-  IFS=' ' read -r lock_pid lock_started lock_extra < "$LOCK_DIR" || return 1
-  case "$lock_pid:$lock_started:${lock_extra:-}" in
+  IFS=' ' read -r lock_pid lock_process_start lock_started lock_extra < "$LOCK_DIR" || return 1
+  case "$lock_pid:$lock_process_start:$lock_started:${lock_extra:-}" in
     *[!0-9:]*|:*|*::?*) return 1 ;;
   esac
   [ -z "${lock_extra:-}" ] || return 1
-  printf '%s %s\n' "$lock_pid" "$lock_started"
+  printf '%s %s %s\n' "$lock_pid" "$lock_process_start" "$lock_started"
+}
+
+process_start_token() {
+  # The override is only for the portable shell contract test, whose host may
+  # not expose Android/Linux /proc. Real deployments leave it unset.
+  if [ "$LOCK_PROC_ROOT" != /proc ] && [ -n "$LOCK_TEST_PROCESS_START_TOKEN" ]; then
+    case "$LOCK_TEST_PROCESS_START_TOKEN" in
+      *[!0-9]*|'') return 1 ;;
+    esac
+    printf '%s\n' "$LOCK_TEST_PROCESS_START_TOKEN"
+    return 0
+  fi
+  process_stat="$LOCK_PROC_ROOT/$1/stat"
+  [ -r "$process_stat" ] || return 1
+  # /proc/<pid>/stat field 2 is parenthesized and may contain spaces; strip it
+  # before selecting the original field 22 (the 20th remaining field).
+  process_start="$(awk '{sub(/^.*\\) /, ""); print $20}' "$process_stat")" || return 1
+  case "$process_start" in
+    *[!0-9]*|'') return 1 ;;
+  esac
+  printf '%s\n' "$process_start"
 }
 
 create_lock() {
@@ -297,7 +320,8 @@ create_lock() {
   case "$lock_started" in
     *[!0-9]*|'') return 1 ;;
   esac
-  lock_owner="$$ $lock_started"
+  lock_process_start="$(process_start_token "$$")" || return 1
+  lock_owner="$$ $lock_process_start $lock_started"
   lock_candidate="${LOCK_DIR}.candidate.$$"
   (umask 077 && printf '%s\n' "$lock_owner" > "$lock_candidate") || return 1
   if ln "$lock_candidate" "$LOCK_DIR" 2>/dev/null; then
@@ -314,14 +338,22 @@ recover_stale_lock() {
     return 1
   }
   lock_pid="${lock_record%% *}"
+  lock_record="${lock_record#* }"
+  lock_process_start="${lock_record%% *}"
   lock_started="${lock_record#* }"
 
   # Never reclaim a lock whose recorded owner still exists, even when a slow
   # command has exceeded its lease. This deliberately prefers availability of
   # the in-flight transition over a competing gesture.
   if kill -0 "$lock_pid" 2>/dev/null; then
-    printf 'frame-mode-router: another transition is already running (lock held by live owner %s)\n' "$lock_pid" >&2
-    return 1
+    current_process_start="$(process_start_token "$lock_pid")" || {
+      printf 'frame-mode-router: another transition is already running (live owner identity cannot be verified)\n' >&2
+      return 1
+    }
+    if [ "$current_process_start" = "$lock_process_start" ]; then
+      printf 'frame-mode-router: another transition is already running (lock held by live owner %s)\n' "$lock_pid" >&2
+      return 1
+    fi
   fi
 
   lock_now="$(date +%s)" || return 1
