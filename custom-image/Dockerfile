@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # Keep the upstream release pinned, then apply the reviewable display,
 # curation, dependency-security, input-hardening, and regression-test patches.
 FROM alpine/git:v2.54.0@sha256:a299a963fbe31628ab481ca42907bcf0691d004f86734c02638abdf513691d42 AS source
@@ -12,7 +13,9 @@ COPY fully-kiosk-dpr.patch /tmp/fully-kiosk-dpr.patch
 COPY weighted-curation.patch /tmp/weighted-curation.patch
 COPY runtime-hardening.patch /tmp/runtime-hardening.patch
 COPY album-penalties.patch /tmp/album-penalties.patch
+COPY backend-performance.patch /tmp/backend-performance.patch
 COPY weighted-curation-tests.patch /tmp/weighted-curation-tests.patch
+COPY performance-regression-tests.patch /tmp/performance-regression-tests.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -22,8 +25,12 @@ RUN cd /src \
     && git apply --unidiff-zero /tmp/runtime-hardening.patch \
     && git apply --check /tmp/album-penalties.patch \
     && git apply /tmp/album-penalties.patch \
+    && git apply --check /tmp/backend-performance.patch \
+    && git apply /tmp/backend-performance.patch \
     && git apply --check --unidiff-zero /tmp/weighted-curation-tests.patch \
-    && git apply --unidiff-zero /tmp/weighted-curation-tests.patch
+    && git apply --unidiff-zero /tmp/weighted-curation-tests.patch \
+    && git apply --check /tmp/performance-regression-tests.patch \
+    && git apply /tmp/performance-regression-tests.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
@@ -33,7 +40,7 @@ COPY --from=source /src /app
 WORKDIR /app/frontend
 
 RUN npm install -g "@go-task/cli@${GO_TASK_VERSION}"
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 RUN task frontend
 
 FROM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS build
@@ -46,10 +53,12 @@ COPY --from=source /src .
 COPY --from=frontend-build /app/frontend/public/assets/css /app/frontend/public/assets/css
 COPY --from=frontend-build /app/frontend/public/assets/js/ /app/frontend/public/assets/js/
 
-RUN go mod download
-RUN go tool templ generate
-RUN CI=1 go test ./...
-RUN CGO_ENABLED=0 go build -a -installsuffix cgo \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build go tool templ generate && CI=1 go test ./...
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -a -installsuffix cgo \
     -ldflags "-X main.version=${KIOSK_VERSION} -s -w" -o dist/kiosk .
 
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a0f613bdf46feea7fc40f7bd72953e6

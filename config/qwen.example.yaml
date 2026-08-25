@@ -125,7 +125,8 @@ kiosk:
   disable_config_endpoint: true
   enable_url_builder: false
   watch_config: true
-  fetched_assets_size: 1000
+  # 150 bounds decoded candidate-pool memory while retaining ample variety.
+  fetched_assets_size: 150
   http_timeout: 20
   cache: true
   prefetch: true

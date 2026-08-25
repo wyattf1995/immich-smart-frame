@@ -90,6 +90,11 @@ of `0.20` accepts roughly one in five matching candidates; use
 in multiple penalized albums, the strongest (lowest) matching factor wins.
 Penalties are profile-specific, do not consume source weight, and apply whether
 the candidate arrived through a date, person, tag, memory, or album source.
+
+Date sources retain a decoded, concurrency-safe candidate pool until the normal
+cache expiry; each candidate is removed before evaluation. Keep
+`fetched_assets_size` between 100 and 200 on the frame host (the examples use
+150) to bound memory while retaining useful variety.
 The accept/reject decision is stable for an asset within one slide request, so
 selection retries cannot repeatedly re-roll a rejected candidate.
 

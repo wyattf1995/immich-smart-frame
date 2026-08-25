@@ -1,0 +1,341 @@
+diff --git a/internal/immich/immich_date.go b/internal/immich/immich_date.go
+index 1359588..ed74660 100644
+--- a/internal/immich/immich_date.go
++++ b/internal/immich/immich_date.go
+@@ -8,9 +8,9 @@ import (
+ 	"net/http"
+ 	"net/url"
+ 	"regexp"
+-	"slices"
+ 	"strconv"
+ 	"strings"
++	"sync"
+ 	"time"
+ 
+ 	"charm.land/log/v2"
+@@ -19,6 +19,38 @@ import (
+ 	"github.com/google/go-querystring/query"
+ )
+ 
++type dateCandidatePool struct {
++	mu         sync.Mutex
++	candidates []Asset
++}
++
++func newDateCandidatePool(candidates []Asset) *dateCandidatePool {
++	return &dateCandidatePool{candidates: candidates}
++}
++
++// take removes a candidate before validation, so a cached candidate is never
++// decoded or evaluated twice. Removing the last item is O(1).
++func (p *dateCandidatePool) take() (Asset, bool) {
++	p.mu.Lock()
++	defer p.mu.Unlock()
++	if len(p.candidates) == 0 {
++		return Asset{}, false
++	}
++	last := len(p.candidates) - 1
++	asset := p.candidates[last]
++	p.candidates[last] = Asset{}
++	p.candidates = p.candidates[:last]
++	return asset, true
++}
++
++func (p *dateCandidatePool) refill(candidates []Asset) {
++	p.mu.Lock()
++	p.candidates = candidates
++	p.mu.Unlock()
++}
++
++func dateCandidatePoolKey(apiCacheKey string) string { return "date-candidates:" + apiCacheKey }
++
+ // RandomAssetInDateRange retrieves a random asset from the Immich API within the specified date range.
+ // Parameters:
+ //   - dateRange: A string in the format "YYYY-MM-DD_to_YYYY-MM-DD" or using "today" for current date
+@@ -100,13 +132,33 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+ 			return err
+ 		}
+ 
+-		err = json.Unmarshal(apiBody, &immichAssets)
+-		if err != nil {
+-			_, _, err = immichAPIFail(immichAssets, err, apiBody, apiURL.String())
+-			return err
++		apiCacheKey := cache.APICacheKey(apiURL.String(), deviceID, a.requestConfig.SelectedUser)
++		poolKey := dateCandidatePoolKey(apiCacheKey)
++		var pool *dateCandidatePool
++		if cachedPool, found := cache.Get(poolKey); found {
++			pool, _ = cachedPool.(*dateCandidatePool)
++		}
++		if pool == nil {
++			pool = newDateCandidatePool(nil)
++			cache.Set(poolKey, pool, a.requestConfig.Duration, a.requestConfig.CacheDuration)
+ 		}
+ 
+-		apiCacheKey := cache.APICacheKey(apiURL.String(), deviceID, a.requestConfig.SelectedUser)
++		if candidate, ok := pool.take(); ok {
++			immichAssets = []Asset{candidate}
++		} else {
++			err = json.Unmarshal(apiBody, &immichAssets)
++			if err != nil {
++				_, _, err = immichAPIFail(immichAssets, err, apiBody, apiURL.String())
++				return err
++			}
++			pool.refill(immichAssets)
++			candidate, ok := pool.take()
++			if !ok {
++				cache.Delete(apiCacheKey)
++				continue
++			}
++			immichAssets = []Asset{candidate}
++		}
+ 
+ 		if len(immichAssets) == 0 {
+ 			log.Debug(requestID + " No assets left in cache. Refreshing and trying again")
+@@ -119,7 +171,7 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+ 			wantedAssetType = AllAssetTypes
+ 		}
+ 
+-		for immichAssetIndex, asset := range immichAssets {
++		for _, asset := range immichAssets {
+ 
+ 			asset.Bucket = kiosk.SourceDateRange
+ 			asset.requestConfig = a.requestConfig
+@@ -129,19 +181,6 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+ 				continue
+ 			}
+ 
+-			if a.requestConfig.Kiosk.Cache {
+-				// Remove the current asset from the slice
+-				immichAssetsToCache := slices.Delete(immichAssets, immichAssetIndex, immichAssetIndex+1)
+-				jsonBytes, cacheMarshalErr := json.Marshal(immichAssetsToCache)
+-				if cacheMarshalErr != nil {
+-					log.Error("Failed to marshal immichAssetsToCache", "error", cacheMarshalErr)
+-					return cacheMarshalErr
+-				}
+-
+-				// replace cache with used asset(s) removed
+-				cache.Set(apiCacheKey, jsonBytes, a.requestConfig.Duration, a.requestConfig.CacheDuration)
+-			}
+-
+ 			asset.BucketID = dateRange
+ 
+ 			*a = asset
+diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
+index b8da962..8071c81 100644
+--- a/internal/immich/immich_helpers.go
++++ b/internal/immich/immich_helpers.go
+@@ -743,42 +743,61 @@ func (a *Asset) hasValidFilterExcludeFaces(requestID, deviceID string) bool {
+ // Returns:
+ //   - bool: true if asset is not in any excluded albums, false otherwise
+ func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
++	penalties := selectedAlbumPenaltyFactors(a.requestConfig)
++	if len(a.requestConfig.ExcludedAlbums) == 0 && len(penalties) == 0 {
++		return true
++	}
++
+ 	if len(a.AppearsIn) == 0 {
+ 		a.AlbumsThatContainAsset(requestID, deviceID)
+ 	}
+ 
+-	if slices.ContainsFunc(a.AppearsIn, func(album Album) bool {
+-		return slices.Contains(a.requestConfig.ExcludedAlbums, album.ID)
+-	}) {
+-		return false
++	for _, album := range a.AppearsIn {
++		if slices.Contains(a.requestConfig.ExcludedAlbums, album.ID) {
++			return false
++		}
+ 	}
+ 
+-	var penalties []config.AlbumPenalty
+-	for name, profile := range a.requestConfig.Curation.Profiles {
+-		if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(a.requestConfig.CurationProfile)) {
+-			penalties = profile.AlbumPenalties
+-			break
++	return albumPenaltyRoll(a.ID, requestID) < albumPenaltyFactorForAlbums(a.AppearsIn, penalties)
++}
++
++func selectedAlbumPenaltyFactors(requestConfig config.Config) map[string]float64 {
++	if requestConfig.CurationProfile == "" {
++		return nil
++	}
++	for name, profile := range requestConfig.Curation.Profiles {
++		if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(requestConfig.CurationProfile)) {
++			return albumPenaltyFactors(profile.AlbumPenalties)
+ 		}
+ 	}
+-
+-	return acceptsAlbumPenaltyForAsset(a.AppearsIn, penalties, a.ID, requestID)
++	return nil
+ }
+ 
+-func albumPenaltyFactor(albums Albums, penalties []config.AlbumPenalty) float64 {
+-	factor := 1.0
++func albumPenaltyFactors(penalties []config.AlbumPenalty) map[string]float64 {
++	factors := make(map[string]float64, len(penalties))
+ 	for _, penalty := range penalties {
+-		if penalty.Factor <= 0 || penalty.Factor > factor {
+-			continue
++		key := strings.ToLower(strings.TrimSpace(penalty.Album))
++		if key != "" && penalty.Factor > 0 {
++			factors[key] = penalty.Factor
+ 		}
+-		if slices.ContainsFunc(albums, func(album Album) bool {
+-			return strings.EqualFold(album.ID, penalty.Album)
+-		}) {
+-			factor = penalty.Factor
++	}
++	return factors
++}
++
++func albumPenaltyFactorForAlbums(albums Albums, factors map[string]float64) float64 {
++	factor := 1.0
++	for _, album := range albums {
++		if candidate, ok := factors[strings.ToLower(album.ID)]; ok && candidate < factor {
++			factor = candidate
+ 		}
+ 	}
+ 	return factor
+ }
+ 
++func albumPenaltyFactor(albums Albums, penalties []config.AlbumPenalty) float64 {
++	return albumPenaltyFactorForAlbums(albums, albumPenaltyFactors(penalties))
++}
++
+ func acceptsAlbumPenalty(albums Albums, penalties []config.AlbumPenalty, roll float64) bool {
+ 	return roll < albumPenaltyFactor(albums, penalties)
+ }
+@@ -796,7 +815,7 @@ func albumPenaltyRoll(assetID, requestID string) float64 {
+ }
+ 
+ func acceptsAlbumPenaltyForAsset(albums Albums, penalties []config.AlbumPenalty, assetID, requestID string) bool {
+-	return acceptsAlbumPenalty(albums, penalties, albumPenaltyRoll(assetID, requestID))
++	return albumPenaltyRoll(assetID, requestID) < albumPenaltyFactorForAlbums(albums, albumPenaltyFactors(penalties))
+ }
+ 
+ // hasValidPeople checks if the asset contains any excluded people.
+diff --git a/internal/immich/immich_memories.go b/internal/immich/immich_memories.go
+index 95939de..3d9ba8a 100644
+--- a/internal/immich/immich_memories.go
++++ b/internal/immich/immich_memories.go
+@@ -198,9 +198,17 @@ func memoriesCount(memories MemoriesResponse) int {
+ // Returns:
+ //   - int: Total number of assets, or 0 if error occurs
+ func (a *Asset) MemoriesAssetsCount(requestID, deviceID string) int {
++	pastDays := max(a.requestConfig.PastMemoryDays, 0)
++	availabilityKey := cache.APICacheKey(fmt.Sprintf("memories-availability:%s:%d", a.requestConfig.ImmichURL, pastDays), deviceID, a.requestConfig.SelectedUser)
++	if cachedCount, found := cache.Get(availabilityKey); found {
++		if count, ok := cachedCount.(int); ok {
++			return count
++		}
++		cache.Delete(availabilityKey)
++	}
++
+ 	var m MemoriesResponse
+ 	var err error
+-	pastDays := max(a.requestConfig.PastMemoryDays, 0)
+ 
+ 	if pastDays > 0 {
+ 		m, _, err = a.memoriesWithPastDays(requestID, deviceID, true, pastDays)
+@@ -212,7 +220,11 @@ func (a *Asset) MemoriesAssetsCount(requestID, deviceID string) int {
+ 		return 0
+ 	}
+ 
+-	return memoriesCount(m)
++	count := memoriesCount(m)
++	// Availability is only a bounded hint for bucket weighting. A later memory
++	// selection still handles an empty/refreshed response safely.
++	cache.SetWithExpiration(availabilityKey, count, time.Minute)
++	return count
+ }
+ 
+ // updateMemoryCache updates the cache by removing used assets from memories.
+diff --git a/internal/routes/routes_asset.go b/internal/routes/routes_asset.go
+index ea80d9f..90dc19c 100644
+--- a/internal/routes/routes_asset.go
++++ b/internal/routes/routes_asset.go
+@@ -64,7 +64,7 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 		// get and use prefetch data (if found)
+ 		if requestConfig.Kiosk.PreFetch {
+ 			if cachedViewData := fromCache(requestCtx.URL.String(), deviceID); cachedViewData != nil {
+-				go assetPreFetch(com, requestData, requestCtx)
++				scheduleAssetPrefetch(com, requestData, requestCtx)
+ 				go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, cachedViewData[0])
+ 
+ 				return renderCachedViewData(c, cachedViewData, &requestConfig, requestID, deviceID, com.Secret())
+@@ -79,7 +79,7 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 		}
+ 
+ 		if requestConfig.Kiosk.PreFetch {
+-			go assetPreFetch(com, requestData, requestCtx)
++			scheduleAssetPrefetch(com, requestData, requestCtx)
+ 		}
+ 
+ 		go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, viewData)
+diff --git a/internal/routes/routes_asset_helpers.go b/internal/routes/routes_asset_helpers.go
+index a9a2c41..a8b8be4 100644
+--- a/internal/routes/routes_asset_helpers.go
++++ b/internal/routes/routes_asset_helpers.go
+@@ -736,7 +736,12 @@ func ProcessViewImageDataWithOptions(requestConfig config.Config, c common.Conte
+ func assetToCache(ctx context.Context, viewDataToAdd common.ViewData, requestConfig *config.Config, deviceID string, requestData *common.RouteRequestData, c common.ContextCopy) {
+ 	cache.AssetToCache(viewDataToAdd, requestConfig, deviceID, c.URL.String())
+ 
+-	go webhooks.Trigger(ctx, requestData, KioskVersion, webhooks.PrefetchAsset, viewDataToAdd)
++	webhooks.Trigger(ctx, requestData, KioskVersion, webhooks.PrefetchAsset, viewDataToAdd)
++}
++
++func scheduleAssetPrefetch(common *common.Common, requestData *common.RouteRequestData, c common.ContextCopy) {
++	key := requestData.DeviceID + "\x00" + c.URL.String()
++	assetPrefetchScheduler.schedule(key, func(context.Context) { assetPreFetch(common, requestData, c) })
+ }
+ 
+ // assetPreFetch handles prefetching assets for the current request
+diff --git a/internal/routes/routes_prefetch.go b/internal/routes/routes_prefetch.go
+new file mode 100644
+index 0000000..0acffdb
+--- /dev/null
++++ b/internal/routes/routes_prefetch.go
+@@ -0,0 +1,43 @@
++package routes
++
++import (
++	"context"
++	"sync"
++	"time"
++)
++
++const (
++	defaultPrefetchConcurrency = 2
++	defaultPrefetchTimeout     = 30 * time.Second
++)
++
++type prefetchScheduler struct {
++	sem      chan struct{}
++	timeout  time.Duration
++	inFlight sync.Map
++}
++
++func newPrefetchScheduler(concurrency int, timeout time.Duration) *prefetchScheduler {
++	return &prefetchScheduler{sem: make(chan struct{}, concurrency), timeout: timeout}
++}
++
++func (s *prefetchScheduler) schedule(key string, work func(context.Context)) bool {
++	if _, loaded := s.inFlight.LoadOrStore(key, struct{}{}); loaded {
++		return false
++	}
++	select {
++	case s.sem <- struct{}{}:
++	default:
++		s.inFlight.Delete(key)
++		return false
++	}
++	go func() {
++		defer func() { <-s.sem; s.inFlight.Delete(key) }()
++		ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
++		defer cancel()
++		work(ctx)
++	}()
++	return true
++}
++
++var assetPrefetchScheduler = newPrefetchScheduler(defaultPrefetchConcurrency, defaultPrefetchTimeout)
