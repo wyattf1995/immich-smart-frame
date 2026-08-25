@@ -1,14 +1,17 @@
 package com.wyattfleming.frameos.ui
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
+import android.graphics.Typeface
 import android.os.SystemClock
 import android.util.TypedValue
 import android.view.View
@@ -19,6 +22,7 @@ import com.wyattfleming.frameos.weather.WeatherHourlyPager
 import com.wyattfleming.frameos.weather.WeatherMetric
 import com.wyattfleming.frameos.weather.WeatherPresentation
 import com.wyattfleming.frameos.weather.WeatherRenderCadence
+import com.wyattfleming.frameos.weather.WeatherStaticLayerCacheState
 import com.wyattfleming.frameos.weather.sceneProfile
 import kotlin.math.cos
 import kotlin.math.sin
@@ -27,9 +31,11 @@ class WeatherContentView(context: Context) : View(context) {
     var presentation: WeatherPresentation = previewPresentation()
         set(value) {
             if (field.sceneCondition != value.sceneCondition) sceneEpochMillis = SystemClock.uptimeMillis()
+            if (field.sceneCondition != value.sceneCondition) invalidateSceneShaders()
             field = value
             pageEpochMillis = SystemClock.uptimeMillis()
             pageAnchorIndex = 0
+            staticLayerState.invalidatePresentation()
             val metricSummary = value.metrics.joinToString { "${it.label} ${it.value}" }
             contentDescription = value.emptyMessage ?: buildString {
                 append("${value.condition}, ${value.temperature}. ${value.status}")
@@ -40,8 +46,22 @@ class WeatherContentView(context: Context) : View(context) {
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val terrainPath = Path()
+    private val regularTypeface = Typeface.create("sans", Typeface.NORMAL)
+    private val mediumTypeface = Typeface.create("sans", Typeface.BOLD)
     private val hourlyPager = WeatherHourlyPager(WeatherRenderCadence.HOURLY_PAGE_SIZE)
     private val metricPager = WeatherHourlyPager(WeatherDetailPagination.METRICS_PER_PAGE)
+    private val staticLayerState = WeatherStaticLayerCacheState()
+    private val shaderMatrix = Matrix()
+    private var staticLayer: Bitmap? = null
+    private var backgroundGradient: LinearGradient? = null
+    private var backgroundGradientCondition: WeatherCondition? = null
+    private var backgroundGradientWidth = -1
+    private var backgroundGradientHeight = -1
+    private var fogGradient: LinearGradient? = null
+    private var fogGradientWidth = -1f
+    private var sunlightGradient: RadialGradient? = null
+    private var sunlightGradientWidth = -1
+    private var sunlightGradientHeight = -1
     private var pageEpochMillis = SystemClock.uptimeMillis()
     private var pageAnchorIndex = 0
     private var sceneEpochMillis = SystemClock.uptimeMillis()
@@ -57,6 +77,7 @@ class WeatherContentView(context: Context) : View(context) {
         val currentPage = currentHourlyPageIndex(pageCount, SystemClock.uptimeMillis())
         pageAnchorIndex = Math.floorMod(currentPage + if (forward) 1 else -1, pageCount)
         pageEpochMillis = SystemClock.uptimeMillis()
+        staticLayerState.invalidatePresentation()
         invalidate()
 
         val page = hourlyPager.page(presentation.hourly, pageAnchorIndex)
@@ -69,17 +90,7 @@ class WeatherContentView(context: Context) : View(context) {
         super.onDraw(canvas)
         val now = SystemClock.uptimeMillis()
         drawBackground(canvas, (now - sceneEpochMillis) / 1_000f)
-        drawText(canvas, "Weather", width * 0.05f, height * 0.10f, 40f, Color.WHITE, true)
-
-        val emptyMessage = presentation.emptyMessage
-        if (emptyMessage != null) {
-            drawEmptyState(canvas, emptyMessage)
-        } else {
-            drawText(canvas, presentation.status, width * 0.05f, height * 0.145f, 19f, MUTED)
-            drawCurrent(canvas, now)
-            drawDaily(canvas)
-            drawHourly(canvas)
-        }
+        drawStaticForeground(canvas, now)
 
         if (isShown) {
             WeatherRenderCadence.nextDelayMillis(
@@ -90,21 +101,102 @@ class WeatherContentView(context: Context) : View(context) {
         }
     }
 
+    override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight)
+        releaseStaticLayer()
+        staticLayerState.invalidatePresentation()
+        invalidateSceneShaders()
+    }
+
+    override fun onDetachedFromWindow() {
+        releaseStaticLayer()
+        staticLayerState.invalidatePresentation()
+        super.onDetachedFromWindow()
+    }
+
+    private fun drawStaticForeground(canvas: Canvas, now: Long) {
+        if (width <= 0 || height <= 0) return
+        val pageIndex = currentHourlyPageIndex(hourlyPager.pageCount(presentation.hourly), now)
+        if (staticLayerState.needsRebuild(width, height, pageIndex) || staticLayer == null) {
+            val bitmap = staticLayer
+                ?.takeIf { it.width == width && it.height == height && !it.isRecycled }
+                ?: Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
+                    staticLayer?.recycle()
+                    staticLayer = it
+                }
+            bitmap.eraseColor(Color.TRANSPARENT)
+            val staticCanvas = Canvas(bitmap)
+            paint.shader = null
+            paint.alpha = 255
+            paint.style = Paint.Style.FILL
+            drawFixedTerrain(staticCanvas)
+            drawText(staticCanvas, "Weather", width * 0.05f, height * 0.10f, 40f, Color.WHITE, true)
+
+            val emptyMessage = presentation.emptyMessage
+            if (emptyMessage != null) {
+                drawEmptyState(staticCanvas, emptyMessage)
+            } else {
+                drawText(staticCanvas, presentation.status, width * 0.05f, height * 0.145f, 19f, MUTED)
+                drawCurrent(staticCanvas, pageIndex)
+                drawDaily(staticCanvas)
+                drawHourly(staticCanvas, pageIndex)
+            }
+            staticLayerState.recordRendered(width, height, pageIndex)
+        }
+        staticLayer?.let { canvas.drawBitmap(it, 0f, 0f, null) }
+    }
+
+    private fun releaseStaticLayer() {
+        staticLayer?.recycle()
+        staticLayer = null
+    }
+
+    private fun invalidateSceneShaders() {
+        backgroundGradient = null
+        backgroundGradientCondition = null
+        fogGradient = null
+        fogGradientWidth = -1f
+        sunlightGradient = null
+        sunlightGradientWidth = -1
+        sunlightGradientHeight = -1
+    }
+
     private fun drawBackground(canvas: Canvas, elapsedSeconds: Float) {
         val condition = presentation.sceneCondition
         val profile = condition.sceneProfile()
-        val colors = when (condition) {
-            WeatherCondition.SUNNY -> intArrayOf(0xFF226AA0.toInt(), 0xFF69A9C6.toInt(), 0xFFD9A466.toInt())
-            WeatherCondition.RAINY, WeatherCondition.POURING, WeatherCondition.LIGHTNING_RAINY ->
-                intArrayOf(0xFF182431.toInt(), 0xFF33495B.toInt(), 0xFF48545D.toInt())
-            WeatherCondition.CLOUDY, WeatherCondition.PARTLY_CLOUDY, WeatherCondition.FOG,
-            WeatherCondition.WINDY, WeatherCondition.WINDY_VARIANT ->
-                intArrayOf(0xFF26374B.toInt(), 0xFF61758A.toInt(), 0xFF8B8584.toInt())
-            WeatherCondition.SNOWY, WeatherCondition.SNOWY_RAINY, WeatherCondition.HAIL ->
-                intArrayOf(0xFF26384A.toInt(), 0xFF718597.toInt(), 0xFFB9C7D1.toInt())
-            else -> intArrayOf(0xFF101A2D.toInt(), 0xFF223957.toInt(), 0xFF5D5265.toInt())
+        paint.style = Paint.Style.FILL
+        paint.alpha = 255
+        if (
+            backgroundGradient == null ||
+            backgroundGradientCondition != condition ||
+            backgroundGradientWidth != width ||
+            backgroundGradientHeight != height
+        ) {
+            val colors = when (condition) {
+                WeatherCondition.SUNNY -> intArrayOf(0xFF226AA0.toInt(), 0xFF69A9C6.toInt(), 0xFFD9A466.toInt())
+                WeatherCondition.RAINY, WeatherCondition.POURING, WeatherCondition.LIGHTNING_RAINY ->
+                    intArrayOf(0xFF182431.toInt(), 0xFF33495B.toInt(), 0xFF48545D.toInt())
+                WeatherCondition.CLOUDY, WeatherCondition.PARTLY_CLOUDY, WeatherCondition.FOG,
+                WeatherCondition.WINDY, WeatherCondition.WINDY_VARIANT ->
+                    intArrayOf(0xFF26374B.toInt(), 0xFF61758A.toInt(), 0xFF8B8584.toInt())
+                WeatherCondition.SNOWY, WeatherCondition.SNOWY_RAINY, WeatherCondition.HAIL ->
+                    intArrayOf(0xFF26384A.toInt(), 0xFF718597.toInt(), 0xFFB9C7D1.toInt())
+                else -> intArrayOf(0xFF101A2D.toInt(), 0xFF223957.toInt(), 0xFF5D5265.toInt())
+            }
+            backgroundGradient = LinearGradient(
+                0f,
+                0f,
+                width.toFloat(),
+                height.toFloat(),
+                colors,
+                null,
+                Shader.TileMode.CLAMP,
+            )
+            backgroundGradientCondition = condition
+            backgroundGradientWidth = width
+            backgroundGradientHeight = height
         }
-        paint.shader = LinearGradient(0f, 0f, width.toFloat(), height.toFloat(), colors, null, Shader.TileMode.CLAMP)
+        paint.shader = backgroundGradient
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
         paint.shader = null
 
@@ -127,21 +219,30 @@ class WeatherContentView(context: Context) : View(context) {
                 condition == WeatherCondition.PARTLY_CLOUDY,
             )
         }
-        drawFixedTerrain(canvas)
     }
 
     private fun drawSunlight(canvas: Canvas, elapsedSeconds: Float) {
         val pulse = 0.92f + sin(elapsedSeconds * 0.35f) * 0.04f
-        paint.shader = RadialGradient(
-            width * 0.82f,
-            height * 0.16f,
-            width * 0.30f * pulse,
-            intArrayOf(0x70FFF2B0, 0x18FFF2B0, Color.TRANSPARENT),
-            floatArrayOf(0f, 0.45f, 1f),
-            Shader.TileMode.CLAMP,
-        )
+        val centerX = width * 0.82f
+        val centerY = height * 0.16f
+        if (sunlightGradient == null || sunlightGradientWidth != width || sunlightGradientHeight != height) {
+            sunlightGradient = RadialGradient(
+                centerX,
+                centerY,
+                width * 0.30f,
+                intArrayOf(0x70FFF2B0, 0x18FFF2B0, Color.TRANSPARENT),
+                floatArrayOf(0f, 0.45f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+            sunlightGradientWidth = width
+            sunlightGradientHeight = height
+        }
+        shaderMatrix.setScale(pulse, pulse, centerX, centerY)
+        sunlightGradient?.setLocalMatrix(shaderMatrix)
+        paint.shader = sunlightGradient
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
         paint.shader = null
+        sunlightGradient?.setLocalMatrix(null)
     }
 
     private fun drawNightSky(canvas: Canvas, elapsedSeconds: Float, shootingStars: Int) {
@@ -214,7 +315,10 @@ class WeatherContentView(context: Context) : View(context) {
         canvas.drawCircle(centerX, centerY - radius * 0.15f, radius * 0.43f, paint)
         canvas.drawCircle(centerX + radius * 0.46f, centerY, radius * 0.31f, paint)
         canvas.drawRoundRect(
-            RectF(centerX - radius * 0.72f, centerY, centerX + radius * 0.75f, centerY + radius * 0.30f),
+            centerX - radius * 0.72f,
+            centerY,
+            centerX + radius * 0.75f,
+            centerY + radius * 0.30f,
             radius * 0.16f,
             radius * 0.16f,
             paint,
@@ -253,22 +357,29 @@ class WeatherContentView(context: Context) : View(context) {
     }
 
     private fun drawFog(canvas: Canvas, elapsedSeconds: Float) {
-        repeat(4) { index ->
-            val bandWidth = width * 0.70f
-            val span = width + bandWidth
-            val x = ((index * width * 0.31f + elapsedSeconds * dp(5f + index)) % span) - bandWidth
-            paint.shader = LinearGradient(
-                x,
+        val bandWidth = width * 0.70f
+        if (fogGradient == null || fogGradientWidth != bandWidth) {
+            fogGradient = LinearGradient(
                 0f,
-                x + bandWidth,
+                0f,
+                bandWidth,
                 0f,
                 intArrayOf(Color.TRANSPARENT, 0x38EEF3F6, Color.TRANSPARENT),
                 null,
                 Shader.TileMode.CLAMP,
             )
-            canvas.drawRect(0f, height * (0.14f + index * 0.16f), width.toFloat(), height * (0.24f + index * 0.16f), paint)
-            paint.shader = null
+            fogGradientWidth = bandWidth
         }
+        repeat(4) { index ->
+            val span = width + bandWidth
+            val x = ((index * width * 0.31f + elapsedSeconds * dp(5f + index)) % span) - bandWidth
+            shaderMatrix.setTranslate(x, 0f)
+            fogGradient?.setLocalMatrix(shaderMatrix)
+            paint.shader = fogGradient
+            canvas.drawRect(0f, height * (0.14f + index * 0.16f), width.toFloat(), height * (0.24f + index * 0.16f), paint)
+        }
+        paint.shader = null
+        fogGradient?.setLocalMatrix(null)
     }
 
     private fun drawFixedTerrain(canvas: Canvas) {
@@ -305,10 +416,9 @@ class WeatherContentView(context: Context) : View(context) {
         drawCenteredText(canvas, detail, width * 0.50f, height * 0.60f, 19f, MUTED)
     }
 
-    private fun drawCurrent(canvas: Canvas, now: Long) {
+    private fun drawCurrent(canvas: Canvas, forecastPageIndex: Int) {
         val card = RectF(width * 0.05f, height * 0.17f, width * 0.42f, height * 0.55f)
         drawCard(canvas, card)
-        val forecastPageIndex = currentHourlyPageIndex(hourlyPager.pageCount(presentation.hourly), now)
         val metricPageCount = WeatherDetailPagination.pageCount(presentation.metrics.size)
         val metricPageIndex = WeatherDetailPagination.pageIndex(forecastPageIndex, presentation.metrics.size)
         val metricHeading = if (metricPageCount > 1) {
@@ -348,11 +458,10 @@ class WeatherContentView(context: Context) : View(context) {
         }
     }
 
-    private fun drawHourly(canvas: Canvas) {
+    private fun drawHourly(canvas: Canvas, pageIndex: Int) {
         val card = RectF(width * 0.05f, height * 0.59f, width * 0.95f, height * 0.91f)
         drawCard(canvas, card)
         val pageCount = hourlyPager.pageCount(presentation.hourly)
-        val pageIndex = currentHourlyPageIndex(pageCount, SystemClock.uptimeMillis())
         val items = hourlyPager.page(presentation.hourly, pageIndex)
         val normalizedPage = Math.floorMod(pageIndex, pageCount)
         val rangeStart = normalizedPage * WeatherRenderCadence.HOURLY_PAGE_SIZE + 1
@@ -440,7 +549,10 @@ class WeatherContentView(context: Context) : View(context) {
         canvas.drawCircle(centerX, centerY - radius * 0.20f, radius * 0.62f, paint)
         canvas.drawCircle(centerX + radius * 0.48f, centerY, radius * 0.44f, paint)
         canvas.drawRoundRect(
-            RectF(centerX - radius * 0.82f, centerY, centerX + radius * 0.84f, centerY + radius * 0.48f),
+            centerX - radius * 0.82f,
+            centerY,
+            centerX + radius * 0.84f,
+            centerY + radius * 0.48f,
             radius * 0.22f,
             radius * 0.22f,
             paint,
@@ -472,10 +584,7 @@ class WeatherContentView(context: Context) : View(context) {
         paint.style = Paint.Style.FILL
         paint.color = color
         paint.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sizeSp, resources.displayMetrics)
-        paint.typeface = android.graphics.Typeface.create(
-            "sans",
-            if (medium) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL,
-        )
+        paint.typeface = if (medium) mediumTypeface else regularTypeface
     }
 
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
