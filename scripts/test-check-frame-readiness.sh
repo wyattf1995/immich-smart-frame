@@ -43,7 +43,8 @@ case "$1" in
       'pidof com.wyattfleming.frameos') printf '2468\n' ;;
       'pidof keymapper_sysbridge') exit 1 ;;
       'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME')
-        printf 'com.wyattfleming.frameos/.MainActivity\n'
+        printf 'Warning: intent resolution used the current user\n'
+        printf 'com.wyattfleming.frameos/.MainActivity\r\n'
         ;;
       'dumpsys activity activities')
         printf 'mResumedActivity: ActivityRecord{1 u0 com.wyattfleming.frameos/.MainActivity}\n'

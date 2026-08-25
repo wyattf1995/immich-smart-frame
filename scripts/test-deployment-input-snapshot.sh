@@ -51,6 +51,40 @@ printf '%s\n' 'new offline fixture' > "$tmp_dir/offline-assets/new.txt"
 [[ ! -e "$tmp_dir/offline-assets/new.txt" ]] || fail 'restore must remove offline state absent from the snapshot'
 grep -Fxq 'curation_profile: balanced' "$tmp_dir/config/config.yaml" || fail 'restore must recover the saved config'
 
+# Verify and restore must validate saved payload integrity before reporting a
+# match or overwriting any live deployment input. A failure after copying is too
+# late, and SHA-256 alone is not an attacker-authentication mechanism.
+payload_snapshot="$snapshot_parent/payload-corruption"
+"$snapshot_script" create "$payload_snapshot" "$tmp_dir/.env"
+printf '%s\n' 'tampered snapshot payload' >> "$payload_snapshot/inputs/config/config.yaml"
+if "$snapshot_script" verify "$payload_snapshot" "$tmp_dir/.env"; then
+  fail 'verify must reject a payload whose hash no longer matches the manifest'
+fi
+printf '%s\n' 'must-survive-payload-rejection' >> "$tmp_dir/config/config.yaml"
+if "$snapshot_script" restore "$payload_snapshot" "$tmp_dir/.env" --confirm-restore; then
+  fail 'restore must reject a payload whose hash no longer matches the manifest'
+fi
+grep -Fxq 'must-survive-payload-rejection' "$tmp_dir/config/config.yaml" || fail 'a corrupted snapshot must not overwrite live config before rejection'
+printf '%s\n' 'curation_profile: balanced' > "$tmp_dir/config/config.yaml"
+
+manifest_snapshot="$snapshot_parent/manifest-path-corruption"
+"$snapshot_script" create "$manifest_snapshot" "$tmp_dir/.env"
+printf '%064d  ../outside.yaml\n' 0 >> "$manifest_snapshot/manifest.sha256"
+printf '%s\n' 'must-survive-manifest-rejection' >> "$tmp_dir/config/config.yaml"
+if "$snapshot_script" restore "$manifest_snapshot" "$tmp_dir/.env" --confirm-restore; then
+  fail 'restore must reject manifest paths outside the snapshot payload root'
+fi
+grep -Fxq 'must-survive-manifest-rejection' "$tmp_dir/config/config.yaml" || fail 'an unsafe manifest path must not overwrite live config before rejection'
+printf '%s\n' 'curation_profile: balanced' > "$tmp_dir/config/config.yaml"
+
+extra_snapshot="$snapshot_parent/extra-payload-file"
+"$snapshot_script" create "$extra_snapshot" "$tmp_dir/.env"
+printf '%s\n' 'unexpected payload' > "$extra_snapshot/inputs/offline-assets/unlisted.txt"
+if "$snapshot_script" restore "$extra_snapshot" "$tmp_dir/.env" --confirm-restore; then
+  fail 'restore must reject payload files not listed in the manifest'
+fi
+[[ ! -e "$tmp_dir/offline-assets/unlisted.txt" ]] || fail 'an unlisted payload file must not reach live offline-assets'
+
 outside_config="$tmp_dir/outside.yaml"
 printf '%s\n' 'outside: true' > "$outside_config"
 printf '%s\n' 'KIOSK_CONFIG_FILE=./config/../outside.yaml' > "$tmp_dir/path-traversal.env"
