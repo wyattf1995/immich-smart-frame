@@ -41,6 +41,7 @@ class WeatherPresenterTest {
         assertEquals("6.5", presentation.metrics.single { it.label == "UV index" }.value)
         assertEquals(8, presentation.metrics.size)
         assertEquals(24, presentation.hourly.size)
+        assertEquals("Tue", presentation.hourly.first().day)
         assertEquals("Midnight", presentation.hourly.first().time)
         assertEquals("11 PM", presentation.hourly.last().time)
         assertEquals("30%", presentation.hourly[4].precipitation)
