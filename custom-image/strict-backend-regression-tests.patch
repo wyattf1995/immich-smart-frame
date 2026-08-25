@@ -91,7 +91,7 @@ index 0000000..4444444
 +	require.ErrorIs(t, err, context.Canceled)
 +	require.Less(t, time.Since(start), 200*time.Millisecond)
 +}
-
++
 +type roundTripFunc func(*http.Request) (*http.Response, error)
 +func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 diff --git a/internal/routes/routes_prefetch_context_test.go b/internal/routes/routes_prefetch_context_test.go
