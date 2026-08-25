@@ -1,5 +1,5 @@
 diff --git a/main.go b/main.go
-index 62271d3..cbcca22 100644
+index 62271d3..1cda859 100644
 --- a/main.go
 +++ b/main.go
 @@ -63,8 +63,8 @@ func init() {
@@ -70,39 +70,70 @@ index 62271d3..cbcca22 100644
  	e.Pre(middleware.RemoveTrailingSlash())
  	e.Pre(NoCacheMiddleware)
  	e.Use(middleware.Recover())
-@@ -277,7 +280,7 @@ func addMiddleware(e *echo.Echo, baseConfig *config.Config) {
+@@ -277,35 +280,41 @@ func addMiddleware(e *echo.Echo, baseConfig *config.Config) {
  		},
  	}))
  
 -	if baseConfig.Kiosk.Password != "" {
-+	if startupConfig.Kiosk.Password != "" {
- 		e.Use(middleware.KeyAuthWithConfig(middleware.KeyAuthConfig{
- 			Skipper: func(c *echo.Context) bool {
- 				// skip auth for assets and /health endpoint
-@@ -286,13 +289,15 @@ func addMiddleware(e *echo.Echo, baseConfig *config.Config) {
- 			},
- 			KeyLookup: "header:Authorization,header:X-Api-Key,query:authsecret,query:password,form:authsecret,form:password",
- 			Validator: func(c *echo.Context, key string, _ middleware.ExtractorSource) (bool, error) {
+-		e.Use(middleware.KeyAuthWithConfig(middleware.KeyAuthConfig{
+-			Skipper: func(c *echo.Context) bool {
+-				// skip auth for assets and /health endpoint
+-				path := c.Request().URL.Path
+-				return strings.HasPrefix(path, "/assets/") || path == "/health" || path == "/favicon.ico"
+-			},
+-			KeyLookup: "header:Authorization,header:X-Api-Key,query:authsecret,query:password,form:authsecret,form:password",
+-			Validator: func(c *echo.Context, key string, _ middleware.ExtractorSource) (bool, error) {
 -				if subtle.ConstantTimeCompare([]byte(key), []byte(baseConfig.Kiosk.Password)) == 1 {
-+				requestConfig := baseConfig.Snapshot()
-+				if subtle.ConstantTimeCompare([]byte(key), []byte(requestConfig.Kiosk.Password)) == 1 {
- 					return true, nil
- 				}
- 				return false, nil
- 			},
- 			ErrorHandler: func(c *echo.Context, err error) error {
+-					return true, nil
+-				}
+-				return false, nil
+-			},
+-			ErrorHandler: func(c *echo.Context, err error) error {
 -				if baseConfig.Kiosk.Debug || baseConfig.Kiosk.DebugVerbose {
-+				requestConfig := baseConfig.Snapshot()
-+				if requestConfig.Kiosk.Debug || requestConfig.Kiosk.DebugVerbose {
- 					log.Warn("unauthorized request",
- 						"IP", c.RealIP(),
- 						"method", c.Request().Method,
-@@ -304,8 +309,10 @@ func addMiddleware(e *echo.Echo, baseConfig *config.Config) {
- 		}))
- 	}
- 
+-					log.Warn("unauthorized request",
+-						"IP", c.RealIP(),
+-						"method", c.Request().Method,
+-						"URL", c.Request().URL.String(),
+-						"error", err)
+-				}
+-				return routes.RenderUnauthorized(c)
+-			},
+-		}))
+-	}
+-
 -	if len(baseConfig.Kiosk.AllowedOrigins) > 0 {
 -		e.Use(middleware.CORS(baseConfig.Kiosk.AllowedOrigins...))
++	e.Use(middleware.KeyAuthWithConfig(middleware.KeyAuthConfig{
++		Skipper: func(c *echo.Context) bool {
++			// Health probes never disclose configuration or upstream responses. All
++			// other routes are public only while the current snapshot has no password.
++			path := c.Request().URL.Path
++			if strings.HasPrefix(path, "/assets/") || path == "/health" || path == "/livez" || path == "/readyz" || path == "/favicon.ico" {
++				return true
++			}
++			return baseConfig.Snapshot().Kiosk.Password == ""
++		},
++		KeyLookup: "header:Authorization,header:X-Api-Key,query:authsecret,query:password,form:authsecret,form:password",
++		Validator: func(c *echo.Context, key string, _ middleware.ExtractorSource) (bool, error) {
++			requestConfig := baseConfig.Snapshot()
++			if subtle.ConstantTimeCompare([]byte(key), []byte(requestConfig.Kiosk.Password)) == 1 {
++				return true, nil
++			}
++			return false, nil
++		},
++		ErrorHandler: func(c *echo.Context, err error) error {
++			requestConfig := baseConfig.Snapshot()
++			if requestConfig.Kiosk.Debug || requestConfig.Kiosk.DebugVerbose {
++				log.Warn("unauthorized request",
++					"IP", c.RealIP(),
++					"method", c.Request().Method,
++					"URL", c.Request().URL.String(),
++					"error", err)
++			}
++			return routes.RenderUnauthorized(c)
++		},
++	}))
++
 +	// CORS registration is startup-only in Echo. Snapshot it so reloads cannot
 +	// race middleware construction or imply unsupported live CORS mutation.
 +	if len(startupConfig.Kiosk.AllowedOrigins) > 0 {
@@ -110,7 +141,7 @@ index 62271d3..cbcca22 100644
  	}
  }
  
-@@ -339,8 +346,9 @@ func NoCacheMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+@@ -339,8 +348,9 @@ func NoCacheMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
  
  // Middleware for static routes with access to baseConfig
  func StaticCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareFunc {
@@ -121,7 +152,7 @@ index 62271d3..cbcca22 100644
  			return NoCacheMiddleware(next)
  		}
  
-@@ -353,8 +361,9 @@ func StaticCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareF
+@@ -353,8 +363,9 @@ func StaticCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareF
  
  // Middleware for asset(s) routes with access to baseConfig
  func AssetCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareFunc {
@@ -132,7 +163,7 @@ index 62271d3..cbcca22 100644
  			return NoCacheMiddleware(next)
  		}
  
-@@ -365,7 +374,45 @@ func AssetCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareFu
+@@ -365,7 +376,45 @@ func AssetCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareFu
  	}
  }
  
@@ -179,7 +210,7 @@ index 62271d3..cbcca22 100644
  	port := os.Getenv("KIOSK_PORT")
  	if port == "" {
  		port = "3000"
-@@ -374,7 +421,7 @@ func healthCheck() int {
+@@ -374,7 +423,7 @@ func healthCheck() int {
  	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
  	defer cancel()
  
@@ -188,7 +219,7 @@ index 62271d3..cbcca22 100644
  	if err != nil {
  		fmt.Fprintln(os.Stderr, "FAIL")
  		return 1
-@@ -409,8 +456,9 @@ func healthCheck() int {
+@@ -409,8 +458,9 @@ func healthCheck() int {
  }
  
  func versionCheck(c context.Context, immichURL string) bool {
@@ -299,7 +330,7 @@ index d80e128..28a7685 100644
  
  	c.updateConfigState()
 diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
-index c64b0a7..85f5c0e 100644
+index c64b0a7..d95fb31 100644
 --- a/internal/immich/immich_helpers.go
 +++ b/internal/immich/immich_helpers.go
 @@ -14,6 +14,7 @@ import (
@@ -310,19 +341,28 @@ index c64b0a7..85f5c0e 100644
  	"strings"
  	"sync"
  	"time"
-@@ -147,6 +148,11 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
+@@ -31,6 +32,7 @@ import (
+ const (
+ 	defaultAlbumRestrictionRegistrySize = 128
+ 	defaultAlbumRestrictionTTL          = 10 * time.Minute
++	defaultAPICallTimeout               = 20 * time.Second
+ )
+ 
+ type albumRestrictionCacheKey struct {
+@@ -147,6 +149,12 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
  	var responseBody []byte
  	var lastErr error
  	var contentType string
-+	if _, hasDeadline := ctx.Deadline(); !hasDeadline && a.requestConfig.Kiosk.HTTPTimeout > 0 {
-+		var cancel context.CancelFunc
-+		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.requestConfig.Kiosk.HTTPTimeout)*time.Second)
-+		defer cancel()
++	timeout := time.Duration(a.requestConfig.Kiosk.HTTPTimeout) * time.Second
++	if timeout <= 0 {
++		timeout = defaultAPICallTimeout
 +	}
++	ctx, cancel := context.WithTimeout(ctx, timeout)
++	defer cancel()
  
  	_, err := url.Parse(apiURL)
  	if err != nil {
-@@ -223,12 +229,11 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
+@@ -223,12 +231,11 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
  					"error_type", fmt.Sprintf("%T", resErr),
  					"error", resErr)
  			}
@@ -340,7 +380,7 @@ index c64b0a7..85f5c0e 100644
  			}
  			continue
  		}
-@@ -259,6 +264,13 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
+@@ -259,6 +266,13 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
  			if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
  				return responseBody, contentType, false, fmt.Errorf("received %d (unauthorised) code from Immich. Please check your Immich API is correct", res.StatusCode)
  			}
@@ -354,7 +394,7 @@ index c64b0a7..85f5c0e 100644
  
  			return responseBody, contentType, false, fmt.Errorf("HTTP %d: unexpected status code", res.StatusCode)
  		}
-@@ -275,6 +287,59 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
+@@ -275,6 +289,59 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
  	return responseBody, contentType, false, fmt.Errorf("request failed: max retries exceeded. last err=%w", lastErr)
  }
  
@@ -415,10 +455,16 @@ index c64b0a7..85f5c0e 100644
  // FilterDate is applied here.
  // FilterNewest is applied here.
 diff --git a/internal/immich/immich_server.go b/internal/immich/immich_server.go
-index 38596ba..9994251 100644
+index 38596ba..b47895f 100644
 --- a/internal/immich/immich_server.go
 +++ b/internal/immich/immich_server.go
-@@ -7,10 +7,31 @@ import (
+@@ -2,15 +2,37 @@ package immich
+ 
+ import (
+ 	"context"
++	"crypto/sha256"
+ 	"encoding/json"
+ 	"fmt"
  	"io"
  	"net/http"
  	"net/url"
@@ -450,7 +496,7 @@ index 38596ba..9994251 100644
  type ServerAboutResponse struct {
  	Build                      *string `json:"build,omitempty"`
  	BuildImage                 *string `json:"buildImage,omitempty"`
-@@ -170,3 +191,46 @@ func Version(ctx context.Context, immichURL string) (ServerVersionResponse, erro
+@@ -170,3 +192,58 @@ func Version(ctx context.Context, immichURL string) (ServerVersionResponse, erro
  
  	return serverVersionResponse, nil
  }
@@ -459,7 +505,7 @@ index 38596ba..9994251 100644
 +// error to callers so readiness endpoints never expose API keys or upstream
 +// response bodies.
 +func Ready(ctx context.Context, requestConfig config.Config) error {
-+	key := requestConfig.ImmichURL + "\x00" + requestConfig.SelectedUser
++	key := readinessKey(requestConfig)
 +	if ready, cacheErr := cachedReadiness(key, time.Now()); ready || cacheErr != nil {
 +		return cacheErr
 +	}
@@ -473,6 +519,18 @@ index 38596ba..9994251 100644
 +		return nil, probeErr
 +	})
 +	return err
++}
++
++func readinessKey(requestConfig config.Config) string {
++	apiKey := requestConfig.ImmichAPIKey
++	if requestConfig.SelectedUser != "" {
++		if userKey, ok := requestConfig.ImmichUsersAPIKeys[requestConfig.SelectedUser]; ok {
++			apiKey = userKey
++		}
++	}
++	digest := sha256.Sum256([]byte(apiKey))
++	// The cache key remains process-private and includes no raw credential.
++	return requestConfig.ImmichURL + "\x00" + requestConfig.SelectedUser + "\x00" + string(digest[:])
 +}
 +
 +func cachedReadiness(key string, now time.Time) (bool, error) {
@@ -684,7 +742,7 @@ index 43572b0..e4e6bd9 100644
  
  // assetPreFetch handles prefetching assets for the current request
 diff --git a/internal/routes/routes_offline.go b/internal/routes/routes_offline.go
-index 57e5f76..01776b8 100644
+index 57e5f76..1a42086 100644
 --- a/internal/routes/routes_offline.go
 +++ b/internal/routes/routes_offline.go
 @@ -55,7 +55,7 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
@@ -723,19 +781,51 @@ index 57e5f76..01776b8 100644
  				if err != nil {
  					log.Error("SaveOfflineAsset: generateViewData", "err", err)
  					if errorCount.Add(1) > fileExistsTolerance*2 {
-@@ -450,7 +450,9 @@ func generateCacheFilename(uuids ...string) string {
+@@ -449,12 +449,7 @@ func generateCacheFilename(uuids ...string) string {
+ // Returns an error if the render operation fails
  func handleNoOfflineAssets(c *echo.Context, requestConfig config.Config, com *common.Common, requestID, deviceID string) error {
  	requestCtx := common.CopyContext(c)
- 	go func(c common.ContextCopy) {
+-	go func(c common.ContextCopy) {
 -		downloadErr := downloadOfflineAssets(requestConfig, c, com, requestID, deviceID)
-+		downloadCtx, cancel := context.WithTimeout(com.Context(), offlinePrefetchDeadline)
-+		defer cancel()
-+		downloadErr := downloadOfflineAssets(downloadCtx, requestConfig, c, com, requestID, deviceID)
- 		if downloadErr != nil {
- 			log.Error("OfflineMode: DownloadOfflineAssets", "err", downloadErr)
- 		}
+-		if downloadErr != nil {
+-			log.Error("OfflineMode: DownloadOfflineAssets", "err", downloadErr)
+-		}
+-	}(requestCtx)
++	scheduleOfflinePrewarm(com, requestConfig, requestCtx, requestID, deviceID)
+ 
+ 	maxSizeMessage := "None"
+ 	if requestConfig.OfflineMode.MaxSize != "0" {
+@@ -552,6 +547,28 @@ func IsOfflineDownloadRunning() bool {
+ 	return !locked
+ }
+ 
++func offlinePrewarmNeeded(requestConfig config.Config) bool {
++	files, err := os.ReadDir(OfflineAssetsPath)
++	if err != nil {
++		return true
++	}
++	assets := 0
++	for _, file := range files {
++		if !file.IsDir() && !strings.HasPrefix(file.Name(), "_") && !strings.HasPrefix(file.Name(), ".") {
++			assets++
++		}
++	}
++	if assets < requestConfig.OfflineMode.NumberOfAssets {
++		return true
++	}
++	expires, err := os.ReadFile(filepath.Join(OfflineAssetsPath, OfflineExpirationFilename))
++	if err != nil {
++		return true
++	}
++	expiration, err := time.Parse(time.RFC3339, strings.TrimSpace(string(expires)))
++	return err != nil || !time.Now().Before(expiration)
++}
++
+ func checkCanceled(ctx context.Context) error {
+ 	select {
+ 	case <-ctx.Done():
 diff --git a/internal/routes/routes_prefetch.go b/internal/routes/routes_prefetch.go
-index 0acffdb..f043b76 100644
+index 0acffdb..c529e5b 100644
 --- a/internal/routes/routes_prefetch.go
 +++ b/internal/routes/routes_prefetch.go
 @@ -2,8 +2,13 @@ package routes
@@ -752,15 +842,23 @@ index 0acffdb..f043b76 100644
  )
  
  const (
-@@ -15,6 +20,7 @@ type prefetchScheduler struct {
- 	sem      chan struct{}
- 	timeout  time.Duration
- 	inFlight sync.Map
-+	workers  sync.WaitGroup
+@@ -12,9 +17,12 @@ const (
+ )
+ 
+ type prefetchScheduler struct {
+-	sem      chan struct{}
+-	timeout  time.Duration
+-	inFlight sync.Map
++	sem       chan struct{}
++	timeout   time.Duration
++	inFlight  sync.Map
++	workers   sync.WaitGroup
++	admission sync.Mutex
++	draining  bool
  }
  
  func newPrefetchScheduler(concurrency int, timeout time.Duration) *prefetchScheduler {
-@@ -22,6 +28,15 @@ func newPrefetchScheduler(concurrency int, timeout time.Duration) *prefetchSched
+@@ -22,6 +30,20 @@ func newPrefetchScheduler(concurrency int, timeout time.Duration) *prefetchSched
  }
  
  func (s *prefetchScheduler) schedule(key string, work func(context.Context)) bool {
@@ -768,15 +866,20 @@ index 0acffdb..f043b76 100644
 +}
 +
 +func (s *prefetchScheduler) scheduleWithContext(parent context.Context, key string, work func(context.Context)) bool {
++	s.admission.Lock()
++	defer s.admission.Unlock()
 +	select {
 +	case <-parent.Done():
 +		return false
 +	default:
 +	}
++	if s.draining {
++		return false
++	}
  	if _, loaded := s.inFlight.LoadOrStore(key, struct{}{}); loaded {
  		return false
  	}
-@@ -31,13 +46,53 @@ func (s *prefetchScheduler) schedule(key string, work func(context.Context)) boo
+@@ -31,13 +53,59 @@ func (s *prefetchScheduler) schedule(key string, work func(context.Context)) boo
  		s.inFlight.Delete(key)
  		return false
  	}
@@ -793,6 +896,9 @@ index 0acffdb..f043b76 100644
  }
  
 +func (s *prefetchScheduler) drain(ctx context.Context) bool {
++	s.admission.Lock()
++	s.draining = true
++	s.admission.Unlock()
 +	done := make(chan struct{})
 +	go func() {
 +		s.workers.Wait()
@@ -815,6 +921,9 @@ index 0acffdb..f043b76 100644
 +var offlinePrefetchScheduler = newPrefetchScheduler(1, offlinePrefetchDeadline)
 +
 +func scheduleOfflinePrewarm(com *common.Common, requestConfig config.Config, requestCtx common.ContextCopy, requestID, deviceID string) bool {
++	if !offlinePrewarmNeeded(requestConfig) {
++		return false
++	}
 +	if IsOfflineDownloadRunning() {
 +		return false
 +	}
