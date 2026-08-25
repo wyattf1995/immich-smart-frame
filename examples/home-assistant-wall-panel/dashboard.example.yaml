@@ -35,18 +35,24 @@ views:
               {% for calendar in calendars %}
                 {% set message = state_attr(calendar.entity, 'message') %}
                 {% set start_time = state_attr(calendar.entity, 'start_time') %}
+                {% set all_day = state_attr(calendar.entity, 'all_day') | default(false, true) %}
                 {% set location = state_attr(calendar.entity, 'location') %}
                 {% if message and start_time %}
                   {% set start = as_datetime(start_time) %}
                   {% if start %}
-                    {% set agenda.events = agenda.events + [{'calendar': calendar.name, 'message': message, 'start': start, 'location': location}] %}
+                    {% set agenda.events = agenda.events + [{'calendar': calendar.name, 'message': message, 'start': start, 'all_day': all_day, 'location': location}] %}
                   {% endif %}
                 {% endif %}
               {% endfor %}
               {% set events = agenda.events | sort(attribute='start') %}
               {% if events %}
                 {% for event in events[:4] %}
-              - **{{ as_timestamp(event.start) | timestamp_custom('%a %-I:%M %p') }}** — {{ event.message }} · {{ event.calendar }}{% if event.location %} · {{ event.location }}{% endif %}
+                  {% set event_date = as_timestamp(event.start) | timestamp_custom('%a, %b %-d') %}
+                  {% if event.all_day %}
+              - **{{ event_date }} · All day** — {{ event.message }} · {{ event.calendar }}{% if event.location %} · {{ event.location }}{% endif %}
+                  {% else %}
+              - **{{ event_date }} · {{ as_timestamp(event.start) | timestamp_custom('%-I:%M %p') }}** — {{ event.message }} · {{ event.calendar }}{% if event.location %} · {{ event.location }}{% endif %}
+                  {% endif %}
                 {% endfor %}
               {% else %}
               _No upcoming events_

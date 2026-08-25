@@ -157,11 +157,12 @@ Replace every generic entity below before importing the raw dashboard YAML:
 | `calendar.family`, `calendar.personal`, `calendar.birthdays`, `calendar.holidays` | Calendars you intend to show |
 
 The time/date entities must also exist. Home's **Up next** card reads only the
-already-exposed `message`, `start_time`, and `location` state attributes from
-each of the four calendar entities. It sorts one next item per calendar and
-renders at most four items; it does not call a calendar service or fetch a
-separate event feed. Remove any optional card whose entity your installation
-does not provide.
+already-exposed `message`, `start_time`, `all_day`, and `location` state
+attributes from each of the four calendar entities. It sorts one next item per
+calendar and renders at most four items. Timed events show `Tue, Sep 15 · 6:00
+PM`; all-day events show `Tue, Sep 15 · All day`, never a misleading midnight
+time. It does not call a calendar service or fetch a separate event feed.
+Remove any optional card whose entity your installation does not provide.
 
 Create a UI-managed dashboard, open its raw configuration editor, and paste the
 adapted `dashboard.example.yaml`. The built-in Calendar card defaults to Month;
