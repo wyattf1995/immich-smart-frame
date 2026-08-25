@@ -6,6 +6,7 @@ import org.junit.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class HomeAssistantWeatherRemoteCancellationTest {
     @Test
@@ -21,8 +22,9 @@ class HomeAssistantWeatherRemoteCancellationTest {
             remote.cancel()
 
             assertTrue("fetch should be released by future cancellation", result.get(1, TimeUnit.SECONDS) is WeatherRemoteResult.Offline)
-            assertEquals(3, transport.interruptedCalls)
-            assertTrue(transport.cancelCalls > 0)
+            assertTrue("every stalled request should observe interruption", transport.interrupted.await(1, TimeUnit.SECONDS))
+            assertEquals(3, transport.interruptedCalls.get())
+            assertTrue(transport.cancelCalls.get() > 0)
         } finally {
             caller.shutdownNow()
             requestExecutor.shutdownNow()
@@ -42,8 +44,9 @@ class HomeAssistantWeatherRemoteCancellationTest {
 
             assertTrue(result is WeatherRemoteResult.Offline)
             assertTrue("deadline was not total: $elapsedMillis ms", elapsedMillis < 750L)
-            assertEquals(3, transport.interruptedCalls)
-            assertTrue(transport.cancelCalls > 0)
+            assertTrue("every stalled request should observe interruption", transport.interrupted.await(1, TimeUnit.SECONDS))
+            assertEquals(3, transport.interruptedCalls.get())
+            assertTrue(transport.cancelCalls.get() > 0)
         } finally {
             requestExecutor.shutdownNow()
         }
@@ -60,8 +63,9 @@ class HomeAssistantWeatherRemoteCancellationTest {
 
     private class StalledTransport : CancellableHomeAssistantHttpTransport {
         val started = CountDownLatch(3)
-        @Volatile var interruptedCalls = 0
-        @Volatile var cancelCalls = 0
+        val interrupted = CountDownLatch(3)
+        val interruptedCalls = AtomicInteger()
+        val cancelCalls = AtomicInteger()
 
         override fun execute(request: HomeAssistantHttpRequest): HomeAssistantHttpResponse {
             started.countDown()
@@ -69,13 +73,14 @@ class HomeAssistantWeatherRemoteCancellationTest {
                 CountDownLatch(1).await()
                 error("stalled transport unexpectedly completed")
             } catch (error: InterruptedException) {
-                interruptedCalls += 1
+                interruptedCalls.incrementAndGet()
+                interrupted.countDown()
                 throw error
             }
         }
 
         override fun cancelInFlight() {
-            cancelCalls += 1
+            cancelCalls.incrementAndGet()
         }
     }
 }
