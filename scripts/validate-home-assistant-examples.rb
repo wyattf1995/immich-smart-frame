@@ -16,7 +16,7 @@ FILES = {
 }.freeze
 
 EXPECTED_FILES = FILES.values.map { |path| path.delete_prefix("#{REPO_ROOT}/") }.sort.freeze
-EXPECTED_VIEW_PATHS = %w[home cameras calendar].freeze
+EXPECTED_VIEW_PATHS = %w[home weather cameras calendar].freeze
 EXPECTED_ENTITIES = Set[
   "binary_sensor.internet_status",
   "calendar.birthdays",
@@ -96,10 +96,28 @@ unless view_paths == EXPECTED_VIEW_PATHS
   fail_validation("view paths #{view_paths.inspect}, expected #{EXPECTED_VIEW_PATHS.inspect}")
 end
 
-home_view, camera_view, calendar_view = views
+home_view, weather_view, camera_view, calendar_view = views
 unless home_view["type"] == "sections" && home_view["max_columns"] == 2 &&
        home_view["animated_background"] == "weather"
   fail_validation("Home must remain the verified two-column weather view")
+end
+unless weather_view["type"] == "sections" && weather_view["max_columns"] == 2 &&
+       weather_view["animated_background"] == "weather"
+  fail_validation("Weather must be a two-column forecast view with a weather-driven background")
+end
+
+weather_cards = weather_view.fetch("sections", []).flat_map { |section| section.fetch("cards", []) }
+weather_forecasts = weather_cards.select { |card| card["type"] == "weather-forecast" }
+forecast_types = weather_forecasts.filter_map { |card| card["forecast_type"] }.to_set
+unless weather_forecasts.any? { |card| card["show_current"] == true } &&
+       forecast_types == Set["daily", "hourly"]
+  fail_validation("Weather must show current conditions plus daily and hourly forecasts")
+end
+
+history_card = weather_cards.find { |card| card["type"] == "history-graph" }
+unless history_card && history_card["hours_to_show"] == 24 &&
+       history_card.fetch("entities", []).include?("weather.home")
+  fail_validation("Weather must retain a 24-hour condition history")
 end
 unless camera_view["type"] == "panel" && camera_view["animated_background"] == "neutral"
   fail_validation("Cameras must remain a neutral-background panel view")

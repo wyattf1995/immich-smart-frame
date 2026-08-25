@@ -15,6 +15,10 @@ class HomeAssistantRouteTest {
             HomeAssistantRoute.urlFor(base, FrameMode.HOME),
         )
         assertEquals(
+            "$base#weather",
+            HomeAssistantRoute.urlFor(base, FrameMode.WEATHER),
+        )
+        assertEquals(
             "$base#cameras",
             HomeAssistantRoute.urlFor(base, FrameMode.CAMERAS),
         )

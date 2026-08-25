@@ -15,6 +15,7 @@ class FrameReducerTest {
 
         val expected = listOf(
             FrameMode.HOME,
+            FrameMode.WEATHER,
             FrameMode.CAMERAS,
             FrameMode.CALENDAR,
             FrameMode.PHOTOS,
@@ -36,7 +37,7 @@ class FrameReducerTest {
 
     @Test
     fun `primary action returns every information mode to photos`() {
-        listOf(FrameMode.HOME, FrameMode.CAMERAS, FrameMode.CALENDAR).forEach { mode ->
+        listOf(FrameMode.HOME, FrameMode.WEATHER, FrameMode.CAMERAS, FrameMode.CALENDAR).forEach { mode ->
             val transition = reducer.reduce(FrameState(mode = mode), FrameIntent.PrimaryAction)
 
             assertEquals(FrameMode.PHOTOS, transition.state.mode)
