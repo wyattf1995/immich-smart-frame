@@ -22,7 +22,7 @@ object HomeAssistantRoute {
     fun urlFor(baseUrl: String, mode: FrameMode): String? {
         val fragment = when (mode) {
             FrameMode.HOME -> "home"
-            FrameMode.WEATHER -> "weather"
+            FrameMode.WEATHER -> return null
             FrameMode.CAMERAS -> "cameras"
             FrameMode.CALENDAR -> "calendar"
             FrameMode.PHOTOS -> return null
@@ -31,6 +31,6 @@ object HomeAssistantRoute {
         return "${baseUrl.substringBefore('#')}#$fragment"
     }
 
-    private const val WRAPPER_PATH = "/local/lenovo-wall-panel.html"
+    private const val WRAPPER_PATH = "/local/frameos-panel.html"
     private val VERSION_PATTERN = Regex("[A-Za-z0-9._-]+")
 }
