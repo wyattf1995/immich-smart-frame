@@ -29,6 +29,7 @@ COPY album-registry-allocation-tests.patch /tmp/album-registry-allocation-tests.
 COPY backend-test-gofmt.patch /tmp/backend-test-gofmt.patch
 COPY resilience-backend-tests.patch /tmp/resilience-backend-tests.patch
 COPY resilience-backend-coverage-tests.patch /tmp/resilience-backend-coverage-tests.patch
+COPY resilience-backend-m2-tests.patch /tmp/resilience-backend-m2-tests.patch
 COPY resilience-backend.patch /tmp/resilience-backend.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
@@ -71,6 +72,8 @@ RUN cd /src \
 	&& git apply --unidiff-zero /tmp/resilience-backend-tests.patch \
 	&& git apply --check --unidiff-zero /tmp/resilience-backend-coverage-tests.patch \
 	&& git apply --unidiff-zero /tmp/resilience-backend-coverage-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/resilience-backend-m2-tests.patch \
+	&& git apply --unidiff-zero /tmp/resilience-backend-m2-tests.patch \
 	&& git apply --check --unidiff-zero /tmp/resilience-backend.patch \
 	&& git apply --unidiff-zero /tmp/resilience-backend.patch
 
