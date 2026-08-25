@@ -49,6 +49,15 @@ image_location:
   hide_state: false
   hide_country: true
 
+# Persist a bounded fallback pool. It is refreshed single-flight after live
+# selections and served automatically when Immich becomes unavailable.
+offline_mode:
+  enabled: true
+  number_of_assets: 100
+  parallel_downloads: 1
+  max_size: 750MB
+  expiration_hours: 168
+
 kiosk:
   port: 3000
   behind_proxy: false
