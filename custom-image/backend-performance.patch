@@ -126,7 +126,7 @@ index 1359588..46b5e3a 100644
  
  			*a = asset
 diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
-index b8da962..032d433 100644
+index b8da962..3e4197a 100644
 --- a/internal/immich/immich_helpers.go
 +++ b/internal/immich/immich_helpers.go
 @@ -15,6 +15,7 @@ import (
@@ -137,21 +137,37 @@ index b8da962..032d433 100644
  	"time"
  
  	"charm.land/log/v2"
-@@ -26,6 +27,8 @@ import (
+@@ -26,6 +27,9 @@ import (
  	"github.com/google/go-querystring/query"
  )
  
 +var compiledAlbumPenaltyFactors sync.Map
++var compiledAlbumRestrictions sync.Map
 +
  // immichAPIFail handles failures in Immich API calls by unmarshaling the error response,
  // logging the error, and returning a formatted error along with the original value.
  func immichAPIFail[T APIResponse](value T, err error, body []byte, apiURL string) (T, string, error) {
-@@ -743,42 +746,67 @@ func (a *Asset) hasValidFilterExcludeFaces(requestID, deviceID string) bool {
+@@ -179,7 +183,13 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
+ 					"error_type", fmt.Sprintf("%T", resErr),
+ 					"error", resErr)
+ 			}
+-			time.Sleep(time.Duration(1<<attempts) * time.Second)
++			backoff := time.NewTimer(time.Duration(1<<attempts) * time.Second)
++			select {
++			case <-ctx.Done():
++				backoff.Stop()
++				return responseBody, contentType, false, ctx.Err()
++			case <-backoff.C:
++			}
+ 			continue
+ 		}
+ 
+@@ -743,42 +753,89 @@ func (a *Asset) hasValidFilterExcludeFaces(requestID, deviceID string) bool {
  // Returns:
  //   - bool: true if asset is not in any excluded albums, false otherwise
  func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
-+	penalties := selectedAlbumPenaltyFactors(a.requestConfig)
-+	if len(a.requestConfig.ExcludedAlbums) == 0 && len(penalties) == 0 {
++	restrictions := selectedAlbumRestrictions(a.requestConfig)
++	if len(restrictions.excluded) == 0 && len(restrictions.penalties) == 0 {
 +		return true
 +	}
 +
@@ -163,20 +179,46 @@ index b8da962..032d433 100644
 -		return slices.Contains(a.requestConfig.ExcludedAlbums, album.ID)
 -	}) {
 -		return false
-+	for _, album := range a.AppearsIn {
-+		if slices.Contains(a.requestConfig.ExcludedAlbums, album.ID) {
-+			return false
-+		}
- 	}
+-	}
++	return restrictions.allows(a.AppearsIn, a.ID, requestID)
++}
  
 -	var penalties []config.AlbumPenalty
 -	for name, profile := range a.requestConfig.Curation.Profiles {
 -		if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(a.requestConfig.CurationProfile)) {
 -			penalties = profile.AlbumPenalties
 -			break
-+	return albumPenaltyRoll(a.ID, requestID) < albumPenaltyFactorForAlbums(a.AppearsIn, penalties)
++type albumRestrictions struct {
++	excluded  map[string]struct{}
++	penalties map[string]float64
 +}
 +
++func (r albumRestrictions) allows(albums Albums, assetID, requestID string) bool {
++	for _, album := range albums {
++		if _, excluded := r.excluded[album.ID]; excluded {
++			return false
+ 		}
+ 	}
++	return albumPenaltyRoll(assetID, requestID) < albumPenaltyFactorForAlbums(albums, r.penalties)
++}
+ 
+-	return acceptsAlbumPenaltyForAsset(a.AppearsIn, penalties, a.ID, requestID)
++func selectedAlbumRestrictions(requestConfig config.Config) albumRestrictions {
++	cacheKey := fmt.Sprintf("%p:%s:%s", requestConfig.Curation.Profiles, strings.ToLower(strings.TrimSpace(requestConfig.CurationProfile)), strings.Join(requestConfig.ExcludedAlbums, "\x00"))
++	if cached, ok := compiledAlbumRestrictions.Load(cacheKey); ok {
++		return cached.(albumRestrictions)
++	}
++	excluded := make(map[string]struct{}, len(requestConfig.ExcludedAlbums))
++	for _, albumID := range requestConfig.ExcludedAlbums {
++		excluded[albumID] = struct{}{}
++	}
++	restrictions := albumRestrictions{excluded: excluded, penalties: selectedAlbumPenaltyFactors(requestConfig)}
++	actual, _ := compiledAlbumRestrictions.LoadOrStore(cacheKey, restrictions)
++	return actual.(albumRestrictions)
+ }
+ 
+-func albumPenaltyFactor(albums Albums, penalties []config.AlbumPenalty) float64 {
+-	factor := 1.0
 +func selectedAlbumPenaltyFactors(requestConfig config.Config) map[string]float64 {
 +	if requestConfig.CurationProfile == "" {
 +		return nil
@@ -190,15 +232,11 @@ index b8da962..032d433 100644
 +			factors := albumPenaltyFactors(profile.AlbumPenalties)
 +			actual, _ := compiledAlbumPenaltyFactors.LoadOrStore(cacheKey, factors)
 +			return actual.(map[string]float64)
- 		}
- 	}
--
--	return acceptsAlbumPenaltyForAsset(a.AppearsIn, penalties, a.ID, requestID)
++		}
++	}
 +	return nil
- }
- 
--func albumPenaltyFactor(albums Albums, penalties []config.AlbumPenalty) float64 {
--	factor := 1.0
++}
++
 +func albumPenaltyFactors(penalties []config.AlbumPenalty) map[string]float64 {
 +	factors := make(map[string]float64, len(penalties))
  	for _, penalty := range penalties {
@@ -233,7 +271,7 @@ index b8da962..032d433 100644
  func acceptsAlbumPenalty(albums Albums, penalties []config.AlbumPenalty, roll float64) bool {
  	return roll < albumPenaltyFactor(albums, penalties)
  }
-@@ -796,7 +824,7 @@ func albumPenaltyRoll(assetID, requestID string) float64 {
+@@ -796,7 +853,7 @@ func albumPenaltyRoll(assetID, requestID string) float64 {
  }
  
  func acceptsAlbumPenaltyForAsset(albums Albums, penalties []config.AlbumPenalty, assetID, requestID string) bool {
