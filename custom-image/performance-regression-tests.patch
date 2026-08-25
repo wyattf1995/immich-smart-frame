@@ -51,7 +51,7 @@ new file mode 100644
 index 0000000..2222222
 --- /dev/null
 +++ b/internal/routes/routes_prefetch_test.go
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,29 @@
 +package routes
 +
 +import (
@@ -81,4 +81,3 @@ index 0000000..2222222
 +	completed.Wait()
 +	assert.True(t, scheduler.schedule("device-a\\x00/url-c", func(context.Context) {}))
 +}
-+
