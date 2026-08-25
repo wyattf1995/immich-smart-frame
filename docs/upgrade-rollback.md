@@ -11,16 +11,22 @@ not by changing one container image in isolation.
    Immich Kiosk release.
 3. Review local changes in `.env`, `config/config.yaml`, and any reverse-proxy
    or network assumptions.
-4. Run `./scripts/validate.sh` on the target revision before replacing a
+4. Create a protected snapshot of those deployment inputs before changing a
+   revision. The snapshot includes the ignored API-key file and offline assets,
+   so place it outside the checkout with mode 700 or stronger.
+5. Run `./scripts/validate.sh` on the target revision before replacing a
    working display.
 
 ## Upgrade flow
 
 ```sh
+SNAPSHOT_DIR=/protected/backups/immich-smart-frame/$(date -u +%Y%m%dT%H%M%SZ)-before-TAG_OR_BRANCH
+./scripts/deployment-input-snapshot.sh create "$SNAPSHOT_DIR" .env
 git fetch --tags
 git checkout TAG_OR_BRANCH
+./scripts/deployment-input-snapshot.sh verify "$SNAPSHOT_DIR" .env
 docker compose build immich-kiosk
-docker compose up -d immich-kiosk
+docker compose up -d --wait --wait-timeout 120 immich-kiosk
 docker compose ps
 ```
 
@@ -30,6 +36,18 @@ Then verify:
 - the frame renders a full-resolution image;
 - the active curation profile still works;
 - logs show no patch-application or startup failures.
+
+`docker compose --wait` gates only local Kiosk liveness. It deliberately does
+not treat an Immich dependency outage as a reason to restart Kiosk. Run the
+read-only readiness sampler after rollout and from the host scheduler:
+
+```sh
+./scripts/check-frame-readiness.sh
+```
+
+It invokes Kiosk's local `--livecheck` and dependency-aware `--readycheck`
+separately. Add the optional array, Home Assistant, and ADB hooks described in
+[Resilience operations](resilience-operations.md) for a full-stack sample.
 
 If the deployment also uses FrameOS, stage the signed release APK and router
 separately. Verify the APK signature and install it with `adb install -r` using
@@ -45,13 +63,20 @@ If the new revision fails, roll back to the last known-good repository tag:
 ```sh
 git fetch --tags
 git checkout LAST_KNOWN_GOOD_TAG
+./scripts/deployment-input-snapshot.sh restore \
+  /protected/backups/immich-smart-frame/KNOWN_GOOD_SNAPSHOT .env --confirm-restore
 docker compose build immich-kiosk
-docker compose up -d immich-kiosk
+docker compose up -d --wait --wait-timeout 120 immich-kiosk
 docker compose ps
+./scripts/deployment-input-snapshot.sh verify \
+  /protected/backups/immich-smart-frame/KNOWN_GOOD_SNAPSHOT .env
 ```
 
-Rollback is safe because secrets and active config live outside Git in `.env`,
-`config/config.yaml`, and `secrets/immich_api_key`.
+Rollback is safe only when code and its matching versioned input snapshot move
+together. Leaving `.env`, `config/config.yaml`, `secrets/immich_api_key`, or
+`offline-assets/` at their newer values is preservation, not rollback. Restore
+uses an explicit confirmation because it overwrites those private inputs and
+removes offline assets absent from the known-good snapshot.
 
 FrameOS rollback is independent of the container rollback. Disable its two
 gesture rules, restore the verified legacy router/config pair with blank

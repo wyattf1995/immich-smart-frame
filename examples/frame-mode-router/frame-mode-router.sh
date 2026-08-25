@@ -60,6 +60,7 @@ FRAMEOS_RECEIVER="${FRAMEOS_RECEIVER:-}"
 FRAMEOS_CONTROL_ACTION="${FRAMEOS_CONTROL_ACTION:-com.wyattfleming.frameos.CONTROL}"
 FIREFOX_READY_MAX_PROBES="${FIREFOX_READY_MAX_PROBES:-4}"
 FIREFOX_READY_POLL_SECONDS="${FIREFOX_READY_POLL_SECONDS:-1}"
+LOCK_LEASE_SECONDS="${LOCK_LEASE_SECONDS:-90}"
 frameos_enabled=0
 if [ -n "$FRAMEOS_PACKAGE" ] || [ -n "$FRAMEOS_ACTIVITY" ] || [ -n "$FRAMEOS_RECEIVER" ]; then
   [ -n "$FRAMEOS_PACKAGE" ] && [ -n "$FRAMEOS_ACTIVITY" ] && [ -n "$FRAMEOS_RECEIVER" ] || \
@@ -116,6 +117,10 @@ case "$FIREFOX_READY_POLL_SECONDS" in
   *[!0-9]*|'') fail 'FIREFOX_READY_POLL_SECONDS must be a positive integer' ;;
 esac
 [ "$FIREFOX_READY_POLL_SECONDS" -ge 1 ] || fail 'FIREFOX_READY_POLL_SECONDS must be a positive integer'
+case "$LOCK_LEASE_SECONDS" in
+  *[!0-9]*|'') fail 'LOCK_LEASE_SECONDS must be a positive integer' ;;
+esac
+[ "$LOCK_LEASE_SECONDS" -ge 1 ] || fail 'LOCK_LEASE_SECONDS must be a positive integer'
 
 fully_package="${FULLY_ACTIVITY%%/*}"
 
@@ -277,12 +282,72 @@ if [ "$action" = status ]; then
   exit 0
 fi
 
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-  printf 'frame-mode-router: another transition is already running\n' >&2
-  exit 75
+read_lock_owner() {
+  [ -f "$LOCK_DIR" ] || return 1
+  IFS=' ' read -r lock_pid lock_started lock_extra < "$LOCK_DIR" || return 1
+  case "$lock_pid:$lock_started:${lock_extra:-}" in
+    *[!0-9:]*|:*|*::?*) return 1 ;;
+  esac
+  [ -z "${lock_extra:-}" ] || return 1
+  printf '%s %s\n' "$lock_pid" "$lock_started"
+}
+
+create_lock() {
+  lock_started="$(date +%s)" || return 1
+  case "$lock_started" in
+    *[!0-9]*|'') return 1 ;;
+  esac
+  lock_owner="$$ $lock_started"
+  lock_candidate="${LOCK_DIR}.candidate.$$"
+  (umask 077 && printf '%s\n' "$lock_owner" > "$lock_candidate") || return 1
+  if ln "$lock_candidate" "$LOCK_DIR" 2>/dev/null; then
+    rm -f "$lock_candidate"
+    return 0
+  fi
+  rm -f "$lock_candidate"
+  return 1
+}
+
+recover_stale_lock() {
+  lock_record="$(read_lock_owner)" || {
+    printf 'frame-mode-router: lock record is malformed; manual recovery is required\n' >&2
+    return 1
+  }
+  lock_pid="${lock_record%% *}"
+  lock_started="${lock_record#* }"
+
+  # Never reclaim a lock whose recorded owner still exists, even when a slow
+  # command has exceeded its lease. This deliberately prefers availability of
+  # the in-flight transition over a competing gesture.
+  if kill -0 "$lock_pid" 2>/dev/null; then
+    printf 'frame-mode-router: another transition is already running (lock held by live owner %s)\n' "$lock_pid" >&2
+    return 1
+  fi
+
+  lock_now="$(date +%s)" || return 1
+  case "$lock_now" in
+    *[!0-9]*|'') return 1 ;;
+  esac
+  if [ "$lock_now" -lt "$lock_started" ] || [ $((lock_now - lock_started)) -lt "$LOCK_LEASE_SECONDS" ]; then
+    printf 'frame-mode-router: another transition is already running (owner is gone but lease has not expired)\n' >&2
+    return 1
+  fi
+
+  rm -f "$LOCK_DIR" || return 1
+  return 0
+}
+
+if ! create_lock; then
+  recover_stale_lock || exit 75
+  create_lock || {
+    printf 'frame-mode-router: another transition is already running\n' >&2
+    exit 75
+  }
 fi
 cleanup_lock() {
-  rmdir "$LOCK_DIR" 2>/dev/null || true
+  if [ -f "$LOCK_DIR" ] && [ "$(cat "$LOCK_DIR" 2>/dev/null)" = "$lock_owner" ]; then
+    rm -f "$LOCK_DIR" 2>/dev/null || true
+  fi
 }
 trap cleanup_lock EXIT HUP INT TERM
 

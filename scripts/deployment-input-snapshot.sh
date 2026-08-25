@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'usage: %s {create|verify} SNAPSHOT_DIR ENV_FILE\n' "$0" >&2
+  printf '       %s restore SNAPSHOT_DIR ENV_FILE --confirm-restore\n' "$0" >&2
+  exit 2
+}
+
+fail() {
+  printf 'deployment-input-snapshot: %s\n' "$*" >&2
+  exit 1
+}
+
+[[ $# -ge 3 ]] || usage
+action="$1"
+snapshot_dir="$2"
+env_file="$3"
+case "$action" in
+  create|verify) [[ $# -eq 3 ]] || usage ;;
+  restore) [[ $# -eq 4 && "${4:-}" == '--confirm-restore' ]] || usage ;;
+  *) usage ;;
+esac
+[[ -f "$env_file" ]] || fail "cannot read environment file: $env_file"
+
+env_file="$(cd "$(dirname "$env_file")" && pwd)/$(basename "$env_file")"
+deployment_root="$(dirname "$env_file")"
+
+env_value_from() {
+  local source_file="$1"
+  local key="$2"
+  local default_value="$3"
+  local line
+  line="$(sed -n "s/^${key}=//p" "$source_file" | tail -n 1)"
+  if [[ -z "$line" ]]; then
+    printf '%s\n' "$default_value"
+  else
+    case "$line" in
+      \"*\"|\'*\') line="${line:1:${#line}-2}" ;;
+    esac
+    printf '%s\n' "$line"
+  fi
+}
+
+env_value() {
+  env_value_from "$env_file" "$1" "$2"
+}
+
+resolve_input_path() {
+  local value="$1"
+  case "$value" in
+    /*) printf '%s\n' "$value" ;;
+    *) printf '%s/%s\n' "$deployment_root" "${value#./}" ;;
+  esac
+}
+
+snapshot_relative_path() {
+  local source="$1"
+  case "$source" in
+    "$deployment_root"/*) printf '%s\n' "${source#"$deployment_root"/}" ;;
+    *) fail "input must be below the environment-file directory: $source" ;;
+  esac
+}
+
+config_file="$(resolve_input_path "$(env_value KIOSK_CONFIG_FILE ./config/config.yaml)")"
+secret_file="$(resolve_input_path "$(env_value KIOSK_API_KEY_FILE ./secrets/immich_api_key)")"
+offline_assets="$deployment_root/offline-assets"
+for required_file in "$env_file" "$config_file" "$secret_file"; do
+  [[ -f "$required_file" ]] || fail "required input is not a regular file: $required_file"
+done
+[[ -d "$offline_assets" ]] || fail "required offline-assets directory is missing: $offline_assets"
+
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+write_manifest() {
+  local output="$1"
+  : > "$output"
+  for source in "$env_file" "$config_file" "$secret_file"; do
+    printf '%s  %s\n' "$(sha256 "$source")" "$(snapshot_relative_path "$source")" >> "$output"
+  done
+  while IFS= read -r source; do
+    printf '%s  %s\n' "$(sha256 "$source")" "$(snapshot_relative_path "$source")" >> "$output"
+  done < <(find "$offline_assets" -type f -print | LC_ALL=C sort)
+}
+
+case "$action" in
+  create)
+    [[ ! -e "$snapshot_dir" ]] || fail "snapshot target already exists: $snapshot_dir"
+    umask 077
+    mkdir -p "$snapshot_dir/inputs"
+    for source in "$env_file" "$config_file" "$secret_file" "$offline_assets"; do
+      relative_path="$(snapshot_relative_path "$source")"
+      mkdir -p "$snapshot_dir/inputs/$(dirname "$relative_path")"
+      cp -pR "$source" "$snapshot_dir/inputs/$relative_path"
+    done
+    write_manifest "$snapshot_dir/manifest.sha256"
+    {
+      printf 'created_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      printf 'source_revision=%s\n' "$(git -C "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" rev-parse HEAD 2>/dev/null || printf unknown)"
+      printf 'environment_file=%s\n' "$(basename "$env_file")"
+    } > "$snapshot_dir/metadata.env"
+    chmod -R go-rwx "$snapshot_dir"
+    printf 'created protected deployment-input snapshot: %s\n' "$snapshot_dir"
+    ;;
+  verify)
+    [[ -f "$snapshot_dir/manifest.sha256" ]] || fail "missing snapshot manifest: $snapshot_dir/manifest.sha256"
+    current_manifest="$(mktemp "${TMPDIR:-/tmp}/deployment-input-manifest.XXXXXX")"
+    trap 'rm -f "$current_manifest"' EXIT
+    write_manifest "$current_manifest"
+    if ! cmp -s "$snapshot_dir/manifest.sha256" "$current_manifest"; then
+      printf 'deployment-input-snapshot: current inputs differ from snapshot %s\n' "$snapshot_dir" >&2
+      diff -u "$snapshot_dir/manifest.sha256" "$current_manifest" >&2 || true
+      exit 1
+    fi
+    printf 'deployment inputs match snapshot: %s\n' "$snapshot_dir"
+    ;;
+  restore)
+    [[ -f "$snapshot_dir/manifest.sha256" ]] || fail "missing snapshot manifest: $snapshot_dir/manifest.sha256"
+    command -v rsync >/dev/null 2>&1 || fail 'restore requires rsync for an exact offline-assets rollback'
+    snapshot_env="$snapshot_dir/inputs/.env"
+    [[ -f "$snapshot_env" ]] || fail 'snapshot is missing .env'
+    restore_config_file="$(resolve_input_path "$(env_value_from "$snapshot_env" KIOSK_CONFIG_FILE ./config/config.yaml)")"
+    restore_secret_file="$(resolve_input_path "$(env_value_from "$snapshot_env" KIOSK_API_KEY_FILE ./secrets/immich_api_key)")"
+    for source in "$env_file" "$restore_config_file" "$restore_secret_file"; do
+      relative_path="$(snapshot_relative_path "$source")"
+      [[ -f "$snapshot_dir/inputs/$relative_path" ]] || fail "snapshot is missing input: $relative_path"
+    done
+    [[ -d "$snapshot_dir/inputs/offline-assets" ]] || fail 'snapshot is missing offline-assets'
+
+    # This is intentionally explicit: the confirmation token acknowledges that
+    # restoring a known-good snapshot overwrites the current private inputs.
+    for source in "$env_file" "$restore_config_file" "$restore_secret_file"; do
+      relative_path="$(snapshot_relative_path "$source")"
+      mkdir -p "$(dirname "$source")"
+      cp -p "$snapshot_dir/inputs/$relative_path" "$source"
+    done
+    rsync -a --delete "$snapshot_dir/inputs/offline-assets/" "$offline_assets/"
+    "$0" verify "$snapshot_dir" "$env_file"
+    printf 'restored deployment inputs from snapshot: %s\n' "$snapshot_dir"
+    ;;
+esac

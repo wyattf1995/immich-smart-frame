@@ -15,8 +15,13 @@ views:
             icon: mdi:calendar-today
           - type: markdown
             content: |-
+              {% set date_value = as_datetime(states('sensor.date')) %}
+              {% if has_value('sensor.time') and has_value('sensor.date') and date_value %}
               # {{ states('sensor.time') }}
-              ## {{ as_timestamp(states('sensor.date')) | timestamp_custom('%A, %B %-d') }}
+              ## {{ as_timestamp(date_value) | timestamp_custom('%A, %B %-d') }}
+              {% else %}
+              # Time and date are temporarily unavailable
+              {% endif %}
             grid_options:
               columns: 12
               rows: auto
@@ -31,17 +36,21 @@ views:
                 {'entity': 'calendar.birthdays', 'name': 'Birthdays'},
                 {'entity': 'calendar.holidays', 'name': 'Holidays'}
               ] %}
-              {% set agenda = namespace(events=[]) %}
+              {% set agenda = namespace(events=[], unavailable=[]) %}
               {% for calendar in calendars %}
-                {% set message = state_attr(calendar.entity, 'message') %}
-                {% set start_time = state_attr(calendar.entity, 'start_time') %}
-                {% set all_day = state_attr(calendar.entity, 'all_day') | default(false, true) %}
-                {% set location = state_attr(calendar.entity, 'location') %}
-                {% if message and start_time %}
-                  {% set start = as_datetime(start_time) %}
-                  {% if start %}
-                    {% set agenda.events = agenda.events + [{'calendar': calendar.name, 'message': message, 'start': start, 'all_day': all_day, 'location': location}] %}
+                {% if has_value(calendar.entity) %}
+                  {% set message = state_attr(calendar.entity, 'message') %}
+                  {% set start_time = state_attr(calendar.entity, 'start_time') %}
+                  {% set all_day = state_attr(calendar.entity, 'all_day') | default(false, true) %}
+                  {% set location = state_attr(calendar.entity, 'location') %}
+                  {% if message and start_time %}
+                    {% set start = as_datetime(start_time) %}
+                    {% if start %}
+                      {% set agenda.events = agenda.events + [{'calendar': calendar.name, 'message': message, 'start': start, 'all_day': all_day, 'location': location}] %}
+                    {% endif %}
                   {% endif %}
+                {% else %}
+                  {% set agenda.unavailable = agenda.unavailable + [calendar.name] %}
                 {% endif %}
               {% endfor %}
               {% set events = agenda.events | sort(attribute='start') %}
@@ -57,7 +66,14 @@ views:
                   {% endif %}
                 {% endfor %}
               {% else %}
+                {% if agenda.unavailable | length == calendars | length %}
+              _Calendar data is temporarily unavailable_
+                {% else %}
               _No upcoming events_
+                {% endif %}
+              {% endif %}
+              {% if agenda.unavailable %}
+              _Unavailable calendars: {{ agenda.unavailable | join(', ') }}_
               {% endif %}
             grid_options:
               columns: 12
@@ -138,6 +154,7 @@ views:
               {% set temperature_unit = state_attr('weather.home', 'temperature_unit') or '' %}
               {% set visibility = state_attr('weather.home', 'visibility') %}
               {% set visibility_unit = state_attr('weather.home', 'visibility_unit') or '' %}
+              {% set sun_ready = has_value('sensor.sun_next_rising') and has_value('sensor.sun_next_setting') %}
 
               | Humidity | Wind | Pressure |
               | :--- | :--- | :--- |
@@ -145,7 +162,7 @@ views:
 
               | Feels like | Visibility | Sun |
               | :--- | :--- | :--- |
-              | **{{ apparent ~ temperature_unit if apparent is not none else '—' }}** | **{{ visibility ~ ' ' ~ visibility_unit if visibility is not none else '—' }}** | **🌅 {{ as_timestamp(states('sensor.sun_next_rising')) | timestamp_custom('%-I:%M %p') }} · 🌇 {{ as_timestamp(states('sensor.sun_next_setting')) | timestamp_custom('%-I:%M %p') }}** |
+              | **{{ apparent ~ temperature_unit if apparent is not none else '—' }}** | **{{ visibility ~ ' ' ~ visibility_unit if visibility is not none else '—' }}** | **{% if sun_ready %}🌅 {{ as_timestamp(states('sensor.sun_next_rising')) | timestamp_custom('%-I:%M %p') }} · 🌇 {{ as_timestamp(states('sensor.sun_next_setting')) | timestamp_custom('%-I:%M %p') }}{% else %}Sun times unavailable{% endif %}** |
             grid_options:
               columns: 12
               rows: auto
