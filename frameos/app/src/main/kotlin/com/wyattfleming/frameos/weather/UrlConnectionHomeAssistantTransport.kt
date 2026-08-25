@@ -4,21 +4,26 @@ import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URI
 import java.nio.charset.StandardCharsets
-import java.util.concurrent.ConcurrentHashMap
+import java.io.InterruptedIOException
 
 interface CancellableHomeAssistantHttpTransport : HomeAssistantHttpTransport {
     fun cancelInFlight()
 }
 
-class UrlConnectionHomeAssistantTransport : CancellableHomeAssistantHttpTransport {
-    private val connections = ConcurrentHashMap.newKeySet<HttpURLConnection>()
+class UrlConnectionHomeAssistantTransport(
+    private val connectionFactory: (URI) -> HttpURLConnection = { uri -> uri.toURL().openConnection() as HttpURLConnection },
+    private val cancellationRegistry: HomeAssistantHttpCancellationRegistry = HomeAssistantHttpCancellationRegistry(),
+) : CancellableHomeAssistantHttpTransport {
 
     override fun execute(request: HomeAssistantHttpRequest): HomeAssistantHttpResponse {
         val uri = requireSafeHttpsUrl(request.url)
         require(request.method == "GET" || request.method == "POST") { "Unsupported HTTP method" }
-        val connection = uri.toURL().openConnection() as HttpURLConnection
-        connections += connection
+        val requestGeneration = cancellationRegistry.beginRequest()
+        requireCurrent(requestGeneration)
+        val connection = connectionFactory(uri)
+        if (!cancellationRegistry.register(requestGeneration, connection)) throw InterruptedIOException("Home Assistant request cancelled")
         return try {
+            requireCurrent(requestGeneration)
             connection.requestMethod = request.method
             connection.instanceFollowRedirects = false
             connection.connectTimeout = CONNECT_TIMEOUT_MILLIS
@@ -30,22 +35,24 @@ class UrlConnectionHomeAssistantTransport : CancellableHomeAssistantHttpTranspor
                 connection.setRequestProperty(name, value)
             }
             request.body?.let { body ->
+                requireCurrent(requestGeneration)
                 val bytes = body.toByteArray(StandardCharsets.UTF_8)
                 require(bytes.size <= MAX_REQUEST_BYTES) { "HTTP request body is too large" }
                 connection.doOutput = true
                 connection.setFixedLengthStreamingMode(bytes.size)
                 connection.outputStream.use { it.write(bytes) }
             }
+            requireCurrent(requestGeneration)
             val statusCode = connection.responseCode
             val stream = if (statusCode in 200..299) connection.inputStream else connection.errorStream
-            HomeAssistantHttpResponse(statusCode, stream?.use(::readBoundedUtf8).orEmpty())
+            HomeAssistantHttpResponse(statusCode, stream?.use { readBoundedUtf8(it, requestGeneration) }.orEmpty())
         } finally {
-            connections -= connection
+            cancellationRegistry.unregister(connection)
             connection.disconnect()
         }
     }
 
-    override fun cancelInFlight() = connections.forEach(HttpURLConnection::disconnect)
+    override fun cancelInFlight() = cancellationRegistry.cancelAll()
 
     override fun toString(): String = "UrlConnectionHomeAssistantTransport(redacted)"
 
@@ -65,11 +72,16 @@ class UrlConnectionHomeAssistantTransport : CancellableHomeAssistantHttpTranspor
         return uri
     }
 
-    private fun readBoundedUtf8(input: java.io.InputStream): String {
+    private fun requireCurrent(requestGeneration: Long) {
+        if (!cancellationRegistry.isCurrent(requestGeneration)) throw InterruptedIOException("Home Assistant request cancelled")
+    }
+
+    private fun readBoundedUtf8(input: java.io.InputStream, requestGeneration: Long): String {
         val output = ByteArrayOutputStream()
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
         var total = 0
         while (true) {
+            requireCurrent(requestGeneration)
             val count = input.read(buffer)
             if (count < 0) break
             total += count

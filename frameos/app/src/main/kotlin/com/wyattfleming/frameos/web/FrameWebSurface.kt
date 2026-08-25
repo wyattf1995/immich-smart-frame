@@ -119,7 +119,6 @@ class FrameWebSurface(
     private var homeAssistantSession: ManagedSession? = null
     private var cameraSession: ManagedSession? = null
     private var attachedSlot: FrameWebSlot? = null
-    private var hiddenGeneration = 0
     private val hiddenHomeLifecycle = FrameWebHiddenSessionLifecycle()
     private var preloadDeactivation: Runnable? = null
     private val evictHiddenHome = Runnable { evictHiddenHomeIfExpired() }
@@ -152,7 +151,6 @@ class FrameWebSurface(
     }
 
     fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean) {
-        hiddenGeneration += 1
         if (slot == FrameWebSlot.HOME_ASSISTANT) {
             removeCallbacks(evictHiddenHome)
             hiddenHomeLifecycle.onHomeShown()
@@ -182,7 +180,6 @@ class FrameWebSurface(
     }
 
     fun hide() {
-        hiddenGeneration += 1
         visibility = View.GONE
         if (attachedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
         allSessions().forEach {
