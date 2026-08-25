@@ -1,0 +1,56 @@
+diff --git a/internal/routes/routes_resilience_coverage_test.go b/internal/routes/routes_resilience_coverage_test.go
+index 1160348..46a4b36 100644
+--- a/internal/routes/routes_resilience_coverage_test.go
++++ b/internal/routes/routes_resilience_coverage_test.go
+@@ -6,6 +6,7 @@ import (
+ 	"net/http"
+ 	"os"
+ 	"path/filepath"
++	"sync/atomic"
+ 	"testing"
+ 	"time"
+ 
+@@ -56,3 +57,42 @@ func TestPartialActionStateHelperFindsCurrentTag(t *testing.T) {
+ 	require.True(t, assetHasTag(immich.Tags{{Value: "hide-me"}}, "hide-me"))
+ 	require.False(t, assetHasTag(immich.Tags{{Name: "other"}}, "hide-me"))
+ }
++
++func TestOfflinePrewarmIsDeduplicatedShutdownBoundedAndDrained(t *testing.T) {
++	oldAssetScheduler := assetPrefetchScheduler
++	oldOfflineScheduler := offlinePrefetchScheduler
++	assetPrefetchScheduler = newPrefetchScheduler(1, time.Second)
++	offlinePrefetchScheduler = newPrefetchScheduler(1, offlinePrefetchDeadline)
++	t.Cleanup(func() {
++		assetPrefetchScheduler = oldAssetScheduler
++		offlinePrefetchScheduler = oldOfflineScheduler
++	})
++
++	parent, cancel := context.WithCancel(context.Background())
++	var scheduled atomic.Int32
++	var workers atomic.Int32
++	started := make(chan struct{})
++	for range 50 {
++		if offlinePrefetchScheduler.scheduleWithContext(parent, offlinePrewarmKey, func(ctx context.Context) {
++			workers.Add(1)
++			close(started)
++			<-ctx.Done()
++		}) {
++			scheduled.Add(1)
++		}
++	}
++	<-started
++	require.EqualValues(t, 1, scheduled.Load(), "only one worker is created; repeated slides are deduplicated")
++	require.EqualValues(t, 1, workers.Load())
++
++	assetStarted := make(chan struct{})
++	require.True(t, assetPrefetchScheduler.scheduleWithContext(parent, "asset", func(ctx context.Context) {
++		close(assetStarted)
++		<-ctx.Done()
++	}))
++	<-assetStarted
++	cancel()
++	drainCtx, drainCancel := context.WithTimeout(context.Background(), time.Second)
++	defer drainCancel()
++	require.True(t, DrainAssetPrefetch(drainCtx))
++}
+
