@@ -27,6 +27,7 @@ data class WeatherPresentation(
     val daily: List<WeatherForecastItem> = emptyList(),
     val hourly: List<WeatherForecastItem> = emptyList(),
     val emptyMessage: String? = null,
+    val authenticationRequired: Boolean = false,
 )
 
 class WeatherPresenter(
@@ -43,7 +44,11 @@ class WeatherPresenter(
 
     fun present(result: WeatherLoadResult): WeatherPresentation = when (result) {
         is WeatherLoadResult.Fresh -> presentSnapshot(result.snapshot, stale = false)
-        is WeatherLoadResult.Stale -> presentSnapshot(result.snapshot, stale = true)
+        is WeatherLoadResult.Stale -> presentSnapshot(
+            result.snapshot,
+            stale = true,
+            authenticationRequired = result.authenticationRequired,
+        )
         WeatherLoadResult.AuthRequired -> WeatherPresentation(
             emptyMessage = "Weather needs Home Assistant sign-in",
         )
@@ -52,7 +57,11 @@ class WeatherPresenter(
         )
     }
 
-    private fun presentSnapshot(snapshot: WeatherSnapshot, stale: Boolean): WeatherPresentation {
+    private fun presentSnapshot(
+        snapshot: WeatherSnapshot,
+        stale: Boolean,
+        authenticationRequired: Boolean = false,
+    ): WeatherPresentation {
         val current = snapshot.current
         val nearestHourly = snapshot.hourly.firstOrNull()
         val updateTime = formatEpochTime(current.updatedAtEpochMillis)
@@ -60,7 +69,12 @@ class WeatherPresenter(
             temperature = formatTemperature(current.temperature, current.temperatureUnit),
             condition = current.displayCondition,
             sceneCondition = current.condition,
-            status = if (stale) "Offline · updated $updateTime" else "Updated $updateTime",
+            status = when {
+                authenticationRequired -> "Home Assistant sign-in needed · updated $updateTime"
+                stale -> "Offline · updated $updateTime"
+                else -> "Updated $updateTime"
+            },
+            authenticationRequired = authenticationRequired,
             metrics = buildList {
                 (current.apparentTemperature ?: nearestHourly?.apparentTemperature)?.let {
                     add(WeatherMetric("Feels like", formatTemperature(it, current.temperatureUnit)))

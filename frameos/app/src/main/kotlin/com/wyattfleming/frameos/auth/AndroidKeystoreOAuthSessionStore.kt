@@ -1,5 +1,6 @@
 package com.wyattfleming.frameos.auth
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -42,6 +43,7 @@ class AndroidKeystoreOAuthSessionStore(
     }
 
     @Synchronized
+    @SuppressLint("ApplySharedPref") // Token exchange runs off the UI thread; survive immediate process death.
     override fun write(session: OAuthSession) {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
@@ -52,12 +54,13 @@ class AndroidKeystoreOAuthSessionStore(
             .put("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
             .put("ciphertext", Base64.encodeToString(ciphertext, Base64.NO_WRAP))
             .toString()
-        preferences.edit().putString(KEY_ENCRYPTED_SESSION, envelope).apply()
+        preferences.edit().putString(KEY_ENCRYPTED_SESSION, envelope).commit()
     }
 
     @Synchronized
+    @SuppressLint("ApplySharedPref") // Clearing an invalid envelope must also be durable.
     override fun clear() {
-        preferences.edit().remove(KEY_ENCRYPTED_SESSION).apply()
+        preferences.edit().remove(KEY_ENCRYPTED_SESSION).commit()
     }
 
     override fun toString(): String = "AndroidKeystoreOAuthSessionStore(redacted)"

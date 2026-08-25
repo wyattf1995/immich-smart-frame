@@ -14,6 +14,7 @@ import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
+import java.net.URI
 
 @SuppressLint("ViewConstructor")
 class FrameWebSurface(
@@ -21,41 +22,54 @@ class FrameWebSurface(
     runtime: GeckoRuntime,
     photosUrl: String,
     homeAssistantUrl: String,
+    homeAssistantFallbackUrl: String? = null,
     private val listener: Listener,
     private val urlPolicy: FrameUrlPolicy = FrameUrlPolicy(),
 ) : GeckoView(context) {
     interface Listener {
         fun onPageLoading(label: String, loading: Boolean)
         fun onPageUnavailable(label: String)
+        fun onPageRecovery(label: String, attempt: Int, retryInMillis: Long)
+        fun onPageRecovered(label: String)
     }
 
     private val frameRuntime = runtime
     private val retentionPolicy = FrameWebSessionRetentionPolicy()
     private val requiresFullAccessibilityTree = context.getSystemService(AccessibilityManager::class.java)
         ?.isTouchExplorationEnabled == true
+    private val recoveryPolicy = FrameWebRecoveryPolicy()
 
     private inner class ManagedSession(
-        val configuredUrl: String,
+        val configuredUrls: List<String>,
         val label: String,
     ) {
-        val session = GeckoSession(
+        lateinit var session: GeckoSession
+            private set
+        val loadState = FrameWebSessionState()
+        val crashRecovery = FrameWebCrashRecoveryState()
+        var recoveryAttempts = 0
+        var retryPending = false
+
+        init {
+            openSession()
+        }
+
+        private fun openSession() {
+            session = GeckoSession(
             GeckoSessionSettings().apply {
                 setAllowJavascript(true)
                 setDisplayMode(GeckoSessionSettings.DISPLAY_MODE_FULLSCREEN)
                 setFullAccessibilityTree(requiresFullAccessibilityTree)
                 setSuspendMediaWhenInactive(true)
             },
-        )
-        val loadState = FrameWebSessionState()
-
-        init {
+            )
             session.navigationDelegate = object : GeckoSession.NavigationDelegate {
                 override fun onLoadRequest(
                     session: GeckoSession,
                     request: GeckoSession.NavigationDelegate.LoadRequest,
                 ): GeckoResult<AllowOrDeny> {
-                    val allowed = urlPolicy.isAllowedTopLevelNavigation(configuredUrl, request.uri)
-                    if (!allowed) listener.onPageUnavailable(label)
+                    val allowed = urlPolicy.isAllowedTopLevelNavigation(configuredUrls, request.uri)
+                    if (!allowed) reportUnavailable(this@ManagedSession)
                     return GeckoResult.fromValue(if (allowed) AllowOrDeny.ALLOW else AllowOrDeny.DENY)
                 }
             }
@@ -74,20 +88,23 @@ class FrameWebSurface(
                 override fun onPageStop(session: GeckoSession, success: Boolean) {
                     listener.onPageLoading(label, false)
                     if (!success) {
-                        loadState.recordFailure()
-                        listener.onPageUnavailable(label)
+                        reportUnavailable(this@ManagedSession)
+                    } else {
+                        loadState.recordSuccess()
+                        resetRecovery(this@ManagedSession)
+                        listener.onPageRecovered(label)
                     }
                 }
             }
             session.contentDelegate = object : GeckoSession.ContentDelegate {
                 override fun onCrash(session: GeckoSession) {
-                    loadState.recordFailure()
-                    listener.onPageUnavailable(label)
+                    crashRecovery.markClosedByContentProcess()
+                    reportUnavailable(this@ManagedSession)
                 }
 
                 override fun onKill(session: GeckoSession) {
-                    loadState.recordFailure()
-                    listener.onPageUnavailable(label)
+                    crashRecovery.markClosedByContentProcess()
+                    reportUnavailable(this@ManagedSession)
                 }
             }
             session.open(frameRuntime)
@@ -95,33 +112,44 @@ class FrameWebSurface(
             session.setFocused(false)
         }
 
-        fun request(url: String) {
-            require(urlPolicy.isAllowedTopLevelNavigation(configuredUrl, url)) { "Unsafe $label navigation" }
+        fun request(url: String): Boolean {
+            require(urlPolicy.isAllowedTopLevelNavigation(configuredUrls, url)) { "Unsafe $label navigation" }
             loadState.recordRequest(url)
             try {
+                if (crashRecovery.reopenIfRequired()) {
+                    session.open(frameRuntime)
+                    // Recovery retries run only for an attached, visible session.
+                    session.setActive(true)
+                    session.setFocused(false)
+                }
                 session.loadUri(url)
+                return true
             } catch (error: RuntimeException) {
-                loadState.recordFailure()
-                throw error
+                reportUnavailable(this)
+                return false
             }
         }
 
         fun close() {
-            session.setFocused(false)
-            session.setActive(false)
-            session.stop()
-            session.close()
+            runCatching {
+                session.setFocused(false)
+                session.setActive(false)
+                session.stop()
+                session.close()
+            }
         }
     }
 
-    private val photosSession = ManagedSession(photosUrl, "Photos")
+    private val photosSession = ManagedSession(listOf(photosUrl), "Photos")
     private val homeAssistantUrl = homeAssistantUrl
+    private val homeAssistantFallbackUrl = homeAssistantFallbackUrl
     private var homeAssistantSession: ManagedSession? = null
     private var cameraSession: ManagedSession? = null
     private var attachedSlot: FrameWebSlot? = null
     private val hiddenHomeLifecycle = FrameWebHiddenSessionLifecycle()
     private var preloadDeactivation: Runnable? = null
     private val evictHiddenHome = Runnable { evictHiddenHomeIfExpired() }
+    private val retryCallbacks = mutableMapOf<ManagedSession, Runnable>()
 
     init {
         setBackgroundColor(Color.BLACK)
@@ -172,7 +200,11 @@ class FrameWebSurface(
         }
         visibility = View.VISIBLE
         managed.session.setActive(true)
-        if (managed.loadState.shouldRequest(url)) managed.request(url)
+        if (managed.loadState.shouldRequest(url)) {
+            cancelRecovery(managed)
+            managed.recoveryAttempts = 0
+            managed.request(url)
+        }
         managed.session.setFocused(takeFocus)
         if (takeFocus) requestFocus()
         contentDescription = managed.label
@@ -224,6 +256,8 @@ class FrameWebSurface(
         removeCallbacks(evictHiddenHome)
         preloadDeactivation?.let(::removeCallbacks)
         preloadDeactivation = null
+        retryCallbacks.values.forEach(::removeCallbacks)
+        retryCallbacks.clear()
         hiddenHomeLifecycle.onEvicted()
         if (session != null) releaseSession()
         cameraSession?.close()
@@ -239,12 +273,17 @@ class FrameWebSurface(
 
     private fun sessionFor(slot: FrameWebSlot): ManagedSession = when (slot) {
         FrameWebSlot.PHOTOS -> photosSession
-        FrameWebSlot.HOME_ASSISTANT -> homeAssistantSession ?: ManagedSession(homeAssistantUrl, "Home Assistant")
+        FrameWebSlot.HOME_ASSISTANT -> homeAssistantSession ?: ManagedSession(homeAssistantOrigins(), "Home Assistant")
             .also { homeAssistantSession = it }
         FrameWebSlot.CAMERAS -> cameraSession ?: ManagedSession(
-            configuredUrl = homeAssistantUrl,
+            configuredUrls = homeAssistantOrigins(),
             label = "Cameras",
         ).also { cameraSession = it }
+    }
+
+    private fun homeAssistantOrigins(): List<String> = buildList {
+        add(homeAssistantUrl)
+        homeAssistantFallbackUrl?.let(::add)
     }
 
     private fun allSessions(): List<ManagedSession> = buildList {
@@ -260,6 +299,7 @@ class FrameWebSurface(
             attachedSlot = null
         }
         disposable.close()
+        cancelRecovery(disposable)
         cameraSession = null
     }
 
@@ -284,7 +324,73 @@ class FrameWebSurface(
         preloadDeactivation = null
         hiddenHomeLifecycle.onEvicted()
         homeAssistantSession?.close()
+        homeAssistantSession?.let(::cancelRecovery)
         homeAssistantSession = null
+    }
+
+    private fun reportUnavailable(managed: ManagedSession) {
+        managed.loadState.recordFailure()
+        listener.onPageUnavailable(managed.label)
+        if (managed.retryPending) return
+        scheduleRecovery(managed)
+    }
+
+    private fun scheduleRecovery(managed: ManagedSession) {
+        val url = fallbackUrlFor(managed.loadState.recoveryUrl()) ?: return
+        val retry = recoveryPolicy.nextRetry(managed.recoveryAttempts) ?: return
+        managed.recoveryAttempts = retry.attempt
+        managed.retryPending = true
+        listener.onPageRecovery(managed.label, retry.attempt, retry.delayMillis)
+        val callback = Runnable {
+            retryCallbacks.remove(managed)
+            managed.retryPending = false
+            if (visibility != View.VISIBLE || managed !== attachedManagedSession()) return@Runnable
+            managed.request(url)
+        }
+        retryCallbacks[managed] = callback
+        postDelayed(callback, retry.delayMillis)
+    }
+
+    private fun resetRecovery(managed: ManagedSession) {
+        managed.recoveryAttempts = 0
+        managed.retryPending = false
+        cancelRecovery(managed)
+    }
+
+    private fun cancelRecovery(managed: ManagedSession) {
+        retryCallbacks.remove(managed)?.let(::removeCallbacks)
+        managed.retryPending = false
+    }
+
+    private fun attachedManagedSession(): ManagedSession? = attachedSlot?.let(::sessionFor)
+
+    private fun fallbackUrlFor(url: String?): String? {
+        if (url == null) return null
+        val fallback = homeAssistantFallbackUrl?.let { value -> runCatching { URI(value) }.getOrNull() } ?: return url
+        val requested = runCatching { URI(url) }.getOrNull() ?: return url
+        val primary = runCatching { URI(homeAssistantUrl) }.getOrNull() ?: return url
+        if (!sameOrigin(requested, primary)) return url
+        return URI(
+            fallback.scheme,
+            null,
+            fallback.host,
+            fallback.port,
+            requested.rawPath,
+            requested.rawQuery,
+            requested.rawFragment,
+        ).toASCIIString()
+    }
+
+    private fun sameOrigin(first: URI, second: URI): Boolean =
+        first.scheme.equals(second.scheme, ignoreCase = true) &&
+            first.host.equals(second.host, ignoreCase = true) &&
+            effectivePort(first) == effectivePort(second)
+
+    private fun effectivePort(uri: URI): Int = when {
+        uri.port >= 0 -> uri.port
+        uri.scheme.equals("https", ignoreCase = true) -> 443
+        uri.scheme.equals("http", ignoreCase = true) -> 80
+        else -> -1
     }
 
     private companion object {

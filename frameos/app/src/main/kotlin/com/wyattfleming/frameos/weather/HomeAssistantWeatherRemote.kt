@@ -29,6 +29,7 @@ class HomeAssistantWeatherRemote(
     private val endpoint: HomeAssistantWeatherEndpoint,
     private val transport: HomeAssistantHttpTransport,
     private val parser: HomeAssistantWeatherParser,
+    private val fallbackEndpoint: HomeAssistantWeatherEndpoint? = null,
     private val requestExecutor: ExecutorService = sharedRequestExecutor,
     private val requestTimeoutMillis: Long = TOTAL_REQUEST_TIMEOUT_MILLIS,
 ) : WeatherRemote {
@@ -37,6 +38,19 @@ class HomeAssistantWeatherRemote(
 
     override fun fetch(entityId: String, bearerToken: String): WeatherRemoteResult {
         if (bearerToken.isBlank()) return WeatherRemoteResult.AuthRequired(AUTH_REQUIRED)
+        val primaryResult = fetchFrom(endpoint, entityId, bearerToken)
+        return if (primaryResult is WeatherRemoteResult.Offline && fallbackEndpoint != null) {
+            fetchFrom(fallbackEndpoint, entityId, bearerToken)
+        } else {
+            primaryResult
+        }
+    }
+
+    private fun fetchFrom(
+        requestEndpoint: HomeAssistantWeatherEndpoint,
+        entityId: String,
+        bearerToken: String,
+    ): WeatherRemoteResult {
         val batch = synchronized(batchLock) {
             if (activeBatch != null) return WeatherRemoteResult.Offline(REQUEST_IN_PROGRESS)
             RequestBatch().also { activeBatch = it }
@@ -49,13 +63,13 @@ class HomeAssistantWeatherRemote(
             )
             val deadline = WeatherRequestDeadline(timeoutMillis = requestTimeoutMillis)
             val currentFuture = submitTracked(batch) {
-                parser.parseCurrentState(entityId, execute(HomeAssistantHttpRequest("GET", endpoint.stateUrl(entityId), headers)).body)
+                parser.parseCurrentState(entityId, execute(HomeAssistantHttpRequest("GET", requestEndpoint.stateUrl(entityId), headers)).body)
             }
             val dailyFuture = submitTracked(batch) {
-                fetchForecast(entityId, WeatherForecastType.DAILY, headers)
+                fetchForecast(requestEndpoint, entityId, WeatherForecastType.DAILY, headers)
             }
             val hourlyFuture = submitTracked(batch) {
-                fetchForecast(entityId, WeatherForecastType.HOURLY, headers)
+                fetchForecast(requestEndpoint, entityId, WeatherForecastType.HOURLY, headers)
             }
             awaitBatchStart(batch, deadline)
             val current = await(currentFuture, deadline)
@@ -118,6 +132,7 @@ class HomeAssistantWeatherRemote(
     }
 
     private fun fetchForecast(
+        endpoint: HomeAssistantWeatherEndpoint,
         entityId: String,
         type: WeatherForecastType,
         headers: Map<String, String>,

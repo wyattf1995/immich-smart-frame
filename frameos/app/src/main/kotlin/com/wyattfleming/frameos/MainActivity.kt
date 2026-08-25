@@ -29,6 +29,7 @@ import com.wyattfleming.frameos.navigation.FrameIntent
 import com.wyattfleming.frameos.navigation.FrameMode
 import com.wyattfleming.frameos.navigation.FrameReducer
 import com.wyattfleming.frameos.navigation.FrameState
+import com.wyattfleming.frameos.navigation.FrameStartupPolicy
 import com.wyattfleming.frameos.navigation.ContextualFrameAction
 import com.wyattfleming.frameos.navigation.ContextualInputMapper
 import com.wyattfleming.frameos.navigation.PhysicalInputMapper
@@ -90,8 +91,10 @@ class MainActivity : Activity() {
     private lateinit var hudLabel: TextView
     private lateinit var hudPosition: TextView
     private lateinit var loading: LinearLayout
+    private lateinit var webRecovery: LinearLayout
+    private lateinit var webRecoveryLabel: TextView
 
-    private var state = FrameState()
+    private var state = FrameStartupPolicy.initialState()
     private var starLongPressed = false
     private var volumeUpPressed = false
     private var volumeDownPressed = false
@@ -346,7 +349,21 @@ class MainActivity : Activity() {
                 override fun onPageUnavailable(label: String) {
                     runOnUiThread {
                         updatePageLoading(label, false)
-                        if (isWebLabelActive(label)) showHud("$label is temporarily unavailable")
+                        if (isWebLabelActive(label)) showWebRecovery("$label is temporarily unavailable")
+                    }
+                }
+
+                override fun onPageRecovery(label: String, attempt: Int, retryInMillis: Long) {
+                    runOnUiThread {
+                        if (isWebLabelActive(label)) {
+                            showWebRecovery("$label is unavailable · retry $attempt in ${retryInMillis / 1_000}s")
+                        }
+                    }
+                }
+
+                override fun onPageRecovered(label: String) {
+                    runOnUiThread {
+                        if (isWebLabelActive(label)) hideWebRecovery()
                     }
                 }
             }
@@ -356,6 +373,7 @@ class MainActivity : Activity() {
                 runtime = runtime,
                 photosUrl = activeConfiguration.photosUrl,
                 homeAssistantUrl = activeConfiguration.homeAssistantUrl,
+                homeAssistantFallbackUrl = activeConfiguration.homeAssistantFallbackUrl,
                 listener = webListener,
             )
             root.addView(webSurface, fullScreenLayout)
@@ -381,6 +399,8 @@ class MainActivity : Activity() {
                 bottomMargin = resources.getDimensionPixelSize(R.dimen.frame_safe_inset)
             },
         )
+        webRecovery = buildWebRecoveryView()
+        root.addView(webRecovery, fullScreenLayout)
         setContentView(root)
         root.requestFocus()
     }
@@ -436,6 +456,28 @@ class MainActivity : Activity() {
             visibility = View.INVISIBLE
             addView(spinner, LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginEnd = dp(14) })
             addView(words)
+        }
+    }
+
+    private fun buildWebRecoveryView(): LinearLayout {
+        webRecoveryLabel = textView("", 22f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(36), dp(24), dp(36), dp(24))
+            background = roundedBackground(0xE0181817.toInt(), strokeColor = 0x4DFFFFFF)
+            visibility = View.GONE
+            isFocusable = false
+            isClickable = false
+            addView(webRecoveryLabel)
+            addView(
+                textView("The last view will reconnect automatically. Use a mode gesture to try another view.", 16f, getColor(R.color.frame_ink_muted)).apply {
+                    gravity = Gravity.CENTER
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = dp(10)
+                },
+            )
         }
     }
 
@@ -513,16 +555,19 @@ class MainActivity : Activity() {
             is FrameSurfaceTarget.Web -> when (target.slot) {
                 FrameWebSlot.PHOTOS -> {
                     weatherContent.visibility = View.GONE
+                    hideWebRecovery()
                     webSurface?.show(target.slot, target.url, takeFocus = false)
                     webSurface?.setContentActive(!next.photosPaused)
                     root.requestFocus()
                 }
                 FrameWebSlot.HOME_ASSISTANT, FrameWebSlot.CAMERAS -> {
                     weatherContent.visibility = View.GONE
+                    hideWebRecovery()
                     webSurface?.show(target.slot, target.url, takeFocus = true)
                 }
             }
             FrameSurfaceTarget.NativeWeather -> {
+                hideWebRecovery()
                 webSurface?.hide()
                 weatherContent.visibility = View.VISIBLE
                 root.requestFocus()
@@ -614,6 +659,8 @@ class MainActivity : Activity() {
                 .getStringExtra(FrameControlContract.EXTRA_WEATHER_ENTITY_ID)
                 .orEmpty()
                 .ifBlank { DEFAULT_WEATHER_ENTITY_ID },
+            homeAssistantFallbackUrl = intent
+                .getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_FALLBACK_URL),
         ) ?: return null
         configurationStore.write(provisioned)
         return provisioned
@@ -644,6 +691,9 @@ class MainActivity : Activity() {
                 repository = WeatherRepository(
                     remote = HomeAssistantWeatherRemote(
                         endpoint = HomeAssistantWeatherEndpoint.fromDisplayUrl(activeConfiguration.homeAssistantUrl),
+                        fallbackEndpoint = activeConfiguration.homeAssistantFallbackUrl?.let(
+                            HomeAssistantWeatherEndpoint::fromDisplayUrl,
+                        ),
                         transport = transport,
                         parser = HomeAssistantWeatherParser(),
                         requestExecutor = weatherRequestExecutor,
@@ -689,7 +739,8 @@ class MainActivity : Activity() {
                 if (generation != weatherRequestGeneration || isFinishing || isDestroyed) return@post
                 weatherRefreshInProgress = false
                 weatherContent.presentation = presentation
-                weatherNeedsAuthentication = presentation.emptyMessage == "Weather needs Home Assistant sign-in"
+                weatherNeedsAuthentication = presentation.authenticationRequired ||
+                    presentation.emptyMessage == "Weather needs Home Assistant sign-in"
                 scheduleWeatherRefresh()
             }
         }
@@ -819,6 +870,18 @@ class MainActivity : Activity() {
         hud.sendAccessibilityEvent(AccessibilityEvent.TYPE_ANNOUNCEMENT)
         handler.removeCallbacks(hideHud)
         handler.postDelayed(hideHud, HUD_VISIBLE_MILLIS)
+    }
+
+    private fun showWebRecovery(message: String) {
+        webRecoveryLabel.text = message
+        webRecovery.contentDescription = message
+        webRecovery.visibility = View.VISIBLE
+        webRecovery.alpha = 1f
+        webRecovery.sendAccessibilityEvent(AccessibilityEvent.TYPE_ANNOUNCEMENT)
+    }
+
+    private fun hideWebRecovery() {
+        if (::webRecovery.isInitialized) webRecovery.visibility = View.GONE
     }
 
     private fun scheduleIdleReset() {

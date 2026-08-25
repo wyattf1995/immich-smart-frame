@@ -112,7 +112,10 @@ interface WeatherCache {
 
 sealed interface WeatherLoadResult {
     data class Fresh(val snapshot: WeatherSnapshot) : WeatherLoadResult
-    data class Stale(val snapshot: WeatherSnapshot) : WeatherLoadResult
+    data class Stale(
+        val snapshot: WeatherSnapshot,
+        val authenticationRequired: Boolean = false,
+    ) : WeatherLoadResult
     data object Offline : WeatherLoadResult
     data object AuthRequired : WeatherLoadResult
 }
