@@ -1,0 +1,1096 @@
+diff --git a/main.go b/main.go
+index 62271d3..1cda859 100644
+--- a/main.go
++++ b/main.go
+@@ -63,8 +63,8 @@ func init() {
+ 
+ // main initializes and starts the Immich Kiosk web server, sets up configuration, middleware, routes, and manages graceful shutdown.
+ func main() {
+-	if len(os.Args) > 1 && os.Args[1] == "--healthcheck" {
+-		os.Exit(healthCheck())
++	if endpoint, ok := checkEndpoint(os.Args[1:]); ok {
++		os.Exit(localCheck(endpoint))
+ 	}
+ 
+ 	var logLevel log.Level
+@@ -116,8 +116,6 @@ func main() {
+ 		os.Exit(1)
+ 	}
+ 
+-	immich.HTTPClient.Timeout = time.Second * time.Duration(baseConfig.Kiosk.HTTPTimeout)
+-
+ 	cache.Initialize()
+ 
+ 	videoManager, videoManagerErr := video.New(c.Context())
+@@ -167,15 +165,14 @@ func main() {
+ 
+ 	if !baseConfig.Kiosk.DisableConfigEndpoint {
+ 		e.GET("/config", func(c *echo.Context) error {
+-			return c.String(http.StatusOK, baseConfig.SanitizedYaml())
++			snapshot := baseConfig.Snapshot()
++			return c.String(http.StatusOK, snapshot.SanitizedYaml())
+ 		})
+ 	}
+ 
+ 	e.GET("/", routes.Home(baseConfig, c))
+ 
+-	e.GET("/health", func(c *echo.Context) error {
+-		return c.String(http.StatusOK, "OK")
+-	})
++	registerHealthRoutes(e, baseConfig)
+ 
+ 	if baseConfig.Kiosk.EnableURLBuilder {
+ 		e.GET("/url-builder", routes.URLBuilderPage(baseConfig, c, false))
+@@ -245,6 +242,7 @@ func main() {
+ 		HideBanner:      true,
+ 		HidePort:        true,
+ 		GracefulTimeout: 10 * time.Second,
++		BeforeServeFunc: configureServer,
+ 	}
+ 
+ 	startErr := sc.Start(c.Context(), e)
+@@ -252,7 +250,11 @@ func main() {
+ 		log.Error("Failed to start Kiosk server", "error", startErr)
+ 	}
+ 
+-	// Shutting down, clean up
++	// Shutting down, clean up. Prefetch derives from c.Context(), so cancellation
++	// above requests worker exit before temporary assets are removed.
++	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
++	routes.DrainAssetPrefetch(drainCtx)
++	drainCancel()
+ 	video.DeleteTmpDir()
+ 
+ 	fmt.Println("")
+@@ -265,6 +267,7 @@ func main() {
+ }
+ 
+ func addMiddleware(e *echo.Echo, baseConfig *config.Config) {
++	startupConfig := baseConfig.Snapshot()
+ 	e.Pre(middleware.RemoveTrailingSlash())
+ 	e.Pre(NoCacheMiddleware)
+ 	e.Use(middleware.Recover())
+@@ -277,35 +280,41 @@ func addMiddleware(e *echo.Echo, baseConfig *config.Config) {
+ 		},
+ 	}))
+ 
+-	if baseConfig.Kiosk.Password != "" {
+-		e.Use(middleware.KeyAuthWithConfig(middleware.KeyAuthConfig{
+-			Skipper: func(c *echo.Context) bool {
+-				// skip auth for assets and /health endpoint
+-				path := c.Request().URL.Path
+-				return strings.HasPrefix(path, "/assets/") || path == "/health" || path == "/favicon.ico"
+-			},
+-			KeyLookup: "header:Authorization,header:X-Api-Key,query:authsecret,query:password,form:authsecret,form:password",
+-			Validator: func(c *echo.Context, key string, _ middleware.ExtractorSource) (bool, error) {
+-				if subtle.ConstantTimeCompare([]byte(key), []byte(baseConfig.Kiosk.Password)) == 1 {
+-					return true, nil
+-				}
+-				return false, nil
+-			},
+-			ErrorHandler: func(c *echo.Context, err error) error {
+-				if baseConfig.Kiosk.Debug || baseConfig.Kiosk.DebugVerbose {
+-					log.Warn("unauthorized request",
+-						"IP", c.RealIP(),
+-						"method", c.Request().Method,
+-						"URL", c.Request().URL.String(),
+-						"error", err)
+-				}
+-				return routes.RenderUnauthorized(c)
+-			},
+-		}))
+-	}
+-
+-	if len(baseConfig.Kiosk.AllowedOrigins) > 0 {
+-		e.Use(middleware.CORS(baseConfig.Kiosk.AllowedOrigins...))
++	e.Use(middleware.KeyAuthWithConfig(middleware.KeyAuthConfig{
++		Skipper: func(c *echo.Context) bool {
++			// Health probes never disclose configuration or upstream responses. All
++			// other routes are public only while the current snapshot has no password.
++			path := c.Request().URL.Path
++			if strings.HasPrefix(path, "/assets/") || path == "/health" || path == "/livez" || path == "/readyz" || path == "/favicon.ico" {
++				return true
++			}
++			return baseConfig.Snapshot().Kiosk.Password == ""
++		},
++		KeyLookup: "header:Authorization,header:X-Api-Key,query:authsecret,query:password,form:authsecret,form:password",
++		Validator: func(c *echo.Context, key string, _ middleware.ExtractorSource) (bool, error) {
++			requestConfig := baseConfig.Snapshot()
++			if subtle.ConstantTimeCompare([]byte(key), []byte(requestConfig.Kiosk.Password)) == 1 {
++				return true, nil
++			}
++			return false, nil
++		},
++		ErrorHandler: func(c *echo.Context, err error) error {
++			requestConfig := baseConfig.Snapshot()
++			if requestConfig.Kiosk.Debug || requestConfig.Kiosk.DebugVerbose {
++				log.Warn("unauthorized request",
++					"IP", c.RealIP(),
++					"method", c.Request().Method,
++					"URL", c.Request().URL.String(),
++					"error", err)
++			}
++			return routes.RenderUnauthorized(c)
++		},
++	}))
++
++	// CORS registration is startup-only in Echo. Snapshot it so reloads cannot
++	// race middleware construction or imply unsupported live CORS mutation.
++	if len(startupConfig.Kiosk.AllowedOrigins) > 0 {
++		e.Use(middleware.CORS(startupConfig.Kiosk.AllowedOrigins...))
+ 	}
+ }
+ 
+@@ -339,8 +348,9 @@ func NoCacheMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+ 
+ // Middleware for static routes with access to baseConfig
+ func StaticCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareFunc {
++	startupConfig := baseConfig.Snapshot()
+ 	return func(next echo.HandlerFunc) echo.HandlerFunc {
+-		if baseConfig.Kiosk.Debug || baseConfig.Kiosk.DebugVerbose {
++		if startupConfig.Kiosk.Debug || startupConfig.Kiosk.DebugVerbose {
+ 			return NoCacheMiddleware(next)
+ 		}
+ 
+@@ -353,8 +363,9 @@ func StaticCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareF
+ 
+ // Middleware for asset(s) routes with access to baseConfig
+ func AssetCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareFunc {
++	startupConfig := baseConfig.Snapshot()
+ 	return func(next echo.HandlerFunc) echo.HandlerFunc {
+-		if baseConfig.Kiosk.Debug || baseConfig.Kiosk.DebugVerbose {
++		if startupConfig.Kiosk.Debug || startupConfig.Kiosk.DebugVerbose {
+ 			return NoCacheMiddleware(next)
+ 		}
+ 
+@@ -365,7 +376,45 @@ func AssetCacheMiddlewareWithConfig(baseConfig *config.Config) echo.MiddlewareFu
+ 	}
+ }
+ 
+-func healthCheck() int {
++func healthCheck() int { return localCheck("/livez") }
++
++func checkEndpoint(args []string) (string, bool) {
++	if len(args) != 1 {
++		return "", false
++	}
++	switch args[0] {
++	case "--healthcheck", "--livecheck":
++		return "/livez", true
++	case "--readycheck":
++		return "/readyz", true
++	default:
++		return "", false
++	}
++}
++
++func registerHealthRoutes(e *echo.Echo, baseConfig *config.Config) {
++	e.GET("/health", func(c *echo.Context) error { return c.String(http.StatusOK, "OK") })
++	e.GET("/livez", func(c *echo.Context) error { return c.String(http.StatusOK, "OK") })
++	e.GET("/readyz", func(c *echo.Context) error {
++		ctx, cancel := context.WithTimeout(c.Request().Context(), 2*time.Second)
++		defer cancel()
++		if err := immich.Ready(ctx, baseConfig.Snapshot()); err != nil {
++			return c.NoContent(http.StatusServiceUnavailable)
++		}
++		return c.String(http.StatusOK, "OK")
++	})
++}
++
++func configureServer(server *http.Server) error {
++	server.ReadHeaderTimeout = 5 * time.Second
++	server.ReadTimeout = 30 * time.Second
++	server.WriteTimeout = 45 * time.Second
++	server.IdleTimeout = 60 * time.Second
++	server.MaxHeaderBytes = 16 << 10
++	return nil
++}
++
++func localCheck(endpoint string) int {
+ 	port := os.Getenv("KIOSK_PORT")
+ 	if port == "" {
+ 		port = "3000"
+@@ -374,7 +423,7 @@ func healthCheck() int {
+ 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+ 	defer cancel()
+ 
+-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://localhost:%s/health", port), nil)
++	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://localhost:%s%s", port, endpoint), nil)
+ 	if err != nil {
+ 		fmt.Fprintln(os.Stderr, "FAIL")
+ 		return 1
+@@ -409,8 +458,9 @@ func healthCheck() int {
+ }
+ 
+ func versionCheck(c context.Context, immichURL string) bool {
+-	immich.HTTPClient.Timeout = time.Second * 20
+-	immichVersion, immichVersionErr := immich.Version(c, immichURL)
++	ctx, cancel := context.WithTimeout(c, 20*time.Second)
++	defer cancel()
++	immichVersion, immichVersionErr := immich.Version(ctx, immichURL)
+ 	if immichVersionErr != nil {
+ 		log.Error("Failed to get Immich version. Skipping version check.", "err", immichVersionErr)
+ 	} else {
+diff --git a/internal/config/config.go b/internal/config/config.go
+index f5a4118..a5f47c8 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -739,6 +739,7 @@ func (c *Config) Load() error {
+ 	c.checkWeatherRotationInterval()
+ 	c.checkDebuging()
+ 	c.checkFetchedAssetsSize()
++	c.checkHTTPTimeout()
+ 	c.checkRedirects()
+ 	c.checkOffline()
+ 	c.checkBurnIn()
+@@ -747,6 +748,21 @@ func (c *Config) Load() error {
+ 	return nil
+ }
+ 
++// Snapshot returns an isolated, request-safe copy of the current configuration.
++// Reload swaps the source configuration while holding the same lock, so callers
++// must not copy Config directly.
++func (c *Config) Snapshot() Config {
++	c.mu.RLock()
++	snapshot := *c
++	// Request overrides mutate slices and maps. Deep-copy the exported config
++	// graph while holding the reload lock so no request shares mutable state.
++	copyRec(reflect.ValueOf(c).Elem(), reflect.ValueOf(&snapshot).Elem(), make(map[unsafe.Pointer]reflect.Value), false)
++	c.mu.RUnlock()
++	// Request overrides mutate their copy.  Do not retain the shared reload lock.
++	snapshot.mu = &sync.RWMutex{}
++	return snapshot
++}
++
+ // ResetBuckets clears all the asset bucket slice fields (Person, Album, Date)
+ // in the Config structure. This is typically used when applying new query parameters
+ // to ensure old values don't persist. When querying specific buckets, the previous
+@@ -857,7 +873,7 @@ func RedactedCopy[T any](in T) T {
+ 	src := reflect.ValueOf(in)
+ 	dst := reflect.New(src.Type()).Elem()
+ 	seen := make(map[unsafe.Pointer]reflect.Value) // cycle-guard
+-	copyRec(src, dst, seen)
++	copyRec(src, dst, seen, true)
+ 	out, ok := dst.Interface().(T)
+ 	if !ok {
+ 		var zero T
+@@ -866,7 +882,7 @@ func RedactedCopy[T any](in T) T {
+ 	return out
+ }
+ 
+-func copyRec(src, dst reflect.Value, seen map[unsafe.Pointer]reflect.Value) {
++func copyRec(src, dst reflect.Value, seen map[unsafe.Pointer]reflect.Value, redact bool) {
+ 	if !src.IsValid() {
+ 		return
+ 	}
+@@ -884,18 +900,18 @@ func copyRec(src, dst reflect.Value, seen map[unsafe.Pointer]reflect.Value) {
+ 		}
+ 		dst.Set(reflect.New(src.Elem().Type()))
+ 		seen[addr] = dst
+-		copyRec(src.Elem(), dst.Elem(), seen)
++		copyRec(src.Elem(), dst.Elem(), seen, redact)
+ 
+ 	case reflect.Struct:
+ 		for i := range src.NumField() {
+ 			fsrc, fdst := src.Field(i), dst.Field(i)
+ 			fieldInfo := src.Type().Field(i)
+-			if fieldInfo.Tag.Get("redact") == "true" {
++			if redact && fieldInfo.Tag.Get("redact") == "true" {
+ 				maskValue(fsrc, fdst)
+ 				continue
+ 			}
+ 			if fdst.CanSet() {
+-				copyRec(fsrc, fdst, seen)
++				copyRec(fsrc, fdst, seen, redact)
+ 			}
+ 		}
+ 
+@@ -903,7 +919,7 @@ func copyRec(src, dst reflect.Value, seen map[unsafe.Pointer]reflect.Value) {
+ 		l := src.Len()
+ 		dslice := reflect.MakeSlice(src.Type(), l, l)
+ 		for i := range l {
+-			copyRec(src.Index(i), dslice.Index(i), seen)
++			copyRec(src.Index(i), dslice.Index(i), seen, redact)
+ 		}
+ 		dst.Set(dslice)
+ 
+@@ -911,7 +927,7 @@ func copyRec(src, dst reflect.Value, seen map[unsafe.Pointer]reflect.Value) {
+ 		dmap := reflect.MakeMapWithSize(src.Type(), src.Len())
+ 		for _, k := range src.MapKeys() {
+ 			v := reflect.New(src.Type().Elem()).Elem()
+-			copyRec(src.MapIndex(k), v, seen)
++			copyRec(src.MapIndex(k), v, seen, redact)
+ 			dmap.SetMapIndex(k, v)
+ 		}
+ 		dst.Set(dmap)
+diff --git a/internal/config/config_validation.go b/internal/config/config_validation.go
+index 03217e5..b9c9708 100644
+--- a/internal/config/config_validation.go
++++ b/internal/config/config_validation.go
+@@ -598,6 +598,13 @@ func (c *Config) checkOffline() {
+ 	}
+ }
+ 
++func (c *Config) checkHTTPTimeout() {
++	if c.Kiosk.HTTPTimeout <= 0 {
++		log.Warn("Invalid http_timeout value. Using default: 20", "http_timeout", c.Kiosk.HTTPTimeout)
++		c.Kiosk.HTTPTimeout = 20
++	}
++}
++
+ func checkSchema(config map[string]any, level string) bool {
+ 	if strings.EqualFold(level, kiosk.ConfigValidationOff) {
+ 		log.Info("Config validation disabled")
+diff --git a/internal/config/config_watcher.go b/internal/config/config_watcher.go
+index d80e128..28a7685 100644
+--- a/internal/config/config_watcher.go
++++ b/internal/config/config_watcher.go
+@@ -94,6 +94,9 @@ func (c *Config) reloadConfig(reason string) {
+ 		return
+ 	}
+ 
++	// Keep the lock stable across a reload. Readers take this lock through
++	// Snapshot(), whereas replacing it would leave them unsynchronised.
++	newConfig.mu = c.mu
+ 	*c = *newConfig
+ 
+ 	c.updateConfigState()
+diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
+index c64b0a7..d95fb31 100644
+--- a/internal/immich/immich_helpers.go
++++ b/internal/immich/immich_helpers.go
+@@ -14,6 +14,7 @@ import (
+ 	"path"
+ 	"reflect"
+ 	"slices"
++	"strconv"
+ 	"strings"
+ 	"sync"
+ 	"time"
+@@ -31,6 +32,7 @@ import (
+ const (
+ 	defaultAlbumRestrictionRegistrySize = 128
+ 	defaultAlbumRestrictionTTL          = 10 * time.Minute
++	defaultAPICallTimeout               = 20 * time.Second
+ )
+ 
+ type albumRestrictionCacheKey struct {
+@@ -147,6 +149,12 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
+ 	var responseBody []byte
+ 	var lastErr error
+ 	var contentType string
++	timeout := time.Duration(a.requestConfig.Kiosk.HTTPTimeout) * time.Second
++	if timeout <= 0 {
++		timeout = defaultAPICallTimeout
++	}
++	ctx, cancel := context.WithTimeout(ctx, timeout)
++	defer cancel()
+ 
+ 	_, err := url.Parse(apiURL)
+ 	if err != nil {
+@@ -223,12 +231,11 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
+ 					"error_type", fmt.Sprintf("%T", resErr),
+ 					"error", resErr)
+ 			}
+-			backoff := time.NewTimer(time.Duration(1<<attempts) * time.Second)
+-			select {
+-			case <-ctx.Done():
+-				backoff.Stop()
+-				return responseBody, contentType, false, ctx.Err()
+-			case <-backoff.C:
++			if !retryableOperation(method, apiURL) {
++				return responseBody, contentType, false, resErr
++			}
++			if err := waitRetry(ctx, attempts, ""); err != nil {
++				return responseBody, contentType, false, err
+ 			}
+ 			continue
+ 		}
+@@ -259,6 +266,13 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
+ 			if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
+ 				return responseBody, contentType, false, fmt.Errorf("received %d (unauthorised) code from Immich. Please check your Immich API is correct", res.StatusCode)
+ 			}
++			if attempts < MaxRetries-1 && retryableOperation(method, apiURL) && transientStatus(res.StatusCode) {
++				lastErr = fmt.Errorf("HTTP %d: transient status code", res.StatusCode)
++				if err := waitRetry(ctx, attempts, res.Header.Get("Retry-After")); err != nil {
++					return responseBody, contentType, false, err
++				}
++				continue
++			}
+ 
+ 			return responseBody, contentType, false, fmt.Errorf("HTTP %d: unexpected status code", res.StatusCode)
+ 		}
+@@ -275,6 +289,59 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
+ 	return responseBody, contentType, false, fmt.Errorf("request failed: max retries exceeded. last err=%w", lastErr)
+ }
+ 
++func retryableOperation(method, apiURL string) bool {
++	switch method {
++	case http.MethodGet, http.MethodHead, http.MethodOptions:
++		return true
++	case http.MethodPost:
++		u, err := url.Parse(apiURL)
++		if err != nil {
++			return false
++		}
++		// These POST endpoints are selections, not mutations.
++		return u.Path == "/api/search/random" || u.Path == "/api/search/metadata"
++	default:
++		return false
++	}
++}
++
++func transientStatus(status int) bool {
++	return status == http.StatusRequestTimeout || status == http.StatusTooEarly || status == http.StatusTooManyRequests || status >= 500
++}
++
++func waitRetry(ctx context.Context, attempt int, retryAfter string) error {
++	delay := retryDelay(attempt, retryAfter)
++	timer := time.NewTimer(delay)
++	defer timer.Stop()
++	select {
++	case <-ctx.Done():
++		return ctx.Err()
++	case <-timer.C:
++		return nil
++	}
++}
++
++func retryDelay(attempt int, retryAfter string) time.Duration {
++	delay := time.Duration(1<<attempt) * time.Second
++	retryAfterProvided := false
++	if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds >= 0 {
++		delay = time.Duration(seconds) * time.Second
++		retryAfterProvided = true
++	} else if retryAt, err := http.ParseTime(retryAfter); err == nil {
++		delay = max(time.Until(retryAt), 0)
++		retryAfterProvided = true
++	}
++	// Retry-After is a provider minimum. Add bounded positive jitter only; for
++	// locally chosen backoff use full jitter to avoid synchronized retries.
++	if retryAfterProvided {
++		jitterLimit := min(250*time.Millisecond, max(delay/10, time.Millisecond))
++		delay += time.Duration(rand.Int64N(int64(jitterLimit) + 1))
++	} else if delay > 0 {
++		delay = time.Duration(rand.Int64N(int64(delay) + 1))
++	}
++	return delay
++}
++
+ // fetchAssets handles the API call and unmarshalling for both random and metadata endpoints.
+ // FilterDate is applied here.
+ // FilterNewest is applied here.
+diff --git a/internal/immich/immich_server.go b/internal/immich/immich_server.go
+index 38596ba..efdead2 100644
+--- a/internal/immich/immich_server.go
++++ b/internal/immich/immich_server.go
+@@ -2,15 +2,37 @@ package immich
+ 
+ import (
+ 	"context"
++	"crypto/sha256"
+ 	"encoding/json"
+ 	"fmt"
+ 	"io"
+ 	"net/http"
+ 	"net/url"
++	"sync"
++	"time"
+ 
+ 	"charm.land/log/v2"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"golang.org/x/sync/singleflight"
+ )
+ 
++const (
++	readinessSuccessTTL = 30 * time.Second
++	readinessFailureTTL = 5 * time.Second
++)
++
++type readinessResult struct {
++	successUntil time.Time
++	failureUntil time.Time
++}
++
++var readinessCache = struct {
++	sync.Mutex
++	results map[string]readinessResult
++}{results: make(map[string]readinessResult)}
++
++var readinessProbes singleflight.Group
++
+ type ServerAboutResponse struct {
+ 	Build                      *string `json:"build,omitempty"`
+ 	BuildImage                 *string `json:"buildImage,omitempty"`
+@@ -82,6 +104,8 @@ type ServerPingResponse struct {
+ 
+ func IsOnline(ctx context.Context, immichURL string) bool {
+ 	var pong ServerPingResponse
++	ctx, cancel := context.WithTimeout(ctx, defaultAPICallTimeout)
++	defer cancel()
+ 
+ 	u, err := url.Parse(immichURL)
+ 	if err != nil {
+@@ -170,3 +194,58 @@ func Version(ctx context.Context, immichURL string) (ServerVersionResponse, erro
+ 
+ 	return serverVersionResponse, nil
+ }
++
++// Ready performs a bounded authenticated read. It intentionally returns only an
++// error to callers so readiness endpoints never expose API keys or upstream
++// response bodies.
++func Ready(ctx context.Context, requestConfig config.Config) error {
++	key := readinessKey(requestConfig)
++	if ready, cacheErr := cachedReadiness(key, time.Now()); ready || cacheErr != nil {
++		return cacheErr
++	}
++	_, err, _ := readinessProbes.Do(key, func() (any, error) {
++		if ready, cacheErr := cachedReadiness(key, time.Now()); ready || cacheErr != nil {
++			return nil, cacheErr
++		}
++		asset := New(ctx, requestConfig)
++		_, probeErr := asset.assetsStatistics()
++		storeReadiness(key, time.Now(), probeErr)
++		return nil, probeErr
++	})
++	return err
++}
++
++func readinessKey(requestConfig config.Config) string {
++	apiKey := requestConfig.ImmichAPIKey
++	if requestConfig.SelectedUser != "" {
++		if userKey, ok := requestConfig.ImmichUsersAPIKeys[requestConfig.SelectedUser]; ok {
++			apiKey = userKey
++		}
++	}
++	digest := sha256.Sum256([]byte(apiKey))
++	// The cache key remains process-private and includes no raw credential.
++	return requestConfig.ImmichURL + "\x00" + requestConfig.SelectedUser + "\x00" + string(digest[:])
++}
++
++func cachedReadiness(key string, now time.Time) (bool, error) {
++	readinessCache.Lock()
++	cached := readinessCache.results[key]
++	readinessCache.Unlock()
++	if now.Before(cached.successUntil) {
++		return true, nil
++	}
++	if now.Before(cached.failureUntil) {
++		return false, fmt.Errorf("Immich readiness probe is temporarily backed off")
++	}
++	return false, nil
++}
++
++func storeReadiness(key string, now time.Time, err error) {
++	readinessCache.Lock()
++	if err == nil {
++		readinessCache.results[key] = readinessResult{successUntil: now.Add(readinessSuccessTTL)}
++	} else {
++		readinessCache.results[key] = readinessResult{failureUntil: now.Add(readinessFailureTTL)}
++	}
++	readinessCache.Unlock()
++}
+diff --git a/internal/routes/routes.go b/internal/routes/routes.go
+index a88aa45..c2db007 100644
+--- a/internal/routes/routes.go
++++ b/internal/routes/routes.go
+@@ -73,7 +73,7 @@ func InitializeRequestData(c *echo.Context, baseConfig *config.Config) (*common.
+ 	}
+ 
+ 	// create a copy of the global config to use with this request
+-	requestConfig := *baseConfig
++	requestConfig := baseConfig.Snapshot()
+ 
+ 	// If kiosk version on client and server do not match refresh client.
+ 	if kioskDeviceVersion != "" && KioskVersion != kioskDeviceVersion {
+diff --git a/internal/routes/routes_asset.go b/internal/routes/routes_asset.go
+index 8721a47..01176c7 100644
+--- a/internal/routes/routes_asset.go
++++ b/internal/routes/routes_asset.go
+@@ -2,11 +2,13 @@ package routes
+ 
+ import (
+ 	"bytes"
++	"context"
+ 	"errors"
+ 	"net/http"
+ 	"slices"
+ 	"strconv"
+ 	"strings"
++	"time"
+ 
+ 	"charm.land/log/v2"
+ 	"github.com/labstack/echo/v5"
+@@ -24,6 +26,26 @@ import (
+ 	"github.com/damongolding/immich-kiosk/internal/webhooks"
+ )
+ 
++const (
++	foregroundAssetTimeout  = 30 * time.Second
++	offlinePrefetchDeadline = 2 * time.Minute
++)
++
++func foregroundAssetContext(request context.Context, shutdown context.Context, httpTimeoutSeconds int) (context.Context, context.CancelFunc) {
++	ctx, cancel := context.WithCancel(request)
++	stop := context.AfterFunc(shutdown, cancel)
++	deadline := foregroundAssetTimeout
++	if httpTimeoutSeconds > 0 {
++		deadline = min(deadline, time.Duration(httpTimeoutSeconds)*time.Second)
++	}
++	timed, timeoutCancel := context.WithTimeout(ctx, deadline)
++	return timed, func() {
++		stop()
++		timeoutCancel()
++		cancel()
++	}
++}
++
+ // NewAsset returns an echo.HandlerFunc that handles requests fogr new assets.
+ // It manages image processing, caching, and prefetching based on the configuration.
+ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+@@ -72,8 +94,13 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 			log.Debug(requestID, "deviceID", deviceID, "cache miss for new image")
+ 		}
+ 
+-		viewData, err := generateViewData(com.Context(), requestConfig, requestCtx, requestID, deviceID, false)
++		foregroundCtx, cancel := foregroundAssetContext(c.Request().Context(), com.Context(), requestConfig.Kiosk.HTTPTimeout)
++		defer cancel()
++		viewData, err := generateViewData(foregroundCtx, requestConfig, requestCtx, requestID, deviceID, false)
+ 		if err != nil {
++			if requestConfig.OfflineMode.Enabled {
++				return OfflineMode(baseConfig, com)(c)
++			}
+ 			t := i18n.T()
+ 			return RenderError(c, err, t("retrieving_asset"), requestConfig.Duration)
+ 		}
+@@ -81,6 +108,11 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 		if requestConfig.Kiosk.PreFetch {
+ 			scheduleAssetPrefetch(com, requestData, requestCtx)
+ 		}
++		if requestConfig.OfflineMode.Enabled {
++			// The dedicated scheduler deduplicates slide-triggered prewarm work and
++			// derives its lifetime from shutdown, so it is drained before exit.
++			scheduleOfflinePrewarm(com, requestConfig, requestCtx, requestID, deviceID)
++		}
+ 
+ 		go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, viewData)
+ 
+@@ -327,7 +359,7 @@ func LikeAsset(baseConfig *config.Config, com *common.Common, setAssetAsLiked bo
+ 			return echo.NewHTTPError(http.StatusBadRequest, "Asset ID is required")
+ 		}
+ 
+-		if baseConfig.Kiosk.DemoMode {
++		if requestConfig.Kiosk.DemoMode {
+ 			return Render(c, http.StatusOK, partials.LikeButton(assetID, user, true, true, true, com.Secret()))
+ 		}
+ 
+@@ -370,7 +402,17 @@ func LikeAsset(baseConfig *config.Config, com *common.Common, setAssetAsLiked bo
+ 
+ 		// handle error
+ 		if eg != nil {
+-			return Render(c, http.StatusInternalServerError, partials.LikeButton(assetID, user, !setAssetAsLiked, false, true, com.Secret()))
++			// A combined favourite/album action can partially succeed. Re-read without
++			// cache and disable the control so the UI never claims the requested state.
++			actualLikeState := immichAsset.IsFavorite
++			reconcileConfig := requestConfig
++			reconcileConfig.Kiosk.Cache = false
++			reconciled := immich.New(com.Context(), reconcileConfig)
++			reconciled.ID = assetID
++			if reconcileErr := reconciled.AssetInfo(requestID, requestData.DeviceID); reconcileErr == nil {
++				actualLikeState = reconciled.IsFavorite
++			}
++			return Render(c, http.StatusConflict, partials.LikeButton(assetID, user, actualLikeState, false, false, com.Secret()))
+ 		}
+ 
+ 		return Render(c, http.StatusOK, partials.LikeButton(assetID, user, setAssetAsLiked, setAssetAsLiked, true, com.Secret()))
+@@ -423,7 +465,7 @@ func HideAsset(baseConfig *config.Config, com *common.Common, hideAsset bool) ec
+ 			return echo.NewHTTPError(http.StatusBadRequest, "Tag name is required")
+ 		}
+ 
+-		if baseConfig.Kiosk.DemoMode {
++		if requestConfig.Kiosk.DemoMode {
+ 			return Render(c, http.StatusOK, partials.HideButton(assetID, user, !hideAsset, true, com.Secret()))
+ 		}
+ 
+@@ -467,16 +509,39 @@ func HideAsset(baseConfig *config.Config, com *common.Common, hideAsset bool) ec
+ 		}
+ 
+ 		if eg != nil {
+-			return Render(c, http.StatusOK, partials.HideButton(assetID, user, !hideAsset, true, com.Secret()))
++			// Tag and archive are independent actions. A partial failure cannot be
++			// represented by one toggle, so expose the freshly observed primary state
++			// but disable it until the operator resolves the inconsistency.
++			actualHideState := immichAsset.IsArchived
++			reconcileConfig := requestConfig
++			reconcileConfig.Kiosk.Cache = false
++			reconciled := immich.New(com.Context(), reconcileConfig)
++			reconciled.ID = assetID
++			if reconcileErr := reconciled.AssetInfo(requestID, requestData.DeviceID); reconcileErr == nil {
++				actualHideState = reconciled.IsArchived
++				if !slices.Contains(requestConfig.HideButtonAction, kiosk.HideButtonActionArchive) {
++					actualHideState = assetHasTag(reconciled.Tags, tagName)
++				}
++			}
++			return Render(c, http.StatusConflict, partials.HideButton(assetID, user, actualHideState, false, com.Secret()))
+ 		}
+ 
+ 		return Render(c, http.StatusOK, partials.HideButton(assetID, user, hideAsset, true, com.Secret()))
+ 	}
+ }
+ 
++func assetHasTag(tags immich.Tags, tagName string) bool {
++	for _, tag := range tags {
++		if strings.EqualFold(tag.Name, tagName) || strings.EqualFold(tag.Value, tagName) {
++			return true
++		}
++	}
++	return false
++}
++
+ func RatingAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 	return func(c *echo.Context) error {
+-		if baseConfig.Kiosk.DemoMode {
++		if baseConfig.Snapshot().Kiosk.DemoMode {
+ 			return nil
+ 		}
+ 
+@@ -545,7 +610,7 @@ func RatingAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 
+ func ClearRatingAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 	return func(c *echo.Context) error {
+-		if baseConfig.Kiosk.DemoMode {
++		if baseConfig.Snapshot().Kiosk.DemoMode {
+ 			return nil
+ 		}
+ 
+diff --git a/internal/routes/routes_asset_helpers.go b/internal/routes/routes_asset_helpers.go
+index 43572b0..e4e6bd9 100644
+--- a/internal/routes/routes_asset_helpers.go
++++ b/internal/routes/routes_asset_helpers.go
+@@ -745,7 +745,7 @@ func assetToCache(ctx context.Context, viewDataToAdd common.ViewData, requestCon
+ 
+ func scheduleAssetPrefetch(common *common.Common, requestData *common.RouteRequestData, c common.ContextCopy) {
+ 	key := requestData.DeviceID + "\x00" + c.URL.String()
+-	assetPrefetchScheduler.schedule(key, func(ctx context.Context) { assetPreFetch(ctx, common, requestData, c) })
++	assetPrefetchScheduler.scheduleWithContext(common.Context(), key, func(ctx context.Context) { assetPreFetch(ctx, common, requestData, c) })
+ }
+ 
+ // assetPreFetch handles prefetching assets for the current request
+diff --git a/internal/routes/routes_offline.go b/internal/routes/routes_offline.go
+index 57e5f76..247450b 100644
+--- a/internal/routes/routes_offline.go
++++ b/internal/routes/routes_offline.go
+@@ -55,7 +55,7 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 		requestID := requestData.RequestID
+ 		deviceID := requestData.DeviceID
+ 
+-		requestConfig := *baseConfig
++		requestConfig := baseConfig.Snapshot()
+ 		requestConfig.History = requestData.RequestConfig.History
+ 		requestConfig.Memories = false
+ 		requestConfig.ShowVideos = false
+@@ -97,7 +97,13 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 		}
+ 
+ 		if requestConfig.OfflineMode.ExpirationHours > 0 {
+-			expired, expiredErr := checkOfflineAssetsExpiration(com.Context(), requestConfig.ImmichURL)
++			timeout := time.Duration(requestConfig.Kiosk.HTTPTimeout) * time.Second
++			if timeout <= 0 {
++				timeout = 20 * time.Second
++			}
++			expirationCtx, cancel := context.WithTimeout(com.Context(), timeout)
++			expired, expiredErr := checkOfflineAssetsExpiration(expirationCtx, requestConfig.ImmichURL)
++			cancel()
+ 			if expiredErr != nil {
+ 				return expiredErr
+ 			}
+@@ -163,7 +169,7 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ //   - Max size parsing fails
+ //   - File operations fail
+ //   - Asset downloads fail
+-func downloadOfflineAssets(requestConfig config.Config, requestCtx common.ContextCopy, com *common.Common, requestID, deviceID string) error {
++func downloadOfflineAssets(parent context.Context, requestConfig config.Config, requestCtx common.ContextCopy, com *common.Common, requestID, deviceID string) error {
+ 	if !mu.TryLock() {
+ 		log.Debug("DownloadOfflineAssets is already running")
+ 		return nil
+@@ -179,7 +185,7 @@ func downloadOfflineAssets(requestConfig config.Config, requestCtx common.Contex
+ 	}
+ 
+ 	// Setup parent context with cancel
+-	ctx, cancel := context.WithCancel(com.Context())
++	ctx, cancel := context.WithCancel(parent)
+ 	defer cancel()
+ 
+ 	// Wrap with errgroup context
+@@ -217,7 +223,7 @@ func downloadOfflineAssets(requestConfig config.Config, requestCtx common.Contex
+ 					return err
+ 				}
+ 
+-				viewData, err := generateViewData(com.Context(), requestConfig, requestCtx, requestID, deviceID, false)
++				viewData, err := generateViewData(egCtx, requestConfig, requestCtx, requestID, deviceID, false)
+ 				if err != nil {
+ 					log.Error("SaveOfflineAsset: generateViewData", "err", err)
+ 					if errorCount.Add(1) > fileExistsTolerance*2 {
+@@ -449,12 +455,7 @@ func generateCacheFilename(uuids ...string) string {
+ // Returns an error if the render operation fails
+ func handleNoOfflineAssets(c *echo.Context, requestConfig config.Config, com *common.Common, requestID, deviceID string) error {
+ 	requestCtx := common.CopyContext(c)
+-	go func(c common.ContextCopy) {
+-		downloadErr := downloadOfflineAssets(requestConfig, c, com, requestID, deviceID)
+-		if downloadErr != nil {
+-			log.Error("OfflineMode: DownloadOfflineAssets", "err", downloadErr)
+-		}
+-	}(requestCtx)
++	scheduleOfflinePrewarm(com, requestConfig, requestCtx, requestID, deviceID)
+ 
+ 	maxSizeMessage := "None"
+ 	if requestConfig.OfflineMode.MaxSize != "0" {
+@@ -552,6 +553,28 @@ func IsOfflineDownloadRunning() bool {
+ 	return !locked
+ }
+ 
++func offlinePrewarmNeeded(requestConfig config.Config) bool {
++	files, err := os.ReadDir(OfflineAssetsPath)
++	if err != nil {
++		return true
++	}
++	assets := 0
++	for _, file := range files {
++		if !file.IsDir() && !strings.HasPrefix(file.Name(), "_") && !strings.HasPrefix(file.Name(), ".") {
++			assets++
++		}
++	}
++	if assets < requestConfig.OfflineMode.NumberOfAssets {
++		return true
++	}
++	expires, err := os.ReadFile(filepath.Join(OfflineAssetsPath, OfflineExpirationFilename))
++	if err != nil {
++		return true
++	}
++	expiration, err := time.Parse(time.RFC3339, strings.TrimSpace(string(expires)))
++	return err != nil || !time.Now().Before(expiration)
++}
++
+ func checkCanceled(ctx context.Context) error {
+ 	select {
+ 	case <-ctx.Done():
+diff --git a/internal/routes/routes_prefetch.go b/internal/routes/routes_prefetch.go
+index 0acffdb..c529e5b 100644
+--- a/internal/routes/routes_prefetch.go
++++ b/internal/routes/routes_prefetch.go
+@@ -2,8 +2,13 @@ package routes
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"sync"
+ 	"time"
++
++	"charm.land/log/v2"
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
+ )
+ 
+ const (
+@@ -12,9 +17,12 @@ const (
+ )
+ 
+ type prefetchScheduler struct {
+-	sem      chan struct{}
+-	timeout  time.Duration
+-	inFlight sync.Map
++	sem       chan struct{}
++	timeout   time.Duration
++	inFlight  sync.Map
++	workers   sync.WaitGroup
++	admission sync.Mutex
++	draining  bool
+ }
+ 
+ func newPrefetchScheduler(concurrency int, timeout time.Duration) *prefetchScheduler {
+@@ -22,6 +30,20 @@ func newPrefetchScheduler(concurrency int, timeout time.Duration) *prefetchSched
+ }
+ 
+ func (s *prefetchScheduler) schedule(key string, work func(context.Context)) bool {
++	return s.scheduleWithContext(context.Background(), key, work)
++}
++
++func (s *prefetchScheduler) scheduleWithContext(parent context.Context, key string, work func(context.Context)) bool {
++	s.admission.Lock()
++	defer s.admission.Unlock()
++	select {
++	case <-parent.Done():
++		return false
++	default:
++	}
++	if s.draining {
++		return false
++	}
+ 	if _, loaded := s.inFlight.LoadOrStore(key, struct{}{}); loaded {
+ 		return false
+ 	}
+@@ -31,13 +53,59 @@ func (s *prefetchScheduler) schedule(key string, work func(context.Context)) boo
+ 		s.inFlight.Delete(key)
+ 		return false
+ 	}
++	s.workers.Add(1)
+ 	go func() {
++		defer s.workers.Done()
+ 		defer func() { <-s.sem; s.inFlight.Delete(key) }()
+-		ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
++		ctx, cancel := context.WithTimeout(parent, s.timeout)
+ 		defer cancel()
+ 		work(ctx)
+ 	}()
+ 	return true
+ }
+ 
++func (s *prefetchScheduler) drain(ctx context.Context) bool {
++	s.admission.Lock()
++	s.draining = true
++	s.admission.Unlock()
++	done := make(chan struct{})
++	go func() {
++		s.workers.Wait()
++		close(done)
++	}()
++	select {
++	case <-done:
++		return true
++	case <-ctx.Done():
++		return false
++	}
++}
++
+ var assetPrefetchScheduler = newPrefetchScheduler(defaultPrefetchConcurrency, defaultPrefetchTimeout)
++
++const offlinePrewarmKey = "offline-prewarm"
++
++// Kept separate from ordinary asset prefetch so a durable offline download does
++// not consume the short-lived foreground prefetch capacity.
++var offlinePrefetchScheduler = newPrefetchScheduler(1, offlinePrefetchDeadline)
++
++func scheduleOfflinePrewarm(com *common.Common, requestConfig config.Config, requestCtx common.ContextCopy, requestID, deviceID string) bool {
++	if !offlinePrewarmNeeded(requestConfig) {
++		return false
++	}
++	if IsOfflineDownloadRunning() {
++		return false
++	}
++	return offlinePrefetchScheduler.scheduleWithContext(com.Context(), offlinePrewarmKey, func(ctx context.Context) {
++		if err := downloadOfflineAssets(ctx, requestConfig, requestCtx, com, requestID, deviceID); err != nil && !errors.Is(err, context.Canceled) {
++			log.Warn("offline prewarm", "err", err)
++		}
++	})
++}
++
++// DrainAssetPrefetch waits for shutdown-cancelled prefetch workers to exit.
++func DrainAssetPrefetch(ctx context.Context) bool {
++	assetDrained := assetPrefetchScheduler.drain(ctx)
++	offlineDrained := offlinePrefetchScheduler.drain(ctx)
++	return assetDrained && offlineDrained
++}
+diff --git a/internal/routes/routes_webhooks.go b/internal/routes/routes_webhooks.go
+index 3b85b57..2e990c0 100644
+--- a/internal/routes/routes_webhooks.go
++++ b/internal/routes/routes_webhooks.go
+@@ -23,7 +23,7 @@ import (
+ // The handler validates request signatures, timestamps, and payloads, and processes supported webhook events such as user interactions. For relevant events, it retrieves asset information based on the request history and triggers asynchronous webhook actions. Returns appropriate HTTP responses for demo mode, invalid requests, or processing errors.
+ func Webhooks(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 	return func(c *echo.Context) error {
+-		if baseConfig.Kiosk.DemoMode {
++		if baseConfig.Snapshot().Kiosk.DemoMode {
+ 			return c.String(http.StatusOK, "Demo mode enabled")
+ 		}
+ 
+diff --git a/internal/routes/routes_weather.go b/internal/routes/routes_weather.go
+index 963c29a..8df2eb3 100644
+--- a/internal/routes/routes_weather.go
++++ b/internal/routes/routes_weather.go
+@@ -16,6 +16,7 @@ import (
+ 
+ func Weather(baseConfig *config.Config) echo.HandlerFunc {
+ 	return func(c *echo.Context) error {
++		baseSnapshot := baseConfig.Snapshot()
+ 		requestData, err := InitializeRequestData(c, baseConfig)
+ 		if err != nil {
+ 			return err
+@@ -36,7 +37,7 @@ func Weather(baseConfig *config.Config) echo.HandlerFunc {
+ 
+ 		locationName := requestParams.Get(weather.WeatherParam)
+ 		// Enable weather rotation in demo mode
+-		if baseConfig.Kiosk.DemoMode {
++		if baseSnapshot.Kiosk.DemoMode {
+ 			locationName = weather.WeatherRotation
+ 		}
+ 		nextWeatherRotation := 0
+@@ -60,11 +61,11 @@ func Weather(baseConfig *config.Config) echo.HandlerFunc {
+ 		}
+ 
+ 		if locationName == "" {
+-			if !baseConfig.Weather.HasDefault {
++			if !baseSnapshot.Weather.HasDefault {
+ 				log.Warn("No weather location provided and no default set")
+ 				return c.NoContent(http.StatusNoContent)
+ 			}
+-			for _, loc := range baseConfig.Weather.Locations {
++			for _, loc := range baseSnapshot.Weather.Locations {
+ 				if loc.Default {
+ 					locationName = loc.Name
+ 					break
+@@ -87,7 +88,7 @@ func Weather(baseConfig *config.Config) echo.HandlerFunc {
+ 			if !requestData.RequestConfig.Kiosk.DisableURLQueries {
+ 				weatherLocation = weather.ApplyURLOverrides(weatherLocation, requestParams)
+ 			}
+-			return Render(c, http.StatusOK, partials.WeatherLocation(weatherLocation, nextWeatherRotation, baseConfig.SystemLang))
++			return Render(c, http.StatusOK, partials.WeatherLocation(weatherLocation, nextWeatherRotation, baseSnapshot.SystemLang))
+ 
+ 		}
+ 
+diff --git a/internal/routes/routes_url_builder.go b/internal/routes/routes_url_builder.go
+index a1d3c06..9d56ff0 100644
+--- a/internal/routes/routes_url_builder.go
++++ b/internal/routes/routes_url_builder.go
+@@ -20,6 +20,7 @@ func BuildURL(baseConfig *config.Config) echo.HandlerFunc {
+ 	const maxURLLength = 2048
+ 
+ 	return func(c *echo.Context) error {
++		baseSnapshot := baseConfig.Snapshot()
+ 		kioskHost := c.Request().Header.Get("X-Forwarded-Host")
+ 		if kioskHost == "" {
+ 			kioskHost = c.Request().Host
+@@ -62,8 +63,8 @@ func BuildURL(baseConfig *config.Config) echo.HandlerFunc {
+ 			return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("encoding query parameters: %v", err))
+ 		}
+ 
+-		if baseConfig.Kiosk.Password != "" {
+-			queries.Add("password", baseConfig.Kiosk.Password)
++		if baseSnapshot.Kiosk.Password != "" {
++			queries.Add("password", baseSnapshot.Kiosk.Password)
+ 		}
+ 
+ 		kioskURL.RawQuery = queries.Encode()
+diff --git a/internal/routes/routes_redirect.go b/internal/routes/routes_redirect.go
+index dcafe8e..bb16c9a 100644
+--- a/internal/routes/routes_redirect.go
++++ b/internal/routes/routes_redirect.go
+@@ -20,7 +20,8 @@ import (
+ // If the redirect name is not found, it redirects to the root path. If the maximum number of redirects is exceeded, it returns HTTP 429.
+ func Redirect(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 	return func(c *echo.Context) error {
+-		if baseConfig.Kiosk.DisableURLQueries {
++		baseSnapshot := baseConfig.Snapshot()
++		if baseSnapshot.Kiosk.DisableURLQueries {
+ 			log.Warn("URL query overrides disabled, redirecting to root")
+ 			homeURL, _ := url.Parse("/")
+ 			if c.Request().URL.Query().Has("password") {
+@@ -61,7 +62,7 @@ func Redirect(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 			return echo.NewHTTPError(http.StatusBadRequest, "Redirect name is required")
+ 		}
+ 
+-		if redirectItem, exists := baseConfig.Kiosk.RedirectsMap[redirectName]; exists {
++		if redirectItem, exists := baseSnapshot.Kiosk.RedirectsMap[redirectName]; exists {
+ 
+ 			if strings.EqualFold(redirectItem.Type, kiosk.RedirectExternal) {
+ 				c.SetCookie(&http.Cookie{
+

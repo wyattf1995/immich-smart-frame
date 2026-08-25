@@ -27,6 +27,14 @@ COPY backend-hard-timeout-tests.patch /tmp/backend-hard-timeout-tests.patch
 COPY date-pool-exhaustion-tests.patch /tmp/date-pool-exhaustion-tests.patch
 COPY album-registry-allocation-tests.patch /tmp/album-registry-allocation-tests.patch
 COPY backend-test-gofmt.patch /tmp/backend-test-gofmt.patch
+COPY resilience-backend-tests.patch /tmp/resilience-backend-tests.patch
+COPY resilience-backend-coverage-tests.patch /tmp/resilience-backend-coverage-tests.patch
+COPY resilience-backend-m2-tests.patch /tmp/resilience-backend-m2-tests.patch
+COPY resilience-offline-prewarm-tests.patch /tmp/resilience-offline-prewarm-tests.patch
+COPY resilience-lifecycle-tests.patch /tmp/resilience-lifecycle-tests.patch
+COPY resilience-timeout-prewarm-tests.patch /tmp/resilience-timeout-prewarm-tests.patch
+COPY resilience-timeout-bounds-tests.patch /tmp/resilience-timeout-bounds-tests.patch
+COPY resilience-backend.patch /tmp/resilience-backend.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -63,7 +71,23 @@ RUN cd /src \
 	&& git apply --check --unidiff-zero /tmp/album-registry-allocation-tests.patch \
 	&& git apply --unidiff-zero /tmp/album-registry-allocation-tests.patch \
 	&& git apply --check --unidiff-zero /tmp/backend-test-gofmt.patch \
-	&& git apply --unidiff-zero /tmp/backend-test-gofmt.patch
+	&& git apply --unidiff-zero /tmp/backend-test-gofmt.patch \
+	&& git apply --check --unidiff-zero /tmp/resilience-backend-tests.patch \
+	&& git apply --unidiff-zero /tmp/resilience-backend-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/resilience-backend-coverage-tests.patch \
+	&& git apply --unidiff-zero /tmp/resilience-backend-coverage-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/resilience-backend-m2-tests.patch \
+	&& git apply --unidiff-zero /tmp/resilience-backend-m2-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/resilience-offline-prewarm-tests.patch \
+	&& git apply --unidiff-zero /tmp/resilience-offline-prewarm-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/resilience-lifecycle-tests.patch \
+	&& git apply --unidiff-zero /tmp/resilience-lifecycle-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/resilience-timeout-prewarm-tests.patch \
+	&& git apply --unidiff-zero /tmp/resilience-timeout-prewarm-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/resilience-timeout-bounds-tests.patch \
+	&& git apply --unidiff-zero /tmp/resilience-timeout-bounds-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/resilience-backend.patch \
+	&& git apply --unidiff-zero /tmp/resilience-backend.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
