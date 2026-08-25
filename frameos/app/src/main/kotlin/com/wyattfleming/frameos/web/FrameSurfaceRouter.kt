@@ -41,6 +41,6 @@ class FrameSurfaceRouter(configuration: FrameConfiguration) {
     fun calendarPreloadTarget(): FrameSurfaceTarget.Web = target(FrameMode.CALENDAR) as FrameSurfaceTarget.Web
 
     private companion object {
-        const val WRAPPER_VERSION = "e466bf227127"
+        const val WRAPPER_VERSION = "a10be8392eea"
     }
 }

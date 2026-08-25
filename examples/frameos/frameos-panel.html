@@ -193,6 +193,7 @@
         };
 
         const releaseRouteEvidence = (state) => {
+          state.shadowProbeExpired = true;
           window.clearTimeout(state.rootProbeTimer);
           state.rootProbeTimer = null;
           state.pendingShadowHosts.clear();
@@ -310,7 +311,7 @@
             state.pendingShadowHosts.delete(element);
             observeRoot(element.shadowRoot, state);
             inspectAddedSubtree(element.shadowRoot, state);
-          } else if (!state.ready && element.localName.includes("-")) {
+          } else if (!state.ready && !state.shadowProbeExpired && element.localName.includes("-")) {
             state.pendingShadowHosts.add(element);
             schedulePendingShadowRootProbe(state);
           }
@@ -352,6 +353,7 @@
           if (
             activeRouteWork !== state ||
             state.ready ||
+            state.shadowProbeExpired ||
             state.rootProbeTimer !== null ||
             state.pendingShadowHosts.size === 0
           ) return;
@@ -396,6 +398,7 @@
         const finishRouteReady = (state) => {
           if (activeRouteWork !== state || state.ready) return;
           state.ready = true;
+          state.shadowProbeExpired = true;
           window.clearTimeout(state.rootProbeTimer);
           state.rootProbeTimer = null;
           state.pendingShadowHosts.clear();
@@ -434,6 +437,7 @@
             observers: [],
             observedRoots: new WeakSet(),
             pendingShadowHosts: new Set(),
+            shadowProbeExpired: false,
             styledHeadings: new WeakSet(),
             styledHeadingShadows: new WeakSet(),
             primaryHeadings: new Map(),
@@ -449,6 +453,7 @@
           activeRouteWork = state;
           state.deadlineTimer = window.setTimeout(() => {
             if (activeRouteWork !== state || state.ready) return;
+            state.shadowProbeExpired = true;
             window.clearTimeout(state.rootProbeTimer);
             state.rootProbeTimer = null;
             state.pendingShadowHosts.clear();
