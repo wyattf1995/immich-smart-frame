@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..3333333
 --- /dev/null
 +++ b/internal/immich/immich_album_fast_path_test.go
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,56 @@
 +package immich
 +
 +import (
@@ -29,61 +29,111 @@ index 0000000..3333333
 +	asset := New(context.Background(), config.Config{ImmichURL: server.URL})
 +	asset.ID = "asset-a"
 +	assert.True(t, asset.hasValidAlbums("request-a", "device-a"))
-+	assert.Zero(t, calls.Load(), "unconfigured assets must not query album membership")
++	assert.Zero(t, calls.Load())
 +
 +	asset = New(context.Background(), config.Config{ImmichURL: server.URL, ExcludedAlbums: []string{"excluded"}})
 +	asset.ID = "asset-b"
 +	assert.True(t, asset.hasValidAlbums("request-b", "device-a"))
-+	assert.EqualValues(t, 1, calls.Load(), "configured exclusions must preserve membership lookup")
++	assert.EqualValues(t, 1, calls.Load())
 +
-+	profileConfig := config.Config{
-+		ImmichURL:       server.URL,
-+		CurationProfile: "profile",
-+		Curation: config.CurationSettings{Profiles: map[string]config.CurationProfile{
-+			"profile": {AlbumPenalties: []config.AlbumPenalty{{Album: "penalized", Factor: 1}}},
-+		}},
-+	}
++	profileConfig := config.Config{ImmichURL: server.URL, CurationProfile: "profile", Curation: config.CurationSettings{Profiles: map[string]config.CurationProfile{
++		"profile": {AlbumPenalties: []config.AlbumPenalty{{Album: "penalized", Factor: 1}}},
++	}}}
 +	asset = New(context.Background(), profileConfig)
 +	asset.ID = "asset-c"
 +	assert.True(t, asset.hasValidAlbums("request-c", "device-a"))
-+	assert.EqualValues(t, 2, calls.Load(), "configured penalties must preserve membership lookup")
++	assert.EqualValues(t, 2, calls.Load())
 +}
-diff --git a/internal/routes/routes_prefetch_context_test.go b/internal/routes/routes_prefetch_context_test.go
++
++func TestSelectedAlbumRestrictionsCompilesExcludedIDs(t *testing.T) {
++	restrictions := selectedAlbumRestrictions(config.Config{ExcludedAlbums: []string{"one", "two"}})
++	assert.False(t, restrictions.allows(Albums{{ID: "two"}}, "asset", "request"))
++	assert.True(t, restrictions.allows(Albums{{ID: "three"}}, "asset", "request"))
++}
++
++func BenchmarkAlbumRestrictionsLookup(b *testing.B) {
++	restrictions := selectedAlbumRestrictions(config.Config{ExcludedAlbums: []string{"one", "two", "three", "four", "five"}})
++	albums := Albums{{ID: "a"}, {ID: "b"}, {ID: "c"}, {ID: "d"}, {ID: "e"}}
++	b.ReportAllocs()
++	b.ResetTimer()
++	for range b.N {
++		if !restrictions.allows(albums, "asset-a", "request-a") { b.Fatal("unexpected exclusion") }
++	}
++}
+diff --git a/internal/immich/immich_context_retry_test.go b/internal/immich/immich_context_retry_test.go
 new file mode 100644
 index 0000000..4444444
 --- /dev/null
++++ b/internal/immich/immich_context_retry_test.go
+@@ -0,0 +1,25 @@
++package immich
++
++import (
++	"context"
++	"errors"
++	"net/http"
++	"testing"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/stretchr/testify/require"
++)
++
++func TestImmichAPICallStopsRetryBackoffWhenContextEnds(t *testing.T) {
++	originalClient := HTTPClient
++	HTTPClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("blocked") })}
++	t.Cleanup(func() { HTTPClient = originalClient })
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	asset := New(ctx, config.Config{ImmichURL: "http://immich.test"})
++	start := time.Now()
++	_, _, _, err := asset.immichAPICall(ctx, http.MethodGet, "http://immich.test/api/test", nil)
++	require.ErrorIs(t, err, context.Canceled)
++	require.Less(t, time.Since(start), 200*time.Millisecond)
++}
+
++type roundTripFunc func(*http.Request) (*http.Response, error)
++func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+diff --git a/internal/routes/routes_prefetch_context_test.go b/internal/routes/routes_prefetch_context_test.go
+new file mode 100644
+index 0000000..5555555
+--- /dev/null
 +++ b/internal/routes/routes_prefetch_context_test.go
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,37 @@
 +package routes
 +
 +import (
 +	"context"
 +	"net/http"
-+	"net/http/httptest"
 +	"net/url"
 +	"testing"
 +	"time"
 +
 +	"github.com/damongolding/immich-kiosk/internal/common"
 +	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/immich"
 +	"github.com/stretchr/testify/require"
 +)
 +
-+func TestAssetPreFetchCancelsBlockingImmichRequest(t *testing.T) {
++func TestAssetPreFetchPassesDeadlineToBlockingHTTPTransport(t *testing.T) {
++	originalClient := immich.HTTPClient
 +	cancelled := make(chan struct{})
-+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++	immich.HTTPClient = &http.Client{Transport: routesRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 +		<-r.Context().Done()
 +		close(cancelled)
-+	}))
-+	defer server.Close()
++		return nil, r.Context().Err()
++	})}
++	t.Cleanup(func() { immich.HTTPClient = originalClient })
 +	requestURL, err := url.Parse("http://kiosk.local/view")
 +	require.NoError(t, err)
 +	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 +	defer cancel()
-+	requestData := &common.RouteRequestData{RequestID: "request-a", DeviceID: "device-a", RequestConfig: config.Config{ImmichURL: server.URL}}
++	requestData := &common.RouteRequestData{RequestID: "request-a", DeviceID: "device-a", RequestConfig: config.Config{ImmichURL: "http://immich.test"}}
 +	requestCopy := common.ContextCopy{URL: *requestURL, RequestHeader: http.Header{"kiosk-device-id": []string{"device-a"}}, ResponseHeader: make(http.Header)}
 +
 +	assetPreFetch(ctx, nil, requestData, requestCopy)
-+
 +	require.Eventually(t, func() bool { select { case <-cancelled: return true; default: return false } }, time.Second, 5*time.Millisecond)
 +}
++
++type routesRoundTripFunc func(*http.Request) (*http.Response, error)
++func (f routesRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
