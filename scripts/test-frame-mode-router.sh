@@ -63,6 +63,7 @@ write_proc_start() {
 }
 
 write_proc_start "$$" 111
+export FRAME_ROUTER_PROCESS_START_TOKEN=111
 
 cat > "$fake_bin/dumpsys" <<'EOF'
 #!/usr/bin/env sh
