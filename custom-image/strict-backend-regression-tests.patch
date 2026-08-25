@@ -1,0 +1,89 @@
+diff --git a/internal/immich/immich_album_fast_path_test.go b/internal/immich/immich_album_fast_path_test.go
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/internal/immich/immich_album_fast_path_test.go
+@@ -0,0 +1,42 @@
++package immich
++
++import (
++	"context"
++	"net/http"
++	"net/http/httptest"
++	"sync/atomic"
++	"testing"
++
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/stretchr/testify/assert"
++)
++
++func TestHasValidAlbumsSkipsMembershipRequestWithoutRestrictions(t *testing.T) {
++	var calls atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = w.Write([]byte("[]"))
++	}))
++	defer server.Close()
++
++	asset := New(context.Background(), config.Config{ImmichURL: server.URL})
++	asset.ID = "asset-a"
++	assert.True(t, asset.hasValidAlbums("request-a", "device-a"))
++	assert.Zero(t, calls.Load(), "unconfigured assets must not query album membership")
++
++	asset = New(context.Background(), config.Config{ImmichURL: server.URL, ExcludedAlbums: []string{"excluded"}})
++	asset.ID = "asset-b"
++	assert.True(t, asset.hasValidAlbums("request-b", "device-a"))
++	assert.EqualValues(t, 1, calls.Load(), "configured exclusions must preserve membership lookup")
++
++	profileConfig := config.Config{
++		ImmichURL:       server.URL,
++		CurationProfile: "profile",
++		Curation: config.CurationSettings{Profiles: map[string]config.CurationProfile{
++			"profile": {AlbumPenalties: []config.AlbumPenalty{{Album: "penalized", Factor: 1}}},
++		}},
++	}
++	asset = New(context.Background(), profileConfig)
++	asset.ID = "asset-c"
++	assert.True(t, asset.hasValidAlbums("request-c", "device-a"))
++	assert.EqualValues(t, 2, calls.Load(), "configured penalties must preserve membership lookup")
++}
+diff --git a/internal/routes/routes_prefetch_context_test.go b/internal/routes/routes_prefetch_context_test.go
+new file mode 100644
+index 0000000..4444444
+--- /dev/null
++++ b/internal/routes/routes_prefetch_context_test.go
+@@ -0,0 +1,33 @@
++package routes
++
++import (
++	"context"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"testing"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/stretchr/testify/require"
++)
++
++func TestAssetPreFetchCancelsBlockingImmichRequest(t *testing.T) {
++	cancelled := make(chan struct{})
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		<-r.Context().Done()
++		close(cancelled)
++	}))
++	defer server.Close()
++	requestURL, err := url.Parse("http://kiosk.local/view")
++	require.NoError(t, err)
++	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
++	defer cancel()
++	requestData := &common.RouteRequestData{RequestID: "request-a", DeviceID: "device-a", RequestConfig: config.Config{ImmichURL: server.URL}}
++	requestCopy := common.ContextCopy{URL: *requestURL, RequestHeader: http.Header{"kiosk-device-id": []string{"device-a"}}, ResponseHeader: make(http.Header)}
++
++	assetPreFetch(ctx, nil, requestData, requestCopy)
++
++	require.Eventually(t, func() bool { select { case <-cancelled: return true; default: return false } }, time.Second, 5*time.Millisecond)
++}
