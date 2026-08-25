@@ -1,0 +1,45 @@
+diff --git a/internal/config/config_snapshot_test.go b/internal/config/config_snapshot_test.go
+index 44d70a7..d73ab72 100644
+--- a/internal/config/config_snapshot_test.go
++++ b/internal/config/config_snapshot_test.go
+@@ -51,3 +51,16 @@ func TestSnapshotIsRaceSafeDuringHotReloadStyleWrites(t *testing.T) {
+ 	<-done
+ 	wg.Wait()
+ }
++
++func TestNonpositiveHTTPTimeoutUsesDefault(t *testing.T) {
++	c := New()
++	c.Kiosk.HTTPTimeout = 0
++	c.checkHTTPTimeout()
++	require.Equal(t, 20, c.Kiosk.HTTPTimeout)
++	c.Kiosk.HTTPTimeout = -1
++	c.checkHTTPTimeout()
++	require.Equal(t, 20, c.Kiosk.HTTPTimeout)
++	c.Kiosk.HTTPTimeout = 7
++	c.checkHTTPTimeout()
++	require.Equal(t, 7, c.Kiosk.HTTPTimeout)
++}
+diff --git a/internal/immich/immich_resilience_coverage_test.go b/internal/immich/immich_resilience_coverage_test.go
+index 54556eb..36b7284 100644
+--- a/internal/immich/immich_resilience_coverage_test.go
++++ b/internal/immich/immich_resilience_coverage_test.go
+@@ -45,6 +45,18 @@ func TestImmichAPICallBoundsUnsetTimeout(t *testing.T) {
+ 	require.NoError(t, err)
+ }
+ 
++func TestOnlinePingHonorsCanceledContext(t *testing.T) {
++	original := HTTPClient
++	t.Cleanup(func() { HTTPClient = original })
++	HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
++		<-r.Context().Done()
++		return nil, r.Context().Err()
++	})}
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	require.False(t, IsOnline(ctx, "http://immich.test"))
++}
++
+ func TestReadinessCachesRecentSuccessAndBacksOffFailures(t *testing.T) {
+ 	original := HTTPClient
+ 	t.Cleanup(func() { HTTPClient = original })
+
