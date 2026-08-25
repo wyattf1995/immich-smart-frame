@@ -41,6 +41,9 @@ import com.wyattfleming.frameos.auth.PendingOAuthStateStore
 import com.wyattfleming.frameos.auth.SharedPreferencesPendingOAuthStateStore
 import com.wyattfleming.frameos.config.FrameConfiguration
 import com.wyattfleming.frameos.config.FrameConfigurationStore
+import com.wyattfleming.frameos.control.FrameControlCommand
+import com.wyattfleming.frameos.control.FrameControlContract
+import com.wyattfleming.frameos.control.FrameControlStore
 import com.wyattfleming.frameos.security.FrameExternalControlPolicy
 import com.wyattfleming.frameos.ui.WeatherContentView
 import com.wyattfleming.frameos.ui.dp
@@ -91,6 +94,7 @@ class MainActivity : Activity() {
     private var volumeUpPressed = false
     private var volumeDownPressed = false
     private lateinit var configurationStore: FrameConfigurationStore
+    private lateinit var controlStore: FrameControlStore
     private var configuration: FrameConfiguration? = null
     private var oauthClient: HomeAssistantOAuthClient? = null
     private var oauthEndpoint: HomeAssistantOAuthEndpoint? = null
@@ -139,6 +143,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         configurationStore = FrameConfigurationStore(this)
+        controlStore = FrameControlStore(this)
         val savedConfiguration = configurationStore.read()
         configuration = if (externalControlPolicy.acceptsProvisioning(savedConfiguration != null)) {
             persistProvisioning(intent) ?: savedConfiguration
@@ -151,6 +156,7 @@ class MainActivity : Activity() {
         render(state, announce = false)
         handleOAuthCallback(intent)
         handleFrameCommand(intent)
+        handlePendingControl()
         showStartupTransition()
         scheduleIdleReset()
     }
@@ -160,6 +166,7 @@ class MainActivity : Activity() {
         setIntent(intent)
         handleOAuthCallback(intent)
         handleFrameCommand(intent)
+        handlePendingControl()
     }
 
     override fun onResume() {
@@ -520,21 +527,31 @@ class MainActivity : Activity() {
 
     private fun handleFrameCommand(intent: Intent) {
         if (!externalControlPolicy.acceptsCommands()) {
-            intent.removeExtra(EXTRA_FRAME_COMMAND)
-            intent.removeExtra(EXTRA_FRAME_MODE)
+            intent.removeExtra(FrameControlContract.EXTRA_COMMAND)
+            intent.removeExtra(FrameControlContract.EXTRA_MODE)
             return
         }
-        val command = intent.getStringExtra(EXTRA_FRAME_COMMAND)?.lowercase(Locale.ROOT)
-        val requestedMode = intent.getStringExtra(EXTRA_FRAME_MODE)?.uppercase(Locale.ROOT)
+        val command = intent.getStringExtra(FrameControlContract.EXTRA_COMMAND)?.lowercase(Locale.ROOT)
+        val requestedMode = intent.getStringExtra(FrameControlContract.EXTRA_MODE)?.uppercase(Locale.ROOT)
             ?.let { name -> FrameMode.entries.firstOrNull { it.name == name } }
-        intent.removeExtra(EXTRA_FRAME_COMMAND)
-        intent.removeExtra(EXTRA_FRAME_MODE)
+        intent.removeExtra(FrameControlContract.EXTRA_COMMAND)
+        intent.removeExtra(FrameControlContract.EXTRA_MODE)
 
         when {
             requestedMode != null -> showMode(requestedMode)
             command == "next" -> dispatch(FrameIntent.NextMode)
             command == "previous" || command == "prev" -> dispatch(FrameIntent.PreviousMode)
             command == "home" -> dispatch(FrameIntent.GoHome)
+        }
+    }
+
+    private fun handlePendingControl() {
+        when (val command = controlStore.consume()) {
+            FrameControlCommand.Next -> dispatch(FrameIntent.NextMode)
+            FrameControlCommand.Previous -> dispatch(FrameIntent.PreviousMode)
+            FrameControlCommand.Home -> dispatch(FrameIntent.GoHome)
+            is FrameControlCommand.Show -> showMode(command.mode)
+            null -> Unit
         }
     }
 
@@ -551,11 +568,17 @@ class MainActivity : Activity() {
     }
 
     private fun persistProvisioning(intent: Intent): FrameConfiguration? {
-        if (!intent.hasExtra(EXTRA_PHOTOS_URL) && !intent.hasExtra(EXTRA_HOME_ASSISTANT_URL)) return null
+        if (
+            !intent.hasExtra(FrameControlContract.EXTRA_PHOTOS_URL) &&
+            !intent.hasExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_URL)
+        ) return null
         val provisioned = FrameConfiguration.from(
-            photosUrl = intent.getStringExtra(EXTRA_PHOTOS_URL).orEmpty(),
-            homeAssistantUrl = intent.getStringExtra(EXTRA_HOME_ASSISTANT_URL).orEmpty(),
-            weatherEntityId = intent.getStringExtra(EXTRA_WEATHER_ENTITY_ID).orEmpty().ifBlank { DEFAULT_WEATHER_ENTITY_ID },
+            photosUrl = intent.getStringExtra(FrameControlContract.EXTRA_PHOTOS_URL).orEmpty(),
+            homeAssistantUrl = intent.getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_URL).orEmpty(),
+            weatherEntityId = intent
+                .getStringExtra(FrameControlContract.EXTRA_WEATHER_ENTITY_ID)
+                .orEmpty()
+                .ifBlank { DEFAULT_WEATHER_ENTITY_ID },
         ) ?: return null
         configurationStore.write(provisioned)
         return provisioned
@@ -799,11 +822,6 @@ class MainActivity : Activity() {
         const val WEATHER_CACHE_FRESH_MILLIS = 5 * 60 * 1_000L
         const val OAUTH_STATE_BYTES = 32
         const val DEFAULT_WEATHER_ENTITY_ID = "weather.home"
-        const val EXTRA_PHOTOS_URL = "frameos.photos_url"
-        const val EXTRA_HOME_ASSISTANT_URL = "frameos.home_assistant_url"
-        const val EXTRA_WEATHER_ENTITY_ID = "frameos.weather_entity_id"
-        const val EXTRA_FRAME_COMMAND = "frameos.command"
-        const val EXTRA_FRAME_MODE = "frameos.mode"
         val HOME_ASSISTANT_MODES = setOf(FrameMode.HOME, FrameMode.CAMERAS, FrameMode.CALENDAR)
     }
 }
