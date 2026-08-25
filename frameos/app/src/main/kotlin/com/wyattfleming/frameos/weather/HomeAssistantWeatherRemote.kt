@@ -6,8 +6,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CancellationException
+import java.util.concurrent.CountDownLatch
 
 data class HomeAssistantHttpRequest(
     val method: String,
@@ -32,13 +32,15 @@ class HomeAssistantWeatherRemote(
     private val requestExecutor: ExecutorService = sharedRequestExecutor,
     private val requestTimeoutMillis: Long = TOTAL_REQUEST_TIMEOUT_MILLIS,
 ) : WeatherRemote {
-    private val activeFutures = ConcurrentHashMap.newKeySet<Future<*>>()
-    private val activeRequestLock = Any()
-    private var cancellationRequested = false
+    private val batchLock = Any()
+    private var activeBatch: RequestBatch? = null
 
     override fun fetch(entityId: String, bearerToken: String): WeatherRemoteResult {
         if (bearerToken.isBlank()) return WeatherRemoteResult.AuthRequired(AUTH_REQUIRED)
-        synchronized(activeRequestLock) { cancellationRequested = false }
+        val batch = synchronized(batchLock) {
+            if (activeBatch != null) return WeatherRemoteResult.Offline(REQUEST_IN_PROGRESS)
+            RequestBatch().also { activeBatch = it }
+        }
         var completed = false
         return try {
             val headers = mapOf(
@@ -46,15 +48,16 @@ class HomeAssistantWeatherRemote(
                 "Authorization" to "Bearer $bearerToken",
             )
             val deadline = WeatherRequestDeadline(timeoutMillis = requestTimeoutMillis)
-            val currentFuture = submitTracked<WeatherCurrent> {
+            val currentFuture = submitTracked(batch) {
                 parser.parseCurrentState(entityId, execute(HomeAssistantHttpRequest("GET", endpoint.stateUrl(entityId), headers)).body)
             }
-            val dailyFuture = submitTracked<List<WeatherForecast>> {
+            val dailyFuture = submitTracked(batch) {
                 fetchForecast(entityId, WeatherForecastType.DAILY, headers)
             }
-            val hourlyFuture = submitTracked<List<WeatherForecast>> {
+            val hourlyFuture = submitTracked(batch) {
                 fetchForecast(entityId, WeatherForecastType.HOURLY, headers)
             }
+            awaitBatchStart(batch, deadline)
             val current = await(currentFuture, deadline)
             val daily = await(dailyFuture, deadline)
             val hourly = await(hourlyFuture, deadline)
@@ -71,12 +74,15 @@ class HomeAssistantWeatherRemote(
         } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
             WeatherRemoteResult.Offline(OFFLINE)
         } finally {
-            cancelOutstandingRequests(disconnect = !completed)
+            cancelBatch(batch, disconnect = !completed)
+            synchronized(batchLock) {
+                if (activeBatch === batch) activeBatch = null
+            }
         }
     }
 
     override fun cancel() {
-        cancelOutstandingRequests(disconnect = true)
+        synchronized(batchLock) { activeBatch }?.let { batch -> cancelBatch(batch, disconnect = true) }
     }
 
     private fun <T> await(future: Future<T>, deadline: WeatherRequestDeadline): T = try {
@@ -87,18 +93,28 @@ class HomeAssistantWeatherRemote(
         throw (error.cause ?: error)
     }
 
-    private fun cancelOutstandingRequests(disconnect: Boolean) {
-        val futures = synchronized(activeRequestLock) {
-            if (disconnect) cancellationRequested = true
-            activeFutures.toList().also { activeFutures.clear() }
+    private fun awaitBatchStart(batch: RequestBatch, deadline: WeatherRequestDeadline) {
+        val remainingMillis = deadline.remainingMillis()
+        if (remainingMillis == 0L || !batch.started.await(remainingMillis, TimeUnit.MILLISECONDS)) {
+            throw TimeoutException("Weather request deadline elapsed")
+        }
+    }
+
+    private fun cancelBatch(batch: RequestBatch, disconnect: Boolean) {
+        val futures = synchronized(batchLock) {
+            if (disconnect) batch.cancelled = true
+            batch.futures.toList().also { batch.futures.clear() }
         }
         futures.forEach { future -> future.cancel(true) }
         if (disconnect) (transport as? CancellableHomeAssistantHttpTransport)?.cancelInFlight()
     }
 
-    private fun <T> submitTracked(task: () -> T): Future<T> = synchronized(activeRequestLock) {
-        if (cancellationRequested) throw CancellationException("Weather request cancelled")
-        requestExecutor.submit(task).also(activeFutures::add)
+    private fun <T> submitTracked(batch: RequestBatch, task: () -> T): Future<T> = synchronized(batchLock) {
+        if (activeBatch !== batch || batch.cancelled) throw CancellationException("Weather request cancelled")
+        requestExecutor.submit<T> {
+            batch.started.countDown()
+            task()
+        }.also(batch.futures::add)
     }
 
     private fun fetchForecast(
@@ -128,11 +144,18 @@ class HomeAssistantWeatherRemote(
 
     private class AuthenticationException : Exception()
 
+    private class RequestBatch {
+        val futures = mutableSetOf<Future<*>>()
+        val started = CountDownLatch(MAX_PARALLEL_REQUESTS)
+        var cancelled = false
+    }
+
     private companion object {
         const val MAX_PARALLEL_REQUESTS = 3
         const val TOTAL_REQUEST_TIMEOUT_MILLIS = 15_000L
         const val AUTH_REQUIRED = "weather_auth_required"
         const val OFFLINE = "weather_offline"
+        const val REQUEST_IN_PROGRESS = "weather_request_in_progress"
         val sharedRequestExecutor: ExecutorService = Executors.newFixedThreadPool(MAX_PARALLEL_REQUESTS)
     }
 }
