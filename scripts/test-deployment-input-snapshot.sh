@@ -36,4 +36,10 @@ if "$snapshot_script" verify "$snapshot_dir" "$tmp_dir/.env"; then
   fail 'verification must reject a deployment input that differs from the snapshot'
 fi
 
+printf '%s\n' 'new offline fixture' > "$tmp_dir/offline-assets/new.txt"
+"$snapshot_script" restore "$snapshot_dir" "$tmp_dir/.env" --confirm-restore
+"$snapshot_script" verify "$snapshot_dir" "$tmp_dir/.env"
+[[ ! -e "$tmp_dir/offline-assets/new.txt" ]] || fail 'restore must remove offline state absent from the snapshot'
+grep -Fxq 'curation_profile: balanced' "$tmp_dir/config/config.yaml" || fail 'restore must recover the saved config'
+
 printf 'deployment input snapshot contract passed\n'
