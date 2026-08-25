@@ -357,7 +357,12 @@ class WeatherContentView(context: Context) : View(context) {
         val normalizedPage = Math.floorMod(pageIndex, pageCount)
         val rangeStart = normalizedPage * WeatherRenderCadence.HOURLY_PAGE_SIZE + 1
         val rangeEnd = minOf(rangeStart + items.size - 1, presentation.hourly.size)
-        drawText(canvas, "HOURLY FORECAST", card.left + dp(24f), card.top + dp(36f), 15f, MUTED, true)
+        val pageDays = items.mapNotNull(WeatherForecastItem::day).distinct()
+        val hourlyHeading = buildString {
+            append("HOURLY FORECAST")
+            if (pageDays.isNotEmpty()) append(" · ${pageDays.joinToString("–")}")
+        }
+        drawText(canvas, hourlyHeading, card.left + dp(24f), card.top + dp(36f), 15f, MUTED, true)
         if (presentation.hourly.isNotEmpty()) {
             drawText(canvas, "$rangeStart–$rangeEnd of ${presentation.hourly.size} hours", card.right - dp(190f), card.top + dp(36f), 15f, MUTED)
         }

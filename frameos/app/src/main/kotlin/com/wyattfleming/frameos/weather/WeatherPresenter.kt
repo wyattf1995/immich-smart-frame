@@ -15,6 +15,7 @@ data class WeatherForecastItem(
     val temperature: String,
     val lowTemperature: String?,
     val precipitation: String?,
+    val day: String? = null,
 )
 
 data class WeatherPresentation(
@@ -120,6 +121,7 @@ class WeatherPresenter(
             temperature = formatNumber(forecast.temperature),
             lowTemperature = null,
             precipitation = forecast.precipitationProbability?.let { "$it%" },
+            day = dayFormat.format(time),
         )
     }
 
