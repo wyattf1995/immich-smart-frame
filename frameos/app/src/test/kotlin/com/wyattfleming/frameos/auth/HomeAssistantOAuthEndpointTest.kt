@@ -17,18 +17,17 @@ class HomeAssistantOAuthEndpointTest {
         val authorization = endpoint.authorizationRequest(
             callbackPageUrl = callback,
             state = state,
-            codeChallenge = "challenge-value",
         )
 
         assertEquals("https://home.example.invalid:8123/auth/token", endpoint.tokenUrl())
         assertEquals(state, authorization.state)
         assertEquals(
-            "https://home.example.invalid:8123/auth/authorize?response_type=code&client_id=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&redirect_uri=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&state=${state.value}&code_challenge=challenge-value&code_challenge_method=S256",
+            "https://home.example.invalid:8123/auth/authorize?response_type=code&client_id=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&redirect_uri=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&state=${state.value}",
             authorization.url,
         )
         assertEquals(
-            "grant_type=authorization_code&code=authorization-code&client_id=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&redirect_uri=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&code_verifier=verifier-value",
-            endpoint.tokenRequestBody(callback, "authorization-code", "verifier-value"),
+            "grant_type=authorization_code&code=authorization-code&client_id=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html",
+            endpoint.tokenRequestBody(callback, "authorization-code"),
         )
     }
 
@@ -47,7 +46,6 @@ class HomeAssistantOAuthEndpointTest {
                 endpoint.authorizationRequest(
                     invalidCallback,
                     OAuthState.fromCryptographicBytes(ByteArray(32) { 7 }),
-                    "challenge-value",
                 )
             }
         }
