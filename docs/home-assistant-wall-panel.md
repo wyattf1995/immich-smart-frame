@@ -104,6 +104,14 @@ pages intentionally fall back to one same-origin navigation. The wrapper adds
 no external scripts, stores no credentials, and has no visible steady-state
 chrome.
 
+Readiness uses one initial light/shadow-DOM traversal, then scoped mutation
+observers for newly added subtrees and shadow roots; it does not repeatedly
+rescan the full dashboard. Home waits for the primary headings, Calendar waits
+for its rendered calendar root, and Cameras waits for all four cards and
+players, plus decoded video where Gecko exposes it. A slow camera route keeps
+a small nonblocking “still connecting” message with card/player/decode counts
+instead of declaring a single structural node ready or leaving a blank overlay.
+
 Weather is deliberately native rather than another dashboard fragment. That
 lets it retain the last successful forecast, show all 24 hourly entries in
 automatic pages, and draw stable terrain with subtle condition-specific sun,
@@ -125,6 +133,12 @@ cd examples/home-assistant-wall-panel
 Copy the generated MP4 files and your `neutral.png` to
 `/config/www/wallpanel-weather/` on Home Assistant. Local media avoids an
 external CDN dependency and unnecessary remote video transfer.
+
+The builder fingerprints the four completed MP4 files together and rewrites
+the MP4 URLs in `dashboard.example.yaml` with that SHA-256-derived `?v=` value.
+Run the builder before copying the dashboard as well as the media. This is
+required because Home Assistant may cache `/local/` media for 31 days: replacing
+a file without its new versioned URL can otherwise keep the previous scene.
 
 ## Adapt the dashboard
 

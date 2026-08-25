@@ -20,10 +20,29 @@ required = [
   'aria-live="polite"',
   'id="loading"',
   "panel.contentWindow.focus()",
-  "const routeHasContent = (readyView) =>",
   "const waitForRouteReady = (readyView) =>",
   "ROUTE_READY_TIMEOUT_MILLIS",
-  "ROUTE_READY_POLL_MILLIS",
+  "const readinessRequirements = Object.freeze({",
+  'primaryHeadings: Object.freeze(["at a glance", "home status", "weather", "hourly forecast"])',
+  "primaryHeadings",
+  "cameraCards",
+  "cameraPlayers",
+  "cameraVideos: 4",
+  "decodedVideos",
+  "new MutationObserver(",
+  "const inspectAddedSubtree = (node, state) =>",
+  "const cancelRouteWork = () =>",
+  "const isActivePanelElement = (element, documentRoot) =>",
+  "element.isConnected && element.ownerDocument === documentRoot",
+  "const pruneRouteEvidence = (state) =>",
+  "!cameraVideoIsDecoded(video)",
+  "const pruneRouteObservers = (state) =>",
+  "state.observers.push({ root, observer });",
+  "primaryHeadings: new Map()",
+  "const disconnectRouteObservers = (state) =>",
+  "const removeVideoListeners = (state) =>",
+  "new WeakSet()",
+  "still connecting",
   "panel.src = nextPath",
 ]
 required.each do |contract|
@@ -36,6 +55,15 @@ abort("FrameOS panel wrapper iframe must select its initial route dynamically") 
 abort("FrameOS panel wrapper must not expose a weather web route") if panel.include?("/wall-panel/weather")
 abort("FrameOS panel wrapper must not include browser toolbar workarounds") if panel.match?(/requestFullscreen|scroll-rail|min-height:\s*calc/)
 abort("FrameOS panel wrapper must not declare readiness on a fixed 180ms delay") if panel.match?(/setTimeout\(\(\)\s*=>\s*\{\s*showReady.*?180\s*\)/m)
+abort("FrameOS panel wrapper must not retry full-DOM readiness scans every 100ms") if panel.include?("ROUTE_READY_POLL_MILLIS")
+abort("FrameOS panel wrapper must use its route observer for heading contrast") if panel.include?("startHeadingContrast")
+abort("FrameOS panel wrapper must disconnect route observers when superseded") unless panel.include?("observer.disconnect()")
+abort("FrameOS panel wrapper must discard strong camera evidence after ready") unless panel.include?("releaseRouteEvidence(state)")
+abort("FrameOS panel wrapper must require all four decoded camera videos") unless panel.include?("state.cameraVideos.size >= requirement.cameraVideos")
+abort("FrameOS panel wrapper must not treat absent camera videos as ready") if panel.include?("state.cameraVideos.size === 0")
+unless panel.match?(/showStillConnecting\(state\.view, detail\);\s*focusPanel\(\);/m)
+  abort("FrameOS panel wrapper must focus the panel after a nonblocking readiness timeout")
+end
 
 forbidden = [
   "fetch(",

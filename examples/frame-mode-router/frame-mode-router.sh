@@ -58,6 +58,8 @@ FRAMEOS_PACKAGE="${FRAMEOS_PACKAGE:-}"
 FRAMEOS_ACTIVITY="${FRAMEOS_ACTIVITY:-}"
 FRAMEOS_RECEIVER="${FRAMEOS_RECEIVER:-}"
 FRAMEOS_CONTROL_ACTION="${FRAMEOS_CONTROL_ACTION:-com.wyattfleming.frameos.CONTROL}"
+FIREFOX_READY_MAX_PROBES="${FIREFOX_READY_MAX_PROBES:-4}"
+FIREFOX_READY_POLL_SECONDS="${FIREFOX_READY_POLL_SECONDS:-1}"
 frameos_enabled=0
 if [ -n "$FRAMEOS_PACKAGE" ] || [ -n "$FRAMEOS_ACTIVITY" ] || [ -n "$FRAMEOS_RECEIVER" ]; then
   [ -n "$FRAMEOS_PACKAGE" ] && [ -n "$FRAMEOS_ACTIVITY" ] && [ -n "$FRAMEOS_RECEIVER" ] || \
@@ -106,6 +108,14 @@ esac
 case "$FRAMEOS_CONTROL_ACTION" in
   *[!A-Za-z0-9._]*|'') fail 'FRAMEOS_CONTROL_ACTION contains unsupported characters' ;;
 esac
+case "$FIREFOX_READY_MAX_PROBES" in
+  *[!0-9]*|'') fail 'FIREFOX_READY_MAX_PROBES must be a positive integer' ;;
+esac
+[ "$FIREFOX_READY_MAX_PROBES" -ge 1 ] || fail 'FIREFOX_READY_MAX_PROBES must be a positive integer'
+case "$FIREFOX_READY_POLL_SECONDS" in
+  *[!0-9]*|'') fail 'FIREFOX_READY_POLL_SECONDS must be a positive integer' ;;
+esac
+[ "$FIREFOX_READY_POLL_SECONDS" -ge 1 ] || fail 'FIREFOX_READY_POLL_SECONDS must be a positive integer'
 
 fully_package="${FULLY_ACTIVITY%%/*}"
 
@@ -185,10 +195,31 @@ open_firefox_mode() {
     -a android.intent.action.VIEW \
     -d "$destination_url" \
     -p "$FIREFOX_PACKAGE" >/dev/null 2>&1 || return 1
-  sleep 1
+  if ! wait_for_firefox_ready; then
+    # The activity may still finish its launch later. Do not swipe whatever
+    # unrelated surface happens to remain resumed at this bounded deadline.
+    return 0
+  fi
   # This best-effort content scroll collapses Firefox's toolbar on the tested
   # fixed Home Assistant layouts. It is not a permanent fullscreen guarantee.
   input swipe 100 1000 100 500 100 >/dev/null 2>&1 || true
+}
+
+firefox_is_resumed() {
+  dumpsys activity activities 2>/dev/null | grep 'mResumedActivity' | grep -Fq "$FIREFOX_PACKAGE"
+}
+
+wait_for_firefox_ready() {
+  probe=0
+  while [ "$probe" -lt "$FIREFOX_READY_MAX_PROBES" ]; do
+    if firefox_is_resumed; then
+      return 0
+    fi
+    probe=$((probe + 1))
+    [ "$probe" -lt "$FIREFOX_READY_MAX_PROBES" ] || break
+    sleep "$FIREFOX_READY_POLL_SECONDS"
+  done
+  return 1
 }
 
 open_frameos_mode() {
@@ -255,10 +286,15 @@ cleanup_lock() {
 }
 trap cleanup_lock EXIT HUP INT TERM
 
-current="$(current_mode)"
 case "$action" in
-  next) destination="$(next_mode "$current")" ;;
-  prev|previous) destination="$(previous_mode "$current")" ;;
+  next)
+    current="$(current_mode)"
+    destination="$(next_mode "$current")"
+    ;;
+  prev|previous)
+    current="$(current_mode)"
+    destination="$(previous_mode "$current")"
+    ;;
   show) destination="$requested_mode" ;;
 esac
 

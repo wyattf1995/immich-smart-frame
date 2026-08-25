@@ -54,6 +54,31 @@ cat > "$fake_bin/dumpsys" <<'EOF'
 if [ "${1:-}" != "activity" ] || [ "${2:-}" != "activities" ]; then
   exit 2
 fi
+printf 'dumpsys\n' >> "$FRAME_ROUTER_LOG"
+if [ -n "${FRAME_ROUTER_FIREFOX_READY_AFTER:-}" ]; then
+  calls_file="${FRAME_ROUTER_DUMPSYS_CALLS:?}"
+  calls=0
+  if [ -r "$calls_file" ]; then
+    calls="$(cat "$calls_file")"
+  fi
+  calls=$((calls + 1))
+  printf '%s\n' "$calls" > "$calls_file"
+  if [ "$calls" -gt "$FRAME_ROUTER_FIREFOX_READY_AFTER" ]; then
+    printf '%s\n' '  mResumedActivity: ActivityRecord{42 u0 org.mozilla.firefox/org.mozilla.gecko.BrowserApp}'
+  else
+    printf '%s\n' '  mResumedActivity: ActivityRecord{42 u0 com.example.launcher/.MainActivity}'
+  fi
+  exit 0
+fi
+if [ "${FRAME_ROUTER_FOREGROUND:-}" = background-firefox ]; then
+  printf '%s\n' '  mResumedActivity: ActivityRecord{42 u0 com.example.launcher/.MainActivity}'
+  printf '%s\n' '  mLastPausedActivity: ActivityRecord{42 u0 org.mozilla.firefox/org.mozilla.gecko.BrowserApp}'
+  exit 0
+fi
+if [ -n "${FRAME_ROUTER_FIREFOX_STARTED:-}" ] && [ -f "$FRAME_ROUTER_FIREFOX_STARTED" ]; then
+  printf '%s\n' '  mResumedActivity: ActivityRecord{42 u0 org.mozilla.firefox/org.mozilla.gecko.BrowserApp}'
+  exit 0
+fi
 case "${FRAME_ROUTER_FOREGROUND:-firefox}" in
   fully)
     printf '%s\n' '  mResumedActivity: ActivityRecord{42 u0 de.ozerov.fully/.FullyActivity}'
@@ -76,6 +101,13 @@ EOF
 cat > "$fake_bin/am" <<'EOF'
 #!/usr/bin/env sh
 printf 'am %s\n' "$*" >> "$FRAME_ROUTER_LOG"
+case " $* " in
+  *" -p org.mozilla.firefox "*)
+    if [ -n "${FRAME_ROUTER_FIREFOX_STARTED:-}" ]; then
+      : > "$FRAME_ROUTER_FIREFOX_STARTED"
+    fi
+    ;;
+esac
 if [ "${FRAME_ROUTER_BLOCK_AM:-0}" = 1 ]; then
   : > "$FRAME_ROUTER_AM_STARTED"
   while [ ! -f "$FRAME_ROUTER_RELEASE_AM" ]; do
@@ -91,7 +123,7 @@ EOF
 
 cat > "$fake_bin/sleep" <<'EOF'
 #!/usr/bin/env sh
-: "${1:-0}"
+printf 'sleep %s\n' "${1:-0}" >> "$FRAME_ROUTER_LOG"
 exit 0
 EOF
 
@@ -115,6 +147,8 @@ frameos_config="$tmp_dir/frameos-router.conf"
 state="$tmp_dir/state"
 lock="$tmp_dir/router.lock"
 log="$tmp_dir/commands.log"
+dumpsys_calls="$tmp_dir/dumpsys-calls"
+firefox_started="$tmp_dir/firefox-started"
 cat > "$config" <<EOF
 STATE_FILE=$state
 LOCK_DIR=$lock
@@ -139,18 +173,20 @@ FRAMEOS_RECEIVER=com.wyattfleming.frameos/.control.FrameControlReceiver
 EOF
 
 run_router() {
+  rm -f "$firefox_started"
   if [[ "$1" == show ]]; then
-    FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router_shell" "$router" show "$2" "$config" \
+    FRAME_ROUTER_LOG="$log" FRAME_ROUTER_FIREFOX_STARTED="$firefox_started" PATH="$fake_bin:$PATH" "$router_shell" "$router" show "$2" "$config" \
       >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
   else
-    FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router_shell" "$router" "$1" "$config" \
+    FRAME_ROUTER_LOG="$log" FRAME_ROUTER_FIREFOX_STARTED="$firefox_started" PATH="$fake_bin:$PATH" "$router_shell" "$router" "$1" "$config" \
       >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
   fi
 }
 
 run_router_expect_failure() {
+  rm -f "$firefox_started"
   set +e
-  FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router_shell" "$router" "$@" \
+  FRAME_ROUTER_LOG="$log" FRAME_ROUTER_FIREFOX_STARTED="$firefox_started" PATH="$fake_bin:$PATH" "$router_shell" "$router" "$@" \
     >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
   local result=$?
   set -e
@@ -158,11 +194,12 @@ run_router_expect_failure() {
 }
 
 run_frameos_router() {
+  rm -f "$firefox_started"
   if [[ "$1" == show ]]; then
-    FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router_shell" "$router" show "$2" "$frameos_config" \
+    FRAME_ROUTER_LOG="$log" FRAME_ROUTER_FIREFOX_STARTED="$firefox_started" PATH="$fake_bin:$PATH" "$router_shell" "$router" show "$2" "$frameos_config" \
       >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
   else
-    FRAME_ROUTER_LOG="$log" PATH="$fake_bin:$PATH" "$router_shell" "$router" "$1" "$frameos_config" \
+    FRAME_ROUTER_LOG="$log" FRAME_ROUTER_FIREFOX_STARTED="$firefox_started" PATH="$fake_bin:$PATH" "$router_shell" "$router" "$1" "$frameos_config" \
       >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
   fi
 }
@@ -239,6 +276,8 @@ assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL 
 FRAME_ROUTER_FOREGROUND=unknown run_frameos_router show weather
 assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL -n com.wyattfleming.frameos/.control.FrameControlReceiver --es frameos.mode WEATHER' "$log" \
   'FrameOS direct Weather must use the protected receiver'
+assert_file_not_contains 'dumpsys' "$log" \
+  'FrameOS direct show must not inspect the current foreground mode'
 
 : > "$log"
 printf 'photos\n' > "$state"
@@ -286,6 +325,46 @@ FRAME_ROUTER_FOREGROUND=unknown run_router show photos
 assert_file_contains 'am start --activity-reorder-to-front -n de.ozerov.fully/.FullyActivity' "$log" \
   'photos must launch the configured Fully activity'
 assert_file_not_contains 'org.mozilla.firefox' "$log" 'photos must not launch Firefox'
+
+: > "$log"
+rm -f "$dumpsys_calls"
+FRAME_ROUTER_FOREGROUND=unknown FRAME_ROUTER_FIREFOX_READY_AFTER=0 \
+  FRAME_ROUTER_DUMPSYS_CALLS="$dumpsys_calls" run_router show home
+assert_eq 1 "$(cat "$dumpsys_calls")" \
+  'direct Firefox show must make only its immediate readiness probe, not a current-mode probe'
+assert_file_not_contains 'sleep 1' "$log" \
+  'an immediately resumed Firefox activity must not pay the legacy fixed sleep'
+assert_file_count 'input swipe 100 1000 100 500 100' "$log" 1 \
+  'an immediately resumed Firefox activity must still receive one toolbar-collapse swipe'
+
+: > "$log"
+rm -f "$dumpsys_calls"
+FRAME_ROUTER_FOREGROUND=unknown FRAME_ROUTER_FIREFOX_READY_AFTER=1 \
+  FRAME_ROUTER_DUMPSYS_CALLS="$dumpsys_calls" run_router show cameras
+assert_eq 2 "$(cat "$dumpsys_calls")" \
+  'a delayed Firefox resume must be polled until it appears'
+assert_file_count 'sleep 1' "$log" 1 \
+  'a delayed Firefox resume must wait once between bounded probes'
+assert_file_count 'input swipe 100 1000 100 500 100' "$log" 1 \
+  'a delayed Firefox resume must receive one toolbar-collapse swipe after readiness'
+
+: > "$log"
+rm -f "$dumpsys_calls"
+FRAME_ROUTER_FOREGROUND=unknown FRAME_ROUTER_FIREFOX_READY_AFTER=99 \
+  FRAME_ROUTER_DUMPSYS_CALLS="$dumpsys_calls" run_router show calendar
+assert_eq 4 "$(cat "$dumpsys_calls")" \
+  'a never-ready Firefox activity must stop after the bounded readiness probe budget'
+assert_file_count 'sleep 1' "$log" 3 \
+  'a never-ready Firefox activity must use only bounded poll sleeps'
+assert_file_not_contains 'input swipe 100 1000 100 500 100' "$log" \
+  'a never-ready Firefox activity must not swipe an unrelated foreground surface'
+
+: > "$log"
+FRAME_ROUTER_FOREGROUND=background-firefox run_router show home
+assert_file_count 'sleep 1' "$log" 3 \
+  'a background Firefox task must not satisfy the resumed-activity readiness probe'
+assert_file_not_contains 'input swipe 100 1000 100 500 100' "$log" \
+  'a background Firefox task must not receive a toolbar-collapse swipe'
 
 : > "$log"
 FRAME_ROUTER_FOREGROUND=fully run_router next
