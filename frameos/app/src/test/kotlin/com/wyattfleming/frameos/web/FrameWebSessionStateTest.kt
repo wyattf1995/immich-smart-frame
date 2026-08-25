@@ -1,6 +1,7 @@
 package com.wyattfleming.frameos.web
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -26,5 +27,18 @@ class FrameWebSessionStateTest {
         assertTrue(
             state.shouldRequest("https://home-assistant.example.invalid/local/frameos-panel.html#calendar"),
         )
+    }
+
+    @Test
+    fun `retains the approved request for crash recovery and records a successful surface`() {
+        val state = FrameWebSessionState()
+        val url = "https://home-assistant.example.invalid/local/frameos-panel.html#home"
+
+        state.recordRequest(url)
+        state.recordSuccess()
+        state.recordFailure()
+
+        assertEquals(url, state.recoveryUrl())
+        assertTrue(state.shouldRequest(url))
     }
 }

@@ -78,4 +78,15 @@ class FrameUrlPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `allows only explicitly configured fallback origins`() {
+        val origins = listOf(
+            "https://home.example.invalid/",
+            "https://home-fallback.example.invalid:8443/",
+        )
+
+        assertTrue(policy.isAllowedTopLevelNavigation(origins, "https://home-fallback.example.invalid:8443/local/frameos-panel.html"))
+        assertFalse(policy.isAllowedTopLevelNavigation(origins, "https://unexpected.example.invalid/local/frameos-panel.html"))
+    }
 }

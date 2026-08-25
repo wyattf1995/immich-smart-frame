@@ -19,6 +19,8 @@ class FrameControlReceiver : BroadcastReceiver() {
                     .getStringExtra(FrameControlContract.EXTRA_WEATHER_ENTITY_ID)
                     .orEmpty()
                     .ifBlank { DEFAULT_WEATHER_ENTITY_ID },
+                homeAssistantFallbackUrl = intent
+                    .getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_FALLBACK_URL),
             )
             if (configuration != null) {
                 configurationStore.write(configuration)

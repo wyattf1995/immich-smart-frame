@@ -16,13 +16,19 @@ class FrameUrlPolicy {
     }
 
     fun isAllowedTopLevelNavigation(configuredUrl: String, requestedUrl: String): Boolean {
-        val configured = configuredUrl.parseUri() ?: return false
+        return isAllowedTopLevelNavigation(listOf(configuredUrl), requestedUrl)
+    }
+
+    fun isAllowedTopLevelNavigation(configuredUrls: Collection<String>, requestedUrl: String): Boolean {
         val requested = requestedUrl.parseUri() ?: return false
         if (!isSafeConfigurationUrl(requestedUrl)) return false
 
-        return configured.scheme.equals(requested.scheme, ignoreCase = true) &&
-            configured.host.equals(requested.host, ignoreCase = true) &&
-            configured.effectivePort() == requested.effectivePort()
+        return configuredUrls.any { configuredUrl ->
+            val configured = configuredUrl.parseUri() ?: return@any false
+            configured.scheme.equals(requested.scheme, ignoreCase = true) &&
+                configured.host.equals(requested.host, ignoreCase = true) &&
+                configured.effectivePort() == requested.effectivePort()
+        }
     }
 
     private fun String.parseUri(): URI? = runCatching { URI(this) }.getOrNull()

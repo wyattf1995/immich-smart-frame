@@ -70,4 +70,28 @@ class FrameConfigurationTest {
             )
         }
     }
+
+    @Test
+    fun `accepts only a separate safe HTTPS fallback Home Assistant origin`() {
+        val configuration = FrameConfiguration.from(
+            photosUrl = "https://photos.example.invalid/",
+            homeAssistantUrl = "https://home.example.invalid:8123/",
+            homeAssistantFallbackUrl = " https://home-fallback.example.invalid:8443/dashboard ",
+        )
+
+        assertEquals("https://home-fallback.example.invalid:8443/dashboard", configuration?.homeAssistantFallbackUrl)
+        listOf(
+            "http://home-fallback.example.invalid/",
+            "https://user:password@home-fallback.example.invalid/",
+            "https://home-fallback.example.invalid/?token=secret",
+        ).forEach { invalid ->
+            assertNull(
+                FrameConfiguration.from(
+                    photosUrl = "https://photos.example.invalid/",
+                    homeAssistantUrl = "https://home.example.invalid/",
+                    homeAssistantFallbackUrl = invalid,
+                ),
+            )
+        }
+    }
 }
