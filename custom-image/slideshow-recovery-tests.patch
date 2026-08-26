@@ -1,0 +1,166 @@
+diff --git a/frontend/tests/asset-request-recovery.test.ts b/frontend/tests/asset-request-recovery.test.ts
+new file mode 100644
+index 0000000..ff3a145
+--- /dev/null
++++ b/frontend/tests/asset-request-recovery.test.ts
+@@ -0,0 +1,42 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++
++import { recoverAssetRequest } from "../src/ts/asset-request-recovery.ts";
++
++function requestEvent(path?: string): Event {
++    return {
++        detail: path === undefined ? {} : { pathInfo: { requestPath: path } },
++    } as unknown as Event;
++}
++
++test("asset requests always release their lock before polling restarts", () => {
++    for (const path of ["/asset/new", "/asset/offline", "/asset/previous"]) {
++        const calls: string[] = [];
++        const recovered = recoverAssetRequest(
++            requestEvent(path),
++            () => calls.push("release"),
++            () => calls.push("start"),
++        );
++
++        assert.equal(recovered, true, path);
++        assert.deepEqual(calls, ["release", "start"], path);
++    }
++});
++
++test("unrelated and malformed requests do not alter slideshow state", () => {
++    for (const event of [
++        requestEvent("/weather"),
++        requestEvent(),
++        {} as Event,
++    ]) {
++        const calls: string[] = [];
++        const recovered = recoverAssetRequest(
++            event,
++            () => calls.push("release"),
++            () => calls.push("start"),
++        );
++
++        assert.equal(recovered, false);
++        assert.deepEqual(calls, []);
++    }
++});
+diff --git a/frontend/tests/htmx.mock.ts b/frontend/tests/htmx.mock.ts
+new file mode 100644
+index 0000000..9d358e4
+--- /dev/null
++++ b/frontend/tests/htmx.mock.ts
+@@ -0,0 +1,14 @@
++const htmx = {
++    addClass(element: HTMLElement, className: string) {
++        element.classList.add(className);
++    },
++    find() {
++        return null;
++    },
++    removeClass(element: HTMLElement, className: string) {
++        element.classList.remove(className);
++    },
++    trigger() {},
++};
++
++export default htmx;
+diff --git a/frontend/tests/polling-recovery.test.ts b/frontend/tests/polling-recovery.test.ts
+new file mode 100644
+index 0000000..71057c7
+--- /dev/null
++++ b/frontend/tests/polling-recovery.test.ts
+@@ -0,0 +1,92 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++
++class FakeClassList {
++    private readonly values = new Set<string>();
++
++    add(...classNames: string[]) {
++        for (const className of classNames) this.values.add(className);
++    }
++
++    contains(className: string) {
++        return this.values.has(className);
++    }
++
++    remove(...classNames: string[]) {
++        for (const className of classNames) this.values.delete(className);
++    }
++}
++
++test("polling stays single-loop and recovers only while active", async () => {
++    let nextFrameId = 1;
++    const scheduledFrames = new Map<number, FrameRequestCallback>();
++    const cancelledFrames: number[] = [];
++    const body = { classList: new FakeClassList() };
++    const fakeDocument = {
++        body,
++        getElementById: () => null,
++        visibilityState: "visible",
++    };
++
++    Object.defineProperties(globalThis, {
++        cancelAnimationFrame: {
++            configurable: true,
++            value: (frameId: number) => {
++                cancelledFrames.push(frameId);
++                scheduledFrames.delete(frameId);
++            },
++        },
++        document: {
++            configurable: true,
++            value: fakeDocument,
++        },
++        requestAnimationFrame: {
++            configurable: true,
++            value: (callback: FrameRequestCallback) => {
++                const frameId = nextFrameId++;
++                scheduledFrames.set(frameId, callback);
++                return frameId;
++            },
++        },
++    });
++
++    const polling = await import("../src/ts/polling.ts");
++    const kiosk = { classList: new FakeClassList() } as unknown as HTMLElement;
++    const menu = { classList: new FakeClassList() } as unknown as HTMLElement;
++
++    polling.initPolling(45_000, kiosk, menu);
++    polling.startPolling();
++    assert.equal(scheduledFrames.size, 1);
++    const initialFrameId = [...scheduledFrames.keys()][0];
++
++    polling.startPolling();
++    assert.equal(
++        scheduledFrames.size,
++        1,
++        "duplicate start created another loop",
++    );
++    assert.equal([...scheduledFrames.keys()][0], initialFrameId);
++
++    polling.recoverPollingIfVisible();
++    assert.deepEqual(cancelledFrames, [initialFrameId]);
++    assert.equal(
++        scheduledFrames.size,
++        1,
++        "visible recovery must replace one loop",
++    );
++
++    polling.stopPolling();
++    assert.equal(scheduledFrames.size, 0);
++    fakeDocument.visibilityState = "hidden";
++    polling.recoverPollingIfVisible();
++    assert.equal(scheduledFrames.size, 0, "hidden slideshow was restarted");
++
++    fakeDocument.visibilityState = "visible";
++    polling.recoverPollingIfVisible();
++    assert.equal(scheduledFrames.size, 1, "active slideshow did not recover");
++
++    polling.pausePolling(false);
++    assert.equal(scheduledFrames.size, 0);
++    polling.recoverPollingIfVisible();
++    assert.equal(scheduledFrames.size, 0, "intentional pause was overridden");
++});
