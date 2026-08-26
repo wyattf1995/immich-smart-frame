@@ -48,7 +48,8 @@ tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/frame-mode-router-test.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 fake_bin="$tmp_dir/bin"
 proc_root="$tmp_dir/proc"
-export FRAME_ROUTER_REAL_LN="$(command -v ln)"
+FRAME_ROUTER_REAL_LN="$(command -v ln)"
+export FRAME_ROUTER_REAL_LN
 mkdir -p "$fake_bin"
 mkdir -p "$proc_root/$$"
 
@@ -424,6 +425,8 @@ run_router_expect_failure status "$tmp_dir/missing.conf"
 # awk rather than relying exclusively on the portable test override.
 rm -f "$lock"
 set +e
+# The child shell must expand these variables.
+# shellcheck disable=SC2016
 FRAME_ROUTER_PROCESS_START_TOKEN='' FRAME_ROUTER_PROC_ROOT="$proc_root" \
   FRAME_ROUTER_LOG="$log" FRAME_ROUTER_FOREGROUND=unknown \
   FRAME_ROUTER_FIREFOX_STARTED="$firefox_started" PATH="$fake_bin:$PATH" \
