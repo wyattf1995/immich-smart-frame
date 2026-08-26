@@ -51,6 +51,7 @@ required_files=(
   scripts/test-offline-assets-permissions.sh
   scripts/validate-frameos.sh
   scripts/validate-frameos-control-receiver.rb
+  scripts/validate-frameos-camera-disposal.rb
   scripts/validate-frameos-oauth-callback.rb
   scripts/validate-frameos-panel.rb
   scripts/validate-frameos-surface-layering.rb
@@ -110,6 +111,7 @@ fi
 ./scripts/validate-frameos.sh
 
 ruby scripts/validate-frameos-control-receiver.rb
+ruby scripts/validate-frameos-camera-disposal.rb
 ruby scripts/validate-frameos-oauth-callback.rb
 ruby scripts/validate-frameos-panel.rb
 ruby scripts/validate-frameos-surface-layering.rb
