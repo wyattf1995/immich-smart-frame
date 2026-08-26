@@ -1,0 +1,618 @@
+diff --git a/internal/cache/cache.go b/internal/cache/cache.go
+index 0a95d92..28f402d 100644
+--- a/internal/cache/cache.go
++++ b/internal/cache/cache.go
+@@ -4,0 +5 @@ import (
++	"encoding/json"
+@@ -5,0 +7,2 @@ import (
++	"sync"
++	"sync/atomic"
+@@ -24,0 +28,4 @@ var (
++	cacheMu    sync.Mutex
++	hooksMu    sync.RWMutex
++	hooks      []func()
++	generation atomic.Uint64
+@@ -27,0 +35,3 @@ var (
++	maxCacheTTL       = 24 * time.Hour
++	maxCacheEntries   = 4096
++	maxCacheValueSize = 16 << 20
+@@ -31,0 +42,6 @@ var (
++func init() {
++	// A configuration reload can change user, tenant, filter, and cache
++	// durations. Start a fresh namespace before any request observes it.
++	config.RegisterReloadHook(InvalidateAll)
++}
++
+@@ -38,0 +55,2 @@ func Initialize() {
++	cacheMu.Lock()
++	defer cacheMu.Unlock()
+@@ -44,0 +63,38 @@ func Initialize() {
++	if generation.Load() == 0 {
++		generation.Store(1)
++	}
++}
++
++// RegisterInvalidationHook registers a callback for logical cache invalidation.
++// Hooks are used by bounded secondary caches (for example date pools and video
++// metadata) so a flush has one consistent meaning across the application.
++func RegisterInvalidationHook(hook func()) {
++	if hook == nil {
++		return
++	}
++	hooksMu.Lock()
++	hooks = append(hooks, hook)
++	hooksMu.Unlock()
++}
++
++// CurrentGeneration returns the cache namespace generation. Callers that
++// refill asynchronously include this value in their key, preventing a stale
++// response from an earlier generation from becoming visible after invalidation.
++func CurrentGeneration() uint64 { return generation.Load() }
++
++// InvalidateAll starts a new cache generation and clears every registered
++// secondary cache. It is safe to call while a request is reading or writing.
++func InvalidateAll() {
++	generation.Add(1)
++	cacheMu.Lock()
++	if kioskCache != nil {
++		kioskCache.Flush()
++	}
++	cacheMu.Unlock()
++
++	hooksMu.RLock()
++	callbacks := append([]func(){}, hooks...)
++	hooksMu.RUnlock()
++	for _, hook := range callbacks {
++		hook()
++	}
+@@ -50 +106 @@ func Flush() {
+-	kioskCache.Flush()
++	InvalidateAll()
+@@ -55,0 +112,5 @@ func ItemCount() int {
++	cacheMu.Lock()
++	defer cacheMu.Unlock()
++	if kioskCache == nil {
++		return 0
++	}
+@@ -62 +123 @@ func ItemCount() int {
+-func ViewCacheKey(apiURL, deviceID string) string {
++func ViewCacheKey(apiURL, deviceID string, selectedUser ...string) string {
+@@ -64 +125,5 @@ func ViewCacheKey(apiURL, deviceID string) string {
+-	key := fmt.Sprintf("%s:%s:view:%s", apiURL, deviceID, dateStamp)
++	user := ""
++	if len(selectedUser) > 0 {
++		user = selectedUser[0]
++	}
++	key := fmt.Sprintf("%d:%s:%s:%s:view:%s", CurrentGeneration(), apiURL, deviceID, user, dateStamp)
+@@ -73 +138 @@ func APICacheKey(apiURL, deviceID string, user string) string {
+-	key := fmt.Sprintf("%s:%s:%s:api:%s", apiURL, deviceID, user, dateStamp)
++	key := fmt.Sprintf("%d:%s:%s:%s:api:%s", CurrentGeneration(), apiURL, deviceID, user, dateStamp)
+@@ -80,0 +146,5 @@ func Get(s string) (any, bool) {
++	cacheMu.Lock()
++	defer cacheMu.Unlock()
++	if kioskCache == nil {
++		return nil, false
++	}
+@@ -83,0 +154,45 @@ func Get(s string) (any, bool) {
++func boundedExpiration(d time.Duration) time.Duration {
++	if d <= 0 || d > maxCacheTTL {
++		return maxCacheTTL
++	}
++	return d
++}
++
++func valueWithinLimit(value any) bool {
++	if bytes, ok := value.([]byte); ok {
++		return len(bytes) <= maxCacheValueSize
++	}
++	if text, ok := value.(string); ok {
++		return len(text) <= maxCacheValueSize
++	}
++	encoded, err := json.Marshal(value)
++	return err == nil && len(encoded) <= maxCacheValueSize
++}
++
++func evictOldestLocked() {
++	if kioskCache.ItemCount() < maxCacheEntries {
++		return
++	}
++	items := kioskCache.Items()
++	var oldestKey string
++	var oldestExpiration int64
++	for key, item := range items {
++		if oldestKey == "" || item.Expiration < oldestExpiration {
++			oldestKey, oldestExpiration = key, item.Expiration
++		}
++	}
++	if oldestKey != "" {
++		kioskCache.Delete(oldestKey)
++	}
++}
++
++func setLocked(key string, value any, expiration time.Duration) {
++	if kioskCache == nil || !valueWithinLimit(value) {
++		return
++	}
++	if _, found := kioskCache.Get(key); !found {
++		evictOldestLocked()
++	}
++	kioskCache.Set(key, value, boundedExpiration(expiration))
++}
++
+@@ -88,0 +204,5 @@ func Set(key string, value any, deviceDuration, cacheDuration int) {
++	cacheMu.Lock()
++	defer cacheMu.Unlock()
++	if kioskCache == nil {
++		return
++	}
+@@ -91 +211 @@ func Set(key string, value any, deviceDuration, cacheDuration int) {
+-		kioskCache.Set(key, value, gocache.DefaultExpiration)
++		setLocked(key, value, defaultExpiration)
+@@ -100 +220,20 @@ func Set(key string, value any, deviceDuration, cacheDuration int) {
+-	kioskCache.Set(key, value, d)
++	setLocked(key, value, d)
++}
++
++// SetIfGeneration stores a value only if no logical invalidation occurred
++// since generation was captured. This closes the miss/fetch/set race in API
++// callers: an old in-flight response cannot refill a namespace after a write.
++func SetIfGeneration(g uint64, key string, value any, deviceDuration, cacheDuration int) bool {
++	cacheMu.Lock()
++	defer cacheMu.Unlock()
++	if kioskCache == nil || generation.Load() != g {
++		return false
++	}
++	if deviceDuration < 0 || cacheDuration < 0 {
++		setLocked(key, value, defaultExpiration)
++		return true
++	}
++	device := time.Duration(deviceDuration)*time.Second + time.Minute
++	configured := time.Duration(cacheDuration)*time.Second + time.Minute
++	setLocked(key, value, max(device, configured, defaultExpiration))
++	return true
+@@ -107 +246,50 @@ func SetWithExpiration(key string, x any, t time.Duration) {
+-	kioskCache.Set(key, x, t)
++	cacheMu.Lock()
++	defer cacheMu.Unlock()
++	setLocked(key, x, t)
++}
++
++// Update atomically transforms a cached slice. It is used for producer queues
++// where a concurrent Get/Set pair could otherwise lose an append.
++func Update[T any](key string, update func([]T) []T, deviceDuration, cacheDuration int) {
++	cacheMu.Lock()
++	defer cacheMu.Unlock()
++	if kioskCache == nil {
++		return
++	}
++	var values []T
++	if cached, found := kioskCache.Get(key); found {
++		if typed, ok := cached.([]T); ok {
++			values = typed
++		}
++	}
++	values = update(values)
++	device := time.Duration(deviceDuration)*time.Second + time.Minute
++	configured := time.Duration(cacheDuration)*time.Second + time.Minute
++	if deviceDuration < 0 || cacheDuration < 0 {
++		device, configured = defaultExpiration, defaultExpiration
++	}
++	setLocked(key, values, max(device, configured, defaultExpiration))
++}
++
++// Pop atomically removes and returns the first element of a cached slice.
++func Pop[T any](key string, deviceDuration, cacheDuration int) (T, bool) {
++	cacheMu.Lock()
++	defer cacheMu.Unlock()
++	var zero T
++	if kioskCache == nil {
++		return zero, false
++	}
++	cached, found := kioskCache.Get(key)
++	values, ok := cached.([]T)
++	if !found || !ok || len(values) == 0 {
++		return zero, false
++	}
++	value := values[0]
++	if len(values) == 1 {
++		kioskCache.Delete(key)
++	} else {
++		device := time.Duration(deviceDuration)*time.Second + time.Minute
++		configured := time.Duration(cacheDuration)*time.Second + time.Minute
++		setLocked(key, values[1:], max(device, configured, defaultExpiration))
++	}
++	return value, true
+@@ -113 +301,5 @@ func Delete(key string) {
+-	kioskCache.Delete(key)
++	cacheMu.Lock()
++	defer cacheMu.Unlock()
++	if kioskCache != nil {
++		kioskCache.Delete(key)
++	}
+@@ -119 +311,6 @@ func Replace(key string, x any) error {
+-	return kioskCache.Replace(key, x, gocache.DefaultExpiration)
++	cacheMu.Lock()
++	defer cacheMu.Unlock()
++	if kioskCache == nil || !valueWithinLimit(x) {
++		return fmt.Errorf("cache is not initialized or value exceeds size limit")
++	}
++	return kioskCache.Replace(key, x, boundedExpiration(defaultExpiration))
+@@ -139,0 +337,3 @@ func assetToCache[T any](viewDataToAdd T, requestConfig *config.Config, deviceID
++	if requestConfig == nil || !requestConfig.Kiosk.Cache {
++		return
++	}
+@@ -142,10 +342,10 @@ func assetToCache[T any](viewDataToAdd T, requestConfig *config.Config, deviceID
+-	cachedViewData := []T{}
+-
+-	viewCacheKey := ViewCacheKey(url, deviceID)
+-
+-	if data, found := Get(viewCacheKey); found {
+-		if typedData, ok := data.([]T); ok {
+-			cachedViewData = typedData
+-		} else {
+-			log.Error("Invalid cache data type")
+-			cachedViewData = []T{}
++	viewCacheKey := ViewCacheKey(url, deviceID, requestConfig.SelectedUser)
++	Update(viewCacheKey, func(cachedViewData []T) []T {
++		switch position {
++		case APPEND:
++			return append(cachedViewData, viewDataToAdd)
++		case PREPEND:
++			return append([]T{viewDataToAdd}, cachedViewData...)
++		default:
++			log.Error("Invalid cache position", "position", position)
++			return cachedViewData
+@@ -153,10 +353 @@ func assetToCache[T any](viewDataToAdd T, requestConfig *config.Config, deviceID
+-	}
+-
+-	switch position {
+-	case APPEND:
+-		cachedViewData = append(cachedViewData, viewDataToAdd)
+-	case PREPEND:
+-		cachedViewData = append([]T{viewDataToAdd}, cachedViewData...)
+-	}
+-
+-	Set(viewCacheKey, cachedViewData, requestConfig.Duration, requestConfig.CacheDuration)
++	}, requestConfig.Duration, requestConfig.CacheDuration)
+diff --git a/internal/config/config_watcher.go b/internal/config/config_watcher.go
+index 28a7685..e43d55b 100644
+--- a/internal/config/config_watcher.go
++++ b/internal/config/config_watcher.go
+@@ -9,0 +10 @@ import (
++	"sync"
+@@ -14,0 +16,25 @@ import (
++var reloadHooks = struct {
++	sync.RWMutex
++	hooks []func()
++}{}
++
++// RegisterReloadHook lets subsystems invalidate derived state when a live
++// configuration replacement occurs. Hooks must be quick and concurrency safe.
++func RegisterReloadHook(hook func()) {
++	if hook == nil {
++		return
++	}
++	reloadHooks.Lock()
++	reloadHooks.hooks = append(reloadHooks.hooks, hook)
++	reloadHooks.Unlock()
++}
++
++func notifyReloadHooks() {
++	reloadHooks.RLock()
++	hooks := append([]func(){}, reloadHooks.hooks...)
++	reloadHooks.RUnlock()
++	for _, hook := range hooks {
++		hook()
++	}
++}
++
+@@ -102,0 +129 @@ func (c *Config) reloadConfig(reason string) {
++	notifyReloadHooks()
+diff --git a/internal/immich/immich_album.go b/internal/immich/immich_album.go
+index e757dbc..b8e23e0 100644
+--- a/internal/immich/immich_album.go
++++ b/internal/immich/immich_album.go
+@@ -498,0 +499 @@ func (a *Asset) createKioskLikedAlbum() (string, error) {
++	cache.InvalidateAll()
+@@ -584,0 +586 @@ func (a *Asset) modifyAssetInAlbum(albumID string, method string) error {
++	cache.InvalidateAll()
+diff --git a/internal/immich/immich_date.go b/internal/immich/immich_date.go
+index a04c31a..98f64f0 100644
+--- a/internal/immich/immich_date.go
++++ b/internal/immich/immich_date.go
+@@ -59,0 +60,6 @@ var dateCandidatePools = newDatePoolRegistry(defaultDatePoolRegistrySize)
++func init() {
++	cache.RegisterInvalidationHook(func() {
++		dateCandidatePools.clear()
++	})
++}
++
+@@ -125,0 +132,6 @@ func (r *datePoolRegistry) size() int {
++func (r *datePoolRegistry) clear() {
++	r.mu.Lock()
++	r.entries = make(map[string]*datePoolEntry, r.maxEntries)
++	r.mu.Unlock()
++}
++
+diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
+index d95fb31..5f63105 100644
+--- a/internal/immich/immich_helpers.go
++++ b/internal/immich/immich_helpers.go
+@@ -21 +20,0 @@ import (
+-	"unsafe"
+@@ -38,6 +37 @@ const (
+-type albumRestrictionCacheKey struct {
+-	profiles       uintptr
+-	excludedAlbums uintptr
+-	excludedCount  int
+-	profile        string
+-}
++type albumRestrictionCacheKey string
+@@ -58,0 +53,3 @@ type albumRestrictionRegistry struct {
++	lastConfig config.Config
++	lastKey    albumRestrictionCacheKey
++	lastSet    bool
+@@ -62,0 +60,6 @@ var compiledAlbumRestrictions = newAlbumRestrictionRegistry(defaultAlbumRestrict
++func init() {
++	cache.RegisterInvalidationHook(func() {
++		compiledAlbumRestrictions.clear()
++	})
++}
++
+@@ -101,0 +105 @@ func withImmichAPICache[T APIResponse](immichAPICall apiCall, requestID, deviceI
++		cacheGeneration := cache.CurrentGeneration()
+@@ -138 +142 @@ func withImmichAPICache[T APIResponse](immichAPICall apiCall, requestID, deviceI
+-		cache.Set(apiCacheKey, jsonBytes, requestConfig.Duration, requestConfig.CacheDuration)
++		cache.SetIfGeneration(cacheGeneration, apiCacheKey, jsonBytes, requestConfig.Duration, requestConfig.CacheDuration)
+@@ -894 +898 @@ func (r *albumRestrictionRegistry) get(requestConfig config.Config) albumRestric
+-	cacheKey := albumRestrictionKey(requestConfig)
++	now := r.now()
+@@ -897 +901,8 @@ func (r *albumRestrictionRegistry) get(requestConfig config.Config) albumRestric
+-	now := r.now()
++	if r.lastSet && sameAlbumRestrictionInput(r.lastConfig, requestConfig) {
++		if entry, ok := r.entries[r.lastKey]; ok && now.Before(entry.expiresAt) {
++			entry.lastAccess = now
++			r.entries[r.lastKey] = entry
++			return entry.restrictions
++		}
++	}
++	cacheKey := albumRestrictionKey(requestConfig)
+@@ -900,0 +912 @@ func (r *albumRestrictionRegistry) get(requestConfig config.Config) albumRestric
++		r.lastConfig, r.lastKey, r.lastSet = requestConfig, cacheKey, true
+@@ -914,0 +927 @@ func (r *albumRestrictionRegistry) get(requestConfig config.Config) albumRestric
++	r.lastConfig, r.lastKey, r.lastSet = requestConfig, cacheKey, true
+@@ -917,0 +931,28 @@ func (r *albumRestrictionRegistry) get(requestConfig config.Config) albumRestric
++func sameAlbumRestrictionInput(left, right config.Config) bool {
++	if strings.ToLower(strings.TrimSpace(left.CurationProfile)) != strings.ToLower(strings.TrimSpace(right.CurationProfile)) || len(left.ExcludedAlbums) != len(right.ExcludedAlbums) || len(left.Curation.Profiles) != len(right.Curation.Profiles) {
++		return false
++	}
++	for i, album := range left.ExcludedAlbums {
++		if album != right.ExcludedAlbums[i] {
++			return false
++		}
++	}
++	for name, leftProfile := range left.Curation.Profiles {
++		rightProfile, ok := right.Curation.Profiles[name]
++		if !ok || len(leftProfile.Sources) != len(rightProfile.Sources) || len(leftProfile.AlbumPenalties) != len(rightProfile.AlbumPenalties) {
++			return false
++		}
++		for i, source := range leftProfile.Sources {
++			if source != rightProfile.Sources[i] {
++				return false
++			}
++		}
++		for i, penalty := range leftProfile.AlbumPenalties {
++			if penalty != rightProfile.AlbumPenalties[i] {
++				return false
++			}
++		}
++	}
++	return true
++}
++
+@@ -943,0 +985,7 @@ func (r *albumRestrictionRegistry) size() int {
++func (r *albumRestrictionRegistry) clear() {
++	r.mu.Lock()
++	r.entries = make(map[albumRestrictionCacheKey]albumRestrictionCacheEntry, r.maxEntries)
++	r.lastSet = false
++	r.mu.Unlock()
++}
++
+@@ -945,14 +993,17 @@ func albumRestrictionKey(requestConfig config.Config) albumRestrictionCacheKey {
+-	var profilesPointer uintptr
+-	if requestConfig.Curation.Profiles != nil {
+-		profilesPointer = reflect.ValueOf(requestConfig.Curation.Profiles).Pointer()
+-	}
+-	var excludedPointer uintptr
+-	if len(requestConfig.ExcludedAlbums) > 0 {
+-		excludedPointer = uintptr(unsafe.Pointer(unsafe.SliceData(requestConfig.ExcludedAlbums)))
+-	}
+-	return albumRestrictionCacheKey{
+-		profiles:       profilesPointer,
+-		excludedAlbums: excludedPointer,
+-		excludedCount:  len(requestConfig.ExcludedAlbums),
+-		profile:        strings.ToLower(strings.TrimSpace(requestConfig.CurationProfile)),
+-	}
++	// Encode values, rather than map/slice addresses. Reloading configuration
++	// commonly allocates equivalent containers at new addresses; pointer keys
++	// then retain stale restrictions until TTL expiry. JSON sorts map keys, and
++	// excluded album order is normalized because it has no semantic meaning.
++	excludedAlbums := append([]string(nil), requestConfig.ExcludedAlbums...)
++	slices.Sort(excludedAlbums)
++	keyMaterial := struct {
++		Profiles       map[string]config.CurationProfile `json:"profiles"`
++		ExcludedAlbums []string                          `json:"excluded_albums"`
++		Profile        string                            `json:"profile"`
++	}{
++		Profiles:       requestConfig.Curation.Profiles,
++		ExcludedAlbums: excludedAlbums,
++		Profile:        strings.ToLower(strings.TrimSpace(requestConfig.CurationProfile)),
++	}
++	encoded, _ := json.Marshal(keyMaterial)
++	return albumRestrictionCacheKey(fmt.Sprintf("%x", sha256.Sum256(encoded)))
+@@ -1289,0 +1341,4 @@ func (a *Asset) updateAsset(deviceID string, requestBody UpdateAssetBody) error
++	// Lists, date pools, memories, and rendered view queues all derive from
++	// this asset. A point delete cannot invalidate those keys consistently, so
++	// advance the shared generation after the mutation succeeds.
++	cache.InvalidateAll()
+diff --git a/internal/immich/immich_memories.go b/internal/immich/immich_memories.go
+index 3d9ba8a..bbba2d7 100644
+--- a/internal/immich/immich_memories.go
++++ b/internal/immich/immich_memories.go
+@@ -89,5 +89,14 @@ func (a *Asset) memoriesWithPastDays(requestID, deviceID string, assetCount bool
+-	if apiData, found := cache.Get(cacheKey); found {
+-		log.Debug(requestID+" Cache hit", "url", apiURL)
+-		data, ok := apiData.([]byte)
+-		if !ok {
+-			return memories, apiURL, errors.New("could not parse past memories data")
++	if a.requestConfig.Kiosk.Cache {
++		if apiData, found := cache.Get(cacheKey); found {
++			log.Debug(requestID+" Cache hit", "url", apiURL)
++			data, ok := apiData.([]byte)
++			if !ok {
++				return memories, apiURL, errors.New("could not parse past memories data")
++			}
++
++			err = json.Unmarshal(data, &memories)
++			if err != nil {
++				return memories, apiURL, err
++			}
++
++			return memories, apiURL, nil
+@@ -95,7 +103,0 @@ func (a *Asset) memoriesWithPastDays(requestID, deviceID string, assetCount bool
+-
+-		err = json.Unmarshal(data, &memories)
+-		if err != nil {
+-			return memories, apiURL, err
+-		}
+-
+-		return memories, apiURL, nil
+@@ -119 +121,3 @@ func (a *Asset) memoriesWithPastDays(requestID, deviceID string, assetCount bool
+-	cache.Set(cacheKey, b, a.requestConfig.Duration, a.requestConfig.CacheDuration)
++	if a.requestConfig.Kiosk.Cache {
++		cache.Set(cacheKey, b, a.requestConfig.Duration, a.requestConfig.CacheDuration)
++	}
+@@ -203,3 +207,6 @@ func (a *Asset) MemoriesAssetsCount(requestID, deviceID string) int {
+-	if cachedCount, found := cache.Get(availabilityKey); found {
+-		if count, ok := cachedCount.(int); ok {
+-			return count
++	if a.requestConfig.Kiosk.Cache {
++		if cachedCount, found := cache.Get(availabilityKey); found {
++			if count, ok := cachedCount.(int); ok {
++				return count
++			}
++			cache.Delete(availabilityKey)
+@@ -207 +213,0 @@ func (a *Asset) MemoriesAssetsCount(requestID, deviceID string) int {
+-		cache.Delete(availabilityKey)
+@@ -226 +232,3 @@ func (a *Asset) MemoriesAssetsCount(requestID, deviceID string) int {
+-	cache.SetWithExpiration(availabilityKey, count, time.Minute)
++	if a.requestConfig.Kiosk.Cache {
++		cache.SetWithExpiration(availabilityKey, count, time.Minute)
++	}
+diff --git a/internal/immich/immich_tag.go b/internal/immich/immich_tag.go
+index ad6e6da..2ca411a 100644
+--- a/internal/immich/immich_tag.go
++++ b/internal/immich/immich_tag.go
+@@ -314,0 +315 @@ func (a *Asset) upsertTag(tag Tag) (Tag, error) {
++	cache.InvalidateAll()
+@@ -375,5 +376,4 @@ func (a *Asset) modifyTagAsset(tag Tag, assetID string, method string, action st
+-	// remove asset data from cache as we've changed its tags
+-	cacheErr := a.RemoveAssetCache(a.DeviceID)
+-	if cacheErr != nil {
+-		log.Error("error removing asset from cache", "assetID", assetID, "error", cacheErr)
+-	}
++	// Tag changes affect the asset, tag lists, and every derived source cache.
++	// Invalidate the shared generation instead of deleting one key (and avoid
++	// relying on Asset.DeviceID, which is not populated on this path).
++	cache.InvalidateAll()
+diff --git a/internal/routes/routes_asset.go b/internal/routes/routes_asset.go
+index 01176c7..9d29dc8 100644
+--- a/internal/routes/routes_asset.go
++++ b/internal/routes/routes_asset.go
+@@ -88 +88 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+-			if cachedViewData := fromCache(requestCtx.URL.String(), deviceID); cachedViewData != nil {
++			if cachedViewData, found := fromCache(requestCtx.URL.String(), deviceID, requestConfig.SelectedUser, requestConfig.Duration, requestConfig.CacheDuration); found {
+@@ -90 +90 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+-				go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, cachedViewData[0])
++				go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, cachedViewData)
+diff --git a/internal/routes/routes_asset_helpers.go b/internal/routes/routes_asset_helpers.go
+index e4e6bd9..80b8f9e 100644
+--- a/internal/routes/routes_asset_helpers.go
++++ b/internal/routes/routes_asset_helpers.go
+@@ -766,18 +766,6 @@ func assetPreFetch(ctx context.Context, common *common.Common, requestData *comm
+-// fromCache retrieves cached page data for a given request and device ID.
+-func fromCache(urlString string, deviceID string) []common.ViewData {
+-	cacheKey := cache.ViewCacheKey(urlString, deviceID)
+-	if data, found := cache.Get(cacheKey); found {
+-		cachedPageData, ok := data.([]common.ViewData)
+-		if !ok {
+-			log.Error("cache: invalid data type", "type", fmt.Sprintf("%T", data), "key", cacheKey)
+-			cache.Delete(cacheKey)
+-			return nil
+-		}
+-
+-		if len(cachedPageData) > 0 {
+-			return cachedPageData
+-		}
+-
+-		cache.Delete(cacheKey)
+-	}
+-	return nil
++// fromCache atomically consumes one prefetched page item. Keeping the remove
++// operation inside the cache lock prevents two concurrent displays from
++// rendering the same item or overwriting each other's queue updates.
++func fromCache(urlString string, deviceID, selectedUser string, deviceDuration, cacheDuration int) (common.ViewData, bool) {
++	cacheKey := cache.ViewCacheKey(urlString, deviceID, selectedUser)
++	return cache.Pop[common.ViewData](cacheKey, deviceDuration, cacheDuration)
+@@ -786,2 +774,2 @@ func fromCache(urlString string, deviceID string) []common.ViewData {
+-// renderCachedViewData renders cached page data and updates the cache.
+-func renderCachedViewData(c *echo.Context, cachedViewData []common.ViewData, requestConfig *config.Config, requestID, deviceID, secret string) error {
++// renderCachedViewData renders one atomically consumed cached page item.
++func renderCachedViewData(c *echo.Context, viewDataToRender common.ViewData, requestConfig *config.Config, requestID, deviceID, secret string) error {
+@@ -790,7 +777,0 @@ func renderCachedViewData(c *echo.Context, cachedViewData []common.ViewData, req
+-	cacheKey := cache.ViewCacheKey(c.Request().URL.String(), deviceID)
+-
+-	viewDataToRender := cachedViewData[0]
+-	viewDataToSave := cachedViewData[1:]
+-
+-	cache.Set(cacheKey, viewDataToSave, requestConfig.Duration, requestConfig.CacheDuration)
+-
+@@ -801 +782 @@ func renderCachedViewData(c *echo.Context, cachedViewData []common.ViewData, req
+-	if requestConfig.ShowVideos && viewDataToRender.Assets[0].ImmichAsset.Type == immich.VideoType {
++	if requestConfig.ShowVideos && len(viewDataToRender.Assets) > 0 && viewDataToRender.Assets[0].ImmichAsset.Type == immich.VideoType {
+diff --git a/internal/video/video.go b/internal/video/video.go
+index e7a60ea..2ae5ef9 100644
+--- a/internal/video/video.go
++++ b/internal/video/video.go
+@@ -49,0 +50 @@ func New(ctx context.Context) (*Manager, error) {
++	cache.RegisterInvalidationHook(v.FlushCache)
+@@ -118,0 +120,20 @@ func (v *Manager) RemoveVideo(id string) {
++// FlushCache drops in-memory video metadata and removes the corresponding
++// temporary files. It is registered with the shared cache generation so the
++// cache flush endpoint cannot leave stale video entries behind.
++func (v *Manager) FlushCache() {
++	v.mu.Lock()
++	videos := append([]Video(nil), v.Videos...)
++	v.Videos = nil
++	v.DownloadQueue = nil
++	v.mu.Unlock()
++
++	for _, video := range videos {
++		if video.FileName == "" {
++			continue
++		}
++		if err := os.Remove(filepath.Join(customTempVideoDir, video.FileName)); err != nil && !os.IsNotExist(err) {
++			log.Error("deleting video during cache flush", "video", video.FileName, "err", err)
++		}
++	}
++}
++
+@@ -155,4 +176,4 @@ func (v *Manager) GetVideo(id string) (Video, error) {
+-	for _, video := range v.Videos {
+-		if video.ID == id {
+-			video.LastAccessed = time.Now()
+-			return video, nil
++	for i := range v.Videos {
++		if v.Videos[i].ID == id {
++			v.Videos[i].LastAccessed = time.Now()
++			return v.Videos[i], nil
