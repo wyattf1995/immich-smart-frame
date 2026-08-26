@@ -42,6 +42,7 @@ COPY backend-cache-regression-tests.patch /tmp/backend-cache-regression-tests.pa
 COPY backend-cache-refill-regression-tests.patch /tmp/backend-cache-refill-regression-tests.patch
 COPY browser-cache-tests.patch /tmp/browser-cache-tests.patch
 COPY offline-cache-tests.patch /tmp/offline-cache-tests.patch
+COPY client-dimension-guard-tests.patch /tmp/client-dimension-guard-tests.patch
 COPY resilience-backend.patch /tmp/resilience-backend.patch
 COPY slideshow-recovery.patch /tmp/slideshow-recovery.patch
 COPY backend-cache-hardening.patch /tmp/backend-cache-hardening.patch
@@ -116,6 +117,8 @@ RUN cd /src \
 	&& git apply --unidiff-zero /tmp/browser-cache-tests.patch \
 	&& git apply --check --unidiff-zero /tmp/offline-cache-tests.patch \
 	&& git apply --unidiff-zero /tmp/offline-cache-tests.patch \
+	&& git apply --check /tmp/client-dimension-guard-tests.patch \
+	&& git apply /tmp/client-dimension-guard-tests.patch \
 	&& git apply --check --unidiff-zero /tmp/resilience-backend.patch \
 	&& git apply --unidiff-zero /tmp/resilience-backend.patch \
 	&& git apply --check --unidiff-zero /tmp/slideshow-recovery.patch \
