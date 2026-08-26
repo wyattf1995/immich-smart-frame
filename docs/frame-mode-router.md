@@ -154,11 +154,15 @@ local source. Keep the prior known-good router under a distinct backup name.
 
 The router's state and lock paths are under `/data/local/tmp`. Missing or
 malformed state safely defaults to Home. Rapid duplicate transitions are
-rejected by an atomic PID, process-start-token, and lease lock file. The router
-reclaims only a lock whose recorded owner is gone (or whose PID has been reused
-with a different `/proc` start token) *and* whose `LOCK_LEASE_SECONDS` has
-elapsed; it never steals an old lock held by the same live process. Keep the
-default 90-second lease above Key Mapper's 30-second command timeout.
+rejected by an atomic owner-record symbolic link containing the PID,
+process-start token, and lease timestamp. A symbolic link is used because the
+tested Android 10 build denies hard-link creation in `/data/local/tmp`. The
+router reclaims only a lock whose recorded owner is gone (or whose PID has been
+reused with a different `/proc` start token) *and* whose
+`LOCK_LEASE_SECONDS` has elapsed. Reclamation first atomically renames the stale
+link, so it cannot delete a replacement lock acquired by another invocation.
+It never steals an old lock held by the same live process. Keep the default
+90-second lease above Key Mapper's 30-second command timeout.
 
 Direct `show MODE` commands do not first inspect the foreground task: they
 send the requested FrameOS command immediately. Legacy Firefox `show` commands

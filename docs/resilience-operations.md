@@ -9,7 +9,9 @@ Assistant, Unraid services, or the frame automatically.
 Compose uses Kiosk's `--livecheck` for Docker liveness. It confirms that the
 local Kiosk process serves `/livez`. Kiosk's `--readycheck` probes its own
 `/readyz` endpoint, which performs a bounded authenticated Immich dependency
-read. The two signals are deliberately separate:
+read by requesting one random asset-selection result. That probe needs the
+same `asset.read` permission as the slideshow and does not add the optional
+`asset.statistics` permission. The two signals are deliberately separate:
 
 - a failed live check means the Kiosk process needs operator attention;
 - a failed ready check can mean Immich, the API key, or the network is down;
@@ -59,3 +61,15 @@ the documented trusted-USB recovery path after an ordinary reboot. The sampler
 reports Key Mapper's sysbridge as informational: direct raw-key FrameOS controls
 remain the supported path when sysbridge is absent. Treat those as operator
 prerequisites, not checks this script can manufacture.
+
+The tested Lenovo firmware also declares its privileged stock launcher at HOME
+intent priority 1. Android caps positive activity priorities from
+non-privileged applications to 0, so the OEM launcher resolves first even when
+FrameOS is both the saved preferred activity and the current HOME role holder.
+The readiness sampler intentionally keeps reporting that mismatch instead of
+turning it into a false pass. The protected router can still launch and recover
+FrameOS explicitly, but automatic boot into FrameOS is not guaranteed on stock
+firmware. Do not disable the complete OEM package merely to satisfy this check:
+that package also owns frame-specific services whose removal has not been
+validated. See Android's
+[`<intent-filter>` priority rules](https://developer.android.com/guide/topics/manifest/intent-filter-element#priority).
