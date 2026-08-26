@@ -6,6 +6,8 @@ class WeatherRepository(
     private val clock: () -> Long,
     private val freshForMillis: Long,
     private val maxStaleMillis: Long = MAX_STALE_MILLIS,
+    private val homeAssistantOrigin: String = DEFAULT_ORIGIN,
+    private val authEpochProvider: () -> String = { LEGACY_AUTH_EPOCH },
 ) {
     init {
         require(freshForMillis >= 0L)
@@ -20,7 +22,8 @@ class WeatherRepository(
     fun cached(entityId: String): WeatherLoadResult? {
         HomeAssistantWeatherEndpoint.requireWeatherEntity(entityId)
         val now = clock()
-        val cached = cache.read(entityId)
+        val key = cacheKey(entityId)
+        val cached = cache.read(key)
         if (cached != null && now - cached.savedAtEpochMillis <= freshForMillis) {
             return WeatherLoadResult.Fresh(cached.snapshot)
         }
@@ -30,7 +33,8 @@ class WeatherRepository(
     fun refresh(entityId: String, bearerToken: String): WeatherLoadResult {
         HomeAssistantWeatherEndpoint.requireWeatherEntity(entityId)
         val now = clock()
-        val cached = cache.read(entityId)
+        val key = cacheKey(entityId)
+        val cached = cache.read(key)
         if (bearerToken.isBlank()) {
             cache.recordError(ERROR_AUTH_REQUIRED)
             return cached.staleIfUsable(now) ?: WeatherLoadResult.AuthRequired
@@ -38,7 +42,7 @@ class WeatherRepository(
 
         return when (val result = remote.fetch(entityId, bearerToken)) {
             is WeatherRemoteResult.Success -> {
-                cache.write(entityId, result.snapshot, now)
+                cache.write(key, result.snapshot, now)
                 WeatherLoadResult.Fresh(result.snapshot)
             }
             is WeatherRemoteResult.Offline -> {
@@ -59,7 +63,15 @@ class WeatherRepository(
         const val MAX_STALE_MILLIS = 24 * 60 * 60 * 1_000L
         const val ERROR_OFFLINE = "weather_offline"
         const val ERROR_AUTH_REQUIRED = "weather_auth_required"
+        const val DEFAULT_ORIGIN = "unknown"
+        const val LEGACY_AUTH_EPOCH = "legacy"
     }
+
+    private fun cacheKey(entityId: String): WeatherCacheKey = WeatherCacheKey(
+        homeAssistantOrigin = homeAssistantOrigin.removeSuffix("/"),
+        entityId = entityId,
+        authEpoch = authEpochProvider().ifBlank { LEGACY_AUTH_EPOCH },
+    )
 
     private fun CachedWeatherSnapshot?.staleIfUsable(
         now: Long,

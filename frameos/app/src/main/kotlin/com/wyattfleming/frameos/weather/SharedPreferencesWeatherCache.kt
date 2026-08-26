@@ -1,6 +1,8 @@
 package com.wyattfleming.frameos.weather
 
 import android.content.Context
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 
 class SharedPreferencesWeatherCache(
     context: Context,
@@ -8,17 +10,21 @@ class SharedPreferencesWeatherCache(
 ) : WeatherCache {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
-    override fun read(entityId: String): CachedWeatherSnapshot? =
-        preferences.getString(KEY_SNAPSHOT, null)?.let { codec.decode(entityId, it) }
+    @Synchronized
+    override fun read(key: WeatherCacheKey): CachedWeatherSnapshot? =
+        preferences.getString(storageKey(key), null)?.let { codec.decode(key.entityId, it) }
 
-    override fun write(entityId: String, snapshot: WeatherSnapshot, savedAtEpochMillis: Long) {
-        val payload = codec.encode(entityId, CachedWeatherSnapshot(snapshot, savedAtEpochMillis))
+    @Synchronized
+    override fun write(key: WeatherCacheKey, snapshot: WeatherSnapshot, savedAtEpochMillis: Long) {
+        val payload = codec.encode(key.entityId, CachedWeatherSnapshot(snapshot, savedAtEpochMillis))
         preferences.edit()
-            .putString(KEY_SNAPSHOT, payload)
+            .putString(storageKey(key), payload)
             .remove(KEY_LAST_ERROR)
+            .remove(KEY_LEGACY_SNAPSHOT)
             .apply()
     }
 
+    @Synchronized
     override fun recordError(message: String) {
         val safeMessage = when (message) {
             "weather_auth_required", "weather_offline" -> message
@@ -27,9 +33,23 @@ class SharedPreferencesWeatherCache(
         preferences.edit().putString(KEY_LAST_ERROR, safeMessage).apply()
     }
 
+    @Synchronized
+    override fun clear() {
+        preferences.edit().clear().apply()
+    }
+
+    private fun storageKey(key: WeatherCacheKey): String {
+        val scope = "${key.homeAssistantOrigin}|${key.entityId}|${key.authEpoch}"
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(scope.toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+        return "$KEY_SNAPSHOT_PREFIX$digest"
+    }
+
     private companion object {
         const val PREFERENCES_NAME = "frameos_weather_cache"
-        const val KEY_SNAPSHOT = "snapshot"
+        const val KEY_SNAPSHOT_PREFIX = "snapshot_"
+        const val KEY_LEGACY_SNAPSHOT = "snapshot"
         const val KEY_LAST_ERROR = "last_error"
     }
 }

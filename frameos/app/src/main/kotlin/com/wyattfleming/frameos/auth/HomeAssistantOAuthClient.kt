@@ -3,11 +3,14 @@ package com.wyattfleming.frameos.auth
 import com.wyattfleming.frameos.weather.HomeAssistantHttpRequest
 import com.wyattfleming.frameos.weather.HomeAssistantHttpTransport
 import com.wyattfleming.frameos.weather.WeatherAccessTokenProvider
+import java.util.UUID
 
 class OAuthSession(
     val accessToken: String,
     val refreshToken: String,
     val expiresAtEpochMillis: Long,
+    /** Stable for one login and deliberately retained across access-token refreshes. */
+    val authEpoch: String = "legacy",
 ) {
     override fun toString(): String = "OAuthSession(redacted)"
 }
@@ -33,12 +36,15 @@ class HomeAssistantOAuthClient(
                 accessToken = tokens.accessToken,
                 refreshToken = tokens.refreshToken,
                 expiresAtEpochMillis = expiresAt(tokens.expiresInSeconds),
+                authEpoch = UUID.randomUUID().toString(),
             ),
         )
         true
     } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
         false
     }
+
+    fun authEpoch(): String = store.read()?.authEpoch ?: ANONYMOUS_AUTH_EPOCH
 
     override fun validAccessToken(): String? {
         val session = store.read() ?: return null
@@ -55,6 +61,7 @@ class HomeAssistantOAuthClient(
             accessToken = token.accessToken,
             refreshToken = session.refreshToken,
             expiresAtEpochMillis = expiresAt(token.expiresInSeconds),
+            authEpoch = session.authEpoch,
         )
         store.write(renewed)
         renewed.accessToken
@@ -82,5 +89,6 @@ class HomeAssistantOAuthClient(
 
     private companion object {
         const val EXPIRY_LEEWAY_MILLIS = 60_000L
+        const val ANONYMOUS_AUTH_EPOCH = "anonymous"
     }
 }

@@ -20,6 +20,9 @@ rewrite_dashboard_asset_urls() {
       "$dashboard_tmp" > "$dashboard_tmp.next"
     mv "$dashboard_tmp.next" "$dashboard_tmp"
   done
+  sed "s#neutral\\.png\\(\\?v=[0-9a-f]*\\)\\{0,1\\}#neutral.png?v=${asset_fingerprint}#g" \
+    "$dashboard_tmp" > "$dashboard_tmp.next"
+  mv "$dashboard_tmp.next" "$dashboard_tmp"
   mv "$dashboard_tmp" "$dashboard_path"
 }
 
@@ -60,6 +63,10 @@ for weather in sunny cloudy rainy clear-night; do
 done
 
 mkdir -p "$output_dir" "$preview_dir"
+if [[ ! -f "$output_dir/neutral.png" ]]; then
+  printf 'missing neutral background image: %s\n' "$output_dir/neutral.png" >&2
+  exit 1
+fi
 
 encode_loop() {
   local source_file="$1"
@@ -139,9 +146,10 @@ asset_fingerprint="$({
   for weather in sunny cloudy rainy clear-night; do
     checksum_file "$output_dir/$weather.mp4"
   done
+  checksum_file "$output_dir/neutral.png"
 } | if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | awk '{print substr($1, 1, 12)}')"
 
-# Home Assistant serves /local files for 31 days. Update every MP4 URL only
+# Home Assistant serves /local files for 31 days. Update every local asset URL
 # after all encodes succeed, so an asset replacement always gets a fresh URL
 # without preloading the inactive weather variants.
 dashboard_path="$script_dir/dashboard.example.yaml"

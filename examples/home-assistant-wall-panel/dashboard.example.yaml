@@ -279,7 +279,7 @@ views:
           - calendar.holidays
 
 animated_background:
-  default_url: /local/wallpanel-weather/neutral.png
+  default_url: /local/wallpanel-weather/neutral.png?v=9fb6f0f237b4
   transparent_panel: true
   groups:
     - name: weather
@@ -304,4 +304,4 @@ animated_background:
           windy-variant: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
     - name: neutral
       config:
-        default_url: /local/wallpanel-weather/neutral.png
+        default_url: /local/wallpanel-weather/neutral.png?v=9fb6f0f237b4

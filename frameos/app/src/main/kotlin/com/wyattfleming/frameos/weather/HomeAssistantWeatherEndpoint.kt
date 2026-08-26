@@ -5,6 +5,8 @@ import java.net.URI
 class HomeAssistantWeatherEndpoint private constructor(
     private val origin: URI,
 ) {
+    val canonicalOrigin: String = origin.toASCIIString().removeSuffix("/")
+
     fun stateUrl(entityId: String): String {
         requireWeatherEntity(entityId)
         return origin.resolve("/api/states/$entityId").toASCIIString()
