@@ -22,6 +22,8 @@ printf '%s\n' 'KIOSK_API_KEY_FILE=./secrets/immich_api_key' >> "$tmp_dir/.env"
 printf '%s\n' 'curation_profile: balanced' > "$tmp_dir/config/config.yaml"
 printf '%s\n' 'not-a-real-secret' > "$tmp_dir/secrets/immich_api_key"
 printf '%s\n' 'offline fixture' > "$tmp_dir/offline-assets/fixture.txt"
+chmod 600 "$tmp_dir/.env" "$tmp_dir/secrets/immich_api_key" "$tmp_dir/offline-assets/fixture.txt"
+chmod 644 "$tmp_dir/config/config.yaml"
 
 snapshot_dir="$snapshot_parent/snapshot"
 "$snapshot_script" create "$snapshot_dir" "$tmp_dir/.env"
@@ -30,6 +32,8 @@ snapshot_mode="$(if stat -c '%a' "$snapshot_dir" >/dev/null 2>&1; then stat -c '
 [[ -f "$snapshot_dir/manifest.sha256" ]] || fail 'snapshot must record input hashes'
 [[ -f "$snapshot_dir/inputs/.env" ]] || fail 'snapshot must retain the deployment environment file'
 [[ -f "$snapshot_dir/inputs/config/config.yaml" ]] || fail 'snapshot must retain the active config'
+config_mode="$(if stat -c '%a' "$snapshot_dir/inputs/config/config.yaml" >/dev/null 2>&1; then stat -c '%a' "$snapshot_dir/inputs/config/config.yaml"; else stat -f '%Lp' "$snapshot_dir/inputs/config/config.yaml"; fi)"
+[[ "$config_mode" == "644" ]] || fail "snapshot must preserve the readable config mode, got $config_mode"
 [[ -f "$snapshot_dir/inputs/secrets/immich_api_key" ]] || fail 'snapshot must retain the API-key secret'
 secret_mode="$(if stat -c '%a' "$snapshot_dir/inputs/secrets/immich_api_key" >/dev/null 2>&1; then stat -c '%a' "$snapshot_dir/inputs/secrets/immich_api_key"; else stat -f '%Lp' "$snapshot_dir/inputs/secrets/immich_api_key"; fi)"
 [[ "$secret_mode" == "600" ]] || fail "snapshot API-key secret must be mode 600, got $secret_mode"
@@ -50,6 +54,8 @@ printf '%s\n' 'new offline fixture' > "$tmp_dir/offline-assets/new.txt"
 "$snapshot_script" verify "$snapshot_dir" "$tmp_dir/.env"
 [[ ! -e "$tmp_dir/offline-assets/new.txt" ]] || fail 'restore must remove offline state absent from the snapshot'
 grep -Fxq 'curation_profile: balanced' "$tmp_dir/config/config.yaml" || fail 'restore must recover the saved config'
+restored_config_mode="$(if stat -c '%a' "$tmp_dir/config/config.yaml" >/dev/null 2>&1; then stat -c '%a' "$tmp_dir/config/config.yaml"; else stat -f '%Lp' "$tmp_dir/config/config.yaml"; fi)"
+[[ "$restored_config_mode" == "644" ]] || fail "restore must preserve the readable config mode, got $restored_config_mode"
 
 # Verify and restore must validate saved payload integrity before reporting a
 # match or overwriting any live deployment input. A failure after copying is too
