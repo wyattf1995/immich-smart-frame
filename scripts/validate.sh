@@ -53,6 +53,7 @@ required_files=(
   scripts/validate-frameos-control-receiver.rb
   scripts/validate-frameos-oauth-callback.rb
   scripts/validate-frameos-panel.rb
+  scripts/validate-frameos-surface-layering.rb
   scripts/validate-home-assistant-examples.rb
   scripts/validate-ci.sh
 )
@@ -111,6 +112,7 @@ fi
 ruby scripts/validate-frameos-control-receiver.rb
 ruby scripts/validate-frameos-oauth-callback.rb
 ruby scripts/validate-frameos-panel.rb
+ruby scripts/validate-frameos-surface-layering.rb
 
 docker compose --env-file .env.example config --quiet
 
