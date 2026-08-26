@@ -171,6 +171,7 @@ class FrameWebSurface(
     private var preloadDeactivation: Runnable? = null
     private val evictHiddenHome = Runnable { evictHiddenHomeIfExpired() }
     private val retryCallbacks = mutableMapOf<ManagedSession, Runnable>()
+    private val pendingCameraClosures = mutableMapOf<ManagedSession, Runnable>()
 
     init {
         setBackgroundColor(Color.BLACK)
@@ -312,6 +313,11 @@ class FrameWebSurface(
         preloadDeactivation = null
         retryCallbacks.values.forEach(::removeCallbacks)
         retryCallbacks.clear()
+        pendingCameraClosures.forEach { (managed, callback) ->
+            removeCallbacks(callback)
+            managed.close()
+        }
+        pendingCameraClosures.clear()
         hiddenHomeLifecycle.onEvicted()
         if (session != null) releaseForegroundAttachedSession()
         releaseWarmHomeAttachedSession()
@@ -373,9 +379,14 @@ class FrameWebSurface(
             foregroundSlot = null
         }
         if (displayedSlot == FrameWebSlot.CAMERAS) displayedSlot = null
-        disposable.close()
         cancelRecovery(disposable)
         cameraSession = null
+        val close = Runnable {
+            pendingCameraClosures.remove(disposable)
+            disposable.close()
+        }
+        pendingCameraClosures[disposable] = close
+        post(close)
     }
 
     private fun scheduleHiddenHomeEviction() {
