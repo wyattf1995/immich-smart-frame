@@ -63,8 +63,8 @@ class WeatherCoordinatorTest {
     }
 
     private data object EmptyCache : WeatherCache {
-        override fun read(entityId: String): CachedWeatherSnapshot? = null
-        override fun write(entityId: String, snapshot: WeatherSnapshot, savedAtEpochMillis: Long) = Unit
+        override fun read(key: WeatherCacheKey): CachedWeatherSnapshot? = null
+        override fun write(key: WeatherCacheKey, snapshot: WeatherSnapshot, savedAtEpochMillis: Long) = Unit
         override fun recordError(message: String) = Unit
     }
 
