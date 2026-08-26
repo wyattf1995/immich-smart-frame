@@ -1,0 +1,79 @@
+diff --git a/internal/cache/cache.go b/internal/cache/cache.go
+index 28f402d..60d06e7 100644
+--- a/internal/cache/cache.go
++++ b/internal/cache/cache.go
+@@ -253,0 +254,7 @@ func Update[T any](key string, update func([]T) []T, deviceDuration, cacheDurati
++	UpdateIfGeneration(CurrentGeneration(), key, update, deviceDuration, cacheDuration)
++}
++
++// UpdateIfGeneration atomically transforms a cached slice only when the
++// supplied namespace is still current. This protects asynchronous producers
++// from appending data fetched before a flush or mutation.
++func UpdateIfGeneration[T any](g uint64, key string, update func([]T) []T, deviceDuration, cacheDuration int) bool {
+@@ -256,2 +263,2 @@ func Update[T any](key string, update func([]T) []T, deviceDuration, cacheDurati
+-	if kioskCache == nil {
+-		return
++	if kioskCache == nil || generation.Load() != g {
++		return false
+@@ -271,0 +279 @@ func Update[T any](key string, update func([]T) []T, deviceDuration, cacheDurati
++	return true
+@@ -331,0 +340,12 @@ func AssetToCacheWithPosition[T any](viewDataToAdd T, requestConfig *config.Conf
++// AssetToCacheIfGeneration appends a view item only if generation is current.
++// It returns false when an invalidation raced with the producer.
++func AssetToCacheIfGeneration[T any](generation uint64, viewDataToAdd T, requestConfig *config.Config, deviceID, url string) bool {
++	return assetToCacheAtGeneration(viewDataToAdd, requestConfig, deviceID, url, APPEND, generation)
++}
++
++// AssetToCacheWithPositionIfGeneration is the conditional form for callers
++// that prepend downloaded video or other high-priority view data.
++func AssetToCacheWithPositionIfGeneration[T any](generation uint64, viewDataToAdd T, requestConfig *config.Config, deviceID, url string, position Position) bool {
++	return assetToCacheAtGeneration(viewDataToAdd, requestConfig, deviceID, url, position, generation)
++}
++
+@@ -336,0 +357,4 @@ func assetToCache[T any](viewDataToAdd T, requestConfig *config.Config, deviceID
++	assetToCacheAtGeneration(viewDataToAdd, requestConfig, deviceID, url, position, CurrentGeneration())
++}
++
++func assetToCacheAtGeneration[T any](viewDataToAdd T, requestConfig *config.Config, deviceID, url string, position Position, generation uint64) bool {
+@@ -338 +362 @@ func assetToCache[T any](viewDataToAdd T, requestConfig *config.Config, deviceID
+-		return
++		return false
+@@ -343 +367 @@ func assetToCache[T any](viewDataToAdd T, requestConfig *config.Config, deviceID
+-	Update(viewCacheKey, func(cachedViewData []T) []T {
++	return UpdateIfGeneration(generation, viewCacheKey, func(cachedViewData []T) []T {
+diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
+index 5f63105..c518d9a 100644
+--- a/internal/immich/immich_helpers.go
++++ b/internal/immich/immich_helpers.go
+@@ -1275,0 +1276 @@ func (a *Asset) fetchPaginatedMetadataWithCache(u *url.URL, requestBody SearchRa
++	cacheGeneration := cache.CurrentGeneration()
+@@ -1296 +1297 @@ func (a *Asset) fetchPaginatedMetadataWithCache(u *url.URL, requestBody SearchRa
+-	cache.Set(cacheKey, jsonBytes, a.requestConfig.Duration, a.requestConfig.CacheDuration)
++	cache.SetIfGeneration(cacheGeneration, cacheKey, jsonBytes, a.requestConfig.Duration, a.requestConfig.CacheDuration)
+diff --git a/internal/routes/routes_asset_helpers.go b/internal/routes/routes_asset_helpers.go
+index 80b8f9e..48b81f1 100644
+--- a/internal/routes/routes_asset_helpers.go
++++ b/internal/routes/routes_asset_helpers.go
+@@ -740,4 +740,4 @@ func ProcessViewImageDataWithOptions(requestConfig config.Config, c common.Conte
+-func assetToCache(ctx context.Context, viewDataToAdd common.ViewData, requestConfig *config.Config, deviceID string, requestData *common.RouteRequestData, c common.ContextCopy) {
+-	cache.AssetToCache(viewDataToAdd, requestConfig, deviceID, c.URL.String())
+-
+-	webhooks.Trigger(ctx, requestData, KioskVersion, webhooks.PrefetchAsset, viewDataToAdd)
++func assetToCache(ctx context.Context, viewDataToAdd common.ViewData, requestConfig *config.Config, deviceID string, requestData *common.RouteRequestData, c common.ContextCopy, generation uint64) {
++	if cache.AssetToCacheIfGeneration(generation, viewDataToAdd, requestConfig, deviceID, c.URL.String()) {
++		webhooks.Trigger(ctx, requestData, KioskVersion, webhooks.PrefetchAsset, viewDataToAdd)
++	}
+@@ -755,0 +756 @@ func assetPreFetch(ctx context.Context, common *common.Common, requestData *comm
++	generation := cache.CurrentGeneration()
+@@ -763 +764 @@ func assetPreFetch(ctx context.Context, common *common.Common, requestData *comm
+-	assetToCache(common.Context(), viewDataToAdd, &requestConfig, deviceID, requestData, c)
++	assetToCache(common.Context(), viewDataToAdd, &requestConfig, deviceID, requestData, c, generation)
+diff --git a/internal/video/video.go b/internal/video/video.go
+index 2ae5ef9..aae11a3 100644
+--- a/internal/video/video.go
++++ b/internal/video/video.go
+@@ -189,0 +190 @@ func (v *Manager) AddVideoToViewCache(id, fileName, filePath, contentType string
++	generation := cache.CurrentGeneration()
+@@ -213 +214 @@ func (v *Manager) AddVideoToViewCache(id, fileName, filePath, contentType string
+-		cache.AssetToCacheWithPosition(viewDataToAdd, requestConfig, deviceID, requestURL, cache.PREPEND)
++		cache.AssetToCacheWithPositionIfGeneration(generation, viewDataToAdd, requestConfig, deviceID, requestURL, cache.PREPEND)
