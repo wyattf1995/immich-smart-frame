@@ -23,6 +23,11 @@ done
 
 (cd "$tmp_root/upstream" && node --test frontend/tests/browser-cache-contract.test.mjs)
 (cd "$tmp_root/upstream" && node --test frontend/tests/offline-cache-contract.test.mjs)
+unformatted="$(gofmt -l \
+  "$tmp_root/upstream/internal/cache/cache.go" \
+  "$tmp_root/upstream/internal/routes/routes_offline.go" \
+  "$tmp_root/upstream/internal/video/video.go")"
+[[ -z "$unformatted" ]] || fail "cache source is not gofmt-clean: $unformatted"
 grep -Fq 'Cache-Control", "private, no-cache, no-transform"' "$tmp_root/upstream/main.go" || \
   fail 'media responses must require revalidation'
 printf 'browser cache contract passed\n'

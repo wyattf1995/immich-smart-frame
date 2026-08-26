@@ -14,7 +14,7 @@ new file mode 100644
 +
 +test("offline pool is scoped and invalidated without a long mutex hold", () => {
 +  for (const marker of [
-+    "OfflineManifestFilename", "generation=", "origin=", "user=", "device=",
++    "OfflineManifestFilename", "cache.CurrentGeneration", "generation=", "origin=", "user=", "device=",
 +    "profile=", "config_sha256=", "ensureOfflineCacheScope",
 +  ]) assert.match(offline, new RegExp(marker));
 +  assert.match(offline, /InvalidateOfflineAssets/);
