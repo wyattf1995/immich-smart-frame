@@ -192,7 +192,7 @@ class FrameWebSurface(
             }
         }
         preloadDeactivation = deactivate
-        postDelayed(deactivate, PRELOAD_ACTIVE_MILLIS)
+        postDelayed(deactivate, FrameWebPreloadPolicy.CALENDAR_ACTIVE_MILLIS)
     }
 
     fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean) {
@@ -419,7 +419,6 @@ class FrameWebSurface(
     }
 
     private companion object {
-        const val PRELOAD_ACTIVE_MILLIS = 12_000L
         const val PHOTO_TAP_MILLIS = 36L
     }
 }
