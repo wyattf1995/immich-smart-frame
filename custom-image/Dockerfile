@@ -38,8 +38,17 @@ COPY readiness-selection-tests.patch /tmp/readiness-selection-tests.patch
 COPY readiness-selection-array-tests.patch /tmp/readiness-selection-array-tests.patch
 COPY readiness-root-fixture-tests.patch /tmp/readiness-root-fixture-tests.patch
 COPY slideshow-recovery-tests.patch /tmp/slideshow-recovery-tests.patch
+COPY backend-cache-regression-tests.patch /tmp/backend-cache-regression-tests.patch
+COPY backend-cache-refill-regression-tests.patch /tmp/backend-cache-refill-regression-tests.patch
+COPY browser-cache-tests.patch /tmp/browser-cache-tests.patch
+COPY offline-cache-tests.patch /tmp/offline-cache-tests.patch
 COPY resilience-backend.patch /tmp/resilience-backend.patch
 COPY slideshow-recovery.patch /tmp/slideshow-recovery.patch
+COPY backend-cache-hardening.patch /tmp/backend-cache-hardening.patch
+COPY backend-cache-refill-hardening.patch /tmp/backend-cache-refill-hardening.patch
+COPY browser-cache-hardening.patch /tmp/browser-cache-hardening.patch
+COPY offline-cache-hardening.patch /tmp/offline-cache-hardening.patch
+COPY offline-mutation-hardening.patch /tmp/offline-mutation-hardening.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -99,10 +108,28 @@ RUN cd /src \
 	&& git apply --unidiff-zero /tmp/readiness-root-fixture-tests.patch \
 	&& git apply --check --unidiff-zero /tmp/slideshow-recovery-tests.patch \
 	&& git apply --unidiff-zero /tmp/slideshow-recovery-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/backend-cache-regression-tests.patch \
+	&& git apply --unidiff-zero /tmp/backend-cache-regression-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/backend-cache-refill-regression-tests.patch \
+	&& git apply --unidiff-zero /tmp/backend-cache-refill-regression-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/browser-cache-tests.patch \
+	&& git apply --unidiff-zero /tmp/browser-cache-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/offline-cache-tests.patch \
+	&& git apply --unidiff-zero /tmp/offline-cache-tests.patch \
 	&& git apply --check --unidiff-zero /tmp/resilience-backend.patch \
 	&& git apply --unidiff-zero /tmp/resilience-backend.patch \
 	&& git apply --check --unidiff-zero /tmp/slideshow-recovery.patch \
-	&& git apply --unidiff-zero /tmp/slideshow-recovery.patch
+	&& git apply --unidiff-zero /tmp/slideshow-recovery.patch \
+	&& git apply --check --unidiff-zero /tmp/backend-cache-hardening.patch \
+	&& git apply --unidiff-zero /tmp/backend-cache-hardening.patch \
+	&& git apply --check --unidiff-zero /tmp/backend-cache-refill-hardening.patch \
+	&& git apply --unidiff-zero /tmp/backend-cache-refill-hardening.patch \
+	&& git apply --check --unidiff-zero /tmp/browser-cache-hardening.patch \
+	&& git apply --unidiff-zero /tmp/browser-cache-hardening.patch \
+	&& git apply --check --unidiff-zero /tmp/offline-cache-hardening.patch \
+	&& git apply --unidiff-zero /tmp/offline-cache-hardening.patch \
+	&& git apply --check --unidiff-zero /tmp/offline-mutation-hardening.patch \
+	&& git apply --unidiff-zero /tmp/offline-mutation-hardening.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
@@ -121,7 +148,8 @@ RUN node_modules/.bin/esbuild tests/asset-request-recovery.test.ts \
       --bundle --platform=node --format=esm \
       --alias:htmx.org=./tests/htmx.mock.ts \
       --outfile=/tmp/polling-recovery.test.mjs \
-    && node --test /tmp/polling-recovery.test.mjs
+    && node --test /tmp/polling-recovery.test.mjs \
+    && node --test tests/browser-cache-contract.test.mjs tests/offline-cache-contract.test.mjs
 RUN task frontend
 
 FROM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS build
