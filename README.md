@@ -89,7 +89,8 @@ cp .env.example .env
 cp config/config.example.yaml config/config.yaml
 install -d -m 700 secrets
 install -m 600 /dev/null secrets/immich_api_key
-mkdir -p offline-assets
+install -d -m 700 -o 65532 -g 65532 offline-assets
+./scripts/check-offline-assets-permissions.sh
 ${EDITOR:-vi} secrets/immich_api_key
 chmod 600 .env
 ```
@@ -246,6 +247,10 @@ a service. This repository intentionally runs its release gates
 locally; the checked-in GitHub Actions workflow remains inert while repository
 Actions are disabled. Use
 `./scripts/validate.sh --static` to skip the Docker image build.
+The offline bind mount is private writable state for the image's non-root
+UID/GID 65532; rerun `scripts/check-offline-assets-permissions.sh` after moving
+the deployment or restoring a snapshot. See [cache operations](docs/cache-operations.md)
+for cache invalidation and upgrade migration details.
 
 ## Security
 

@@ -1,0 +1,23 @@
+diff --git a/internal/routes/routes_asset.go b/internal/routes/routes_asset.go
+--- a/internal/routes/routes_asset.go
++++ b/internal/routes/routes_asset.go
+@@ -315,1 +315,2 @@
+-		return c.String(http.StatusOK, "SUCCESS")
++		InvalidateOfflineAssets()
++		return c.String(http.StatusOK, "SUCCESS")
+@@ -418,1 +418,2 @@
+-		return Render(c, http.StatusOK, partials.LikeButton(assetID, user, setAssetAsLiked, setAssetAsLiked, true, com.Secret()))
++		InvalidateOfflineAssets()
++		return Render(c, http.StatusOK, partials.LikeButton(assetID, user, setAssetAsLiked, setAssetAsLiked, true, com.Secret()))
+@@ -529,1 +529,2 @@
+-		return Render(c, http.StatusOK, partials.HideButton(assetID, user, hideAsset, true, com.Secret()))
++		InvalidateOfflineAssets()
++		return Render(c, http.StatusOK, partials.HideButton(assetID, user, hideAsset, true, com.Secret()))
+@@ -607,1 +607,2 @@
+-		return Render(c, http.StatusOK, partials.RatingStars(assetID, user, rating, allowEdit, true))
++		InvalidateOfflineAssets()
++		return Render(c, http.StatusOK, partials.RatingStars(assetID, user, rating, allowEdit, true))
+@@ -666,1 +666,2 @@
+-		return Render(c, http.StatusOK, partials.RatingStars(assetID, user, 0, allowEdit, true))
++		InvalidateOfflineAssets()
++		return Render(c, http.StatusOK, partials.RatingStars(assetID, user, 0, allowEdit, true))
