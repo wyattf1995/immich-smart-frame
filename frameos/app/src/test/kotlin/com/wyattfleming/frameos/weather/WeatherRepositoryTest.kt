@@ -180,6 +180,8 @@ class WeatherRepositoryTest {
         override fun recordError(message: String) {
             lastErrorMessage = message
         }
+
+        override fun clear() = Unit
     }
 
     private class FakeWeatherRemote(

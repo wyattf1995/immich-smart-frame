@@ -66,6 +66,7 @@ class WeatherCoordinatorTest {
         override fun read(key: WeatherCacheKey): CachedWeatherSnapshot? = null
         override fun write(key: WeatherCacheKey, snapshot: WeatherSnapshot, savedAtEpochMillis: Long) = Unit
         override fun recordError(message: String) = Unit
+        override fun clear() = Unit
     }
 
     private companion object {
