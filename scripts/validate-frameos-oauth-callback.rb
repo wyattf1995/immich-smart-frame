@@ -14,6 +14,7 @@ required = [
   "no-referrer",
   'http-equiv="Cache-Control"',
   'content="no-store, no-cache, must-revalidate"',
+  '<link rel="redirect_uri" href="frameos://oauth/callback">',
   "new URL(\"frameos://oauth/callback\")",
   "searchParams.set(\"code\"",
   "searchParams.set(\"state\"",
