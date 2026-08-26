@@ -29,6 +29,12 @@ Please include:
   browser URL, screenshot, shell history example, issue, or log excerpt.
 - Treat `offline-assets/` as private photo data. It is ignored by Git and must
   not be attached to issues, build artifacts, or releases.
+- Provision `offline-assets/` as mode `0700`, owned by UID/GID `65532`, and run
+  `scripts/check-offline-assets-permissions.sh` before startup. The bind mount
+  is writable only so the non-root kiosk can rebuild its private pool.
+- Do not expose `/image` or `/video` through a shared CDN cache. These responses
+  are private and require revalidation; only fingerprinted static assets are
+  safe to serve as immutable public cache entries.
 - Keep Kiosk on a trusted network or behind an authenticated reverse proxy. The
   slideshow endpoint itself does not add user authentication.
 - Put the Android frame on a dedicated VLAN or isolated SSID when practical.
