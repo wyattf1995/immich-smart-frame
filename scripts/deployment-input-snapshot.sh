@@ -218,7 +218,10 @@ case "$action" in
       printf 'source_revision=%s\n' "$(git -C "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" rev-parse HEAD 2>/dev/null || printf unknown)"
       printf 'environment_file=%s\n' "$(basename "$env_file")"
     } > "$snapshot_dir/metadata.env"
-    chmod -R go-rwx "$snapshot_dir"
+    # The snapshot root is the confidentiality boundary. Keep it private while
+    # preserving each input's mode so a restore does not make the read-only
+    # kiosk config inaccessible to the non-root container user.
+    chmod 700 "$snapshot_dir" "$snapshot_dir/inputs"
     chmod 600 "$snapshot_dir/inputs/$(snapshot_relative_path "$secret_file")"
     printf 'created protected deployment-input snapshot: %s\n' "$snapshot_dir"
     ;;
