@@ -156,6 +156,16 @@ fi
 exit 1
 EOF
 
+cat > "$fake_bin/awk" <<'EOF'
+#!/usr/bin/env sh
+expected='{sub(/^.*\) /, ""); print $20}'
+if [ "${1:-}" != "$expected" ]; then
+  printf 'unexpected awk program: %s\n' "${1:-}" >&2
+  exit 64
+fi
+printf '111\n'
+EOF
+
 chmod +x "$fake_bin"/*
 
 config="$tmp_dir/router.conf"
@@ -398,6 +408,15 @@ assert_file_count 'input swipe 100 1000 100 500 100' "$log" 1 \
 
 run_router_expect_failure unknown-action
 run_router_expect_failure status "$tmp_dir/missing.conf"
+
+# Android's Toybox awk rejects a doubled escape before the closing parenthesis.
+# Exercise the real /proc parser path and require the single-escape ERE passed to
+# awk rather than relying exclusively on the portable test override.
+rm -f "$lock"
+FRAME_ROUTER_PROCESS_START_TOKEN='' FRAME_ROUTER_FOREGROUND=unknown \
+  run_router show photos
+assert_eq photos "$(tr -d '\r\n' < "$state")" \
+  'the Android-compatible process start parser must allow routing'
 
 # A timeout can kill the shell without running its EXIT trap. A stale lock with
 # a recorded dead owner must self-heal only after its lease has expired.
