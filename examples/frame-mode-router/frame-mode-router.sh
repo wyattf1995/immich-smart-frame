@@ -285,8 +285,11 @@ if [ "$action" = status ]; then
 fi
 
 read_lock_owner() {
-  [ -f "$LOCK_DIR" ] || return 1
-  IFS=' ' read -r lock_pid lock_process_start lock_started lock_extra < "$LOCK_DIR" || return 1
+  [ -L "$LOCK_DIR" ] || return 1
+  lock_record="$(readlink "$LOCK_DIR" 2>/dev/null)" || return 1
+  IFS=' ' read -r lock_pid lock_process_start lock_started lock_extra <<EOF
+$lock_record
+EOF
   case "$lock_pid:$lock_process_start:$lock_started:${lock_extra:-}" in
     *[!0-9:]*|:*|*::?*) return 1 ;;
   esac
@@ -322,13 +325,9 @@ create_lock() {
   esac
   lock_process_start="$(process_start_token "$$")" || return 1
   lock_owner="$$ $lock_process_start $lock_started"
-  lock_candidate="${LOCK_DIR}.candidate.$$"
-  (umask 077 && printf '%s\n' "$lock_owner" > "$lock_candidate") || return 1
-  if ln "$lock_candidate" "$LOCK_DIR" 2>/dev/null; then
-    rm -f "$lock_candidate"
+  if ln -s "$lock_owner" "$LOCK_DIR" 2>/dev/null; then
     return 0
   fi
-  rm -f "$lock_candidate"
   return 1
 }
 
@@ -365,7 +364,9 @@ recover_stale_lock() {
     return 1
   fi
 
-  rm -f "$LOCK_DIR" || return 1
+  stale_lock="${LOCK_DIR}.stale.$$"
+  mv "$LOCK_DIR" "$stale_lock" 2>/dev/null || return 1
+  rm -f "$stale_lock" || return 1
   return 0
 }
 
@@ -377,7 +378,7 @@ if ! create_lock; then
   }
 fi
 cleanup_lock() {
-  if [ -f "$LOCK_DIR" ] && [ "$(cat "$LOCK_DIR" 2>/dev/null)" = "$lock_owner" ]; then
+  if [ -L "$LOCK_DIR" ] && [ "$(readlink "$LOCK_DIR" 2>/dev/null)" = "$lock_owner" ]; then
     rm -f "$LOCK_DIR" 2>/dev/null || true
   fi
 }
