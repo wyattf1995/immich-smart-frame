@@ -50,7 +50,6 @@ new pool has been observed, then expire it according to the household backup
 policy. A rollback similarly rebuilds the pool for the rolled-back generation;
 restoring a snapshot is optional and must pass the snapshot verifier first.
 
-The current source uses `KioskVersion` as the generation fallback. Integration
-with the generic cache-generation API should replace that value with the
-API's monotonic generation at image-build integration time, while retaining
-the existing manifest fields and invalidation hooks.
+The scope combines the release `KioskVersion` with the cache API's monotonic
+runtime generation. A release change or an in-process flush/mutation therefore
+forces the next offline request to rebuild the pool under a new manifest.

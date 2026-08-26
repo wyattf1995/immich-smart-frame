@@ -182,18 +182,24 @@ This avoids both visible 2x upscaling and sending full camera originals to a
 
 ## What the custom image changes
 
-The Dockerfile pins the exact Immich Kiosk `v0.42.0` commit and applies five
-reviewable patch files:
+The Dockerfile pins the exact Immich Kiosk `v0.42.0` commit and applies an
+ordered, reviewable patch stack. Its main implementation layers are:
 
 1. `fully-kiosk-dpr.patch` requests physical pixels from ordinary WebViews.
 2. `weighted-curation.patch` adds named, directly weighted source profiles.
 3. `runtime-hardening.patch` updates vulnerable Go dependencies, bounds client
    image dimensions, and normalizes curation input.
 4. `album-penalties.patch` adds validated, profile-specific soft de-ranking.
-5. `backend-performance.patch` makes album filtering and date pools linear and
-   bounded, caches memories availability briefly, and caps concurrent prefetch.
-6. `weighted-curation-tests.patch` guards curation, normalization, dimensions,
-   and exact weights.
+5. The backend performance patches make album filtering and date pools linear
+   and bounded, cache memories availability briefly, and cap concurrent
+   prefetch.
+6. The resilience patches add bounded dependency handling, readiness/liveness,
+   graceful shutdown, and slideshow recovery.
+7. The cache-hardening patches version browser state, scope the durable offline
+   pool, invalidate derived caches after mutations, and reject stale async
+   refills.
+8. Separate regression-test patches guard each behavior before its matching
+   implementation patch is applied.
 
 The build asserts the tag's expected commit, checks that every patch still
 applies, runs the complete upstream Go test suite, then compiles the binary.

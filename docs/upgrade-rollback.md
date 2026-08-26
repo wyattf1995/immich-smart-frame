@@ -25,6 +25,7 @@ SNAPSHOT_DIR=/protected/backups/immich-smart-frame/$(date -u +%Y%m%dT%H%M%SZ)-be
 git fetch --tags
 git checkout TAG_OR_BRANCH
 ./scripts/deployment-input-snapshot.sh verify "$SNAPSHOT_DIR" .env
+./scripts/check-offline-assets-permissions.sh
 docker compose build immich-kiosk
 docker compose up -d --wait --wait-timeout 120 immich-kiosk
 docker compose ps
@@ -65,6 +66,7 @@ git fetch --tags
 git checkout LAST_KNOWN_GOOD_TAG
 ./scripts/deployment-input-snapshot.sh restore \
   /protected/backups/immich-smart-frame/KNOWN_GOOD_SNAPSHOT .env --confirm-restore
+./scripts/check-offline-assets-permissions.sh
 docker compose build immich-kiosk
 docker compose up -d --wait --wait-timeout 120 immich-kiosk
 docker compose ps
