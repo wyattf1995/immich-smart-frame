@@ -1,15 +1,18 @@
 diff --git a/internal/routes/routes_offline.go b/internal/routes/routes_offline.go
 --- a/internal/routes/routes_offline.go
 +++ b/internal/routes/routes_offline.go
+@@ -21,0 +22 @@ import (
++	"github.com/damongolding/immich-kiosk/internal/cache"
 @@ -40,2 +40,3 @@ const (
 -	OfflineAssetsPath         = "./offline-assets"
 -	OfflineExpirationFilename = "_expiration"
 +	OfflineAssetsPath         = "./offline-assets"
 +	OfflineExpirationFilename = "_expiration"
-+	OfflineManifestFilename  = "_manifest"
++	OfflineManifestFilename   = "_manifest"
 @@ -43,1 +43,49 @@ var ErrMaxStorageReached = errors.New("max offline storage size reached")
 -var ErrMaxStorageReached = errors.New("max offline storage size reached")
 +var ErrMaxStorageReached = errors.New("max offline storage size reached")
++
 +// offlineScopeMu prevents a request from observing the old pool while a
 +// changed origin/user/device/profile is replacing it. The manifest is private
 +// metadata and deliberately contains no API key.
@@ -18,7 +21,7 @@ diff --git a/internal/routes/routes_offline.go b/internal/routes/routes_offline.
 +func offlineCacheScope(requestConfig config.Config, deviceID string) string {
 +	configHash := sha256.Sum256([]byte(requestConfig.SanitizedYaml()))
 +	scope := strings.Join([]string{
-+		"generation=" + KioskVersion,
++		fmt.Sprintf("generation=%s:%d", KioskVersion, cache.CurrentGeneration()),
 +		"origin=" + requestConfig.ImmichURL,
 +		"user=" + requestConfig.SelectedUser,
 +		"device=" + deviceID,
@@ -57,7 +60,6 @@ diff --git a/internal/routes/routes_offline.go b/internal/routes/routes_offline.
 +		log.Warn("failed to invalidate offline assets", "err", err)
 +	}
 +}
-+
 @@ -82,1 +82,7 @@
 -		files, readDirErr := os.ReadDir(OfflineAssetsPath)
 +		offlineScopeMu.Lock()
