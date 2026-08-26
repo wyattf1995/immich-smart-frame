@@ -107,6 +107,7 @@ class MainActivity : Activity() {
     private var pendingOAuthStateStore: PendingOAuthStateStore? = null
     private var callbackVerifier: OAuthCallbackVerifier? = null
     private var weatherCoordinator: WeatherCoordinator? = null
+    private var weatherCache: SharedPreferencesWeatherCache? = null
     private var weatherNeedsAuthentication = false
     private var weatherRefreshInProgress = false
     private var weatherAuthorizationInProgress = false
@@ -663,6 +664,7 @@ class MainActivity : Activity() {
                 .getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_FALLBACK_URL),
         ) ?: return null
         configurationStore.write(provisioned)
+        SharedPreferencesWeatherCache(this).clear()
         return provisioned
     }
 
@@ -681,6 +683,8 @@ class MainActivity : Activity() {
                 store = sessionStore,
                 clock = System::currentTimeMillis,
             )
+            val weatherEndpoint = HomeAssistantWeatherEndpoint.fromDisplayUrl(activeConfiguration.homeAssistantUrl)
+            val cache = SharedPreferencesWeatherCache(this)
             oauthEndpoint = endpoint
             oauthCallbackPageUrl = callbackPageUrl
             pendingOAuthStateStore = pendingStateStore
@@ -690,7 +694,7 @@ class MainActivity : Activity() {
                 accessTokenProvider = client,
                 repository = WeatherRepository(
                     remote = HomeAssistantWeatherRemote(
-                        endpoint = HomeAssistantWeatherEndpoint.fromDisplayUrl(activeConfiguration.homeAssistantUrl),
+                        endpoint = weatherEndpoint,
                         fallbackEndpoint = activeConfiguration.homeAssistantFallbackUrl?.let(
                             HomeAssistantWeatherEndpoint::fromDisplayUrl,
                         ),
@@ -698,13 +702,16 @@ class MainActivity : Activity() {
                         parser = HomeAssistantWeatherParser(),
                         requestExecutor = weatherRequestExecutor,
                     ),
-                    cache = SharedPreferencesWeatherCache(this),
+                    cache = cache,
                     clock = System::currentTimeMillis,
                     freshForMillis = WEATHER_CACHE_FRESH_MILLIS,
+                    homeAssistantOrigin = weatherEndpoint.canonicalOrigin,
+                    authEpochProvider = client::authEpoch,
                 ),
                 presenter = WeatherPresenter(ZoneId.systemDefault(), Locale.getDefault()),
                 entityId = activeConfiguration.weatherEntityId,
             )
+            weatherCache = cache
             weatherNeedsAuthentication = false
             weatherContent.presentation = WeatherPresentation(
                 emptyMessage = "Loading the latest forecast",
@@ -801,6 +808,7 @@ class MainActivity : Activity() {
                 if (generation != weatherRequestGeneration || isFinishing || isDestroyed) return@post
                 weatherAuthorizationInProgress = false
                 if (success) {
+                    weatherCache?.clear()
                     refreshWeather()
                 } else {
                     weatherNeedsAuthentication = true

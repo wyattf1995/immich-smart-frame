@@ -22,7 +22,7 @@ class HomeAssistantOAuthEndpointTest {
         assertEquals("https://home.example.invalid:8123/auth/token", endpoint.tokenUrl())
         assertEquals(state, authorization.state)
         assertEquals(
-            "https://home.example.invalid:8123/auth/authorize?response_type=code&client_id=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&redirect_uri=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&state=${state.value}",
+            "https://home.example.invalid:8123/auth/authorize?response_type=code&client_id=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&redirect_uri=frameos%3A%2F%2Foauth%2Fcallback&state=${state.value}",
             authorization.url,
         )
         assertEquals(

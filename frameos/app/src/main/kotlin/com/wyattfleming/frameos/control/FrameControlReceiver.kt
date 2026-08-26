@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import com.wyattfleming.frameos.config.FrameConfiguration
 import com.wyattfleming.frameos.config.FrameConfigurationStore
+import com.wyattfleming.frameos.weather.SharedPreferencesWeatherCache
 
 class FrameControlReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -23,6 +24,7 @@ class FrameControlReceiver : BroadcastReceiver() {
                     .getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_FALLBACK_URL),
             )
             if (configuration != null) {
+                SharedPreferencesWeatherCache(context).clear()
                 configurationStore.write(configuration)
             }
         }

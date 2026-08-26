@@ -141,11 +141,23 @@ Copy the generated MP4 files and your `neutral.png` to
 `/config/www/wallpanel-weather/` on Home Assistant. Local media avoids an
 external CDN dependency and unnecessary remote video transfer.
 
-The builder fingerprints the four completed MP4 files together and rewrites
-the MP4 URLs in `dashboard.example.yaml` with that SHA-256-derived `?v=` value.
+The builder fingerprints the four completed MP4 files and `neutral.png` together
+and rewrites every local media URL in `dashboard.example.yaml` with that
+SHA-256-derived `?v=` value. This includes the neutral camera/calendar
+background, so replacing any asset cannot leave one unversioned URL behind.
 Run the builder before copying the dashboard as well as the media. This is
 required because Home Assistant may cache `/local/` media for 31 days: replacing
 a file without its new versioned URL can otherwise keep the previous scene.
+
+The OAuth return page declares Home Assistant's native-app redirect marker
+(`frameos://oauth/callback`) in a same-origin client-id page. Native
+authorization therefore returns the one-time code directly to FrameOS instead
+of putting it in the HTTPS `/local/frameos-oauth.html` URL. The page also
+scrubs query parameters immediately and declares a no-store cache policy as a
+defense for deployments that still load it directly. The Home Assistant server
+must independently send `Cache-Control: no-store, private` for this path;
+static `/local/` response headers are deployment-specific and remain
+**UNVERIFIED** by this repository's example validator.
 
 ## Adapt the dashboard
 

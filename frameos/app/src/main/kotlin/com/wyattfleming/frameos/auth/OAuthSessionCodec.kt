@@ -12,6 +12,7 @@ class OAuthSessionCodec {
             .put("access_token", session.accessToken)
             .put("refresh_token", session.refreshToken)
             .put("expires_at", session.expiresAtEpochMillis)
+            .put("auth_epoch", session.authEpoch)
             .toString()
     }
 
@@ -21,7 +22,8 @@ class OAuthSessionCodec {
         val accessToken = root.getString("access_token").takeIf(String::isNotBlank) ?: return null
         val refreshToken = root.getString("refresh_token").takeIf(String::isNotBlank) ?: return null
         val expiresAt = root.getLong("expires_at").takeIf { it > 0L } ?: return null
-        OAuthSession(accessToken, refreshToken, expiresAt)
+        val authEpoch = root.optString("auth_epoch", "legacy").ifBlank { "legacy" }
+        OAuthSession(accessToken, refreshToken, expiresAt, authEpoch)
     } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
         null
     }

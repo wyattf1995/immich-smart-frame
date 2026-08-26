@@ -39,9 +39,10 @@ class WeatherStaleWhileRevalidateTest {
     }
 
     private class Cache(private val cached: CachedWeatherSnapshot) : WeatherCache {
-        override fun read(entityId: String): CachedWeatherSnapshot = cached
-        override fun write(entityId: String, snapshot: WeatherSnapshot, savedAtEpochMillis: Long) = Unit
+        override fun read(key: WeatherCacheKey): CachedWeatherSnapshot = cached
+        override fun write(key: WeatherCacheKey, snapshot: WeatherSnapshot, savedAtEpochMillis: Long) = Unit
         override fun recordError(message: String) = Unit
+        override fun clear() = Unit
     }
 
     private fun snapshot(temperature: Double) = WeatherSnapshot(

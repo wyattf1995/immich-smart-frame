@@ -7,6 +7,8 @@
       content="default-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'none'; img-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"
     >
     <meta name="referrer" content="no-referrer">
+    <link rel="redirect_uri" href="frameos://oauth/callback">
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Return to FrameOS</title>
     <style>
@@ -28,6 +30,7 @@
         const source = new URL(window.location.href);
         const code = source.searchParams.get("code") || "";
         const state = source.searchParams.get("state") || "";
+        history.replaceState(null, "", source.pathname);
         const failed = Boolean(source.searchParams.get("error"));
         const target = new URL("frameos://oauth/callback");
         target.searchParams.set("code", failed ? "" : code);

@@ -12,10 +12,14 @@ required = [
   "form-action 'none'",
   "referrer",
   "no-referrer",
+  'http-equiv="Cache-Control"',
+  'content="no-store, no-cache, must-revalidate"',
+  '<link rel="redirect_uri" href="frameos://oauth/callback">',
   "new URL(\"frameos://oauth/callback\")",
   "searchParams.set(\"code\"",
   "searchParams.set(\"state\"",
   "location.replace(target.toString())",
+  'history.replaceState(null, "", source.pathname)',
 ]
 required.each do |contract|
   abort("FrameOS OAuth callback missing contract: #{contract}") unless callback.include?(contract)

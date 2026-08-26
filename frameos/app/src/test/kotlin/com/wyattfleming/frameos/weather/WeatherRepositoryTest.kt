@@ -137,6 +137,26 @@ class WeatherRepositoryTest {
         assertFalse(authCache.lastErrorMessage.contains("secret-token-value"))
     }
 
+    @Test
+    fun `scopes every cache access by origin entity and authentication epoch`() {
+        val cache = RecordingWeatherCache()
+        val repository = WeatherRepository(
+            remote = FakeWeatherRemote(WeatherRemoteResult.Success(snapshot)),
+            cache = cache,
+            clock = { 1_500L },
+            freshForMillis = 60_000L,
+            homeAssistantOrigin = "https://home.example.invalid:8123/",
+            authEpochProvider = { "account-b" },
+        )
+
+        repository.refresh("weather.home", "secret-token-value")
+
+        assertEquals(
+            WeatherCacheKey("https://home.example.invalid:8123", "weather.home", "account-b"),
+            cache.lastKey,
+        )
+    }
+
     private class RecordingWeatherCache(
         private val cached: CachedWeatherSnapshot? = null,
     ) : WeatherCache {
@@ -144,9 +164,15 @@ class WeatherRepositoryTest {
         var serializedPayload: String = ""
         var lastErrorMessage: String = ""
 
-        override fun read(entityId: String): CachedWeatherSnapshot? = cached
+        var lastKey: WeatherCacheKey? = null
 
-        override fun write(entityId: String, snapshot: WeatherSnapshot, savedAtEpochMillis: Long) {
+        override fun read(key: WeatherCacheKey): CachedWeatherSnapshot? {
+            lastKey = key
+            return cached
+        }
+
+        override fun write(key: WeatherCacheKey, snapshot: WeatherSnapshot, savedAtEpochMillis: Long) {
+            lastKey = key
             saved = snapshot
             serializedPayload = snapshot.toString()
         }
@@ -154,6 +180,8 @@ class WeatherRepositoryTest {
         override fun recordError(message: String) {
             lastErrorMessage = message
         }
+
+        override fun clear() = Unit
     }
 
     private class FakeWeatherRemote(

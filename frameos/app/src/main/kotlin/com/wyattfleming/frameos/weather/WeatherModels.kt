@@ -93,6 +93,14 @@ data class CachedWeatherSnapshot(
     val savedAtEpochMillis: Long,
 )
 
+data class WeatherCacheKey(
+    /** Canonical HA origin, not the user-provided path/query URL. */
+    val homeAssistantOrigin: String,
+    val entityId: String,
+    /** Changes on a new OAuth login and survives access-token refreshes. */
+    val authEpoch: String,
+)
+
 sealed interface WeatherRemoteResult {
     data class Success(val snapshot: WeatherSnapshot) : WeatherRemoteResult
     data class Offline(val reason: String) : WeatherRemoteResult
@@ -105,9 +113,10 @@ interface WeatherRemote {
 }
 
 interface WeatherCache {
-    fun read(entityId: String): CachedWeatherSnapshot?
-    fun write(entityId: String, snapshot: WeatherSnapshot, savedAtEpochMillis: Long)
+    fun read(key: WeatherCacheKey): CachedWeatherSnapshot?
+    fun write(key: WeatherCacheKey, snapshot: WeatherSnapshot, savedAtEpochMillis: Long)
     fun recordError(message: String)
+    fun clear()
 }
 
 sealed interface WeatherLoadResult {

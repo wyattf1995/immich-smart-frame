@@ -271,6 +271,14 @@ weather_video_urls = [weather_group["default_url"], *weather_group.fetch("state_
 unless weather_video_urls.all? { |url| url.match?(%r{\A/local/wallpanel-weather/[a-z-]+\.mp4\?v=[0-9a-f]{12,64}\z}) }
   fail_validation("weather MP4 URLs must carry generated SHA-256 cache fingerprints")
 end
+neutral_urls = [background["default_url"], groups.fetch("neutral").fetch("default_url")]
+unless neutral_urls.all? { |url| url.match?(%r{\A/local/wallpanel-weather/neutral\.png\?v=[0-9a-f]{12,64}\z}) }
+  fail_validation("neutral background URLs must carry generated SHA-256 cache fingerprints")
+end
+neutral_fingerprint = neutral_urls.first[/\?v=([0-9a-f]{12,64})\z/, 1]
+unless neutral_urls.all? { |url| url.end_with?("?v=#{neutral_fingerprint}") }
+  fail_validation("neutral background URLs must share one generated fingerprint")
+end
 default_fingerprint = weather_group.fetch("default_url")[/\?v=([0-9a-f]{12,64})\z/, 1]
 expected_weather_files = {
   "default_url" => "cloudy.mp4",
@@ -351,12 +359,19 @@ Dir.mktmpdir("weather-fingerprint-test") do |temporary_dir|
     )
     fail_validation("fingerprint rewrite failed: #{output}") unless status.success?
   end
-  rewritten_weather = YAML.load_file(copied_dashboard).fetch("animated_background")
+  rewritten_dashboard = YAML.load_file(copied_dashboard)
+  rewritten_background = rewritten_dashboard.fetch("animated_background")
+  rewritten_weather = rewritten_background
                           .fetch("groups").find { |group| group["name"] == "weather" }.fetch("config")
   rewritten_urls = [rewritten_weather.fetch("default_url"), *rewritten_weather.fetch("state_url").values]
   unless rewritten_urls.all? { |url| url.match?(%r{\.mp4\?v=#{fingerprint}\z}) } &&
          rewritten_weather.fetch("state_url").fetch("snowy-rainy") == "/local/wallpanel-weather/rainy.mp4?v=#{fingerprint}"
     fail_validation("fingerprint rewrite must be idempotent and preserve every weather-state mapping")
+  end
+  rewritten_neutral = [rewritten_background.fetch("default_url"),
+                       rewritten_background.fetch("groups").find { |group| group["name"] == "neutral" }.fetch("config").fetch("default_url")]
+  unless rewritten_neutral == ["/local/wallpanel-weather/neutral.png?v=#{fingerprint}"] * 2
+    fail_validation("fingerprint rewrite must update neutral background URLs idempotently")
   end
 end
 
@@ -364,6 +379,10 @@ guide = File.read(FILES.fetch(:guide))
 required_architecture_terms = ["UNVERIFIED", "FrameOS", "GeckoView", "Firefox", "Fully Kiosk"]
 unless required_architecture_terms.all? { |term| guide.include?(term) }
   fail_validation("guide must preserve physical verification boundaries, FrameOS, and legacy rollback")
+end
+
+unless guide.include?("frameos-oauth.html") && guide.match?(/Cache-Control: no-store/i) && guide.include?("UNVERIFIED")
+  fail_validation("guide must document the external no-store OAuth callback requirement and verification boundary")
 end
 
 weather_readme = File.read(FILES.fetch(:weather_readme))

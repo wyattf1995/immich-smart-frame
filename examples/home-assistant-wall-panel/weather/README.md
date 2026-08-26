@@ -20,7 +20,8 @@ lighting, drizzle, and two occasional night shooting stars move.
 
 Also provide `output/neutral.png` as the static background for camera and
 calendar views. It can be a small solid-color PNG or another privacy-safe
-neutral image. Copy the four MP4 files and `neutral.png` to Home Assistant's
+neutral image. The builder fingerprints it together with the four loops, so
+copy the four MP4 files and `neutral.png` to Home Assistant's
 `/config/www/wallpanel-weather/` directory. They will then be available below
 `/local/wallpanel-weather/`.
 

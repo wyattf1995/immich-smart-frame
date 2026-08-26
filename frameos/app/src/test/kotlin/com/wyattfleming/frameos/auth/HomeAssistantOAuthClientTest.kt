@@ -28,6 +28,7 @@ class HomeAssistantOAuthClientTest {
 
         assertTrue(client.exchangeAuthorizationCode("one-time-code"))
         assertEquals("access-secret", client.validAccessToken())
+        assertTrue(client.authEpoch() != "legacy")
         assertEquals(1, transport.requests.size)
         assertEquals("POST", transport.requests.single().method)
         assertEquals("https://home.example.invalid:8123/auth/token", transport.requests.single().url)
@@ -43,7 +44,7 @@ class HomeAssistantOAuthClientTest {
     @Test
     fun `refreshes an expired session and keeps the existing refresh token`() {
         val store = RecordingSessionStore(
-            OAuthSession("expired-access", "refresh-secret", expiresAtEpochMillis = 20_000L),
+            OAuthSession("expired-access", "refresh-secret", expiresAtEpochMillis = 20_000L, authEpoch = "account-a"),
         )
         val transport = QueueTransport(
             HomeAssistantHttpResponse(
@@ -54,6 +55,7 @@ class HomeAssistantOAuthClientTest {
         val client = HomeAssistantOAuthClient(endpoint, callback, transport, store, clock = { 30_000L })
 
         assertEquals("new-access", client.validAccessToken())
+        assertEquals("account-a", client.authEpoch())
         assertEquals("refresh-secret", store.saved?.refreshToken)
         assertEquals(
             "grant_type=refresh_token&refresh_token=refresh-secret&client_id=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html",
