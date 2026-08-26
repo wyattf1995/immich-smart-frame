@@ -69,6 +69,26 @@ frameos_resumed() {
     grep -F 'mResumedActivity' | grep -Fq 'com.wyattfleming.frameos/.MainActivity'
 }
 
+frame_input_accessibility_ready() {
+  local accessibility_state enabled_services bound_services
+  accessibility_state="$(adb -s "$adb_serial" shell dumpsys accessibility)" || return 1
+  accessibility_state="${accessibility_state//$'\r'/}"
+
+  # A UI-test automation service suppresses ordinary accessibility services by
+  # default. Never leave one registered on the production frame after E2E.
+  if grep -Fq 'Ui Automation[' <<< "$accessibility_state"; then
+    return 1
+  fi
+
+  enabled_services="$(grep -F 'Enabled services:' <<< "$accessibility_state" | head -n 1)"
+  if [[ "$enabled_services" != *'io.github.sds100.keymapper/io.github.sds100.keymapper.system.accessibility.MyAccessibilityService'* ]]; then
+    return 0
+  fi
+
+  bound_services="$(grep -F 'Bound services:' <<< "$accessibility_state" | head -n 1)"
+  [[ "$bound_services" == *'Service[label=Key Mapper'* ]]
+}
+
 compose=(docker compose -f "$compose_file")
 check 'Kiosk liveness (/livez)' "${compose[@]}" exec -T immich-kiosk /kiosk --livecheck
 check 'Kiosk dependency readiness (/readyz)' "${compose[@]}" exec -T immich-kiosk /kiosk --readycheck
@@ -88,6 +108,7 @@ if [[ -n "$adb_serial" ]]; then
   check 'FrameOS package' adb -s "$adb_serial" shell pidof com.wyattfleming.frameos
   check 'FrameOS default HOME component' frameos_default_home
   check 'FrameOS resumed activity' frameos_resumed
+  check 'Frame input accessibility' frame_input_accessibility_ready
   informational_check 'Key Mapper sysbridge' 'Key Mapper sysbridge is not running (FrameOS direct keys remain available)' \
     adb -s "$adb_serial" shell pidof keymapper_sysbridge
   if [[ -n "$router_config" ]]; then
