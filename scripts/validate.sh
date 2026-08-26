@@ -23,7 +23,16 @@ required_files=(
   config/config.example.yaml
   config/qwen.example.yaml
   custom-image/album-penalties.patch
+  custom-image/backend-cache-hardening.patch
+  custom-image/backend-cache-refill-hardening.patch
+  custom-image/backend-cache-refill-regression-tests.patch
+  custom-image/backend-cache-regression-tests.patch
+  custom-image/browser-cache-hardening.patch
+  custom-image/browser-cache-tests.patch
   custom-image/fully-kiosk-dpr.patch
+  custom-image/offline-cache-hardening.patch
+  custom-image/offline-cache-tests.patch
+  custom-image/offline-mutation-hardening.patch
   custom-image/weighted-curation.patch
   custom-image/weighted-curation-tests.patch
   docker-compose.yaml
@@ -32,11 +41,14 @@ required_files=(
   examples/frame-mode-router/frame-mode-router.sh
   examples/frame-mode-router/keymapper-mode-router.example.json
   scripts/audit-licenses.sh
+  scripts/check-offline-assets-permissions.sh
   scripts/ci-lib.sh
   scripts/run-gitleaks.sh
   scripts/run-govulncheck.sh
   scripts/run-trivy.sh
   scripts/test-frame-mode-router.sh
+  scripts/test-browser-cache-contract.sh
+  scripts/test-offline-assets-permissions.sh
   scripts/validate-frameos.sh
   scripts/validate-frameos-control-receiver.rb
   scripts/validate-frameos-oauth-callback.rb

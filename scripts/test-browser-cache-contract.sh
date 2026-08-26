@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/browser-cache-contract.XXXXXX")"
+trap 'rm -rf "$tmp_root"' EXIT
 
 fail() {
   printf 'browser cache contract failed: %s\n' "$*" >&2
@@ -13,15 +14,11 @@ fail() {
 source "$repo_root/scripts/ci-lib.sh"
 ci_prepare_upstream_source "$tmp_root/upstream" >/dev/null
 
-for patch_file in \
-  "$repo_root/custom-image/browser-cache-hardening.patch" \
-  "$repo_root/custom-image/offline-cache-hardening.patch" \
-  "$repo_root/custom-image/offline-mutation-hardening.patch" \
-  "$repo_root/custom-image/offline-cache-tests.patch" \
-  "$repo_root/custom-image/browser-cache-tests.patch"; do
-  [[ -f "$patch_file" ]] || fail "missing browser cache patch: $patch_file"
-  git -C "$tmp_root/upstream" apply --check --unidiff-zero "$patch_file" || fail "patch does not apply: $patch_file"
-  git -C "$tmp_root/upstream" apply --unidiff-zero "$patch_file"
+for required_file in \
+  frontend/tests/browser-cache-contract.test.mjs \
+  frontend/tests/offline-cache-contract.test.mjs; do
+  [[ -f "$tmp_root/upstream/$required_file" ]] || \
+    fail "Dockerfile patch stack is missing: $required_file"
 done
 
 (cd "$tmp_root/upstream" && node --test frontend/tests/browser-cache-contract.test.mjs)
