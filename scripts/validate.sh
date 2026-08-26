@@ -47,6 +47,7 @@ required_files=(
   scripts/run-govulncheck.sh
   scripts/run-trivy.sh
   scripts/test-frame-mode-router.sh
+  scripts/test-check-frame-readiness.sh
   scripts/test-browser-cache-contract.sh
   scripts/test-offline-assets-permissions.sh
   scripts/validate-frameos.sh
@@ -107,6 +108,8 @@ fi
 ./scripts/validate-ci.sh
 
 ./scripts/test-frame-mode-router.sh
+
+./scripts/test-check-frame-readiness.sh
 
 ./scripts/validate-frameos.sh
 
