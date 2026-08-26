@@ -347,6 +347,7 @@ class MainActivity : Activity() {
         if (activeConfiguration != null) {
             val runtime = (application as FrameOsApplication).geckoRuntime
             val warmHomeAssistantView = GeckoView(this).apply {
+                setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
                 setBackgroundColor(Color.BLACK)
                 coverUntilFirstPaint(Color.BLACK)
                 isFocusable = true
