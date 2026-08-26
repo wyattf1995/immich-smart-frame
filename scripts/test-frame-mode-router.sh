@@ -413,8 +413,22 @@ run_router_expect_failure status "$tmp_dir/missing.conf"
 # Exercise the real /proc parser path and require the single-escape ERE passed to
 # awk rather than relying exclusively on the portable test override.
 rm -f "$lock"
-FRAME_ROUTER_PROCESS_START_TOKEN='' FRAME_ROUTER_FOREGROUND=unknown \
-  run_router show photos
+set +e
+FRAME_ROUTER_PROCESS_START_TOKEN='' FRAME_ROUTER_PROC_ROOT="$proc_root" \
+  FRAME_ROUTER_LOG="$log" FRAME_ROUTER_FOREGROUND=unknown \
+  FRAME_ROUTER_FIREFOX_STARTED="$firefox_started" PATH="$fake_bin:$PATH" \
+  "$router_shell" -c '
+    mkdir -p "$FRAME_ROUTER_PROC_ROOT/$$"
+    : > "$FRAME_ROUTER_PROC_ROOT/$$/stat"
+    . "$1" show photos "$2"
+  ' frame-mode-router-test "$router" "$config" \
+  >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
+parser_result=$?
+set -e
+if [[ "$parser_result" -ne 0 ]]; then
+  cat "$tmp_dir/stderr" >&2
+  fail 'the Android-compatible process start parser rejected the awk program'
+fi
 assert_eq photos "$(tr -d '\r\n' < "$state")" \
   'the Android-compatible process start parser must allow routing'
 
