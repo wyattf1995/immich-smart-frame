@@ -1,0 +1,27 @@
+diff --git a/frontend/tests/offline-cache-contract.test.mjs b/frontend/tests/offline-cache-contract.test.mjs
+new file mode 100644
+--- /dev/null
++++ b/frontend/tests/offline-cache-contract.test.mjs
+@@ -0,0 +1,22 @@
++import assert from "node:assert/strict";
++import { readFile } from "node:fs/promises";
++import test from "node:test";
++
++const read = (name) => readFile(new URL(`../../${name}`, import.meta.url), "utf8");
++const offline = await read("internal/routes/routes_offline.go");
++const assets = await read("internal/routes/routes_asset.go");
++const cache = await read("internal/routes/routes_cache.go");
++
++test("offline pool is scoped and invalidated without a long mutex hold", () => {
++  for (const marker of [
++    "OfflineManifestFilename", "generation=", "origin=", "user=", "device=",
++    "profile=", "config_sha256=", "ensureOfflineCacheScope",
++  ]) assert.match(offline, new RegExp(marker));
++  assert.match(offline, /InvalidateOfflineAssets/);
++  assert.doesNotMatch(offline, /defer offlineScopeMu\.Unlock\(\)/);
++});
++
++test("successful curation mutations and explicit flush invalidate the pool", () => {
++  assert.ok((assets.match(/InvalidateOfflineAssets\(\)/g) || []).length >= 5);
++  assert.match(cache, /InvalidateOfflineAssets\(\)/);
++});
