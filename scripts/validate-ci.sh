@@ -31,6 +31,11 @@ shellcheck -x "${sh_files[@]}"
 
 ./scripts/test-license-audit.sh
 
+if ! grep -Fxq './scripts/test-check-frame-readiness.sh' scripts/validate.sh; then
+  printf 'aggregate validation must execute the frame readiness contract\n' >&2
+  exit 1
+fi
+
 # shellcheck source=scripts/ci-lib.sh
 source scripts/ci-lib.sh
 if [[ ! "$(ci_upstream_ref)" =~ ^[0-9a-f]{40}$ ]]; then
