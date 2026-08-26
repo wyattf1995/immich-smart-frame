@@ -37,7 +37,9 @@ COPY resilience-timeout-bounds-tests.patch /tmp/resilience-timeout-bounds-tests.
 COPY readiness-selection-tests.patch /tmp/readiness-selection-tests.patch
 COPY readiness-selection-array-tests.patch /tmp/readiness-selection-array-tests.patch
 COPY readiness-root-fixture-tests.patch /tmp/readiness-root-fixture-tests.patch
+COPY slideshow-recovery-tests.patch /tmp/slideshow-recovery-tests.patch
 COPY resilience-backend.patch /tmp/resilience-backend.patch
+COPY slideshow-recovery.patch /tmp/slideshow-recovery.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -95,8 +97,12 @@ RUN cd /src \
 	&& git apply --unidiff-zero /tmp/readiness-selection-array-tests.patch \
 	&& git apply --check --unidiff-zero /tmp/readiness-root-fixture-tests.patch \
 	&& git apply --unidiff-zero /tmp/readiness-root-fixture-tests.patch \
+	&& git apply --check --unidiff-zero /tmp/slideshow-recovery-tests.patch \
+	&& git apply --unidiff-zero /tmp/slideshow-recovery-tests.patch \
 	&& git apply --check --unidiff-zero /tmp/resilience-backend.patch \
-	&& git apply --unidiff-zero /tmp/resilience-backend.patch
+	&& git apply --unidiff-zero /tmp/resilience-backend.patch \
+	&& git apply --check --unidiff-zero /tmp/slideshow-recovery.patch \
+	&& git apply --unidiff-zero /tmp/slideshow-recovery.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
@@ -107,6 +113,15 @@ WORKDIR /app/frontend
 
 RUN npm install -g "@go-task/cli@${GO_TASK_VERSION}"
 RUN --mount=type=cache,target=/root/.npm npm ci
+RUN node_modules/.bin/esbuild tests/asset-request-recovery.test.ts \
+      --bundle --platform=node --format=esm \
+      --outfile=/tmp/asset-request-recovery.test.mjs \
+    && node --test /tmp/asset-request-recovery.test.mjs \
+    && node_modules/.bin/esbuild tests/polling-recovery.test.ts \
+      --bundle --platform=node --format=esm \
+      --alias:htmx.org=./tests/htmx.mock.ts \
+      --outfile=/tmp/polling-recovery.test.mjs \
+    && node --test /tmp/polling-recovery.test.mjs
 RUN task frontend
 
 FROM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS build

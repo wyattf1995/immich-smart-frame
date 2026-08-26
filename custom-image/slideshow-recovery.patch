@@ -1,0 +1,126 @@
+diff --git a/frontend/src/ts/asset-request-recovery.ts b/frontend/src/ts/asset-request-recovery.ts
+new file mode 100644
+index 0000000..64b9128
+--- /dev/null
++++ b/frontend/src/ts/asset-request-recovery.ts
+@@ -0,0 +1,31 @@
++type HTMXRequestEvent = Event & {
++    detail?: {
++        pathInfo?: {
++            requestPath?: string;
++        };
++    };
++};
++
++const ASSET_REQUEST_PATH = /^\/asset\/(new|offline|previous)$/;
++
++/**
++ * Completes an asset request even when HTMX has no content to swap.
++ *
++ * HTMX emits afterRequest for success, HTTP failure, abort, timeout, and
++ * network-error paths. Releasing the request lock here prevents the next
++ * slideshow tick from being rejected after a response without afterSwap.
++ */
++export function recoverAssetRequest(
++    event: Event,
++    releaseRequestLock: () => void,
++    startPolling: () => void,
++): boolean {
++    const requestEvent = event as HTMXRequestEvent;
++    const path = requestEvent.detail?.pathInfo?.requestPath || "";
++
++    if (!ASSET_REQUEST_PATH.test(path)) return false;
++
++    releaseRequestLock();
++    startPolling();
++    return true;
++}
+diff --git a/frontend/src/ts/kiosk.ts b/frontend/src/ts/kiosk.ts
+index 5fc7f0a..d4764f5 100644
+--- a/frontend/src/ts/kiosk.ts
++++ b/frontend/src/ts/kiosk.ts
+@@ -1,6 +1,7 @@
+ import { formatRFC3339 } from "date-fns/formatRFC3339";
+ import DOMPurify from "dompurify";
+ import htmx from "htmx.org";
++import { recoverAssetRequest } from "./asset-request-recovery";
+ import type { TimeFormat } from "./clock";
+ import { initClock } from "./clock";
+ import {
+@@ -21,6 +22,7 @@ import { registerVideoMuteApi, toggleMute } from "./mute";
+ import {
+     initPolling,
+     pausePolling,
++    recoverPollingIfVisible,
+     resumePolling,
+     startPolling,
+     stopPolling,
+@@ -396,14 +398,12 @@ function addEventListeners(): void {
+ 
+     htmx.on("htmx:afterRequest", (event: Event) => {
+         const e = event as HTMXEvent;
+-        const path = e.detail?.pathInfo?.requestPath || "";
+-
+-        // Only restart polling for asset endpoints (new|offlie|previous)
+-        if (/^\/asset\/(new|offline|previous)$/.test(path)) {
+-            startPolling();
+-        }
++        recoverAssetRequest(e, releaseRequestLock, startPolling);
+     });
+ 
++    document.addEventListener("visibilitychange", recoverPollingIfVisible);
++    window.addEventListener("pageshow", recoverPollingIfVisible);
++
+     htmx.on("htmx:timeout", (event: Event) => {
+         const e = event as HTMXEvent;
+ 
+diff --git a/frontend/src/ts/polling.ts b/frontend/src/ts/polling.ts
+index 18ba7d6..16dacef 100644
+--- a/frontend/src/ts/polling.ts
++++ b/frontend/src/ts/polling.ts
+@@ -125,6 +125,10 @@ class PollingController {
+      * Starts the polling process
+      */
+     startPolling = () => {
++        // HTMX lifecycle events can overlap (for example afterRequest followed
++        // by sendError). Keep exactly one progress loop alive.
++        if (this.animationFrameId !== null) return;
++
+         this.progressBarElement?.classList.remove("progress--bar-paused");
+         this.menuElement?.classList.add("navigation-hidden");
+         this.lastPollTime = performance.now();
+@@ -142,6 +146,25 @@ class PollingController {
+         this.isPaused = false;
+     };
+ 
++    /**
++     * Repairs a progress loop dropped while GeckoView was inactive.
++     * Intentional user pauses remain paused.
++     */
++    recoverPollingIfVisible = () => {
++        if (
++            document.visibilityState !== "visible" ||
++            this.isPaused ||
++            !this.currentProgressSource
++        ) {
++            return;
++        }
++
++        if (this.animationFrameId !== null) {
++            cancelAnimationFrame(this.animationFrameId);
++        }
++        this.animationFrameId = requestAnimationFrame(this.updateProgress);
++    };
++
+     /**
+      * Pauses the polling process
+      * @param showMenu - Whether to show the menu when pausing
+@@ -374,6 +397,8 @@ export const initPolling = (
+ ) => pollingController.init(interval, kiosk, menu);
+ 
+ export const startPolling = () => pollingController.startPolling();
++export const recoverPollingIfVisible = () =>
++    pollingController.recoverPollingIfVisible();
+ export const pausePolling = (showMenu?: boolean) =>
+     pollingController.pausePolling(showMenu);
+ export const stopPolling = () => pollingController.stopPolling();
