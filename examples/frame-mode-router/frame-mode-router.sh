@@ -308,7 +308,7 @@ process_start_token() {
   [ -r "$process_stat" ] || return 1
   # /proc/<pid>/stat field 2 is parenthesized and may contain spaces; strip it
   # before selecting the original field 22 (the 20th remaining field).
-  process_start="$(awk '{sub(/^.*\\) /, ""); print $20}' "$process_stat")" || return 1
+  process_start="$(awk '{sub(/^.*\) /, ""); print $20}' "$process_stat")" || return 1
   case "$process_start" in
     *[!0-9]*|'') return 1 ;;
   esac
