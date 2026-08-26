@@ -2,11 +2,12 @@ package com.wyattfleming.frameos.web
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.view.accessibility.AccessibilityManager
 import android.graphics.Color
 import android.os.SystemClock
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.accessibility.AccessibilityManager
 import com.wyattfleming.frameos.security.FrameUrlPolicy
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
@@ -23,6 +24,7 @@ class FrameWebSurface(
     photosUrl: String,
     homeAssistantUrl: String,
     homeAssistantFallbackUrl: String? = null,
+    private val warmHomeAssistantView: GeckoView,
     private val listener: Listener,
     private val urlPolicy: FrameUrlPolicy = FrameUrlPolicy(),
 ) : GeckoView(context) {
@@ -161,8 +163,10 @@ class FrameWebSurface(
     private val homeAssistantFallbackUrl = homeAssistantFallbackUrl
     private var homeAssistantSession: ManagedSession? = null
     private var cameraSession: ManagedSession? = null
-    private var attachedSlot: FrameWebSlot? = null
-    private var geckoAttachedSession: ManagedSession? = null
+    private var foregroundSlot: FrameWebSlot? = null
+    private var displayedSlot: FrameWebSlot? = null
+    private var foregroundAttachedSession: ManagedSession? = null
+    private var warmHomeAttachedSession: ManagedSession? = null
     private val hiddenHomeLifecycle = FrameWebHiddenSessionLifecycle()
     private var preloadDeactivation: Runnable? = null
     private val evictHiddenHome = Runnable { evictHiddenHomeIfExpired() }
@@ -180,14 +184,20 @@ class FrameWebSurface(
     fun preload(slot: FrameWebSlot, url: String) {
         require(slot.canPreload) { "$slot cannot be preloaded" }
         val managed = sessionFor(slot)
+        ensureWarmHomeAttached(managed)
+        warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        managed.setFocused(false)
         val generation = hiddenHomeLifecycle.onHomePreloaded(SystemClock.uptimeMillis())
         scheduleHiddenHomeEviction()
-        if (!managed.loadState.shouldRequest(url)) return
         preloadDeactivation?.let(::removeCallbacks)
         managed.setActive(true)
-        managed.request(url)
+        if (managed.loadState.shouldRequest(url)) managed.request(url)
         val deactivate = Runnable {
-            if (hiddenHomeLifecycle.isCurrentPreload(generation) && homeAssistantSession === managed && attachedSlot != slot) {
+            if (
+                hiddenHomeLifecycle.isCurrentPreload(generation) &&
+                homeAssistantSession === managed &&
+                displayedSlot != slot
+            ) {
                 managed.setActive(false)
             }
         }
@@ -202,22 +212,28 @@ class FrameWebSurface(
         } else {
             hiddenHomeLifecycle.onNonHomeShown()
         }
-        if (attachedSlot == FrameWebSlot.CAMERAS && slot != FrameWebSlot.CAMERAS) {
+        if (displayedSlot == FrameWebSlot.CAMERAS && slot != FrameWebSlot.CAMERAS) {
             disposeCameraSession()
         }
         val managed = sessionFor(slot)
-        allSessions().filter { it !== managed }.forEach {
+        allSessions().filter { it !== managed && it !== homeAssistantSession }.forEach {
             cancelRecovery(it)
             it.setActive(false)
             it.setFocused(false)
         }
-        if (attachedSlot != slot) {
-            if (session != null) releaseAttachedSession()
-            setSession(managed.session)
-            geckoAttachedSession = managed
-            attachedSlot = slot
+        homeAssistantSession?.setFocused(false)
+        if (slot == FrameWebSlot.HOME_ASSISTANT) {
+            preloadDeactivation?.let(::removeCallbacks)
+            preloadDeactivation = null
+            ensureWarmHomeAttached(managed)
+            visibility = View.GONE
+            warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        } else {
+            attachForeground(slot, managed)
+            visibility = View.VISIBLE
+            warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         }
-        visibility = View.VISIBLE
+        displayedSlot = slot
         managed.setActive(true)
         if (managed.loadState.shouldRequest(url)) {
             cancelRecovery(managed)
@@ -225,36 +241,54 @@ class FrameWebSurface(
             managed.request(url)
         }
         managed.setFocused(takeFocus)
-        if (takeFocus) requestFocus()
-        contentDescription = managed.label
+        val displayedView = if (slot == FrameWebSlot.HOME_ASSISTANT) warmHomeAssistantView else this
+        if (takeFocus) displayedView.requestFocus()
+        displayedView.contentDescription = managed.label
         if (slot != FrameWebSlot.HOME_ASSISTANT) scheduleHiddenHomeEviction()
     }
 
     fun hide() {
         visibility = View.GONE
-        if (attachedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
-        allSessions().forEach {
+        if (displayedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
+        allSessions().filter { it !== homeAssistantSession }.forEach {
             cancelRecovery(it)
             it.setFocused(false)
             it.setActive(false)
         }
-        if (attachedSlot == FrameWebSlot.HOME_ASSISTANT && session != null) {
-            releaseAttachedSession()
-            attachedSlot = null
-        }
+        homeAssistantSession?.setFocused(false)
+        warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        displayedSlot = null
         scheduleHiddenHomeEviction()
     }
 
     fun setContentActive(active: Boolean) {
-        if (!active && attachedSlot == FrameWebSlot.CAMERAS) {
+        if (!active && displayedSlot == FrameWebSlot.CAMERAS) {
             disposeCameraSession()
             return
         }
-        attachedSlot?.let { slot -> sessionFor(slot).setActive(active) }
+        displayedSlot?.let { slot -> sessionFor(slot).setActive(active) }
+    }
+
+    fun suspendAllContent() {
+        if (displayedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
+        allSessions().forEach {
+            it.setFocused(false)
+            it.setActive(false)
+        }
+    }
+
+    fun forwardKey(event: KeyEvent): Boolean {
+        val displayedView = when (displayedSlot) {
+            FrameWebSlot.HOME_ASSISTANT -> warmHomeAssistantView
+            FrameWebSlot.PHOTOS, FrameWebSlot.CAMERAS -> this
+            null -> return false
+        }
+        displayedView.requestFocus()
+        return displayedView.dispatchKeyEvent(event)
     }
 
     fun movePhoto(forward: Boolean): Boolean {
-        if (attachedSlot != FrameWebSlot.PHOTOS || visibility != View.VISIBLE || width <= 0 || height <= 0) {
+        if (displayedSlot != FrameWebSlot.PHOTOS || visibility != View.VISIBLE || width <= 0 || height <= 0) {
             return false
         }
         val eventTime = SystemClock.uptimeMillis()
@@ -279,7 +313,8 @@ class FrameWebSurface(
         retryCallbacks.values.forEach(::removeCallbacks)
         retryCallbacks.clear()
         hiddenHomeLifecycle.onEvicted()
-        if (session != null) releaseAttachedSession()
+        if (session != null) releaseForegroundAttachedSession()
+        releaseWarmHomeAttachedSession()
         cameraSession?.close()
         cameraSession = null
         homeAssistantSession?.close()
@@ -312,12 +347,32 @@ class FrameWebSurface(
         cameraSession?.let(::add)
     }
 
+    private fun attachForeground(slot: FrameWebSlot, managed: ManagedSession) {
+        require(slot != FrameWebSlot.HOME_ASSISTANT) { "Home Assistant uses its persistent warm surface" }
+        if (foregroundSlot == slot && foregroundAttachedSession === managed) return
+        if (session != null) releaseForegroundAttachedSession()
+        setSession(managed.session)
+        foregroundAttachedSession = managed
+        foregroundSlot = slot
+    }
+
+    private fun ensureWarmHomeAttached(managed: ManagedSession) {
+        require(managed === homeAssistantSession) { "Only the persistent Home Assistant session can use the warm surface" }
+        if (warmHomeAttachedSession !== managed) {
+            if (warmHomeAssistantView.session != null) releaseWarmHomeAttachedSession()
+            warmHomeAssistantView.setSession(managed.session)
+            warmHomeAttachedSession = managed
+        }
+        warmHomeAssistantView.visibility = View.VISIBLE
+    }
+
     private fun disposeCameraSession() {
         val disposable = cameraSession ?: return
-        if (attachedSlot == FrameWebSlot.CAMERAS) {
-            if (session != null) releaseAttachedSession()
-            attachedSlot = null
+        if (foregroundSlot == FrameWebSlot.CAMERAS) {
+            if (session != null) releaseForegroundAttachedSession()
+            foregroundSlot = null
         }
+        if (displayedSlot == FrameWebSlot.CAMERAS) displayedSlot = null
         disposable.close()
         cancelRecovery(disposable)
         cameraSession = null
@@ -325,7 +380,7 @@ class FrameWebSurface(
 
     private fun scheduleHiddenHomeEviction() {
         homeAssistantSession ?: return
-        if (attachedSlot == FrameWebSlot.HOME_ASSISTANT) return
+        if (displayedSlot == FrameWebSlot.HOME_ASSISTANT) return
         hiddenHomeLifecycle.onHomeHidden(SystemClock.uptimeMillis())
         val hiddenSince = requireNotNull(hiddenHomeLifecycle.hiddenSinceMillis)
         removeCallbacks(evictHiddenHome)
@@ -338,11 +393,12 @@ class FrameWebSurface(
     }
 
     private fun evictHiddenHome() {
-        if (attachedSlot == FrameWebSlot.HOME_ASSISTANT) return
+        if (displayedSlot == FrameWebSlot.HOME_ASSISTANT) return
         removeCallbacks(evictHiddenHome)
         preloadDeactivation?.let(::removeCallbacks)
         preloadDeactivation = null
         hiddenHomeLifecycle.onEvicted()
+        releaseWarmHomeAttachedSession()
         homeAssistantSession?.close()
         homeAssistantSession?.let(::cancelRecovery)
         homeAssistantSession = null
@@ -351,7 +407,7 @@ class FrameWebSurface(
     private fun reportUnavailable(managed: ManagedSession) {
         managed.loadState.recordFailure()
         listener.onPageUnavailable(managed.label)
-        if (managed.retryPending || visibility != View.VISIBLE || managed !== attachedManagedSession()) return
+        if (managed.retryPending || !displayedSurfaceVisible() || managed !== displayedManagedSession()) return
         scheduleRecovery(managed)
     }
 
@@ -364,7 +420,7 @@ class FrameWebSurface(
         val callback = Runnable {
             retryCallbacks.remove(managed)
             managed.retryPending = false
-            if (visibility != View.VISIBLE || managed !== attachedManagedSession()) return@Runnable
+            if (!displayedSurfaceVisible() || managed !== displayedManagedSession()) return@Runnable
             managed.request(url)
         }
         retryCallbacks[managed] = callback
@@ -382,12 +438,27 @@ class FrameWebSurface(
         managed.retryPending = false
     }
 
-    private fun releaseAttachedSession() {
-        if (geckoAttachedSession?.crashRecovery?.canUseSession == false) return
-        runCatching(::releaseSession).onSuccess { geckoAttachedSession = null }
+    private fun releaseForegroundAttachedSession() {
+        if (session != null) runCatching(::releaseSession)
+        foregroundAttachedSession = null
+        foregroundSlot = null
     }
 
-    private fun attachedManagedSession(): ManagedSession? = attachedSlot?.let(::sessionFor)
+    private fun releaseWarmHomeAttachedSession() {
+        if (warmHomeAssistantView.session != null) {
+            runCatching(warmHomeAssistantView::releaseSession)
+        }
+        warmHomeAttachedSession = null
+        warmHomeAssistantView.visibility = View.GONE
+    }
+
+    private fun displayedManagedSession(): ManagedSession? = displayedSlot?.let(::sessionFor)
+
+    private fun displayedSurfaceVisible(): Boolean = when (displayedSlot) {
+        FrameWebSlot.HOME_ASSISTANT -> warmHomeAssistantView.visibility == View.VISIBLE
+        FrameWebSlot.PHOTOS, FrameWebSlot.CAMERAS -> visibility == View.VISIBLE
+        null -> false
+    }
 
     private fun fallbackUrlFor(url: String?): String? {
         if (url == null) return null

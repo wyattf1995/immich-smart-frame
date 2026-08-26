@@ -60,8 +60,10 @@ import com.wyattfleming.frameos.weather.WeatherRefreshPolicy
 import com.wyattfleming.frameos.weather.WeatherRepository
 import com.wyattfleming.frameos.web.FrameSurfaceRouter
 import com.wyattfleming.frameos.web.FrameSurfaceTarget
+import com.wyattfleming.frameos.web.FrameWebCompositionPolicy
 import com.wyattfleming.frameos.web.FrameWebSlot
 import com.wyattfleming.frameos.web.FrameWebSurface
+import org.mozilla.geckoview.GeckoView
 import java.net.URI
 import java.security.SecureRandom
 import java.time.ZoneId
@@ -127,7 +129,9 @@ class MainActivity : Activity() {
     private val expireIdle = Runnable { dispatch(FrameIntent.IdleExpired) }
     private val refreshVisibleWeather = Runnable { refreshWeather() }
     private val preloadCalendar = Runnable {
-        if (state.mode !in BACKGROUND_PRELOAD_MODES || !activityResumed) return@Runnable
+        if (!FrameWebCompositionPolicy.forMode(state.mode).warmCalendarInBackground || !activityResumed) {
+            return@Runnable
+        }
         surfaceRouter?.calendarPreloadTarget()?.let { target ->
             webSurface?.preload(target.slot, target.url)
         }
@@ -204,7 +208,7 @@ class MainActivity : Activity() {
         activityResumed = false
         handler.removeCallbacks(refreshVisibleWeather)
         handler.removeCallbacks(preloadCalendar)
-        webSurface?.setContentActive(false)
+        webSurface?.suspendAllContent()
         super.onPause()
     }
 
@@ -342,6 +346,14 @@ class MainActivity : Activity() {
         val activeConfiguration = configuration
         if (activeConfiguration != null) {
             val runtime = (application as FrameOsApplication).geckoRuntime
+            val warmHomeAssistantView = GeckoView(this).apply {
+                setBackgroundColor(Color.BLACK)
+                coverUntilFirstPaint(Color.BLACK)
+                isFocusable = true
+                isFocusableInTouchMode = true
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                visibility = View.GONE
+            }
             val webListener = object : FrameWebSurface.Listener {
                 override fun onPageLoading(label: String, loading: Boolean) {
                     runOnUiThread { updatePageLoading(label, loading) }
@@ -375,8 +387,10 @@ class MainActivity : Activity() {
                 photosUrl = activeConfiguration.photosUrl,
                 homeAssistantUrl = activeConfiguration.homeAssistantUrl,
                 homeAssistantFallbackUrl = activeConfiguration.homeAssistantFallbackUrl,
+                warmHomeAssistantView = warmHomeAssistantView,
                 listener = webListener,
             )
+            root.addView(warmHomeAssistantView, fullScreenLayout)
             root.addView(webSurface, fullScreenLayout)
             root.addView(weatherContent, fullScreenLayout)
         } else {
@@ -583,7 +597,7 @@ class MainActivity : Activity() {
 
     private fun scheduleCalendarPreload() {
         handler.removeCallbacks(preloadCalendar)
-        if (state.mode in BACKGROUND_PRELOAD_MODES && activityResumed) {
+        if (FrameWebCompositionPolicy.forMode(state.mode).warmCalendarInBackground && activityResumed) {
             handler.postDelayed(preloadCalendar, CALENDAR_PRELOAD_DELAY_MILLIS)
         }
     }
@@ -857,8 +871,7 @@ class MainActivity : Activity() {
 
     private fun forwardToWeb(event: KeyEvent): Boolean {
         val surface = webSurface ?: return false
-        surface.requestFocus()
-        return surface.dispatchKeyEvent(event)
+        return surface.forwardKey(event)
     }
 
     private fun showHud(message: String = state.mode.label) {
@@ -952,6 +965,5 @@ class MainActivity : Activity() {
         const val OAUTH_STATE_BYTES = 32
         const val DEFAULT_WEATHER_ENTITY_ID = "weather.home"
         val HOME_ASSISTANT_MODES = setOf(FrameMode.HOME, FrameMode.CALENDAR)
-        val BACKGROUND_PRELOAD_MODES = setOf(FrameMode.PHOTOS, FrameMode.WEATHER)
     }
 }
