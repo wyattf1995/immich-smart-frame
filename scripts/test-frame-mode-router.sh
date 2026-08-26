@@ -48,6 +48,7 @@ tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/frame-mode-router-test.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 fake_bin="$tmp_dir/bin"
 proc_root="$tmp_dir/proc"
+export FRAME_ROUTER_REAL_LN="$(command -v ln)"
 mkdir -p "$fake_bin"
 mkdir -p "$proc_root/$$"
 
@@ -164,6 +165,15 @@ if [ "${1:-}" != "$expected" ]; then
   exit 64
 fi
 printf '111\n'
+EOF
+
+cat > "$fake_bin/ln" <<'EOF'
+#!/usr/bin/env sh
+if [ "${1:-}" != -s ]; then
+  printf 'router lock must use an Android-compatible symbolic link\n' >&2
+  exit 64
+fi
+exec "$FRAME_ROUTER_REAL_LN" "$@"
 EOF
 
 chmod +x "$fake_bin"/*
@@ -435,32 +445,32 @@ assert_eq photos "$(tr -d '\r\n' < "$state")" \
 # A timeout can kill the shell without running its EXIT trap. A stale lock with
 # a recorded dead owner must self-heal only after its lease has expired.
 : > "$log"
-printf '999999 111 1\n' > "$lock"
+ln -s '999999 111 1' "$lock"
 FRAME_ROUTER_FOREGROUND=unknown run_router show photos
 assert_eq photos "$(tr -d '\r\n' < "$state")" \
   'an expired lock owned by a dead process must not strand routing'
-[[ ! -e "$lock" ]] || fail 'the reclaimed stale lock must be released after the transition'
+[[ ! -L "$lock" ]] || fail 'the reclaimed stale lock must be released after the transition'
 
 # Never reclaim a lock merely because its lease is old when the recorded owner
 # is still alive. This guards PID+lease recovery against a slow live command.
 : > "$log"
-printf '%s 111 1\n' "$$" > "$lock"
+ln -s "$$ 111 1" "$lock"
 assert_router_failure_contains 'live owner' show photos "$config"
-assert_eq "$$ 111 1" "$(tr -d '\r\n' < "$lock")" \
+assert_eq "$$ 111 1" "$(readlink "$lock")" \
   'a live lock owner must retain its lock even after the lease age'
 rm -f "$lock"
 
 # A dead owner inside the lease remains protected from a rapid stale-lock
 # takeover; callers receive a retryable lock result instead.
-printf '999999 111 %s\n' "$(date +%s)" > "$lock"
+ln -s "999999 111 $(date +%s)" "$lock"
 assert_router_failure_contains 'lease has not expired' show photos "$config"
 rm -f "$lock"
 
 # PID reuse is not ownership. A matching live PID with a different /proc start
 # token is safely reclaimed once the old lock's lease expires.
-printf '%s 222 1\n' "$$" > "$lock"
+ln -s "$$ 222 1" "$lock"
 FRAME_ROUTER_FOREGROUND=unknown run_router show photos
-[[ ! -e "$lock" ]] || fail 'a reused PID with a mismatched start token must not strand routing'
+[[ ! -L "$lock" ]] || fail 'a reused PID with a mismatched start token must not strand routing'
 
 : > "$log"
 rm -f "$state" "$tmp_dir/am-started" "$tmp_dir/release-am"
