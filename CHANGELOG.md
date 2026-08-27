@@ -20,6 +20,8 @@ changes will still be called out explicitly.
 
 - Increased the advanced Qwen `balanced` example's overlapping recency share
   from 50% to 65%, with an explicit validation guard for the 35/20/10 ladder.
+- Documented the verified timeout, cancellation, webhook-drain, video-drain,
+  and FrameOS watchdog behavior in the resilience runbook.
 - Documented how to boost a private milestone album without publishing its
   Immich identifier or reducing the slideshow to one album.
 - Made album-penalty decisions stable per asset per slide request so retry loops
