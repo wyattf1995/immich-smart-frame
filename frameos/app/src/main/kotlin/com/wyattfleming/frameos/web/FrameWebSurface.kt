@@ -8,6 +8,9 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.accessibility.AccessibilityManager
+import com.wyattfleming.frameos.FrameOperationLogEntry
+import com.wyattfleming.frameos.FrameOperationLogger
+import com.wyattfleming.frameos.NoOpFrameOperationLogger
 import com.wyattfleming.frameos.security.FrameUrlPolicy
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
@@ -27,6 +30,9 @@ class FrameWebSurface(
     private val warmHomeAssistantView: GeckoView,
     private val listener: Listener,
     private val urlPolicy: FrameUrlPolicy = FrameUrlPolicy(),
+    private val operationLogger: FrameOperationLogger = NoOpFrameOperationLogger,
+    private val elapsedRealtime: () -> Long = { SystemClock.uptimeMillis() },
+    private val pageLoadWatchdogMillis: Long = PAGE_LOAD_WATCHDOG_MILLIS,
 ) : GeckoView(context) {
     interface Listener {
         fun onPageLoading(label: String, loading: Boolean)
@@ -51,6 +57,9 @@ class FrameWebSurface(
         val crashRecovery = FrameWebCrashRecoveryState()
         var recoveryAttempts = 0
         var retryPending = false
+        var lifecycleSuspended = false
+        private val pageLoadWatchdogState = FrameWebPageLoadWatchdogState()
+        private var pageLoadWatchdog: Runnable? = null
 
         init {
             openSession()
@@ -84,13 +93,15 @@ class FrameWebSurface(
             }
             session.progressDelegate = object : GeckoSession.ProgressDelegate {
                 override fun onPageStart(session: GeckoSession, url: String) {
+                    armPageLoadWatchdog(session)
                     listener.onPageLoading(label, true)
                 }
 
                 override fun onPageStop(session: GeckoSession, success: Boolean) {
+                    val pageLoad = disarmPageLoadWatchdog()
                     listener.onPageLoading(label, false)
                     if (!success) {
-                        reportUnavailable(this@ManagedSession)
+                        if (!pageLoad.timedOut) reportUnavailable(this@ManagedSession)
                     } else {
                         loadState.recordSuccess()
                         resetRecovery(this@ManagedSession)
@@ -100,11 +111,13 @@ class FrameWebSurface(
             }
             session.contentDelegate = object : GeckoSession.ContentDelegate {
                 override fun onCrash(session: GeckoSession) {
+                    disarmPageLoadWatchdog()
                     crashRecovery.markClosedByContentProcess()
                     reportUnavailable(this@ManagedSession)
                 }
 
                 override fun onKill(session: GeckoSession) {
+                    disarmPageLoadWatchdog()
                     crashRecovery.markClosedByContentProcess()
                     reportUnavailable(this@ManagedSession)
                 }
@@ -116,6 +129,7 @@ class FrameWebSurface(
 
         fun request(url: String): Boolean {
             require(urlPolicy.isAllowedTopLevelNavigation(configuredUrls, url)) { "Unsafe $label navigation" }
+            lifecycleSuspended = false
             loadState.recordRequest(url)
             try {
                 if (crashRecovery.reopenIfRequired { session.open(frameRuntime) }) {
@@ -132,6 +146,7 @@ class FrameWebSurface(
         }
 
         fun setActive(active: Boolean) = runWhenSessionUsable {
+            if (active) lifecycleSuspended = false
             session.setActive(active)
         }
 
@@ -140,6 +155,7 @@ class FrameWebSurface(
         }
 
         fun close() {
+            disarmPageLoadWatchdog()
             if (!crashRecovery.canUseSession) return
             runCatching {
                 session.setFocused(false)
@@ -149,12 +165,55 @@ class FrameWebSurface(
             }.onFailure { crashRecovery.markClosedByContentProcess() }
         }
 
+        fun suspendForLifecycle() {
+            lifecycleSuspended = true
+            val pageLoad = disarmPageLoadWatchdog()
+            if (pageLoad.hadActiveLoad) {
+                loadState.recordFailure()
+                runCatching { session.stop() }
+            }
+            if (!crashRecovery.canUseSession) return
+            runCatching {
+                session.setFocused(false)
+                session.setActive(false)
+            }.onFailure { crashRecovery.markClosedByContentProcess() }
+        }
+
         private fun runWhenSessionUsable(operation: () -> Unit) {
             if (!crashRecovery.canUseSession) return
             runCatching(operation).onFailure {
                 crashRecovery.markClosedByContentProcess()
                 reportUnavailable(this)
             }
+        }
+
+        private fun armPageLoadWatchdog(observedSession: GeckoSession) {
+            pageLoadWatchdog?.let(this@FrameWebSurface::removeCallbacks)
+            pageLoadWatchdog = null
+            val load = pageLoadWatchdogState.arm(elapsedRealtime())
+            val watchdog = Runnable {
+                if (session !== observedSession) return@Runnable
+                val startedAtMillis = pageLoadWatchdogState.markTimedOut(load.generation) ?: return@Runnable
+                pageLoadWatchdog = null
+                operationLogger.log(
+                    FrameOperationLogEntry(
+                        route = label,
+                        stage = "page_load",
+                        outcome = "timeout",
+                        elapsedMillis = (elapsedRealtime() - startedAtMillis).coerceAtLeast(0L),
+                    ),
+                )
+                runCatching { observedSession.stop() }
+                reportUnavailable(this)
+            }
+            pageLoadWatchdog = watchdog
+            this@FrameWebSurface.postDelayed(watchdog, pageLoadWatchdogMillis)
+        }
+
+        private fun disarmPageLoadWatchdog(): FrameWebPageLoadDisarm {
+            pageLoadWatchdog?.let(this@FrameWebSurface::removeCallbacks)
+            pageLoadWatchdog = null
+            return pageLoadWatchdogState.disarm()
         }
     }
 
@@ -185,6 +244,7 @@ class FrameWebSurface(
     fun preload(slot: FrameWebSlot, url: String) {
         require(slot.canPreload) { "$slot cannot be preloaded" }
         val managed = sessionFor(slot)
+        managed.lifecycleSuspended = false
         ensureWarmHomeAttached(managed)
         warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         managed.setFocused(false)
@@ -217,6 +277,7 @@ class FrameWebSurface(
             disposeCameraSession()
         }
         val managed = sessionFor(slot)
+        managed.lifecycleSuspended = false
         allSessions().filter { it !== managed && it !== homeAssistantSession }.forEach {
             cancelRecovery(it)
             it.setActive(false)
@@ -267,14 +328,18 @@ class FrameWebSurface(
             disposeCameraSession()
             return
         }
-        displayedSlot?.let { slot -> sessionFor(slot).setActive(active) }
+        displayedSlot?.let { slot ->
+            val managed = sessionFor(slot)
+            if (active) managed.lifecycleSuspended = false
+            managed.setActive(active)
+        }
     }
 
     fun suspendAllContent() {
         if (displayedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
         allSessions().forEach {
-            it.setFocused(false)
-            it.setActive(false)
+            cancelRecovery(it)
+            it.suspendForLifecycle()
         }
     }
 
@@ -417,6 +482,10 @@ class FrameWebSurface(
 
     private fun reportUnavailable(managed: ManagedSession) {
         managed.loadState.recordFailure()
+        if (managed.lifecycleSuspended) {
+            cancelRecovery(managed)
+            return
+        }
         listener.onPageUnavailable(managed.label)
         if (managed.retryPending || !displayedSurfaceVisible() || managed !== displayedManagedSession()) return
         scheduleRecovery(managed)
@@ -431,7 +500,7 @@ class FrameWebSurface(
         val callback = Runnable {
             retryCallbacks.remove(managed)
             managed.retryPending = false
-            if (!displayedSurfaceVisible() || managed !== displayedManagedSession()) return@Runnable
+            if (managed.lifecycleSuspended || !displayedSurfaceVisible() || managed !== displayedManagedSession()) return@Runnable
             managed.request(url)
         }
         retryCallbacks[managed] = callback
@@ -502,5 +571,6 @@ class FrameWebSurface(
 
     private companion object {
         const val PHOTO_TAP_MILLIS = 36L
+        const val PAGE_LOAD_WATCHDOG_MILLIS = 20_000L
     }
 }

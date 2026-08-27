@@ -112,6 +112,14 @@ interface WeatherRemote {
     fun cancel() = Unit
 }
 
+interface DeadlineAwareWeatherRemote : WeatherRemote {
+    fun fetch(
+        entityId: String,
+        bearerToken: String,
+        deadline: WeatherRequestDeadline,
+    ): WeatherRemoteResult
+}
+
 interface WeatherCache {
     fun read(key: WeatherCacheKey): CachedWeatherSnapshot?
     fun write(key: WeatherCacheKey, snapshot: WeatherSnapshot, savedAtEpochMillis: Long)
