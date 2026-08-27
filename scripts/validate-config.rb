@@ -8,9 +8,11 @@ DATE_VALUE = /\A(?:today|last-\d+|\d{4}-\d{2}-\d{2}_to_(?:today|\d{4}-\d{2}-\d{2
 EXPECTED_SLIDE_DURATION = 45
 EXPECTED_IMAGE_DATE_FORMAT = "YYYY-MM-DD"
 EXPECTED_QWEN_BALANCED_RECENCY = {
-  "last-30" => 35,
-  "last-180" => 20,
-  "last-730" => 10
+  "last-30" => 8,
+  "last-90" => 12,
+  "last-180" => 10,
+  "last-730" => 10,
+  "1900-01-01_to_today" => 10
 }.freeze
 
 def fail_config(file, message)
