@@ -1,0 +1,264 @@
+diff --git a/internal/config/config_date_pool_test.go b/internal/config/config_date_pool_test.go
+new file mode 100644
+index 0000000..173abed
+--- /dev/null
++++ b/internal/config/config_date_pool_test.go
+@@ -0,0 +1,13 @@
++package config
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestDatePoolSettingsDefaults(t *testing.T) {
++	c := New()
++	require.Equal(t, 0, c.Kiosk.DatePoolMinimum, "date_pool_minimum must default to disabled")
++	require.True(t, c.Kiosk.DatePoolSessionSpread, "date_pool_session_spread must default to enabled")
++}
+diff --git a/internal/immich/immich_cache_backend_regression_test.go b/internal/immich/immich_cache_backend_regression_test.go
+index d65d865..ea4f9ba 100644
+--- a/internal/immich/immich_cache_backend_regression_test.go
++++ b/internal/immich/immich_cache_backend_regression_test.go
+@@ -81,7 +81,7 @@ func TestPaginatedFetchDoesNotRefillAfterInvalidation(t *testing.T) {
+ 
+ func TestCacheInvalidationClearsDateCandidatePools(t *testing.T) {
+ 	dateCandidatePools = newDatePoolRegistry(4)
+-	_, _, err := dateCandidatePools.take(context.Background(), "date-key", 0, func(context.Context) ([]Asset, error) {
++	_, _, err := dateCandidatePools.take(context.Background(), "date-key", 0, false, func(context.Context) ([]Asset, error) {
+ 		return []Asset{{ID: "asset"}}, nil
+ 	})
+ 	require.NoError(t, err)
+diff --git a/internal/immich/immich_date_hardening_test.go b/internal/immich/immich_date_hardening_test.go
+new file mode 100644
+index 0000000..34d603b
+--- /dev/null
++++ b/internal/immich/immich_date_hardening_test.go
+@@ -0,0 +1,183 @@
++package immich
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"path"
++	"slices"
++	"strings"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/cache"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/stretchr/testify/require"
++)
++
++func TestDatePoolShuffleBagServesEveryAssetOncePerPass(t *testing.T) {
++	now := time.Unix(1_000, 0)
++	registry := newDatePoolRegistryWithClock(4, func() time.Time { return now })
++
++	population := make([]Asset, 10)
++	for index := range population {
++		population[index] = Asset{ID: fmt.Sprintf("asset-%d", index)}
++	}
++	fetch := func(context.Context) ([]Asset, error) { return slices.Clone(population), nil }
++
++	counts := map[string]int{}
++	for cycle := 1; cycle <= 3; cycle++ {
++		for range population {
++			asset, ok, err := registry.take(context.Background(), "key", time.Minute, false, fetch)
++			require.NoError(t, err)
++			require.True(t, ok)
++			counts[asset.ID]++
++			require.Equal(t, cycle, counts[asset.ID], "asset %q repeated before pass %d finished", asset.ID, cycle)
++			now = now.Add(2 * time.Minute) // expire the TTL between every take
++		}
++		require.Len(t, counts, len(population))
++	}
++}
++
++func TestDatePoolFailedRefreshPreservesUnservedCandidates(t *testing.T) {
++	now := time.Unix(1_000, 0)
++	clock := func() time.Time { return now }
++	pool := &dateCandidatePool{}
++
++	first, ok, err := pool.takeOrRefill(context.Background(), time.Minute, clock, false, func(context.Context) ([]Asset, error) {
++		return []Asset{{ID: "one"}, {ID: "two"}, {ID: "three"}}, nil
++	})
++	require.NoError(t, err)
++	require.True(t, ok)
++
++	now = now.Add(2 * time.Minute) // TTL expires with two unserved candidates left
++	fetchFailure := errors.New("immich unavailable")
++	_, ok, err = pool.takeOrRefill(context.Background(), time.Minute, clock, false, func(context.Context) ([]Asset, error) {
++		return nil, fetchFailure
++	})
++	require.ErrorIs(t, err, fetchFailure)
++	require.False(t, ok)
++
++	served := map[string]bool{first.ID: true}
++	for range 2 {
++		asset, takeOK, takeErr := pool.takeOrRefill(context.Background(), time.Minute, clock, false, func(context.Context) ([]Asset, error) {
++			return nil, nil
++		})
++		require.NoError(t, takeErr)
++		require.True(t, takeOK, "candidates surviving a failed refresh must still be served")
++		require.False(t, served[asset.ID], "candidate %q was served twice", asset.ID)
++		served[asset.ID] = true
++	}
++	require.Len(t, served, 3)
++}
++
++func TestRandomAssetInDateRangeWidensWindowBelowMinimum(t *testing.T) {
++	cache.Initialize()
++	dateCandidatePools = newDatePoolRegistry(defaultDatePoolRegistrySize)
++	var searchCalls atomic.Int32
++	server := wideningDateAssetServer(t, &searchCalls)
++	defer server.Close()
++
++	requestConfig := config.Config{ImmichURL: server.URL, Kiosk: config.KioskSettings{Cache: true, FetchedAssetsSize: 100, DatePoolMinimum: 50}}
++	asset := New(context.Background(), requestConfig)
++	require.NoError(t, asset.RandomAssetInDateRange("last-30", "request", "device", false))
++	require.EqualValues(t, 2, searchCalls.Load(), "a below-minimum fetch must trigger exactly one widened refetch")
++	require.True(t, strings.HasPrefix(asset.ID, "wide-"), "asset %q must come from the widened window", asset.ID)
++}
++
++func TestRandomAssetInDateRangeNoWideningWhenDisabled(t *testing.T) {
++	cache.Initialize()
++	dateCandidatePools = newDatePoolRegistry(defaultDatePoolRegistrySize)
++	var searchCalls atomic.Int32
++	server := wideningDateAssetServer(t, &searchCalls)
++	defer server.Close()
++
++	requestConfig := config.Config{ImmichURL: server.URL, Kiosk: config.KioskSettings{Cache: true, FetchedAssetsSize: 100}}
++	asset := New(context.Background(), requestConfig)
++	require.NoError(t, asset.RandomAssetInDateRange("last-30", "request", "device", false))
++	require.EqualValues(t, 1, searchCalls.Load(), "date_pool_minimum=0 must never widen")
++	require.True(t, strings.HasPrefix(asset.ID, "narrow-"), "asset %q must come from the original window", asset.ID)
++}
++
++func TestSessionSpreadPickWeighsCaptureHoursEqually(t *testing.T) {
++	singletonFirst := 0
++	for range 400 {
++		candidates := sessionSpreadCandidates()
++		if pickDateCandidate(&candidates, true).ID == "singleton" {
++			singletonFirst++
++		}
++	}
++	require.GreaterOrEqual(t, singletonFirst, 120, "singleton hour picked first too rarely")
++	require.LessOrEqual(t, singletonFirst, 280, "singleton hour picked first too often")
++}
++
++func TestSessionSpreadPickDrainsEveryCandidateOnce(t *testing.T) {
++	candidates := sessionSpreadCandidates()
++	total := len(candidates)
++	seen := map[string]bool{}
++	for range total {
++		asset := pickDateCandidate(&candidates, true)
++		require.False(t, seen[asset.ID], "candidate %q was drawn twice", asset.ID)
++		seen[asset.ID] = true
++	}
++	require.Empty(t, candidates)
++	require.Len(t, seen, total)
++}
++
++func TestSessionSpreadDisabledPreservesPopOrder(t *testing.T) {
++	candidates := []Asset{{ID: "one"}, {ID: "two"}, {ID: "three"}}
++	require.Equal(t, "three", pickDateCandidate(&candidates, false).ID)
++	require.Equal(t, "two", pickDateCandidate(&candidates, false).ID)
++	require.Equal(t, "one", pickDateCandidate(&candidates, false).ID)
++	require.Empty(t, candidates)
++}
++
++// sessionSpreadCandidates builds one lone photo in one capture hour and a
++// 99-photo burst in another.
++func sessionSpreadCandidates() []Asset {
++	base := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
++	candidates := make([]Asset, 0, 100)
++	candidates = append(candidates, Asset{ID: "singleton", LocalDateTime: base})
++	burst := base.Add(6 * time.Hour)
++	for index := range 99 {
++		candidates = append(candidates, Asset{ID: fmt.Sprintf("burst-%d", index), LocalDateTime: burst.Add(time.Duration(index) * time.Second)})
++	}
++	return candidates
++}
++
++// wideningDateAssetServer returns 5 assets for a window of roughly 30 days and
++// 80 assets for anything wider.
++func wideningDateAssetServer(t *testing.T, searchCalls *atomic.Int32) *httptest.Server {
++	t.Helper()
++	buildAssets := func(prefix string, count int) []Asset {
++		assets := make([]Asset, count)
++		for index := range assets {
++			assets[index] = Asset{ID: fmt.Sprintf("%s-%d", prefix, index), Type: ImageType, ExifInfo: ExifInfo{ExifImageHeight: 1080, ExifImageWidth: 1920}}
++		}
++		return assets
++	}
++	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Path != "/api/search/random" {
++			asset := Asset{ID: path.Base(r.URL.Path), Type: ImageType, ExifInfo: ExifInfo{ExifImageHeight: 1080, ExifImageWidth: 1920}}
++			require.NoError(t, json.NewEncoder(w).Encode(asset))
++			return
++		}
++		searchCalls.Add(1)
++		var body SearchRandomBody
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
++		takenAfter, err := time.Parse(time.RFC3339, body.TakenAfter)
++		require.NoError(t, err)
++		takenBefore, err := time.Parse(time.RFC3339, body.TakenBefore)
++		require.NoError(t, err)
++		w.Header().Set("Content-Type", "application/json")
++		if takenBefore.Sub(takenAfter) > 40*24*time.Hour {
++			require.NoError(t, json.NewEncoder(w).Encode(buildAssets("wide", 80)))
++			return
++		}
++		require.NoError(t, json.NewEncoder(w).Encode(buildAssets("narrow", 5)))
++	}))
++}
+diff --git a/internal/immich/immich_date_pool_test.go b/internal/immich/immich_date_pool_test.go
+index 90212b3..ba54e47 100644
+--- a/internal/immich/immich_date_pool_test.go
++++ b/internal/immich/immich_date_pool_test.go
+@@ -35,7 +35,7 @@ func TestDatePoolRegistryConcurrentConsumersShareRefresh(t *testing.T) {
+ 		workers.Add(1)
+ 		go func() {
+ 			defer workers.Done()
+-			asset, ok, err := registry.take(context.Background(), "key", time.Minute, fetch)
++			asset, ok, err := registry.take(context.Background(), "key", time.Minute, false, fetch)
+ 			require.NoError(t, err)
+ 			require.True(t, ok)
+ 			seen <- asset.ID
+@@ -58,7 +58,7 @@ func TestDatePoolRegistryConcurrentConsumersShareRefresh(t *testing.T) {
+ 		workers.Add(1)
+ 		go func() {
+ 			defer workers.Done()
+-			asset, ok, err := registry.take(context.Background(), "key", time.Minute, fetch)
++			asset, ok, err := registry.take(context.Background(), "key", time.Minute, false, fetch)
+ 			require.NoError(t, err)
+ 			require.True(t, ok)
+ 			secondSeen <- asset.ID
+@@ -81,16 +81,16 @@ func TestDatePoolRegistryBoundsAndPrunesExpiredEntries(t *testing.T) {
+ 		return func(context.Context) ([]Asset, error) { return []Asset{{ID: id}}, nil }
+ 	}
+ 
+-	_, _, err := registry.take(context.Background(), "one", time.Minute, fetch("one"))
++	_, _, err := registry.take(context.Background(), "one", time.Minute, false, fetch("one"))
+ 	require.NoError(t, err)
+-	_, _, err = registry.take(context.Background(), "two", time.Minute, fetch("two"))
++	_, _, err = registry.take(context.Background(), "two", time.Minute, false, fetch("two"))
+ 	require.NoError(t, err)
+-	_, _, err = registry.take(context.Background(), "three", time.Minute, fetch("three"))
++	_, _, err = registry.take(context.Background(), "three", time.Minute, false, fetch("three"))
+ 	require.NoError(t, err)
+ 	require.LessOrEqual(t, registry.size(), 2)
+ 
+ 	now = now.Add(2 * time.Minute)
+-	_, _, err = registry.take(context.Background(), "four", time.Minute, fetch("four"))
++	_, _, err = registry.take(context.Background(), "four", time.Minute, false, fetch("four"))
+ 	require.NoError(t, err)
+ 	require.Equal(t, 1, registry.size(), "expired idle entries should be pruned atomically")
+ }
