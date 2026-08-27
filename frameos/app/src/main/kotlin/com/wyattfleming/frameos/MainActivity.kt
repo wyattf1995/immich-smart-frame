@@ -10,6 +10,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.net.Uri
 import android.view.GestureDetector
 import android.view.Gravity
@@ -51,6 +52,7 @@ import com.wyattfleming.frameos.ui.dp
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherEndpoint
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherParser
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherRemote
+import com.wyattfleming.frameos.weather.CancellableHomeAssistantHttpTransport
 import com.wyattfleming.frameos.weather.SharedPreferencesWeatherCache
 import com.wyattfleming.frameos.weather.UrlConnectionHomeAssistantTransport
 import com.wyattfleming.frameos.weather.WeatherCoordinator
@@ -58,6 +60,7 @@ import com.wyattfleming.frameos.weather.WeatherPresentation
 import com.wyattfleming.frameos.weather.WeatherPresenter
 import com.wyattfleming.frameos.weather.WeatherRefreshPolicy
 import com.wyattfleming.frameos.weather.WeatherRepository
+import com.wyattfleming.frameos.weather.WeatherRequestDeadline
 import com.wyattfleming.frameos.web.FrameSurfaceRouter
 import com.wyattfleming.frameos.web.FrameSurfaceTarget
 import com.wyattfleming.frameos.web.FrameWebCompositionPolicy
@@ -70,6 +73,7 @@ import java.time.ZoneId
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import kotlin.math.abs
 
 class MainActivity : Activity() {
@@ -81,6 +85,7 @@ class MainActivity : Activity() {
     private val weatherRequestExecutor: ExecutorService = Executors.newFixedThreadPool(3)
     private val authorizationExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val secureRandom = SecureRandom()
+    private val operationLogger: FrameOperationLogger = AndroidFrameOperationLogger()
     private val externalControlPolicy by lazy {
         FrameExternalControlPolicy(
             debuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0,
@@ -115,6 +120,13 @@ class MainActivity : Activity() {
     private var weatherAuthorizationInProgress = false
     private var activityResumed = false
     private var weatherRequestGeneration = 0
+    private var homeAssistantTransport: CancellableHomeAssistantHttpTransport? = null
+    private var weatherRefreshFuture: Future<*>? = null
+    private var weatherRefreshStartedAtUptimeMillis = 0L
+    private var authorizationFuture: Future<*>? = null
+    private var authorizationStartedAtUptimeMillis = 0L
+    private var pendingAuthorizationCode: String? = null
+    private var pendingAuthorizationPreviousAuthEpoch: String? = null
     private var surfaceRouter: FrameSurfaceRouter? = null
     private var webSurface: FrameWebSurface? = null
     private val slowPageLoads = mutableMapOf<String, Runnable>()
@@ -194,7 +206,9 @@ class MainActivity : Activity() {
         activityResumed = true
         enterImmersiveMode()
         render(state, announce = false)
-        if (
+        if (pendingAuthorizationCode != null && !weatherAuthorizationInProgress) {
+            startAuthorizationExchange()
+        } else if (
             state.mode == FrameMode.WEATHER &&
             !weatherNeedsAuthentication &&
             !weatherAuthorizationInProgress &&
@@ -212,9 +226,13 @@ class MainActivity : Activity() {
         super.onPause()
     }
 
+    override fun onStop() {
+        cancelHomeAssistantWork(stage = "activity_stop", clearPendingAuthorizationCode = false)
+        super.onStop()
+    }
+
     override fun onDestroy() {
-        weatherRequestGeneration += 1
-        weatherCoordinator?.cancel()
+        cancelHomeAssistantWork(stage = "activity_destroy", clearPendingAuthorizationCode = true)
         weatherWorkerExecutor.shutdownNow()
         weatherRequestExecutor.shutdownNow()
         authorizationExecutor.shutdownNow()
@@ -390,6 +408,7 @@ class MainActivity : Activity() {
                 homeAssistantFallbackUrl = activeConfiguration.homeAssistantFallbackUrl,
                 warmHomeAssistantView = warmHomeAssistantView,
                 listener = webListener,
+                operationLogger = operationLogger,
             )
             root.addView(warmHomeAssistantView, fullScreenLayout)
             root.addView(webSurface, fullScreenLayout)
@@ -697,9 +716,11 @@ class MainActivity : Activity() {
                 transport = transport,
                 store = sessionStore,
                 clock = System::currentTimeMillis,
+                operationLogger = operationLogger,
             )
             val weatherEndpoint = HomeAssistantWeatherEndpoint.fromDisplayUrl(activeConfiguration.homeAssistantUrl)
             val cache = SharedPreferencesWeatherCache(this)
+            homeAssistantTransport = transport
             oauthEndpoint = endpoint
             oauthCallbackPageUrl = callbackPageUrl
             pendingOAuthStateStore = pendingStateStore
@@ -716,6 +737,7 @@ class MainActivity : Activity() {
                         transport = transport,
                         parser = HomeAssistantWeatherParser(),
                         requestExecutor = weatherRequestExecutor,
+                        operationLogger = operationLogger,
                     ),
                     cache = cache,
                     clock = System::currentTimeMillis,
@@ -728,10 +750,13 @@ class MainActivity : Activity() {
             )
             weatherCache = cache
             weatherNeedsAuthentication = false
+            pendingAuthorizationCode = null
+            pendingAuthorizationPreviousAuthEpoch = null
             weatherContent.presentation = WeatherPresentation(
                 emptyMessage = "Loading the latest forecast",
             )
         } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
+            homeAssistantTransport = null
             weatherNeedsAuthentication = false
             weatherContent.presentation = WeatherPresentation(
                 emptyMessage = "Weather needs a secure Home Assistant URL",
@@ -741,11 +766,12 @@ class MainActivity : Activity() {
 
     private fun refreshWeather() {
         val coordinator = weatherCoordinator ?: return
-        if (weatherAuthorizationInProgress || weatherRefreshInProgress) return
+        if (weatherAuthorizationInProgress || weatherRefreshInProgress || pendingAuthorizationCode != null) return
         weatherRefreshInProgress = true
+        weatherRefreshStartedAtUptimeMillis = SystemClock.uptimeMillis()
         handler.removeCallbacks(refreshVisibleWeather)
         val generation = ++weatherRequestGeneration
-        weatherWorkerExecutor.execute {
+        weatherRefreshFuture = weatherWorkerExecutor.submit {
             coordinator.cachedPresentation()?.let { cached ->
                 handler.post {
                     if (generation != weatherRequestGeneration || isFinishing || isDestroyed) return@post
@@ -759,6 +785,8 @@ class MainActivity : Activity() {
             }
             handler.post {
                 if (generation != weatherRequestGeneration || isFinishing || isDestroyed) return@post
+                weatherRefreshFuture = null
+                weatherRefreshStartedAtUptimeMillis = 0L
                 weatherRefreshInProgress = false
                 weatherContent.presentation = presentation
                 weatherNeedsAuthentication = presentation.authenticationRequired ||
@@ -774,7 +802,7 @@ class MainActivity : Activity() {
             weatherVisible = state.mode == FrameMode.WEATHER,
             activityResumed = activityResumed,
             authenticationRequired = weatherNeedsAuthentication,
-            authorizationInProgress = weatherAuthorizationInProgress || weatherRefreshInProgress,
+            authorizationInProgress = weatherAuthorizationInProgress || weatherRefreshInProgress || pendingAuthorizationCode != null,
         )?.let { delay -> handler.postDelayed(refreshVisibleWeather, delay) }
     }
 
@@ -802,6 +830,8 @@ class MainActivity : Activity() {
         val verifier = callbackVerifier ?: return
         val code = verifier.verify(callbackUrl) ?: run {
             setIntent(Intent(this, MainActivity::class.java))
+            pendingAuthorizationCode = null
+            pendingAuthorizationPreviousAuthEpoch = null
             weatherAuthorizationInProgress = false
             weatherNeedsAuthentication = true
             weatherContent.presentation = WeatherPresentation(emptyMessage = "Weather needs Home Assistant sign-in")
@@ -813,19 +843,49 @@ class MainActivity : Activity() {
         render(state, announce = false)
         weatherContent.presentation = WeatherPresentation(emptyMessage = "Connecting to Home Assistant")
         weatherNeedsAuthentication = false
+        pendingAuthorizationPreviousAuthEpoch = oauthClient?.authEpoch()
+        pendingAuthorizationCode = code.code
+        startAuthorizationExchange()
+    }
+
+    private fun startAuthorizationExchange() {
         val client = oauthClient ?: return
+        val code = pendingAuthorizationCode ?: return
+        if (weatherAuthorizationInProgress) return
+        val previousAuthEpoch = pendingAuthorizationPreviousAuthEpoch
+        if (
+            previousAuthEpoch != null &&
+            client.authEpoch() != previousAuthEpoch &&
+            client.validAccessToken() != null
+        ) {
+            pendingAuthorizationCode = null
+            pendingAuthorizationPreviousAuthEpoch = null
+            weatherCache?.clear()
+            refreshWeather()
+            return
+        }
         weatherAuthorizationInProgress = true
+        authorizationStartedAtUptimeMillis = SystemClock.uptimeMillis()
         handler.removeCallbacks(refreshVisibleWeather)
         val generation = ++weatherRequestGeneration
-        authorizationExecutor.execute {
-            val success = client.exchangeAuthorizationCode(code.code)
+        authorizationFuture = authorizationExecutor.submit {
+            val success = client.exchangeAuthorizationCode(
+                code,
+                WeatherRequestDeadline(timeoutMillis = OAUTH_EXCHANGE_TIMEOUT_MILLIS),
+            )
             handler.post {
                 if (generation != weatherRequestGeneration || isFinishing || isDestroyed) return@post
+                authorizationFuture = null
+                authorizationStartedAtUptimeMillis = 0L
                 weatherAuthorizationInProgress = false
                 if (success) {
+                    pendingAuthorizationCode = null
+                    pendingAuthorizationPreviousAuthEpoch = null
                     weatherCache?.clear()
                     refreshWeather()
                 } else {
+                    pendingAuthorizationCode = null
+                    pendingAuthorizationPreviousAuthEpoch = null
                     weatherNeedsAuthentication = true
                     weatherContent.presentation = WeatherPresentation(emptyMessage = "Weather needs Home Assistant sign-in")
                     showHud("Home Assistant sign-in failed")
@@ -833,6 +893,39 @@ class MainActivity : Activity() {
                 }
             }
         }
+    }
+
+    private fun cancelHomeAssistantWork(stage: String, clearPendingAuthorizationCode: Boolean) {
+        weatherRequestGeneration += 1
+        homeAssistantTransport?.cancelInFlight()
+        weatherCoordinator?.cancel()
+        weatherRefreshFuture?.cancel(true)
+        if (weatherRefreshInProgress) logCancellation("weather", stage, weatherRefreshStartedAtUptimeMillis)
+        weatherRefreshFuture = null
+        weatherRefreshStartedAtUptimeMillis = 0L
+        weatherRefreshInProgress = false
+        authorizationFuture?.cancel(true)
+        if (weatherAuthorizationInProgress) logCancellation("oauth", stage, authorizationStartedAtUptimeMillis)
+        authorizationFuture = null
+        authorizationStartedAtUptimeMillis = 0L
+        weatherAuthorizationInProgress = false
+        if (clearPendingAuthorizationCode) {
+            pendingAuthorizationCode = null
+            pendingAuthorizationPreviousAuthEpoch = null
+        }
+    }
+
+    private fun logCancellation(route: String, stage: String, startedAtUptimeMillis: Long) {
+        operationLogger.log(
+            FrameOperationLogEntry(
+                route = route,
+                stage = stage,
+                outcome = "cancelled",
+                elapsedMillis = if (startedAtUptimeMillis == 0L) 0L else {
+                    (SystemClock.uptimeMillis() - startedAtUptimeMillis).coerceAtLeast(0L)
+                },
+            ),
+        )
     }
 
     private fun callbackPageUrl(homeAssistantUrl: String): String {
@@ -963,6 +1056,7 @@ class MainActivity : Activity() {
         const val HUD_VISIBLE_MILLIS = 1_500L
         const val IDLE_TIMEOUT_MILLIS = 15 * 60 * 1_000L
         const val WEATHER_CACHE_FRESH_MILLIS = 5 * 60 * 1_000L
+        const val OAUTH_EXCHANGE_TIMEOUT_MILLIS = 10_000L
         const val OAUTH_STATE_BYTES = 32
         const val DEFAULT_WEATHER_ENTITY_ID = "weather.home"
         val HOME_ASSISTANT_MODES = setOf(FrameMode.HOME, FrameMode.CALENDAR)

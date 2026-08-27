@@ -31,6 +31,15 @@ class WeatherRepository(
     }
 
     fun refresh(entityId: String, bearerToken: String): WeatherLoadResult {
+        val deadline = WeatherRequestDeadline(timeoutMillis = DEFAULT_REFRESH_TIMEOUT_MILLIS)
+        return refresh(entityId, bearerToken, deadline)
+    }
+
+    fun refresh(
+        entityId: String,
+        bearerToken: String,
+        deadline: WeatherRequestDeadline,
+    ): WeatherLoadResult {
         HomeAssistantWeatherEndpoint.requireWeatherEntity(entityId)
         val now = clock()
         val key = cacheKey(entityId)
@@ -40,7 +49,11 @@ class WeatherRepository(
             return cached.staleIfUsable(now) ?: WeatherLoadResult.AuthRequired
         }
 
-        return when (val result = remote.fetch(entityId, bearerToken)) {
+        val result = when (remote) {
+            is DeadlineAwareWeatherRemote -> remote.fetch(entityId, bearerToken, deadline)
+            else -> remote.fetch(entityId, bearerToken)
+        }
+        return when (result) {
             is WeatherRemoteResult.Success -> {
                 cache.write(key, result.snapshot, now)
                 WeatherLoadResult.Fresh(result.snapshot)
@@ -60,6 +73,7 @@ class WeatherRepository(
     fun cancel() = remote.cancel()
 
     private companion object {
+        const val DEFAULT_REFRESH_TIMEOUT_MILLIS = 15_000L
         const val MAX_STALE_MILLIS = 24 * 60 * 60 * 1_000L
         const val ERROR_OFFLINE = "weather_offline"
         const val ERROR_AUTH_REQUIRED = "weather_auth_required"
