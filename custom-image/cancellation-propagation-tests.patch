@@ -1,0 +1,1126 @@
+diff --git a/internal/routes/routes_cancellation_test.go b/internal/routes/routes_cancellation_test.go
+new file mode 100644
+index 0000000..6451bdf
+--- /dev/null
++++ b/internal/routes/routes_cancellation_test.go
+@@ -0,0 +1,559 @@
++package routes
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"image"
++	"image/jpeg"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"reflect"
++	"regexp"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/cache"
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/damongolding/immich-kiosk/internal/kiosk"
++	"github.com/damongolding/immich-kiosk/internal/utils"
++	"github.com/damongolding/immich-kiosk/internal/video"
++	"github.com/damongolding/immich-kiosk/internal/webhooks"
++	"github.com/labstack/echo/v5"
++	"github.com/stretchr/testify/require"
++)
++
++const (
++	requestCancellationBudget = 300 * time.Millisecond
++	requestDeadline           = 40 * time.Millisecond
++	httpTimeoutUnderTest      = 1
++)
++
++func TestRawImageRequestDeadlineBoundsSequentialImmichWork(t *testing.T) {
++	baseConfig := newCancellationTestConfig("http://immich.test")
++	com := common.New()
++
++	originalClient := immich.HTTPClient
++	var blockedCalls atomic.Int32
++	immich.HTTPClient = newCancellationAwareImmichClient(t, "/api/assets/asset-a/thumbnail", &blockedCalls, false)
++	t.Cleanup(func() { immich.HTTPClient = originalClient })
++
++	req := newTimedRequest(t, http.MethodGet, "/image", nil)
++	req.Header.Set("kiosk-device-id", "frame-a")
++	assertHandlerFinishesWithin(t, Image(baseConfig, com), req, requestCancellationBudget, "raw image handler must stop once the request context is cancelled")
++	require.Positive(t, blockedCalls.Load(), "raw image deadline test must reach the blocking preview call")
++}
++
++func TestWebhooksRequestCancellationCancelsBlockingImmichWorker(t *testing.T) {
++	baseConfig := newCancellationTestConfig("http://immich.test")
++	baseConfig.Kiosk.DisableURLQueries = true
++	com := common.New()
++
++	originalClient := immich.HTTPClient
++	var blockedCalls atomic.Int32
++	immich.HTTPClient = newCancellationAwareImmichClient(t, "/api/assets/asset-a", &blockedCalls, true)
++	t.Cleanup(func() { immich.HTTPClient = originalClient })
++
++	req := newTimedRequest(t, http.MethodPost, "/webhooks?history=asset-a:user-a", http.NoBody)
++	timestamp := "1700000000"
++	req.Header.Set("X-Timestamp", timestamp)
++	req.Header.Set("X-Signature", utils.CalculateSignature(com.Secret(), timestamp))
++	req.Header.Set("kiosk-webhook-event", webhooks.UserLikeInfoOverlay.String())
++	req.Header.Set("kiosk-device-id", "frame-a")
++	assertHandlerFinishesWithin(t, Webhooks(baseConfig, com), req, requestCancellationBudget, "webhook history workers must honor request cancellation")
++	require.Positive(t, blockedCalls.Load(), "webhook cancellation test must reach the blocking asset-info lookup")
++}
++
++func TestPreviousHistoryAssetRequestCancellationCancelsBlockingImmichWorker(t *testing.T) {
++	baseConfig := newCancellationTestConfig("http://immich.test")
++	baseConfig.Kiosk.DisableURLQueries = true
++	com := common.New()
++
++	originalClient := immich.HTTPClient
++	var blockedCalls atomic.Int32
++	immich.HTTPClient = newCancellationAwareImmichClient(t, "/api/assets/asset-prev", &blockedCalls, true)
++	t.Cleanup(func() { immich.HTTPClient = originalClient })
++
++	req := newTimedRequest(t, http.MethodGet, "/history/previous?history=asset-prev:&history=*asset-current:", nil)
++	req.Header.Set("kiosk-device-id", "frame-a")
++	assertHandlerFinishesWithin(t, PreviousHistoryAsset(baseConfig, com), req, requestCancellationBudget, "history workers must derive Immich calls from the request context")
++	require.Positive(t, blockedCalls.Load(), "history cancellation test must reach the blocking asset-info lookup")
++}
++
++func TestLikeAssetCancelledRequestBoundsPreflightAssetInfo(t *testing.T) {
++	baseConfig := newCancellationTestConfig("http://immich.test")
++	baseConfig.LikeButtonAction = []string{kiosk.LikeButtonActionFavorite}
++	com := common.New()
++
++	originalClient := immich.HTTPClient
++	var blockedCalls atomic.Int32
++	immich.HTTPClient = newCancellationAwareImmichClient(t, "/api/assets/asset-a", &blockedCalls, false)
++	t.Cleanup(func() { immich.HTTPClient = originalClient })
++
++	req := newTimedRequest(t, http.MethodPost, "/asset/like", strings.NewReader("assetID=asset-a"))
++	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
++	req.Header.Set("kiosk-device-id", "frame-a")
++	assertHandlerFinishesWithin(t, LikeAsset(baseConfig, com, true), req, requestCancellationBudget, "mutation preflight asset-info lookup must stop when the request is cancelled")
++	require.Positive(t, blockedCalls.Load(), "mutation cancellation test must reach the blocking preflight lookup")
++}
++
++func TestForegroundAssetContextUsesHTTPTimeoutWhenLowerThanRouteCeiling(t *testing.T) {
++	start := time.Now()
++	ctx, cancel := foregroundAssetContext(context.Background(), context.Background(), 1)
++	defer cancel()
++
++	deadline, ok := ctx.Deadline()
++	require.True(t, ok)
++	require.InDelta(t, time.Second, deadline.Sub(start), float64(200*time.Millisecond), "foreground route timeout should follow kiosk.http_timeout when it is below the route ceiling")
++}
++
++func TestForegroundAssetContextCapsLargeHTTPTimeoutAtRouteCeiling(t *testing.T) {
++	start := time.Now()
++	ctx, cancel := foregroundAssetContext(context.Background(), context.Background(), 60)
++	defer cancel()
++
++	deadline, ok := ctx.Deadline()
++	require.True(t, ok)
++	require.InDelta(t, foregroundAssetTimeout, deadline.Sub(start), float64(200*time.Millisecond), "foreground route timeout must stay capped by the route ceiling")
++}
++
++func TestRouteSourcesAvoidSharedShutdownContextsContract(t *testing.T) {
++	routeFiles, err := filepath.Glob("routes*.go")
++	require.NoError(t, err)
++	require.NotEmpty(t, routeFiles)
++
++	for _, filename := range routeFiles {
++		if strings.HasSuffix(filename, "_test.go") {
++			continue
++		}
++		source, readErr := os.ReadFile(filename)
++		require.NoErrorf(t, readErr, "read %s", filename)
++		text := string(source)
++		require.NotContainsf(t, text, "immich.New(com.Context(),", "route handlers must not derive Immich work from the shared shutdown context: %s", filename)
++	}
++}
++
++func TestVideoDownloadsDeriveFromParentContextContract(t *testing.T) {
++	helpersSource, err := os.ReadFile("routes_asset_helpers.go")
++	require.NoError(t, err)
++	helpersText := string(helpersSource)
++	require.NotContains(t, helpersText, "context.TODO()", "live-photo preparation must inherit a caller context")
++	require.NotContains(t, helpersText, "go VideoManager.DownloadVideo(", "background video work must be admitted through a bounded parent-aware path")
++
++	videoSource, err := os.ReadFile(filepath.Join("..", "video", "video.go"))
++	require.NoError(t, err)
++	require.Regexp(t, regexp.MustCompile(`func \(v \*Manager\) DownloadVideo\([^)]*context\.Context`), string(videoSource), "video downloads must accept a parent context")
++}
++
++func TestConvertStagesCheckContextBetweenCPUWorkContract(t *testing.T) {
++	helpersSource, err := os.ReadFile("routes_asset_helpers.go")
++	require.NoError(t, err)
++	helpersText := string(helpersSource)
++
++	convertImages := regexp.MustCompile(`(?s)func convertImages\(.*?\n}`).FindString(helpersText)
++	require.NotEmpty(t, convertImages, "convertImages function source should be present")
++	require.Regexp(t, regexp.MustCompile(`func convertImages\(\s*ctx context\.Context,`), convertImages, "convertImages must derive CPU-heavy conversion work from the caller context")
++	require.Regexp(
++		t,
++		regexp.MustCompile(`(?s)ctx\.Err\(\).*?imageToBase64\(.*?ctx\.Err\(\).*?processBlurredImage\(.*?ctx\.Err\(\).*?ExtractDominantColor\(`),
++		convertImages,
++		"convertImages must check ctx between base64, blur, and dominant-color stages",
++	)
++}
++
++func TestRouteSourcesDoNotSpawnWebhookGoroutinesDirectly(t *testing.T) {
++	routeFiles, err := filepath.Glob("routes*.go")
++	require.NoError(t, err)
++	require.NotEmpty(t, routeFiles)
++
++	for _, filename := range routeFiles {
++		if strings.HasSuffix(filename, "_test.go") {
++			continue
++		}
++		source, readErr := os.ReadFile(filename)
++		require.NoErrorf(t, readErr, "read %s", filename)
++		text := string(source)
++		require.NotContainsf(t, text, "go webhooks.Trigger(", "route handlers must not spawn untracked webhook goroutines directly: %s", filename)
++	}
++}
++
++func TestProcessImageSchedulesLivePhotoLookupWithoutBlockingForeground(t *testing.T) {
++	managerCtx, stopManager := context.WithCancel(context.Background())
++	t.Cleanup(stopManager)
++
++	prevVideoManager := VideoManager
++	videoManager, err := video.New(managerCtx)
++	require.NoError(t, err)
++	VideoManager = videoManager
++	t.Cleanup(func() { VideoManager = prevVideoManager })
++	t.Cleanup(video.DeleteTmpDir)
++
++	requestConfig := *newCancellationTestConfig("http://immich.test")
++	requestConfig.LivePhotos = true
++	foregroundCtx, cancelForeground := context.WithCancel(context.Background())
++	t.Cleanup(cancelForeground)
++	imageAsset := immich.New(foregroundCtx, requestConfig)
++	imageAsset.ID = "image-a"
++	imageAsset.Type = immich.ImageType
++	imageAsset.OriginalMimeType = kiosk.MimeTypeJpeg
++	imageAsset.ExifInfo = immich.ExifInfo{
++		ExifImageWidth:  1920,
++		ExifImageHeight: 1080,
++	}
++	imageAsset.Owner = immich.Owner{
++		ID:    "owner-a",
++		Email: "owner@example.com",
++		Name:  "Owner",
++	}
++	imageAsset.Tags = []immich.Tag{}
++	imageAsset.LivePhotoVideoID = "live-video"
++
++	lookupStarted := make(chan struct{})
++	releaseLookup := make(chan struct{})
++	originalClient := immich.HTTPClient
++	var startOnce sync.Once
++	immich.HTTPClient = &http.Client{Transport: routesRoundTripFunc(func(r *http.Request) (*http.Response, error) {
++		switch r.URL.Path {
++		case "/api/assets/live-video":
++			startOnce.Do(func() { close(lookupStarted) })
++			return jsonResponse(t, testVideoAsset("live-video")), nil
++		case "/api/assets/live-video/video/playback":
++			<-releaseLookup
++			return byteResponse(http.StatusOK, "video/mp4", []byte("video-bytes")), nil
++		case "/api/assets/live-video/thumbnail":
++			return byteResponse(http.StatusOK, kiosk.MimeTypeJpeg, mustEncodeJPEG(t)), nil
++		case "/api/assets/image-a/thumbnail":
++			return byteResponse(http.StatusOK, kiosk.MimeTypeJpeg, mustEncodeJPEG(t)), nil
++		default:
++			t.Fatalf("unexpected live-photo request path: %s", r.URL.Path)
++			return nil, nil
++		}
++	})}
++	t.Cleanup(func() { immich.HTTPClient = originalClient })
++
++	started := time.Now()
++	img, processErr := invokeProcessImage(t, foregroundCtx, &imageAsset, requestConfig, "request-a", "device-a", false)
++	require.NoError(t, processErr)
++	require.NotNil(t, img)
++	require.Less(t, time.Since(started), 250*time.Millisecond, "live-photo background admission must not block the foreground route")
++
++	select {
++	case <-lookupStarted:
++	case <-time.After(time.Second):
++		t.Fatal("live-photo lookup was not admitted into background work")
++	}
++	require.True(t, VideoManager.IsDownloading("live-video"), "live-photo lookup should hold a background download reservation")
++
++	cancelForeground()
++	time.Sleep(20 * time.Millisecond)
++	require.True(t, VideoManager.IsDownloading("live-video"), "live-photo lookup should be detached from the foreground request context")
++
++	close(releaseLookup)
++	require.Eventually(t, func() bool {
++		return !VideoManager.IsDownloading("live-video")
++	}, time.Second, 5*time.Millisecond, "live-photo lookup should finish once the detached background work completes")
++}
++
++func TestHideAssetTagOnlyInvalidatesPrimaryAssetCache(t *testing.T) {
++	cache.Initialize()
++	cache.Flush()
++	t.Cleanup(cache.Flush)
++
++	baseConfig := newCancellationTestConfig("http://immich.test")
++	baseConfig.Kiosk.Cache = true
++	baseConfig.HideButtonAction = []string{kiosk.HideButtonActionTag}
++	com := common.New()
++
++	t.Run("success", func(t *testing.T) {
++		cache.Flush()
++		cacheKey := mustSeedAssetInfoCache(t, *baseConfig, "asset-a", "frame-a", testImageAsset("asset-a"))
++
++		originalClient := immich.HTTPClient
++		immich.HTTPClient = &http.Client{Transport: routesRoundTripFunc(func(r *http.Request) (*http.Response, error) {
++			switch r.URL.Path {
++			case "/api/tags":
++				return jsonResponse(t, immich.Tags{{ID: "tag-hidden", Name: "hidden", Value: "hidden"}}), nil
++			case "/api/tags/tag-hidden/assets":
++				return jsonResponse(t, []map[string]any{{"success": true}}), nil
++			default:
++				t.Fatalf("unexpected hide success path: %s", r.URL.Path)
++				return nil, nil
++			}
++		})}
++		t.Cleanup(func() { immich.HTTPClient = originalClient })
++
++		req := httptest.NewRequest(http.MethodPost, "/asset/hide", strings.NewReader("assetID=asset-a&tagName=hidden"))
++		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
++		req.Header.Set("kiosk-device-id", "frame-a")
++		rec := httptest.NewRecorder()
++		c := echo.New().NewContext(req, rec)
++
++		require.NoError(t, HideAsset(baseConfig, com, true)(c))
++		require.Equal(t, http.StatusOK, rec.Code)
++		_, found := cache.Get(cacheKey)
++		require.False(t, found, "successful tag-only hide must drop the primary asset cache entry")
++	})
++
++	t.Run("ambiguous failure", func(t *testing.T) {
++		cache.Flush()
++		cacheKey := mustSeedAssetInfoCache(t, *baseConfig, "asset-a", "frame-a", testImageAsset("asset-a"))
++
++		originalClient := immich.HTTPClient
++		immich.HTTPClient = &http.Client{Transport: routesRoundTripFunc(func(r *http.Request) (*http.Response, error) {
++			switch r.URL.Path {
++			case "/api/tags":
++				return jsonResponse(t, immich.Tags{{ID: "tag-hidden", Name: "hidden", Value: "hidden"}}), nil
++			case "/api/tags/tag-hidden/assets":
++				return jsonResponse(t, []map[string]any{{"success": false, "error": "race"}}), nil
++			case "/api/assets/asset-a":
++				reconciled := testImageAsset("asset-a")
++				reconciled.Tags = immich.Tags{{ID: "tag-hidden", Name: "hidden", Value: "hidden"}}
++				return jsonResponse(t, reconciled), nil
++			default:
++				t.Fatalf("unexpected hide failure path: %s", r.URL.Path)
++				return nil, nil
++			}
++		})}
++		t.Cleanup(func() { immich.HTTPClient = originalClient })
++
++		req := httptest.NewRequest(http.MethodPost, "/asset/hide", strings.NewReader("assetID=asset-a&tagName=hidden"))
++		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
++		req.Header.Set("kiosk-device-id", "frame-a")
++		rec := httptest.NewRecorder()
++		c := echo.New().NewContext(req, rec)
++
++		require.NoError(t, HideAsset(baseConfig, com, true)(c))
++		require.Equal(t, http.StatusConflict, rec.Code)
++		_, found := cache.Get(cacheKey)
++		require.False(t, found, "ambiguous tag-only hide failure must drop the stale primary asset cache entry")
++	})
++}
++
++func TestRequestCancellationObserverLogsRouteTemplateWithoutRawURLContract(t *testing.T) {
++	source, err := os.ReadFile("routes_context.go")
++	require.NoError(t, err)
++	text := string(source)
++
++	observer := regexp.MustCompile(`(?s)func RequestCancellationObserver\(.*?\n}`).FindString(text)
++	require.NotEmpty(t, observer, "request cancellation observer must exist")
++	require.Contains(t, observer, `c.Path()`, "observer must log the route template")
++	require.Contains(t, observer, `"method", method`)
++	require.Contains(t, observer, `"route", route`)
++	require.Contains(t, observer, `"outcome", outcome`)
++	require.Contains(t, observer, `"elapsed", time.Since(started)`)
++	require.NotContains(t, observer, `URL.String()`, "observer must not log the raw request URL")
++	require.NotContains(t, observer, `RawQuery`, "observer must not log the raw query string")
++	require.NotContains(t, observer, `"path",`, "observer must not log a concrete request path")
++}
++
++func TestWebhookDispatchDrainsOnShutdownContract(t *testing.T) {
++	mainSource, err := os.ReadFile(filepath.Join("..", "..", "main.go"))
++	require.NoError(t, err)
++	require.Regexp(t, regexp.MustCompile(`Drain[A-Za-z]*Webhook[A-Za-z]*\(`), string(mainSource), "graceful shutdown must drain the webhook dispatcher")
++}
++
++func TestMainDrainsVideoDownloadsBeforeDeletingTmpDirContract(t *testing.T) {
++	mainSource, err := os.ReadFile(filepath.Join("..", "..", "main.go"))
++	require.NoError(t, err)
++	require.Regexp(
++		t,
++		regexp.MustCompile(`(?s)videoManager\.[A-Za-z]*Drain[A-Za-z]*\([^)]*drainCtx[^)]*\).*?video\.DeleteTmpDir\(`),
++		string(mainSource),
++		"graceful shutdown must drain video downloads before deleting the temp video directory",
++	)
++}
++
++func newCancellationTestConfig(immichURL string) *config.Config {
++	cfg := config.New()
++	cfg.ImmichURL = immichURL
++	cfg.ImmichAPIKey = "test-api-key"
++	cfg.Kiosk.HTTPTimeout = httpTimeoutUnderTest
++	cfg.Kiosk.FetchedAssetsSize = 1
++	cfg.Kiosk.Cache = false
++	cfg.Kiosk.PreFetch = false
++	cfg.Kiosk.Password = ""
++	return cfg
++}
++
++func newTimedRequest(t *testing.T, method, target string, body io.Reader) *http.Request {
++	t.Helper()
++	ctx, cancel := context.WithTimeout(context.Background(), requestDeadline)
++	t.Cleanup(cancel)
++	return httptest.NewRequest(method, target, body).WithContext(ctx)
++}
++
++func assertHandlerFinishesWithin(t *testing.T, handler echo.HandlerFunc, req *http.Request, budget time.Duration, message string) {
++	t.Helper()
++
++	e := echo.New()
++	rec := httptest.NewRecorder()
++	c := e.NewContext(req, rec)
++
++	done := make(chan error, 1)
++	start := time.Now()
++	go func() {
++		done <- handler(c)
++	}()
++
++	select {
++	case <-done:
++		require.Lessf(t, time.Since(start), budget, message)
++	case <-time.After(budget):
++		select {
++		case <-done:
++		case <-time.After(2 * time.Second):
++			t.Fatal("handler failed to unwind after the cancellation budget expired")
++		}
++		t.Fatalf("%s", message)
++	}
++}
++
++func newCancellationAwareImmichClient(t *testing.T, blockedPath string, blockedCalls *atomic.Int32, succeedAfterCancel bool) *http.Client {
++	t.Helper()
++
++	previewBytes := mustEncodeJPEG(t)
++
++	return &http.Client{Transport: routesRoundTripFunc(func(r *http.Request) (*http.Response, error) {
++		switch {
++		case r.URL.Path == "/api/search/random":
++			return jsonResponse(t, []immich.Asset{testImageAsset("asset-a")}), nil
++		case r.URL.Path == blockedPath:
++			if blockedCalls != nil {
++				blockedCalls.Add(1)
++			}
++			<-r.Context().Done()
++			if succeedAfterCancel {
++				if strings.HasSuffix(r.URL.Path, "/thumbnail") {
++					return byteResponse(http.StatusOK, kiosk.MimeTypeJpeg, previewBytes), nil
++				}
++				return jsonResponse(t, testImageAsset(pathBase(r.URL.Path))), nil
++			}
++			return nil, r.Context().Err()
++		case strings.HasPrefix(r.URL.Path, "/api/assets/") && strings.HasSuffix(r.URL.Path, "/thumbnail"):
++			return byteResponse(http.StatusOK, kiosk.MimeTypeJpeg, previewBytes), nil
++		case strings.HasPrefix(r.URL.Path, "/api/assets/"):
++			return jsonResponse(t, testImageAsset(pathBase(r.URL.Path))), nil
++		default:
++			t.Fatalf("unexpected Immich request path: %s", r.URL.Path)
++			return nil, nil
++		}
++	})}
++}
++
++func jsonResponse(t *testing.T, value any) *http.Response {
++	t.Helper()
++	body, err := json.Marshal(value)
++	require.NoError(t, err)
++	return byteResponse(http.StatusOK, echo.MIMEApplicationJSON, body)
++}
++
++func byteResponse(status int, contentType string, body []byte) *http.Response {
++	return &http.Response{
++		StatusCode: status,
++		Header:     http.Header{"Content-Type": []string{contentType}},
++		Body:       io.NopCloser(bytes.NewReader(body)),
++	}
++}
++
++func mustEncodeJPEG(t *testing.T) []byte {
++	t.Helper()
++
++	var buffer bytes.Buffer
++	err := jpeg.Encode(&buffer, image.NewRGBA(image.Rect(0, 0, 2, 1)), &jpeg.Options{Quality: 80})
++	require.NoError(t, err)
++	return buffer.Bytes()
++}
++
++func testImageAsset(id string) immich.Asset {
++	return immich.Asset{
++		ID:               id,
++		Type:             immich.ImageType,
++		OriginalMimeType: kiosk.MimeTypeJpeg,
++		ExifInfo: immich.ExifInfo{
++			ExifImageWidth:  1920,
++			ExifImageHeight: 1080,
++		},
++		Owner: immich.Owner{
++			ID:    "owner-a",
++			Email: "owner@example.com",
++			Name:  "Owner",
++		},
++		Tags: []immich.Tag{},
++	}
++}
++
++func testVideoAsset(id string) immich.Asset {
++	return immich.Asset{
++		ID:               id,
++		Type:             immich.VideoType,
++		OriginalFileName: "clip.mp4",
++		OriginalMimeType: "video/mp4",
++		ExifInfo: immich.ExifInfo{
++			ExifImageWidth:  1920,
++			ExifImageHeight: 1080,
++		},
++	}
++}
++
++func mustSeedAssetInfoCache(t *testing.T, cfg config.Config, assetID, deviceID string, asset immich.Asset) string {
++	t.Helper()
++
++	cacheKey := cache.APICacheKey(cfg.ImmichURL+"/api/assets/"+assetID, deviceID, cfg.SelectedUser)
++	body, err := json.Marshal(asset)
++	require.NoError(t, err)
++	cache.Set(cacheKey, body, 1, 1)
++	_, found := cache.Get(cacheKey)
++	require.True(t, found)
++	return cacheKey
++}
++
++func invokeProcessImage(t *testing.T, ctx context.Context, asset *immich.Asset, requestConfig config.Config, requestID, deviceID string, isPrefetch bool) (image.Image, error) {
++	t.Helper()
++
++	fn := reflect.ValueOf(processImage)
++	var results []reflect.Value
++	switch fn.Type().NumIn() {
++	case 5:
++		results = fn.Call([]reflect.Value{
++			reflect.ValueOf(asset),
++			reflect.ValueOf(requestConfig),
++			reflect.ValueOf(requestID),
++			reflect.ValueOf(deviceID),
++			reflect.ValueOf(isPrefetch),
++		})
++	case 6:
++		results = fn.Call([]reflect.Value{
++			reflect.ValueOf(ctx),
++			reflect.ValueOf(asset),
++			reflect.ValueOf(requestConfig),
++			reflect.ValueOf(requestID),
++			reflect.ValueOf(deviceID),
++			reflect.ValueOf(isPrefetch),
++		})
++	default:
++		t.Fatalf("unexpected processImage signature with %d parameters", fn.Type().NumIn())
++	}
++
++	var img image.Image
++	if value := results[0]; !value.IsNil() {
++		img = value.Interface().(image.Image)
++	}
++	var err error
++	if value := results[1]; !value.IsNil() {
++		err = value.Interface().(error)
++	}
++	return img, err
++}
++
++func pathBase(p string) string {
++	parts := strings.Split(strings.TrimSuffix(p, "/thumbnail"), "/")
++	return parts[len(parts)-1]
++}
+diff --git a/internal/routes/routes_test.go b/internal/routes/routes_test.go
+index f569ecb..44d2389 100644
+--- a/internal/routes/routes_test.go
++++ b/internal/routes/routes_test.go
+@@ -1,30 +1,28 @@
+ package routes
+ 
+ import (
++	"encoding/json"
+ 	"net/http"
+ 	"net/http/httptest"
+-	"os"
+ 	"testing"
+ 	"time"
+ 
+ 	"github.com/damongolding/immich-kiosk/internal/cache"
+ 	"github.com/damongolding/immich-kiosk/internal/common"
+ 	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/damongolding/immich-kiosk/internal/kiosk"
+ 	"github.com/damongolding/immich-kiosk/internal/utils"
+ 	"github.com/damongolding/immich-kiosk/internal/video"
+ 	"github.com/labstack/echo/v5"
+ 	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
+ )
+ 
+ // TestRawImage tests the NewRawImage handler function.
+-// It skips the test in CI environments, sets up a test HTTP request,
+-// loads the configuration, and asserts that the handler responds
+-// with a 200 OK status code.
++// It injects a hermetic fake Immich server and asserts that the handler still
++// returns a 200 OK blob.
+ func TestRawImage(t *testing.T) {
+-	if os.Getenv("CI") != "" {
+-		t.Skip("Skipping in CI environment")
+-	}
+-
+ 	e := echo.New()
+ 	req := httptest.NewRequest(http.MethodGet, "/image", nil)
+ 	rec := httptest.NewRecorder()
+@@ -32,12 +30,25 @@ func TestRawImage(t *testing.T) {
+ 
+ 	req.Header.Set(echo.HeaderXRequestID, "TESTING")
+ 
+-	baseConfig := config.New()
+-
+-	err := baseConfig.Load()
+-	if err != nil {
+-		t.Error("Failed to load config", "err", err)
+-	}
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch {
++		case r.URL.Path == "/api/search/random":
++			w.Header().Set("Content-Type", echo.MIMEApplicationJSON)
++			require.NoError(t, json.NewEncoder(w).Encode([]immich.Asset{testImageAsset("asset-a")}))
++		case r.URL.Path == "/api/assets/asset-a":
++			w.Header().Set("Content-Type", echo.MIMEApplicationJSON)
++			require.NoError(t, json.NewEncoder(w).Encode(testImageAsset("asset-a")))
++		case r.URL.Path == "/api/assets/asset-a/thumbnail":
++			w.Header().Set("Content-Type", kiosk.MimeTypeJpeg)
++			_, writeErr := w.Write(mustEncodeJPEG(t))
++			require.NoError(t, writeErr)
++		default:
++			t.Fatalf("unexpected raw-image test request: %s", r.URL.Path)
++		}
++	}))
++	defer server.Close()
++
++	baseConfig := newCancellationTestConfig(server.URL)
+ 
+ 	cache.Initialize()
+ 
+diff --git a/internal/templates/views/views_timeout_contract_test.go b/internal/templates/views/views_timeout_contract_test.go
+new file mode 100644
+index 0000000..84a9570
+--- /dev/null
++++ b/internal/templates/views/views_timeout_contract_test.go
+@@ -0,0 +1,35 @@
++package views
++
++import (
++	"os"
++	"regexp"
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestFormatTimeoutAddsTwoSecondGraceInMilliseconds(t *testing.T) {
++	require.Zero(t, formatTimeout(0))
++	require.Equal(t, 3_000, formatTimeout(1))
++	require.Equal(t, 22_000, formatTimeout(20))
++}
++
++func TestFrontendTimeoutBudgetUsesAdditiveGraceContract(t *testing.T) {
++	source, err := os.ReadFile("../../../frontend/src/ts/kiosk.ts")
++	require.NoError(t, err)
++	text := string(source)
++
++	require.NotContains(t, text, "TIMEOUT_GRACE_FACTOR", "the frontend timeout budget must not multiply the whole request duration")
++	require.True(t,
++		strings.Contains(text, "TIMEOUT_GRACE_MILLISECONDS = 2000") ||
++			strings.Contains(text, "TIMEOUT_GRACE_SECONDS = 2") ||
++			strings.Contains(text, "+ 2000"),
++		"the frontend timeout budget must add about two seconds of grace",
++	)
++	require.Regexp(
++		t,
++		regexp.MustCompile(`(?s)htmx\.config\.timeout\s*=\s*kioskData\.httpTimeout\s*\*[\s\S]*MILLISECONDS_PER_SECOND[\s\S]*\+[\s\S]*(2000|TIMEOUT_GRACE_MILLISECONDS|TIMEOUT_GRACE_SECONDS)`),
++		text,
++	)
++}
+diff --git a/internal/video/video_cache_backend_regression_test.go b/internal/video/video_cache_backend_regression_test.go
+index d7dea5b..08e98f3 100644
+--- a/internal/video/video_cache_backend_regression_test.go
++++ b/internal/video/video_cache_backend_regression_test.go
+@@ -1,12 +1,25 @@
+ package video
+ 
+ import (
++	"bytes"
++	"context"
++	"image"
++	"image/jpeg"
++	"io"
++	"net/http"
++	"os"
++	"path/filepath"
++	"reflect"
++	"strings"
++	"sync/atomic"
+ 	"testing"
+ 	"time"
+ 
+ 	"github.com/damongolding/immich-kiosk/internal/cache"
+ 	"github.com/damongolding/immich-kiosk/internal/config"
+ 	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/damongolding/immich-kiosk/internal/kiosk"
++	"github.com/stretchr/testify/require"
+ )
+ 
+ func TestGetVideoPersistsLastAccessed(t *testing.T) {
+@@ -44,3 +57,292 @@ func TestAddVideoRejectsStaleDownloadGeneration(t *testing.T) {
+ 		t.Fatal("video downloaded before invalidation was retained")
+ 	}
+ }
++
++func TestDownloadVideoDropsPartialFileAndCacheWhenCancelledAfterPreviewStarts(t *testing.T) {
++	cache.Initialize()
++	cache.Flush()
++	DeleteTmpDir()
++	t.Cleanup(cache.Flush)
++	t.Cleanup(DeleteTmpDir)
++
++	managerCtx, stopManager := context.WithCancel(context.Background())
++	t.Cleanup(stopManager)
++	manager, err := New(managerCtx)
++	require.NoError(t, err)
++
++	requestConfig := config.Config{
++		ImmichURL: "http://immich.test",
++		Kiosk:     config.KioskSettings{Cache: false},
++	}
++	downloadCtx, cancel := context.WithCancel(context.Background())
++	t.Cleanup(cancel)
++	asset := immich.New(downloadCtx, requestConfig)
++	asset.ID = "video-a"
++	asset.OriginalFileName = "clip.mov"
++
++	previewStarted := make(chan struct{})
++	allowPreview := make(chan struct{})
++	originalClient := immich.HTTPClient
++	immich.HTTPClient = &http.Client{Transport: videoRoundTripFunc(func(r *http.Request) (*http.Response, error) {
++		switch r.URL.Path {
++		case "/api/assets/video-a/video/playback":
++			return &http.Response{
++				StatusCode: http.StatusOK,
++				Header:     http.Header{"Content-Type": []string{"video/mp4"}},
++				Body:       io.NopCloser(strings.NewReader("video-bytes")),
++			}, nil
++		case "/api/assets/video-a/thumbnail":
++			close(previewStarted)
++			<-allowPreview
++			return &http.Response{
++				StatusCode: http.StatusOK,
++				Header:     http.Header{"Content-Type": []string{kiosk.MimeTypeJpeg}},
++				Body:       io.NopCloser(bytes.NewReader(mustEncodeVideoPreviewJPEG(t))),
++			}, nil
++		default:
++			t.Fatalf("unexpected video test path: %s", r.URL.Path)
++			return nil, nil
++		}
++	})}
++	t.Cleanup(func() { immich.HTTPClient = originalClient })
++
++	done := make(chan struct{})
++	go func() {
++		invokeDownloadVideo(t, manager, downloadCtx, asset, requestConfig, "device-a", "")
++		close(done)
++	}()
++
++	select {
++	case <-previewStarted:
++	case <-time.After(time.Second):
++		t.Fatal("video preview did not start")
++	}
++
++	filePath := filepath.Join(customTempVideoDir, "video-a.mp4")
++	require.Eventually(t, func() bool {
++		_, statErr := os.Stat(filePath)
++		return statErr == nil
++	}, time.Second, 5*time.Millisecond, "video file should exist before cancellation")
++
++	cancel()
++	close(allowPreview)
++
++	select {
++	case <-done:
++	case <-time.After(time.Second):
++		t.Fatal("DownloadVideo did not finish after cancellation")
++	}
++
++	require.Len(t, manager.Videos, 0, "cancelled video work must not populate the video cache")
++	require.False(t, manager.IsDownloading("video-a"), "cancelled video work must release its download reservation")
++	_, getErr := manager.GetVideo("video-a")
++	require.Error(t, getErr, "cancelled video work must not mark the asset as downloaded")
++	_, statErr := os.Stat(filePath)
++	require.True(t, os.IsNotExist(statErr), "cancelled video work must remove the partial file")
++}
++
++func TestDrainDownloadsBlocksNewAdmissionAndRespectsCallerCancellation(t *testing.T) {
++	cache.Initialize()
++	cache.Flush()
++	DeleteTmpDir()
++	t.Cleanup(cache.Flush)
++	t.Cleanup(DeleteTmpDir)
++
++	requestConfig := config.Config{
++		ImmichURL: "http://immich.test",
++		Kiosk:     config.KioskSettings{Cache: false, HTTPTimeout: 1},
++	}
++
++	t.Run("blocks new admission while draining", func(t *testing.T) {
++		manager, activeStarted, releaseActive, secondaryCalls := newDrainTestManager(t, requestConfig)
++		drain := findDrainMethod(t, manager)
++		require.True(t, invokeScheduleDownload(t, manager, context.Background(), newVideoAssetForManager(context.Background(), requestConfig, "video-a"), requestConfig, "device-a", ""), "first admission should succeed")
++		select {
++		case <-activeStarted:
++		case <-time.After(time.Second):
++			t.Fatal("active video download did not start")
++		}
++
++		drainCtx, cancel := context.WithTimeout(context.Background(), time.Second)
++		defer cancel()
++		done := make(chan bool, 1)
++		go func() {
++			done <- invokeDrainDownloads(t, drain, drainCtx)
++		}()
++
++		time.Sleep(20 * time.Millisecond)
++		require.False(t, invokeScheduleDownload(t, manager, context.Background(), newVideoAssetForManager(context.Background(), requestConfig, "video-b"), requestConfig, "device-b", ""), "drain should block new download admission while it waits for active work")
++		require.Zero(t, secondaryCalls.Load(), "blocked admission must not start a second download")
++
++		close(releaseActive)
++		require.True(t, <-done, "drain should complete once the active download finishes")
++	})
++
++	t.Run("respects caller cancellation", func(t *testing.T) {
++		manager, activeStarted, releaseActive, _ := newDrainTestManager(t, requestConfig)
++		drain := findDrainMethod(t, manager)
++		require.True(t, invokeScheduleDownload(t, manager, context.Background(), newVideoAssetForManager(context.Background(), requestConfig, "video-a"), requestConfig, "device-a", ""), "admission should still succeed before the cancelled drain begins")
++		select {
++		case <-activeStarted:
++		case <-time.After(time.Second):
++			t.Fatal("second active video download did not start")
++		}
++
++		drainCtx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
++		defer cancel()
++		require.False(t, invokeDrainDownloads(t, drain, drainCtx), "drain should return false when its caller is cancelled")
++
++		close(releaseActive)
++		require.Eventually(t, func() bool {
++			return invokeDrainDownloads(t, drain, context.Background())
++		}, time.Second, 10*time.Millisecond, "drain should succeed after the active work is allowed to finish")
++	})
++}
++
++type videoRoundTripFunc func(*http.Request) (*http.Response, error)
++
++func (f videoRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
++
++func mustEncodeVideoPreviewJPEG(t *testing.T) []byte {
++	t.Helper()
++
++	var buffer bytes.Buffer
++	err := jpeg.Encode(&buffer, image.NewRGBA(image.Rect(0, 0, 2, 1)), &jpeg.Options{Quality: 80})
++	require.NoError(t, err)
++	return buffer.Bytes()
++}
++
++func newDrainTestManager(t *testing.T, requestConfig config.Config) (*Manager, chan struct{}, chan struct{}, *atomic.Int32) {
++	t.Helper()
++
++	managerCtx, stopManager := context.WithCancel(context.Background())
++	t.Cleanup(stopManager)
++	manager, err := New(managerCtx)
++	require.NoError(t, err)
++
++	activeStarted := make(chan struct{})
++	releaseActive := make(chan struct{})
++	secondaryCalls := &atomic.Int32{}
++	originalClient := immich.HTTPClient
++	immich.HTTPClient = &http.Client{Transport: videoRoundTripFunc(func(r *http.Request) (*http.Response, error) {
++		switch r.URL.Path {
++		case "/api/assets/video-a/video/playback":
++			close(activeStarted)
++			<-releaseActive
++			return &http.Response{
++				StatusCode: http.StatusOK,
++				Header:     http.Header{"Content-Type": []string{"video/mp4"}},
++				Body:       io.NopCloser(strings.NewReader("video-a")),
++			}, nil
++		case "/api/assets/video-a/thumbnail", "/api/assets/video-b/thumbnail":
++			return &http.Response{
++				StatusCode: http.StatusOK,
++				Header:     http.Header{"Content-Type": []string{kiosk.MimeTypeJpeg}},
++				Body:       io.NopCloser(bytes.NewReader(mustEncodeVideoPreviewJPEG(t))),
++			}, nil
++		case "/api/assets/video-b/video/playback":
++			secondaryCalls.Add(1)
++			return &http.Response{
++				StatusCode: http.StatusOK,
++				Header:     http.Header{"Content-Type": []string{"video/mp4"}},
++				Body:       io.NopCloser(strings.NewReader("video-b")),
++			}, nil
++		default:
++			t.Fatalf("unexpected drain test path: %s", r.URL.Path)
++			return nil, nil
++		}
++	})}
++	t.Cleanup(func() { immich.HTTPClient = originalClient })
++	return manager, activeStarted, releaseActive, secondaryCalls
++}
++
++func newVideoAssetForManager(ctx context.Context, requestConfig config.Config, id string) immich.Asset {
++	asset := immich.New(ctx, requestConfig)
++	asset.ID = id
++	asset.OriginalFileName = id + ".mp4"
++	asset.OriginalMimeType = "video/mp4"
++	return asset
++}
++
++func invokeDownloadVideo(t *testing.T, manager *Manager, ctx context.Context, asset immich.Asset, requestConfig config.Config, deviceID, requestURL string) {
++	t.Helper()
++
++	method := reflect.ValueOf(manager).MethodByName("DownloadVideo")
++	switch method.Type().NumIn() {
++	case 4:
++		method.Call([]reflect.Value{
++			reflect.ValueOf(asset),
++			reflect.ValueOf(requestConfig),
++			reflect.ValueOf(deviceID),
++			reflect.ValueOf(requestURL),
++		})
++	case 5:
++		method.Call([]reflect.Value{
++			reflect.ValueOf(ctx),
++			reflect.ValueOf(asset),
++			reflect.ValueOf(requestConfig),
++			reflect.ValueOf(deviceID),
++			reflect.ValueOf(requestURL),
++		})
++	default:
++		t.Fatalf("unexpected DownloadVideo signature with %d parameters", method.Type().NumIn())
++	}
++}
++
++func findDrainMethod(t *testing.T, manager *Manager) reflect.Value {
++	t.Helper()
++
++	value := reflect.ValueOf(manager)
++	for i := 0; i < value.NumMethod(); i++ {
++		method := value.Method(i)
++		name := value.Type().Method(i).Name
++		if strings.Contains(name, "Drain") {
++			return method
++		}
++	}
++	t.Fatal("video manager is missing a drain method for background downloads")
++	return reflect.Value{}
++}
++
++func invokeDrainDownloads(t *testing.T, method reflect.Value, ctx context.Context) bool {
++	t.Helper()
++
++	require.Equal(t, 1, method.Type().NumIn(), "drain method must accept exactly one context parameter")
++	require.Equal(t, 1, method.Type().NumOut(), "drain method must return exactly one value")
++	require.True(t, method.Type().In(0).Implements(reflect.TypeOf((*context.Context)(nil)).Elem()), "drain method must accept a context.Context")
++	require.Equal(t, reflect.TypeOf(true), method.Type().Out(0), "drain method must return a bool success flag")
++
++	results := method.Call([]reflect.Value{reflect.ValueOf(ctx)})
++	return results[0].Bool()
++}
++
++func invokeScheduleDownload(t *testing.T, manager *Manager, ctx context.Context, asset immich.Asset, requestConfig config.Config, deviceID, requestURL string) bool {
++	t.Helper()
++
++	method := reflect.ValueOf(manager).MethodByName("ScheduleDownload")
++	require.True(t, method.IsValid(), "video manager must expose ScheduleDownload")
++	require.Equal(t, 5, method.Type().NumIn(), "ScheduleDownload signature changed unexpectedly")
++	var results []reflect.Value
++	if method.Type().In(0).Implements(reflect.TypeOf((*context.Context)(nil)).Elem()) {
++		results = method.Call([]reflect.Value{
++			reflect.ValueOf(ctx),
++			reflect.ValueOf(asset),
++			reflect.ValueOf(requestConfig),
++			reflect.ValueOf(deviceID),
++			reflect.ValueOf(requestURL),
++		})
++	} else {
++		require.Equal(t, reflect.TypeOf(asset), method.Type().In(0), "ScheduleDownload should accept an immich.Asset first when it does not take a context")
++		require.Equal(t, reflect.TypeOf(requestConfig), method.Type().In(1), "ScheduleDownload should accept config.Config second")
++		require.Equal(t, reflect.TypeOf(0), method.Type().In(2), "ScheduleDownload should accept timeoutSeconds as an int third parameter")
++		results = method.Call([]reflect.Value{
++			reflect.ValueOf(asset),
++			reflect.ValueOf(requestConfig),
++			reflect.ValueOf(requestConfig.Kiosk.HTTPTimeout),
++			reflect.ValueOf(deviceID),
++			reflect.ValueOf(requestURL),
++		})
++	}
++	require.Len(t, results, 1)
++	return results[0].Bool()
++}
+diff --git a/internal/webhooks/webhooks_dispatcher_test.go b/internal/webhooks/webhooks_dispatcher_test.go
+new file mode 100644
+index 0000000..a6b422a
+--- /dev/null
++++ b/internal/webhooks/webhooks_dispatcher_test.go
+@@ -0,0 +1,118 @@
++package webhooks
++
++import (
++	"context"
++	"os"
++	"path/filepath"
++	"regexp"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestDispatcherRejectsAdmissionWhenCapacityIsFull(t *testing.T) {
++	dispatcher := newDispatcher(1, time.Second)
++	started := make(chan struct{})
++	release := make(chan struct{})
++
++	require.True(t, dispatcher.scheduleWithContext(context.Background(), "first", func(context.Context) {
++		close(started)
++		<-release
++	}))
++
++	<-started
++	require.False(t, dispatcher.scheduleWithContext(context.Background(), "second", func(context.Context) {}), "dispatcher must reject new webhook work once its bounded capacity is full")
++
++	close(release)
++	require.True(t, dispatcher.drain(context.Background()))
++}
++
++func TestDispatcherDerivesWorkerContextFromTimeoutAndParentCancel(t *testing.T) {
++	t.Run("timeout", func(t *testing.T) {
++		dispatcher := newDispatcher(1, 25*time.Millisecond)
++		done := make(chan error, 1)
++
++		require.True(t, dispatcher.scheduleWithContext(context.Background(), "timeout", func(ctx context.Context) {
++			<-ctx.Done()
++			done <- ctx.Err()
++		}))
++
++		select {
++		case err := <-done:
++			require.ErrorIs(t, err, context.DeadlineExceeded)
++		case <-time.After(250 * time.Millisecond):
++			t.Fatal("dispatcher worker did not observe its timeout-bound context")
++		}
++
++		require.True(t, dispatcher.drain(context.Background()))
++	})
++
++	t.Run("parent cancel", func(t *testing.T) {
++		dispatcher := newDispatcher(1, time.Second)
++		parent, cancel := context.WithCancel(context.Background())
++		done := make(chan error, 1)
++
++		require.True(t, dispatcher.scheduleWithContext(parent, "cancel", func(ctx context.Context) {
++			<-ctx.Done()
++			done <- ctx.Err()
++		}))
++
++		cancel()
++
++		select {
++		case err := <-done:
++			require.ErrorIs(t, err, context.Canceled)
++		case <-time.After(250 * time.Millisecond):
++			t.Fatal("dispatcher worker did not observe parent cancellation")
++		}
++
++		require.True(t, dispatcher.drain(context.Background()))
++	})
++}
++
++func TestDispatcherDrainWaitsForWorkersAndRespectsCallerCancel(t *testing.T) {
++	dispatcher := newDispatcher(1, time.Second)
++	started := make(chan struct{})
++	release := make(chan struct{})
++
++	require.True(t, dispatcher.scheduleWithContext(context.Background(), "blocking", func(ctx context.Context) {
++		close(started)
++		select {
++		case <-release:
++		case <-ctx.Done():
++		}
++	}))
++
++	<-started
++
++	drainCtx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
++	defer cancel()
++	require.False(t, dispatcher.drain(drainCtx), "drain must stop waiting when its caller is cancelled")
++
++	close(release)
++	require.True(t, dispatcher.drain(context.Background()), "drain must wait for outstanding workers once they are allowed to finish")
++}
++
++func TestProcessWideWebhookDispatcherContract(t *testing.T) {
++	dispatcherSource, err := os.ReadFile("webhooks_dispatcher.go")
++	require.NoError(t, err)
++	text := string(dispatcherSource)
++
++	require.Regexp(t, regexp.MustCompile(`var webhookDispatcher = newDispatcher\(`), text, "webhook dispatch must use one process-wide dispatcher")
++	require.NotContains(t, text, "dispatcherForTimeout", "webhook dispatch must not select a dispatcher per timeout")
++	require.NotContains(t, text, "webhookDispatchers", "webhook dispatch must not keep a plural dispatcher registry")
++	require.NotContains(t, text, "LoadOrStore(timeout", "webhook dispatch must not key dispatcher selection by timeout")
++	require.Regexp(
++		t,
++		regexp.MustCompile(`(?s)webhookDispatcher\.scheduleWithContextAndTimeout\(\s*ctx,\s*key,\s*timeout,`),
++		text,
++		"webhook enqueue must use the process-wide dispatcher with a per-job timeout",
++	)
++
++	webhooksSource, err := os.ReadFile(filepath.Join("webhooks.go"))
++	require.NoError(t, err)
++	require.NotContains(t, string(webhooksSource), "newDispatcher(", "webhook trigger entrypoints must not create per-request dispatchers")
++	require.True(t, strings.Contains(string(webhooksSource), "enqueueWebhook("), "trigger should still delegate enqueue to the shared dispatcher path")
++}
