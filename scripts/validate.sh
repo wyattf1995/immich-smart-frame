@@ -31,6 +31,8 @@ required_files=(
   custom-image/browser-cache-tests.patch
   custom-image/cancellation-propagation.patch
   custom-image/cancellation-propagation-tests.patch
+  custom-image/date-pool-hardening.patch
+  custom-image/date-pool-hardening-tests.patch
   custom-image/fully-kiosk-dpr.patch
   custom-image/offline-cache-hardening.patch
   custom-image/offline-cache-tests.patch
