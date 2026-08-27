@@ -1,0 +1,27 @@
+diff --git a/internal/immich/immich_resilience_coverage_test.go b/internal/immich/immich_resilience_coverage_test.go
+index 36b7284..01e69d9 100644
+--- a/internal/immich/immich_resilience_coverage_test.go
++++ b/internal/immich/immich_resilience_coverage_test.go
+@@ -57,6 +57,21 @@ func TestOnlinePingHonorsCanceledContext(t *testing.T) {
+ 	require.False(t, IsOnline(ctx, "http://immich.test"))
+ }
+ 
++func TestReadinessUsesMinimalAuthenticatedKioskSelection(t *testing.T) {
++	original := HTTPClient
++	t.Cleanup(func() { HTTPClient = original })
++	HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
++		require.Equal(t, http.MethodPost, r.Method)
++		require.Equal(t, "/api/search/random", r.URL.Path)
++		require.Equal(t, "key", r.Header.Get("x-api-key"))
++		body, err := io.ReadAll(r.Body)
++		require.NoError(t, err)
++		require.JSONEq(t, `{"size":1}`, string(body))
++		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`[]`))}, nil
++	})}
++	require.NoError(t, Ready(context.Background(), config.Config{ImmichURL: "http://readiness-selection.test", ImmichAPIKey: "key", Kiosk: config.KioskSettings{Cache: false}}))
++}
++
+ func TestReadinessCachesRecentSuccessAndBacksOffFailures(t *testing.T) {
+ 	original := HTTPClient
+ 	t.Cleanup(func() { HTTPClient = original })
+

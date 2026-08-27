@@ -11,6 +11,13 @@ changes will still be called out explicitly.
 
 ### Added
 
+- Added date-pool hardening to the custom image: shuffle-bag refills that never
+  discard unserved candidates (small pools now cycle every photo once before
+  any repeat), an optional `kiosk.date_pool_minimum` floor that widens a
+  collapsed `last-N` window with a logged warning, and capture-hour session
+  spreading (`kiosk.date_pool_session_spread`, default on) so burst shoots
+  cannot monopolize a date pool.
+
 - Added validated, per-profile album penalty factors so an overrepresented
   album can remain eligible while being selected less often through any source.
 - Added an optional, privacy-safe Home Assistant wall-panel example with Home,
@@ -18,8 +25,14 @@ changes will still be called out explicitly.
 
 ### Changed
 
+- Rebalanced the advanced Qwen `balanced` example around a five-rung recency
+  ladder (8/12/10/10 plus a 10-weight all-time rung) with family, photography,
+  and anchor blocks, updated the validation guard to match, and documented
+  `cache_duration` in both example configs.
 - Increased the advanced Qwen `balanced` example's overlapping recency share
   from 50% to 65%, with an explicit validation guard for the 35/20/10 ladder.
+- Documented the verified timeout, cancellation, webhook-drain, video-drain,
+  and FrameOS watchdog behavior in the resilience runbook.
 - Documented how to boost a private milestone album without publishing its
   Immich identifier or reducing the slideshow to one album.
 - Made album-penalty decisions stable per asset per slide request so retry loops

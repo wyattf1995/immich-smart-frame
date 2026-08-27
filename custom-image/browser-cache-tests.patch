@@ -1,0 +1,30 @@
+diff --git a/frontend/tests/browser-cache-contract.test.mjs b/frontend/tests/browser-cache-contract.test.mjs
+new file mode 100644
+--- /dev/null
++++ b/frontend/tests/browser-cache-contract.test.mjs
+@@ -0,0 +1,25 @@
++import assert from "node:assert/strict";
++import { readFile } from "node:fs/promises";
++import test from "node:test";
++
++const workerPath = new URL("../public/assets/js/sw.js", import.meta.url);
++const worker = await readFile(workerPath, "utf8");
++
++test("service worker does not cache the dynamic root document", () => {
++  assert.doesNotMatch(worker, /cache\.addAll\(\[\"\/\"\]\)/);
++  assert.match(worker, /CACHE_VERSION/);
++  assert.match(worker, /immich-kiosk/);
++});
++
++test("service worker removes legacy and superseded caches on activation", () => {
++  assert.match(worker, /immich-kiosk/);
++  assert.match(worker, /caches\.keys\(\)/);
++  assert.match(worker, /caches\.delete/);
++  assert.match(worker, /addEventListener\(\"activate\"/);
++});
++
++test("service worker never uses cache-first fallback for navigations", () => {
++  assert.match(worker, /request\.mode === \"navigate\"/);
++  assert.match(worker, /fetch\(event\.request\)/);
++  assert.doesNotMatch(worker, /response \|\| fetch\(event\.request\)/);
++});

@@ -1,0 +1,207 @@
+diff --git a/internal/routes/routes_cache.go b/internal/routes/routes_cache.go
+index 10d9ab2ac3d6667d8badb60dc4fb0e4f28aee70b..4aa75d53548a5ab33833b201a3f1ca0536a5afb8 100644
+--- a/internal/routes/routes_cache.go
++++ b/internal/routes/routes_cache.go
+@@ -28,0 +29 @@ func FlushCache(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
++		InvalidateOfflineAssets()
+diff --git a/internal/routes/routes_offline.go b/internal/routes/routes_offline.go
+index 247450bf251d75c43a37f5019e212d2b1145de0f..a27bea7a0cf39cf9192cd807566abfbbbcf83418 100644
+--- a/internal/routes/routes_offline.go
++++ b/internal/routes/routes_offline.go
+@@ -21,0 +22 @@ import (
++	"github.com/damongolding/immich-kiosk/internal/cache"
+@@ -40,0 +42 @@ const (
++	OfflineManifestFilename   = "_manifest"
+@@ -43 +45,102 @@ const (
+-var ErrMaxStorageReached = errors.New("max offline storage size reached")
++var (
++	ErrMaxStorageReached       = errors.New("max offline storage size reached")
++	ErrOfflineScopeInvalidated = errors.New("offline cache scope was invalidated")
++)
++
++// offlineScopeMu prevents a request from observing the old pool while a
++// changed origin/user/device/profile is replacing it. The manifest is private
++// metadata and deliberately contains no API key.
++var offlineScopeMu sync.Mutex
++
++type offlineCacheScopeToken struct {
++	generation uint64
++	manifest   string
++}
++
++func offlineCacheScope(requestConfig config.Config, deviceID string) string {
++	return offlineCacheScopeAtGeneration(requestConfig, deviceID, cache.CurrentGeneration())
++}
++
++func offlineCacheScopeAtGeneration(requestConfig config.Config, deviceID string, generation uint64) string {
++	configHash := sha256.Sum256([]byte(requestConfig.SanitizedYaml()))
++	scope := strings.Join([]string{
++		fmt.Sprintf("generation=%s:%d", KioskVersion, generation),
++		"origin=" + requestConfig.ImmichURL,
++		"user=" + requestConfig.SelectedUser,
++		"device=" + deviceID,
++		"profile=" + requestConfig.CurationProfile,
++		"config_sha256=" + hex.EncodeToString(configHash[:]),
++	}, "\x00")
++	scopeHash := sha256.Sum256([]byte(scope))
++	return "schema=1\nscope_sha256=" + hex.EncodeToString(scopeHash[:]) + "\n"
++}
++
++func newOfflineCacheScopeToken(requestConfig config.Config, deviceID string) offlineCacheScopeToken {
++	generation := cache.CurrentGeneration()
++	return offlineCacheScopeToken{
++		generation: generation,
++		manifest:   offlineCacheScopeAtGeneration(requestConfig, deviceID, generation),
++	}
++}
++
++func offlineCacheScopeCurrentLocked(token offlineCacheScopeToken) bool {
++	if cache.CurrentGeneration() != token.generation {
++		return false
++	}
++	current, err := os.ReadFile(filepath.Join(OfflineAssetsPath, OfflineManifestFilename))
++	return err == nil && string(current) == token.manifest
++}
++
++func offlineCacheScopeCurrent(token offlineCacheScopeToken) bool {
++	offlineScopeMu.Lock()
++	current := offlineCacheScopeCurrentLocked(token)
++	offlineScopeMu.Unlock()
++	return current
++}
++
++// ensureOfflineCacheScope removes a pool created for another origin, user,
++// device, profile, config, or kiosk generation before it can be served.
++func ensureOfflineCacheScope(requestConfig config.Config, deviceID string) error {
++	return ensureOfflineCacheScopeExpected(offlineCacheScope(requestConfig, deviceID))
++}
++
++func ensureOfflineCacheScopeExpected(expected string) error {
++	manifestPath := filepath.Join(OfflineAssetsPath, OfflineManifestFilename)
++	if current, err := os.ReadFile(manifestPath); err == nil && string(current) == expected {
++		return nil
++	}
++	if err := utils.CleanDirectory(OfflineAssetsPath); err != nil {
++		return err
++	}
++	tmpPath := manifestPath + ".tmp"
++	if err := os.WriteFile(tmpPath, []byte(expected), 0o600); err != nil {
++		return err
++	}
++	return os.Rename(tmpPath, manifestPath)
++}
++
++func writeOfflineExpirationIfScope(token offlineCacheScopeToken, expiration time.Time) error {
++	offlineScopeMu.Lock()
++	if !offlineCacheScopeCurrentLocked(token) {
++		offlineScopeMu.Unlock()
++		return ErrOfflineScopeInvalidated
++	}
++	err := os.WriteFile(
++		filepath.Join(OfflineAssetsPath, OfflineExpirationFilename),
++		[]byte(expiration.Format(time.RFC3339)),
++		0o600,
++	)
++	offlineScopeMu.Unlock()
++	return err
++}
++
++// InvalidateOfflineAssets is called after a successful curation mutation or
++// explicit cache flush. The next request rebuilds the pool under its scope.
++func InvalidateOfflineAssets() {
++	offlineScopeMu.Lock()
++	err := utils.CleanDirectory(OfflineAssetsPath)
++	offlineScopeMu.Unlock()
++	if err != nil {
++		log.Warn("failed to invalidate offline assets", "err", err)
++	}
++}
+@@ -81,0 +185,6 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
++		offlineScopeMu.Lock()
++		scopeErr := ensureOfflineCacheScope(requestConfig, deviceID)
++		offlineScopeMu.Unlock()
++		if scopeErr != nil {
++			return RenderError(c, scopeErr, "offline assets scope could not be prepared", requestConfig.Duration)
++		}
+@@ -178,0 +288,7 @@ func downloadOfflineAssets(parent context.Context, requestConfig config.Config,
++	offlineScopeMu.Lock()
++	scopeToken := newOfflineCacheScopeToken(requestConfig, deviceID)
++	err := ensureOfflineCacheScopeExpected(scopeToken.manifest)
++	offlineScopeMu.Unlock()
++	if err != nil {
++		return err
++	}
+@@ -205,12 +321,5 @@ func downloadOfflineAssets(parent context.Context, requestConfig config.Config,
+-	// Write expiration timestamp
+-	expiration, expirationErr := os.Create(filepath.Join(OfflineAssetsPath, OfflineExpirationFilename))
+-	if expirationErr != nil {
+-		return expirationErr
+-	}
+-	defer expiration.Close()
+-
+-	_, expirationErr = expiration.WriteString(
+-		startTime.Add(time.Hour * time.Duration(requestConfig.OfflineMode.ExpirationHours)).Format(time.RFC3339),
+-	)
+-	if expirationErr != nil {
+-		return expirationErr
++	if err := writeOfflineExpirationIfScope(
++		scopeToken,
++		startTime.Add(time.Hour*time.Duration(requestConfig.OfflineMode.ExpirationHours)),
++	); err != nil {
++		return err
+@@ -221,0 +331,3 @@ func downloadOfflineAssets(parent context.Context, requestConfig config.Config,
++				if !offlineCacheScopeCurrent(scopeToken) {
++					return ErrOfflineScopeInvalidated
++				}
+@@ -280 +392,5 @@ func downloadOfflineAssets(parent context.Context, requestConfig config.Config,
+-				err = saveMsgpackZstd(egCtx, filename, viewData, &offlineSize, maxSize, &createdFiles)
++				err = saveMsgpackZstd(egCtx, filename, viewData, &offlineSize, maxSize, &createdFiles, scopeToken)
++				if errors.Is(err, ErrOfflineScopeInvalidated) {
++					once.Do(cancel)
++					return err
++				}
+@@ -304 +420,4 @@ func downloadOfflineAssets(parent context.Context, requestConfig config.Config,
+-	if err := eg.Wait(); err != nil && !errors.Is(err, context.Canceled) {
++	if err := eg.Wait(); err != nil {
++		if errors.Is(err, context.Canceled) || errors.Is(err, ErrOfflineScopeInvalidated) {
++			return err
++		}
+@@ -331 +450 @@ func downloadOfflineAssets(parent context.Context, requestConfig config.Config,
+-func saveMsgpackZstd(ctx context.Context, filename string, data common.ViewData, offlineSize *atomic.Int64, maxSize int64, createdFiles *sync.Map) error {
++func saveMsgpackZstd(ctx context.Context, filename string, data common.ViewData, offlineSize *atomic.Int64, maxSize int64, createdFiles *sync.Map, scopeToken offlineCacheScopeToken) error {
+@@ -338,0 +458,3 @@ func saveMsgpackZstd(ctx context.Context, filename string, data common.ViewData,
++	if !offlineCacheScopeCurrent(scopeToken) {
++		return ErrOfflineScopeInvalidated
++	}
+@@ -395 +517,9 @@ func saveMsgpackZstd(ctx context.Context, filename string, data common.ViewData,
+-	if err = os.Rename(tmp.Name(), filename); err != nil {
++	offlineScopeMu.Lock()
++	if !offlineCacheScopeCurrentLocked(scopeToken) {
++		offlineScopeMu.Unlock()
++		offlineSize.Add(-fi.Size())
++		return ErrOfflineScopeInvalidated
++	}
++	err = os.Rename(tmp.Name(), filename)
++	offlineScopeMu.Unlock()
++	if err != nil {
+@@ -556 +686,8 @@ func IsOfflineDownloadRunning() bool {
+-func offlinePrewarmNeeded(requestConfig config.Config) bool {
++func offlinePrewarmNeeded(requestConfig config.Config, deviceID string) bool {
++	offlineScopeMu.Lock()
++	token := newOfflineCacheScopeToken(requestConfig, deviceID)
++	currentScope := offlineCacheScopeCurrentLocked(token)
++	offlineScopeMu.Unlock()
++	if !currentScope {
++		return true
++	}
+diff --git a/internal/routes/routes_prefetch.go b/internal/routes/routes_prefetch.go
+index c529e5bce5e3fff6be990e8794bca8247bb4c7d2..489b0ed8a837c28c67ec0a24854f3685da160bc4 100644
+--- a/internal/routes/routes_prefetch.go
++++ b/internal/routes/routes_prefetch.go
+@@ -93 +93 @@ func scheduleOfflinePrewarm(com *common.Common, requestConfig config.Config, req
+-	if !offlinePrewarmNeeded(requestConfig) {
++	if !offlinePrewarmNeeded(requestConfig, deviceID) {
+@@ -100 +100,2 @@ func scheduleOfflinePrewarm(com *common.Common, requestConfig config.Config, req
+-		if err := downloadOfflineAssets(ctx, requestConfig, requestCtx, com, requestID, deviceID); err != nil && !errors.Is(err, context.Canceled) {
++		if err := downloadOfflineAssets(ctx, requestConfig, requestCtx, com, requestID, deviceID); err != nil &&
++			!errors.Is(err, context.Canceled) && !errors.Is(err, ErrOfflineScopeInvalidated) {

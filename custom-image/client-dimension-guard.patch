@@ -1,0 +1,57 @@
+diff --git a/internal/routes/routes_asset.go b/internal/routes/routes_asset.go
+index 2926ee1..d68438c 100644
+--- a/internal/routes/routes_asset.go
++++ b/internal/routes/routes_asset.go
+@@ -31,6 +31,18 @@ const (
+ 	offlinePrefetchDeadline = 2 * time.Minute
+ )
+ 
++var ErrClientDimensionsRequired = errors.New("client dimensions are required when image optimization is enabled")
++
++func validateOptimizedClientDimensions(requestConfig config.Config) error {
++	if !requestConfig.OptimizeImages {
++		return nil
++	}
++	if requestConfig.ClientData.Width <= 0 || requestConfig.ClientData.Height <= 0 {
++		return ErrClientDimensionsRequired
++	}
++	return nil
++}
++
+ func foregroundAssetContext(request context.Context, shutdown context.Context, httpTimeoutSeconds int) (context.Context, context.CancelFunc) {
+ 	ctx, cancel := context.WithCancel(request)
+ 	stop := context.AfterFunc(shutdown, cancel)
+@@ -63,6 +75,9 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 		requestConfig := requestData.RequestConfig
+ 		requestID := requestData.RequestID
+ 		deviceID := requestData.DeviceID
++		if err := validateOptimizedClientDimensions(requestConfig); err != nil {
++			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
++		}
+ 
+ 		log.Debug(
+ 			requestID,
+@@ -140,6 +155,9 @@ func Image(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 
+ 		requestConfig := requestData.RequestConfig
+ 		requestID := requestData.RequestID
++		if err := validateOptimizedClientDimensions(requestConfig); err != nil {
++			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
++		}
+ 
+ 		requestConfig.ShowVideos = false
+ 		requestConfig.LivePhotos = false
+diff --git a/internal/routes/routes_offline.go b/internal/routes/routes_offline.go
+index a27bea7..034abea 100644
+--- a/internal/routes/routes_offline.go
++++ b/internal/routes/routes_offline.go
+@@ -163,6 +163,9 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 		requestConfig.Memories = false
+ 		requestConfig.ShowVideos = false
+ 		requestConfig.Theme = requestData.RequestConfig.Theme
++		if err := validateOptimizedClientDimensions(requestConfig); err != nil {
++			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
++		}
+ 
+ 		if len(requestConfig.History) > 1 && !strings.HasPrefix(requestConfig.History[len(requestConfig.History)-1], "*") {
+ 			return NextHistoryAsset(baseConfig, com, c)

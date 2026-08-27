@@ -1,0 +1,134 @@
+diff --git a/internal/cache/cache.go b/internal/cache/cache.go
+index 28f402d7bcbc072d07ccb214ece007f55aa05ba3..69455bacc7773c5dc6b569b05c2bcff9a91cef43 100644
+--- a/internal/cache/cache.go
++++ b/internal/cache/cache.go
+@@ -84,0 +85,8 @@ func CurrentGeneration() uint64 { return generation.Load() }
++// IsCurrentGeneration reports whether a producer still belongs to the active
++// namespace. The cache mutex makes this check atomic with invalidation.
++func IsCurrentGeneration(g uint64) bool {
++	cacheMu.Lock()
++	defer cacheMu.Unlock()
++	return generation.Load() == g
++}
++
+@@ -88 +95,0 @@ func InvalidateAll() {
+-	generation.Add(1)
+@@ -89,0 +97 @@ func InvalidateAll() {
++	generation.Add(1)
+@@ -253,0 +262,7 @@ func Update[T any](key string, update func([]T) []T, deviceDuration, cacheDurati
++	UpdateIfGeneration(CurrentGeneration(), key, update, deviceDuration, cacheDuration)
++}
++
++// UpdateIfGeneration atomically transforms a cached slice only when the
++// supplied namespace is still current. This protects asynchronous producers
++// from appending data fetched before a flush or mutation.
++func UpdateIfGeneration[T any](g uint64, key string, update func([]T) []T, deviceDuration, cacheDuration int) bool {
+@@ -256,2 +271,2 @@ func Update[T any](key string, update func([]T) []T, deviceDuration, cacheDurati
+-	if kioskCache == nil {
+-		return
++	if kioskCache == nil || generation.Load() != g {
++		return false
+@@ -271,0 +287 @@ func Update[T any](key string, update func([]T) []T, deviceDuration, cacheDurati
++	return true
+@@ -331,0 +348,12 @@ func AssetToCacheWithPosition[T any](viewDataToAdd T, requestConfig *config.Conf
++// AssetToCacheIfGeneration appends a view item only if generation is current.
++// It returns false when an invalidation raced with the producer.
++func AssetToCacheIfGeneration[T any](generation uint64, viewDataToAdd T, requestConfig *config.Config, deviceID, url string) bool {
++	return assetToCacheAtGeneration(viewDataToAdd, requestConfig, deviceID, url, APPEND, generation)
++}
++
++// AssetToCacheWithPositionIfGeneration is the conditional form for callers
++// that prepend downloaded video or other high-priority view data.
++func AssetToCacheWithPositionIfGeneration[T any](generation uint64, viewDataToAdd T, requestConfig *config.Config, deviceID, url string, position Position) bool {
++	return assetToCacheAtGeneration(viewDataToAdd, requestConfig, deviceID, url, position, generation)
++}
++
+@@ -336,0 +365,4 @@ func assetToCache[T any](viewDataToAdd T, requestConfig *config.Config, deviceID
++	assetToCacheAtGeneration(viewDataToAdd, requestConfig, deviceID, url, position, CurrentGeneration())
++}
++
++func assetToCacheAtGeneration[T any](viewDataToAdd T, requestConfig *config.Config, deviceID, url string, position Position, generation uint64) bool {
+@@ -338 +370 @@ func assetToCache[T any](viewDataToAdd T, requestConfig *config.Config, deviceID
+-		return
++		return false
+@@ -343 +375 @@ func assetToCache[T any](viewDataToAdd T, requestConfig *config.Config, deviceID
+-	Update(viewCacheKey, func(cachedViewData []T) []T {
++	return UpdateIfGeneration(generation, viewCacheKey, func(cachedViewData []T) []T {
+diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
+index 5f631054840342ea683853ce53d608c20ed535c2..c518d9a609e28735193249557b9a8fc97fa484be 100644
+--- a/internal/immich/immich_helpers.go
++++ b/internal/immich/immich_helpers.go
+@@ -1275,0 +1276 @@ func (a *Asset) fetchPaginatedMetadataWithCache(u *url.URL, requestBody SearchRa
++	cacheGeneration := cache.CurrentGeneration()
+@@ -1296 +1297 @@ func (a *Asset) fetchPaginatedMetadataWithCache(u *url.URL, requestBody SearchRa
+-	cache.Set(cacheKey, jsonBytes, a.requestConfig.Duration, a.requestConfig.CacheDuration)
++	cache.SetIfGeneration(cacheGeneration, cacheKey, jsonBytes, a.requestConfig.Duration, a.requestConfig.CacheDuration)
+diff --git a/internal/routes/routes_asset_helpers.go b/internal/routes/routes_asset_helpers.go
+index 80b8f9e50949e2571a5a7e5f03c665565aa9192e..48b81f16f1bef4bb18ac32be01da9b0eba7830d3 100644
+--- a/internal/routes/routes_asset_helpers.go
++++ b/internal/routes/routes_asset_helpers.go
+@@ -740,4 +740,4 @@ func ProcessViewImageDataWithOptions(requestConfig config.Config, c common.Conte
+-func assetToCache(ctx context.Context, viewDataToAdd common.ViewData, requestConfig *config.Config, deviceID string, requestData *common.RouteRequestData, c common.ContextCopy) {
+-	cache.AssetToCache(viewDataToAdd, requestConfig, deviceID, c.URL.String())
+-
+-	webhooks.Trigger(ctx, requestData, KioskVersion, webhooks.PrefetchAsset, viewDataToAdd)
++func assetToCache(ctx context.Context, viewDataToAdd common.ViewData, requestConfig *config.Config, deviceID string, requestData *common.RouteRequestData, c common.ContextCopy, generation uint64) {
++	if cache.AssetToCacheIfGeneration(generation, viewDataToAdd, requestConfig, deviceID, c.URL.String()) {
++		webhooks.Trigger(ctx, requestData, KioskVersion, webhooks.PrefetchAsset, viewDataToAdd)
++	}
+@@ -755,0 +756 @@ func assetPreFetch(ctx context.Context, common *common.Common, requestData *comm
++	generation := cache.CurrentGeneration()
+@@ -763 +764 @@ func assetPreFetch(ctx context.Context, common *common.Common, requestData *comm
+-	assetToCache(common.Context(), viewDataToAdd, &requestConfig, deviceID, requestData, c)
++	assetToCache(common.Context(), viewDataToAdd, &requestConfig, deviceID, requestData, c, generation)
+diff --git a/internal/video/video.go b/internal/video/video.go
+index 2ae5ef92e5e7ef6081f6468f29257452b3cef927..13378a625980912ef5b6713ae7c7b5cfd9492462 100644
+--- a/internal/video/video.go
++++ b/internal/video/video.go
+@@ -187 +187 @@ func (v *Manager) GetVideo(id string) (Video, error) {
+-func (v *Manager) AddVideoToViewCache(id, fileName, filePath, contentType string, requestConfig *config.Config, deviceID, requestURL string, immichAsset immich.Asset, imageData, imageBlurData string) {
++func (v *Manager) AddVideoToViewCache(generation uint64, id, fileName, filePath, contentType string, requestConfig *config.Config, deviceID, requestURL string, immichAsset immich.Asset, imageData, imageBlurData string) {
+@@ -190,9 +190,4 @@ func (v *Manager) AddVideoToViewCache(id, fileName, filePath, contentType string
+-
+-	v.Videos = append(v.Videos, Video{
+-		ID:           id,
+-		LastAccessed: time.Now(),
+-		FileName:     fileName,
+-		FilePath:     filePath,
+-		ContentType:  contentType,
+-		ImmichAsset:  immichAsset,
+-	})
++	if !cache.IsCurrentGeneration(generation) {
++		v.discardDownloadedVideo(fileName)
++		return
++	}
+@@ -212,2 +207,22 @@ func (v *Manager) AddVideoToViewCache(id, fileName, filePath, contentType string
+-	if requestURL != "" {
+-		cache.AssetToCacheWithPosition(viewDataToAdd, requestConfig, deviceID, requestURL, cache.PREPEND)
++	if requestURL != "" && requestConfig.Kiosk.Cache &&
++		!cache.AssetToCacheWithPositionIfGeneration(generation, viewDataToAdd, requestConfig, deviceID, requestURL, cache.PREPEND) {
++		v.discardDownloadedVideo(fileName)
++		return
++	}
++
++	v.Videos = append(v.Videos, Video{
++		ID:           id,
++		LastAccessed: time.Now(),
++		FileName:     fileName,
++		FilePath:     filePath,
++		ContentType:  contentType,
++		ImmichAsset:  immichAsset,
++	})
++}
++
++func (v *Manager) discardDownloadedVideo(fileName string) {
++	if fileName == "" {
++		return
++	}
++	if err := os.Remove(filepath.Join(customTempVideoDir, fileName)); err != nil && !os.IsNotExist(err) {
++		log.Error("discarding invalidated video", "video", fileName, "err", err)
+@@ -239,0 +255 @@ func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.C
++	generation := cache.CurrentGeneration()
+@@ -284 +300 @@ func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.C
+-		v.AddVideoToViewCache(videoID, filename, filePath, contentType, &requestConfig, deviceID, requestURL, immichAsset, imageData, imageBlurData)
++		v.AddVideoToViewCache(generation, videoID, filename, filePath, contentType, &requestConfig, deviceID, requestURL, immichAsset, imageData, imageBlurData)

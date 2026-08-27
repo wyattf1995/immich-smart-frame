@@ -1,0 +1,1654 @@
+diff --git a/frontend/src/ts/kiosk.ts b/frontend/src/ts/kiosk.ts
+index 7e146f55..407ff690 100644
+--- a/frontend/src/ts/kiosk.ts
++++ b/frontend/src/ts/kiosk.ts
+@@ -157,15 +157,15 @@ async function init(): Promise<void> {
+     registerVideoMuteApi();
+ 
+     const MILLISECONDS_PER_SECOND = 1000;
+-    const TIMEOUT_GRACE_FACTOR = 3;
++    const TIMEOUT_GRACE_MILLISECONDS = 2000;
+ 
+     if (kioskData.httpTimeout <= 0) {
+         htmx.config.timeout = 0;
+     } else {
+         htmx.config.timeout =
+             kioskData.httpTimeout *
+-            MILLISECONDS_PER_SECOND *
+-            TIMEOUT_GRACE_FACTOR;
++                MILLISECONDS_PER_SECOND +
++            TIMEOUT_GRACE_MILLISECONDS;
+     }
+ 
+     if (
+diff --git a/internal/config/config_validation.go b/internal/config/config_validation.go
+index b9c97089..b0816dde 100644
+--- a/internal/config/config_validation.go
++++ b/internal/config/config_validation.go
+@@ -602,6 +602,11 @@ func (c *Config) checkHTTPTimeout() {
+ 	if c.Kiosk.HTTPTimeout <= 0 {
+ 		log.Warn("Invalid http_timeout value. Using default: 20", "http_timeout", c.Kiosk.HTTPTimeout)
+ 		c.Kiosk.HTTPTimeout = 20
++		return
++	}
++	if c.Kiosk.HTTPTimeout > 40 {
++		log.Warn("http_timeout exceeds safe route budget. Clamping to 40", "http_timeout", c.Kiosk.HTTPTimeout)
++		c.Kiosk.HTTPTimeout = 40
+ 	}
+ }
+ 
+diff --git a/internal/i18n/i18n.go b/internal/i18n/i18n.go
+index db2b18f7..948d8a52 100644
+--- a/internal/i18n/i18n.go
++++ b/internal/i18n/i18n.go
+@@ -54,6 +54,10 @@ func Init(systemLang string) error {
+ // T returns a translation function for the given locale.
+ func T() func(string) string {
+ 	return func(key string) string {
++		if localizer == nil || defaultLocalizer == nil {
++			return key
++		}
++
+ 		translated, err := localizer.Localize(&i18n.LocalizeConfig{
+ 			MessageID: key,
+ 		})
+diff --git a/internal/immich/immich.go b/internal/immich/immich.go
+index 8ff4e24d..3827b2af 100644
+--- a/internal/immich/immich.go
++++ b/internal/immich/immich.go
+@@ -431,3 +431,8 @@ func New(ctx context.Context, base config.Config) Asset {
+ 		ctx:           ctx,
+ 	}
+ }
++
++func (a Asset) WithContext(ctx context.Context) Asset {
++	a.ctx = ctx
++	return a
++}
+diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
+index c518d9a6..4876d4d0 100644
+--- a/internal/immich/immich_helpers.go
++++ b/internal/immich/immich_helpers.go
+@@ -220,20 +220,38 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
+ 
+ 			// Type assert to get more details about the error
+ 			if urlErr, ok := errors.AsType[*url.Error](resErr); ok {
+-				log.Error("Request failed",
++				fields := []any{
+ 					"attempt", attempts,
+ 					"URL", apiURL,
+ 					"method", method,
+ 					"operation", urlErr.Op,
+ 					"error_type", fmt.Sprintf("%T", urlErr.Err),
+-					"error", urlErr.Err)
++					"error", urlErr.Err,
++				}
++				switch {
++				case errors.Is(resErr, context.Canceled):
++					log.Debug("Request canceled", fields...)
++				case errors.Is(resErr, context.DeadlineExceeded):
++					log.Warn("Request timed out", fields...)
++				default:
++					log.Error("Request failed", fields...)
++				}
+ 			} else {
+-				log.Error("Request failed",
++				fields := []any{
+ 					"attempt", attempts,
+ 					"URL", apiURL,
+ 					"method", method,
+ 					"error_type", fmt.Sprintf("%T", resErr),
+-					"error", resErr)
++					"error", resErr,
++				}
++				switch {
++				case errors.Is(resErr, context.Canceled):
++					log.Debug("Request canceled", fields...)
++				case errors.Is(resErr, context.DeadlineExceeded):
++					log.Warn("Request timed out", fields...)
++				default:
++					log.Error("Request failed", fields...)
++				}
+ 			}
+ 			if !retryableOperation(method, apiURL) {
+ 				return responseBody, contentType, false, resErr
+diff --git a/internal/routes/routes.go b/internal/routes/routes.go
+index c2db007f..b22c3af3 100644
+--- a/internal/routes/routes.go
++++ b/internal/routes/routes.go
+@@ -105,7 +105,7 @@ func InitializeRequestData(c *echo.Context, baseConfig *config.Config) (*common.
+ }
+ 
+ func RenderError(c *echo.Context, err error, message string, refresh int) error {
+-	log.Error(message, "err", err)
++	logRequestOutcome(message, err)
+ 
+ 	retry := refresh > 5
+ 
+diff --git a/internal/routes/routes_asset.go b/internal/routes/routes_asset.go
+index d68438c8..118bd381 100644
+--- a/internal/routes/routes_asset.go
++++ b/internal/routes/routes_asset.go
+@@ -29,6 +29,7 @@ import (
+ const (
+ 	foregroundAssetTimeout  = 30 * time.Second
+ 	offlinePrefetchDeadline = 2 * time.Minute
++	routeHandlerTimeout     = 40 * time.Second
+ )
+ 
+ var ErrClientDimensionsRequired = errors.New("client dimensions are required when image optimization is enabled")
+@@ -44,18 +45,7 @@ func validateOptimizedClientDimensions(requestConfig config.Config) error {
+ }
+ 
+ func foregroundAssetContext(request context.Context, shutdown context.Context, httpTimeoutSeconds int) (context.Context, context.CancelFunc) {
+-	ctx, cancel := context.WithCancel(request)
+-	stop := context.AfterFunc(shutdown, cancel)
+-	deadline := foregroundAssetTimeout
+-	if httpTimeoutSeconds > 0 {
+-		deadline = min(deadline, time.Duration(httpTimeoutSeconds)*time.Second)
+-	}
+-	timed, timeoutCancel := context.WithTimeout(ctx, deadline)
+-	return timed, func() {
+-		stop()
+-		timeoutCancel()
+-		cancel()
+-	}
++	return requestContextWithShutdown(request, shutdown, httpTimeoutSeconds, foregroundAssetTimeout)
+ }
+ 
+ // NewAsset returns an echo.HandlerFunc that handles requests fogr new assets.
+@@ -102,7 +92,7 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 		if requestConfig.Kiosk.PreFetch {
+ 			if cachedViewData, found := fromCache(requestCtx.URL.String(), deviceID, requestConfig.SelectedUser, requestConfig.Duration, requestConfig.CacheDuration); found {
+ 				scheduleAssetPrefetch(com, requestData, requestCtx)
+-				go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, cachedViewData)
++				webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, cachedViewData)
+ 
+ 				return renderCachedViewData(c, cachedViewData, &requestConfig, requestID, deviceID, com.Secret())
+ 			}
+@@ -129,7 +119,7 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 			scheduleOfflinePrewarm(com, requestConfig, requestCtx, requestID, deviceID)
+ 		}
+ 
+-		go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, viewData)
++		webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, viewData)
+ 
+ 		if len(viewData.Assets) > 0 && requestConfig.ShowVideos && viewData.Assets[0].ImmichAsset.Type == immich.VideoType {
+ 			return Render(c, http.StatusOK, videoComponent.Video(viewData, com.Secret()))
+@@ -171,7 +161,10 @@ func Image(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 			"requestConfig", requestConfig.String(),
+ 		)
+ 
+-		immichAsset := immich.New(com.Context(), requestConfig)
++		routeCtx, cancel := requestContextWithShutdown(c.Request().Context(), com.Context(), requestConfig.Kiosk.HTTPTimeout, routeHandlerTimeout)
++		defer cancel()
++
++		immichAsset := immich.New(routeCtx, requestConfig)
+ 
+ 		switch layout {
+ 		case kiosk.PortraitOrientation:
+@@ -183,10 +176,13 @@ func Image(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 
+ 		fakeDeviceID := requestID
+ 
+-		img, err := processAsset(&immichAsset, requestConfig, requestID, fakeDeviceID, "", false)
++		img, err := processAsset(routeCtx, &immichAsset, requestConfig, requestID, fakeDeviceID, "", false)
+ 		if err != nil {
+ 			return err
+ 		}
++		if err := routeCtx.Err(); err != nil {
++			return err
++		}
+ 
+ 		// Optimize image if wanted
+ 		if requestConfig.OptimizeImages && requestConfig.ClientData.Width > 0 && requestConfig.ClientData.Height > 0 {
+@@ -194,12 +190,18 @@ func Image(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 			if err != nil {
+ 				return err
+ 			}
++			if err := routeCtx.Err(); err != nil {
++				return err
++			}
+ 		}
+ 
+ 		imgBytes, err := utils.ImageToBytes(img)
+ 		if err != nil {
+ 			return err
+ 		}
++		if err := routeCtx.Err(); err != nil {
++			return err
++		}
+ 
+ 		return c.Blob(http.StatusOK, kiosk.MimeTypeJpeg, imgBytes)
+ 	}
+@@ -257,7 +259,10 @@ func ImageWithID(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 			return echo.NewHTTPError(http.StatusBadRequest, "Image ID is required")
+ 		}
+ 
+-		immichAsset := immich.New(com.Context(), requestConfig)
++		routeCtx, cancel := requestContextWithShutdown(c.Request().Context(), com.Context(), requestConfig.Kiosk.HTTPTimeout, routeHandlerTimeout)
++		defer cancel()
++
++		immichAsset := immich.New(routeCtx, requestConfig)
+ 		immichAsset.ID = imageID
+ 
+ 		if requestConfig.UseOriginalImage {
+@@ -311,7 +316,10 @@ func TagAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 			return echo.NewHTTPError(http.StatusBadRequest, "Tag name is required")
+ 		}
+ 
+-		immichAsset := immich.New(com.Context(), requestConfig)
++		mutationCtx, cancel := requestContextWithShutdown(c.Request().Context(), com.Context(), requestConfig.Kiosk.HTTPTimeout, routeHandlerTimeout)
++		defer cancel()
++
++		immichAsset := immich.New(mutationCtx, requestConfig)
+ 		immichAsset.ID = assetID
+ 
+ 		tag := immich.Tag{
+@@ -321,6 +329,8 @@ func TagAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 		addTagErr := immichAsset.AddTag(tag)
+ 		if addTagErr != nil {
+ 			log.Error("adding tag", "assetID", assetID, "tagName", tagName, "error", addTagErr)
++			_ = immichAsset.RemoveAssetCache(requestData.DeviceID)
++			InvalidateOfflineAssets()
+ 			return echo.NewHTTPError(http.StatusInternalServerError, "unable to add tag")
+ 		}
+ 
+@@ -382,7 +392,10 @@ func LikeAsset(baseConfig *config.Config, com *common.Common, setAssetAsLiked bo
+ 			return Render(c, http.StatusOK, partials.LikeButton(assetID, user, true, true, true, com.Secret()))
+ 		}
+ 
+-		immichAsset := immich.New(com.Context(), requestConfig)
++		mutationCtx, cancel := requestContextWithShutdown(c.Request().Context(), com.Context(), requestConfig.Kiosk.HTTPTimeout, routeHandlerTimeout)
++		defer cancel()
++
++		immichAsset := immich.New(mutationCtx, requestConfig)
+ 		immichAsset.ID = assetID
+ 		infoErr := immichAsset.AssetInfo(requestID, requestData.DeviceID)
+ 		if infoErr != nil {
+@@ -426,11 +439,14 @@ func LikeAsset(baseConfig *config.Config, com *common.Common, setAssetAsLiked bo
+ 			actualLikeState := immichAsset.IsFavorite
+ 			reconcileConfig := requestConfig
+ 			reconcileConfig.Kiosk.Cache = false
+-			reconciled := immich.New(com.Context(), reconcileConfig)
++			reconcileCtx, reconcileCancel := shutdownContextWithTimeout(com.Context(), requestConfig.Kiosk.HTTPTimeout, 5*time.Second)
++			defer reconcileCancel()
++			reconciled := immich.New(reconcileCtx, reconcileConfig)
+ 			reconciled.ID = assetID
+ 			if reconcileErr := reconciled.AssetInfo(requestID, requestData.DeviceID); reconcileErr == nil {
+ 				actualLikeState = reconciled.IsFavorite
+ 			}
++			InvalidateOfflineAssets()
+ 			return Render(c, http.StatusConflict, partials.LikeButton(assetID, user, actualLikeState, false, false, com.Secret()))
+ 		}
+ 
+@@ -489,7 +505,10 @@ func HideAsset(baseConfig *config.Config, com *common.Common, hideAsset bool) ec
+ 			return Render(c, http.StatusOK, partials.HideButton(assetID, user, !hideAsset, true, com.Secret()))
+ 		}
+ 
+-		immichAsset := immich.New(com.Context(), requestConfig)
++		mutationCtx, cancel := requestContextWithShutdown(c.Request().Context(), com.Context(), requestConfig.Kiosk.HTTPTimeout, routeHandlerTimeout)
++		defer cancel()
++
++		immichAsset := immich.New(mutationCtx, requestConfig)
+ 		immichAsset.ID = assetID
+ 		infoErr := immichAsset.AssetInfo(requestID, requestData.DeviceID)
+ 		if infoErr != nil {
+@@ -532,10 +551,15 @@ func HideAsset(baseConfig *config.Config, com *common.Common, hideAsset bool) ec
+ 			// Tag and archive are independent actions. A partial failure cannot be
+ 			// represented by one toggle, so expose the freshly observed primary state
+ 			// but disable it until the operator resolves the inconsistency.
++			if slices.Contains(requestConfig.HideButtonAction, kiosk.HideButtonActionTag) {
++				_ = immichAsset.RemoveAssetCache(requestData.DeviceID)
++			}
+ 			actualHideState := immichAsset.IsArchived
+ 			reconcileConfig := requestConfig
+ 			reconcileConfig.Kiosk.Cache = false
+-			reconciled := immich.New(com.Context(), reconcileConfig)
++			reconcileCtx, reconcileCancel := shutdownContextWithTimeout(com.Context(), requestConfig.Kiosk.HTTPTimeout, 5*time.Second)
++			defer reconcileCancel()
++			reconciled := immich.New(reconcileCtx, reconcileConfig)
+ 			reconciled.ID = assetID
+ 			if reconcileErr := reconciled.AssetInfo(requestID, requestData.DeviceID); reconcileErr == nil {
+ 				actualHideState = reconciled.IsArchived
+@@ -543,9 +567,13 @@ func HideAsset(baseConfig *config.Config, com *common.Common, hideAsset bool) ec
+ 					actualHideState = assetHasTag(reconciled.Tags, tagName)
+ 				}
+ 			}
++			InvalidateOfflineAssets()
+ 			return Render(c, http.StatusConflict, partials.HideButton(assetID, user, actualHideState, false, com.Secret()))
+ 		}
+ 
++		if slices.Contains(requestConfig.HideButtonAction, kiosk.HideButtonActionTag) {
++			_ = immichAsset.RemoveAssetCache(requestData.DeviceID)
++		}
+ 		InvalidateOfflineAssets()
+ 		return Render(c, http.StatusOK, partials.HideButton(assetID, user, hideAsset, true, com.Secret()))
+ 	}
+@@ -610,7 +638,10 @@ func RatingAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 			return echo.NewHTTPError(http.StatusBadRequest, "Invalid rating")
+ 		}
+ 
+-		immichAsset := immich.New(com.Context(), requestConfig)
++		mutationCtx, cancel := requestContextWithShutdown(c.Request().Context(), com.Context(), requestConfig.Kiosk.HTTPTimeout, routeHandlerTimeout)
++		defer cancel()
++
++		immichAsset := immich.New(mutationCtx, requestConfig)
+ 		immichAsset.ID = assetID
+ 		infoErr := immichAsset.AssetInfo(requestID, requestData.DeviceID)
+ 		if infoErr != nil {
+@@ -622,7 +653,18 @@ func RatingAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 		ratingErr := immichAsset.UpdateRating(requestData.DeviceID, rating)
+ 		if ratingErr != nil {
+ 			log.Error("changing asset rating", "assetID", assetID, "error", ratingErr)
+-			return nil
++			actualRating := immichAsset.ExifInfo.Rating
++			reconcileConfig := requestConfig
++			reconcileConfig.Kiosk.Cache = false
++			reconcileCtx, reconcileCancel := shutdownContextWithTimeout(com.Context(), requestConfig.Kiosk.HTTPTimeout, 5*time.Second)
++			defer reconcileCancel()
++			reconciled := immich.New(reconcileCtx, reconcileConfig)
++			reconciled.ID = assetID
++			if reconcileErr := reconciled.AssetInfo(requestID, requestData.DeviceID); reconcileErr == nil {
++				actualRating = reconciled.ExifInfo.Rating
++			}
++			InvalidateOfflineAssets()
++			return Render(c, http.StatusConflict, partials.RatingStars(assetID, user, max(actualRating, 0), allowEdit, false))
+ 		}
+ 
+ 		InvalidateOfflineAssets()
+@@ -663,7 +705,10 @@ func ClearRatingAsset(baseConfig *config.Config, com *common.Common) echo.Handle
+ 			return echo.NewHTTPError(http.StatusBadRequest, "Asset ID is required")
+ 		}
+ 
+-		immichAsset := immich.New(com.Context(), requestConfig)
++		mutationCtx, cancel := requestContextWithShutdown(c.Request().Context(), com.Context(), requestConfig.Kiosk.HTTPTimeout, routeHandlerTimeout)
++		defer cancel()
++
++		immichAsset := immich.New(mutationCtx, requestConfig)
+ 		immichAsset.ID = assetID
+ 		infoErr := immichAsset.AssetInfo(requestID, requestData.DeviceID)
+ 		if infoErr != nil {
+@@ -682,7 +727,18 @@ func ClearRatingAsset(baseConfig *config.Config, com *common.Common) echo.Handle
+ 
+ 		if eg != nil {
+ 			log.Error("changing asset rating", "assetID", assetID, "error", eg)
+-			return nil
++			actualRating := immichAsset.ExifInfo.Rating
++			reconcileConfig := requestConfig
++			reconcileConfig.Kiosk.Cache = false
++			reconcileCtx, reconcileCancel := shutdownContextWithTimeout(com.Context(), requestConfig.Kiosk.HTTPTimeout, 5*time.Second)
++			defer reconcileCancel()
++			reconciled := immich.New(reconcileCtx, reconcileConfig)
++			reconciled.ID = assetID
++			if reconcileErr := reconciled.AssetInfo(requestID, requestData.DeviceID); reconcileErr == nil {
++				actualRating = reconciled.ExifInfo.Rating
++			}
++			InvalidateOfflineAssets()
++			return Render(c, http.StatusConflict, partials.RatingStars(assetID, user, max(actualRating, 0), allowEdit, false))
+ 		}
+ 
+ 		InvalidateOfflineAssets()
+diff --git a/internal/routes/routes_asset_helpers.go b/internal/routes/routes_asset_helpers.go
+index 48b81f16..c7c4df41 100644
+--- a/internal/routes/routes_asset_helpers.go
++++ b/internal/routes/routes_asset_helpers.go
+@@ -397,7 +397,7 @@ func fetchImagePreview(immichAsset *immich.Asset, isOriginal bool, requestID, de
+ 
+ // processAsset handles the entire process of selecting and retrieving an image.
+ // It returns the image bytes and an error if any step fails.
+-func processAsset(asset *immich.Asset, requestConfig config.Config, requestID string, deviceID string, requestURL string, isPrefetch bool) (image.Image, error) {
++func processAsset(ctx context.Context, asset *immich.Asset, requestConfig config.Config, requestID string, deviceID string, requestURL string, isPrefetch bool) (image.Image, error) {
+ 	var err error
+ 
+ 	assets, assetsErr := gatherAssetBuckets(asset, requestConfig, requestID, deviceID)
+@@ -406,6 +406,9 @@ func processAsset(asset *immich.Asset, requestConfig config.Config, requestID st
+ 	}
+ 
+ 	for range maxProcessAssetRetries {
++		if err := checkCanceled(ctx); err != nil {
++			return nil, err
++		}
+ 
+ 		useWeighting := requestConfig.Kiosk.AssetWeighting || requestConfig.CurationProfile != ""
+ 		pickedAsset := utils.PickRandomImageType(useWeighting, assets)
+@@ -420,7 +423,7 @@ func processAsset(asset *immich.Asset, requestConfig config.Config, requestID st
+ 		//  At this point immichAsset could be a video or an image
+ 		if requestConfig.ShowVideos && asset.Type == immich.VideoType {
+ 			var img image.Image
+-			img, err = processVideo(asset, requestConfig, requestID, deviceID, requestURL, isPrefetch)
++			img, err = processVideo(ctx, asset, requestConfig, requestID, deviceID, requestURL, isPrefetch)
+ 			if err == nil {
+ 				return img, nil
+ 			}
+@@ -432,7 +435,7 @@ func processAsset(asset *immich.Asset, requestConfig config.Config, requestID st
+ 			return nil, err
+ 		}
+ 
+-		return processImage(asset, requestConfig, requestID, deviceID, isPrefetch)
++		return processImage(ctx, asset, requestConfig, requestID, deviceID, isPrefetch)
+ 	}
+ 
+ 	return nil, fmt.Errorf("%w: max retries exceeded", err)
+@@ -440,19 +443,22 @@ func processAsset(asset *immich.Asset, requestConfig config.Config, requestID st
+ 
+ // processVideo handles retrieving and processing video assets.
+ // It downloads videos if needed and returns a preview image.
+-func processVideo(immichAsset *immich.Asset, requestConfig config.Config, requestID string, deviceID string, requestURL string, isPrefetch bool) (image.Image, error) {
++func processVideo(ctx context.Context, immichAsset *immich.Asset, requestConfig config.Config, requestID string, deviceID string, requestURL string, isPrefetch bool) (image.Image, error) {
+ 	// We need to see if the video has been downloaded
+ 	// if so, return nil
+ 	// if it hasn't been downloaded, download it and return a image
+ 
+ 	// Video is available
+ 	if VideoManager.IsDownloaded(immichAsset.ID) {
++		if err := checkCanceled(ctx); err != nil {
++			return nil, err
++		}
+ 		return fetchImagePreview(immichAsset, requestConfig.UseOriginalImage, requestID, deviceID, isPrefetch)
+ 	}
+ 
+ 	//  video is not available, is video downloading?
+ 	if !VideoManager.IsDownloading(immichAsset.ID) {
+-		go VideoManager.DownloadVideo(*immichAsset, requestConfig, deviceID, requestURL)
++		VideoManager.ScheduleDownload(*immichAsset, requestConfig, requestConfig.Kiosk.HTTPTimeout, deviceID, requestURL)
+ 	}
+ 
+ 	// video not ready yet; signal caller to pick another asset
+@@ -460,25 +466,26 @@ func processVideo(immichAsset *immich.Asset, requestConfig config.Config, reques
+ }
+ 
+ // processImage prepares an image asset for display by setting its source type and retrieving a preview
+-func processImage(immichAsset *immich.Asset, requestConfig config.Config, requestID string, deviceID string, isPrefetch bool) (image.Image, error) {
++func processImage(ctx context.Context, immichAsset *immich.Asset, requestConfig config.Config, requestID string, deviceID string, isPrefetch bool) (image.Image, error) {
+ 	if requestConfig.LivePhotos && immichAsset.LivePhotoVideoID != "" {
+-
+ 		isDownloaded := VideoManager.IsDownloaded(immichAsset.LivePhotoVideoID)
+ 		isDownloading := VideoManager.IsDownloading(immichAsset.LivePhotoVideoID)
+ 
+ 		if !isDownloaded && !isDownloading {
+-
+-			livePhoto := immich.New(context.TODO(), requestConfig)
+-			livePhoto.ID = immichAsset.LivePhotoVideoID
+-			err := livePhoto.AssetInfo(requestID, deviceID)
+-			if err != nil {
+-				return nil, err
+-			}
+-
+-			go VideoManager.DownloadVideo(livePhoto, requestConfig, deviceID, "")
++			VideoManager.ScheduleDownloadLookup(immichAsset.LivePhotoVideoID, func(ctx context.Context) (immich.Asset, error) {
++				livePhoto := immich.New(ctx, requestConfig)
++				livePhoto.ID = immichAsset.LivePhotoVideoID
++				if err := livePhoto.AssetInfo(requestID, deviceID); err != nil {
++					return immich.Asset{}, err
++				}
++				return livePhoto, nil
++			}, requestConfig, requestConfig.Kiosk.HTTPTimeout, deviceID, "")
+ 		}
+ 	}
+ 
++	if err := checkCanceled(ctx); err != nil {
++		return nil, err
++	}
+ 	return fetchImagePreview(immichAsset, requestConfig.UseOriginalImage, requestID, deviceID, isPrefetch)
+ }
+ 
+@@ -516,7 +523,7 @@ func shouldSkipBlur(config config.Config) bool {
+ 
+ // processBlurredImage applies a blur effect to the image if required by the configuration.
+ // It returns the blurred image as a base64 string and an error if any occurs.
+-func processBlurredImage(img image.Image, assetType immich.AssetType, config config.Config, requestID, deviceID string, isPrefetch bool) (string, error) {
++func processBlurredImage(ctx context.Context, img image.Image, assetType immich.AssetType, config config.Config, requestID, deviceID string, isPrefetch bool) (string, error) {
+ 	isImage := assetType == immich.ImageType
+ 	skipBlur := shouldSkipBlur(config)
+ 
+@@ -529,6 +536,9 @@ func processBlurredImage(img image.Image, assetType immich.AssetType, config con
+ 	if err != nil {
+ 		return "", fmt.Errorf("blurring image: %w", err)
+ 	}
++	if err := checkCanceled(ctx); err != nil {
++		return "", err
++	}
+ 
+ 	logImageProcessing(config.Kiosk.DebugVerbose, requestID, deviceID, isPrefetch, "Blurred", startTime)
+ 
+@@ -621,13 +631,19 @@ func processViewImageDataWithContext(ctx context.Context, requestConfig config.C
+ 	}
+ 
+ 	// Process asset
+-	img, err := processAsset(&immichAsset, requestConfig, metadata.requestID, metadata.deviceID, metadata.urlString, isPrefetch)
++	img, err := processAsset(ctx, &immichAsset, requestConfig, metadata.requestID, metadata.deviceID, metadata.urlString, isPrefetch)
+ 	if err != nil {
+ 		return common.ViewImageData{}, fmt.Errorf("selecting asset: %w", err)
+ 	}
++	if err := checkCanceled(ctx); err != nil {
++		return common.ViewImageData{}, err
++	}
+ 
+ 	// Handle face detection and smart zoom
+ 	img = handleFaceProcessing(img, &immichAsset, requestConfig, metadata)
++	if err := checkCanceled(ctx); err != nil {
++		return common.ViewImageData{}, err
++	}
+ 
+ 	// Optimize image if needed
+ 	if requestConfig.OptimizeImages {
+@@ -636,13 +652,16 @@ func processViewImageDataWithContext(ctx context.Context, requestConfig config.C
+ 			return common.ViewImageData{}, err
+ 		}
+ 	}
++	if err := checkCanceled(ctx); err != nil {
++		return common.ViewImageData{}, err
++	}
+ 
+ 	// Convert images to required formats
+ 	mimeType := kiosk.MimeTypeJpeg
+ 	if requestConfig.UseOriginalImage && slices.Contains(kiosk.SupportedImageMimeTypes, immichAsset.OriginalMimeType) {
+ 		mimeType = immichAsset.OriginalMimeType
+ 	}
+-	imgString, imgBlurString, dominantColor, err := convertImages(img, immichAsset.Type, mimeType, requestConfig, metadata, isPrefetch)
++	imgString, imgBlurString, dominantColor, err := convertImages(ctx, img, immichAsset.Type, mimeType, requestConfig, metadata, isPrefetch)
+ 	if err != nil {
+ 		return common.ViewImageData{}, err
+ 	}
+@@ -704,24 +723,36 @@ func handleFaceProcessing(img image.Image, asset *immich.Asset, config config.Co
+ 
+ // convertImages converts the provided image to base64 strings for both normal and blurred versions.
+ // Returns the base64 encoded normal image, blurred image, and any error that occurred.
+-func convertImages(img image.Image, assetType immich.AssetType, mimeType string, config config.Config, metadata requestMetadata, isPrefetch bool) (string, string, color.RGBA, error) {
++func convertImages(ctx context.Context, img image.Image, assetType immich.AssetType, mimeType string, config config.Config, metadata requestMetadata, isPrefetch bool) (string, string, color.RGBA, error) {
+ 	var dominantColor color.RGBA
+ 
++	if err := ctx.Err(); err != nil {
++		return "", "", dominantColor, err
++	}
+ 	imgString, err := imageToBase64(img, mimeType, config.Kiosk.DebugVerbose, metadata.requestID, metadata.deviceID, "Converted", isPrefetch)
+ 	if err != nil {
+ 		return "", "", dominantColor, err
+ 	}
++	if err := ctx.Err(); err != nil {
++		return "", "", dominantColor, err
++	}
+ 
+-	imgBlurString, err := processBlurredImage(img, assetType, config, metadata.requestID, metadata.deviceID, isPrefetch)
++	imgBlurString, err := processBlurredImage(ctx, img, assetType, config, metadata.requestID, metadata.deviceID, isPrefetch)
+ 	if err != nil {
+ 		return "", "", dominantColor, err
+ 	}
++	if err := ctx.Err(); err != nil {
++		return "", "", dominantColor, err
++	}
+ 
+ 	if config.Theme == kiosk.ThemeBubble || config.UseOfflineMode {
+ 		dominantColor, err = utils.ExtractDominantColor(img)
+ 		if err != nil {
+ 			return "", "", dominantColor, err
+ 		}
++		if err := ctx.Err(); err != nil {
++			return "", "", dominantColor, err
++		}
+ 	}
+ 
+ 	return imgString, imgBlurString, dominantColor, nil
+@@ -757,7 +788,7 @@ func assetPreFetch(ctx context.Context, common *common.Common, requestData *comm
+ 
+ 	viewDataToAdd, err := generateViewData(ctx, requestConfig, c, requestID, deviceID, true)
+ 	if err != nil {
+-		log.Error("generateViewData", "prefetch", true, "err", err)
++		logRequestOutcome("generateViewData", err, "prefetch", true)
+ 		return
+ 	}
+ 
+diff --git a/internal/routes/routes_cache.go b/internal/routes/routes_cache.go
+index 4aa75d53..9d7d38cc 100644
+--- a/internal/routes/routes_cache.go
++++ b/internal/routes/routes_cache.go
+@@ -31,7 +31,7 @@ func FlushCache(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 		log.Info("Cache after flush ", "cache_items", cache.ItemCount())
+ 
+ 		c.Response().Header().Set("HX-Refresh", "true")
+-		go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.CacheFlush, common.ViewData{})
++		webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.CacheFlush, common.ViewData{})
+ 		return c.NoContent(http.StatusNoContent)
+ 	}
+ }
+diff --git a/internal/routes/routes_context.go b/internal/routes/routes_context.go
+new file mode 100644
+index 00000000..9d99babc
+--- /dev/null
++++ b/internal/routes/routes_context.go
+@@ -0,0 +1,98 @@
++package routes
++
++import (
++	"context"
++	"errors"
++	"time"
++
++	"charm.land/log/v2"
++	"github.com/labstack/echo/v5"
++)
++
++const defaultRequestTimeout = 20 * time.Second
++
++func boundedRequestTimeout(httpTimeoutSeconds int, ceiling time.Duration) time.Duration {
++	timeout := time.Duration(httpTimeoutSeconds) * time.Second
++	switch {
++	case timeout <= 0:
++		timeout = defaultRequestTimeout
++	case timeout > ceiling:
++		timeout = ceiling
++	}
++	return timeout
++}
++
++func requestContextWithShutdown(request context.Context, shutdown context.Context, httpTimeoutSeconds int, ceiling time.Duration) (context.Context, context.CancelFunc) {
++	ctx, cancel := context.WithCancel(request)
++	stop := context.AfterFunc(shutdown, cancel)
++	timed, timeoutCancel := context.WithTimeout(ctx, boundedRequestTimeout(httpTimeoutSeconds, ceiling))
++	return timed, func() {
++		stop()
++		timeoutCancel()
++		cancel()
++	}
++}
++
++func shutdownContextWithTimeout(shutdown context.Context, httpTimeoutSeconds int, ceiling time.Duration) (context.Context, context.CancelFunc) {
++	return context.WithTimeout(shutdown, boundedRequestTimeout(httpTimeoutSeconds, ceiling))
++}
++
++func logRequestOutcome(message string, err error, attrs ...any) {
++	fields := append([]any{"err", err}, attrs...)
++	switch {
++	case errors.Is(err, context.Canceled):
++		log.Debug(message, fields...)
++	case errors.Is(err, context.DeadlineExceeded):
++		log.Warn(message, fields...)
++	default:
++		log.Error(message, fields...)
++	}
++}
++
++func requestCancellationOutcome(err error) (string, bool) {
++	switch {
++	case errors.Is(err, context.Canceled):
++		return "cancelled", true
++	case errors.Is(err, context.DeadlineExceeded):
++		return "timeout", true
++	default:
++		return "", false
++	}
++}
++
++func RequestCancellationObserver(next echo.HandlerFunc) echo.HandlerFunc {
++	return func(c *echo.Context) error {
++		method := c.Request().Method
++		route := c.Path()
++		if route == "" {
++			route = "unknown"
++		}
++
++		requestCtx := c.Request().Context()
++		started := time.Now()
++		handlerDone := make(chan struct{})
++		stop := context.AfterFunc(requestCtx, func() {
++			outcome, ok := requestCancellationOutcome(requestCtx.Err())
++			if !ok {
++				return
++			}
++			select {
++			case <-handlerDone:
++				return
++			default:
++			}
++			log.Warn("request context ended",
++				"method", method,
++				"route", route,
++				"outcome", outcome,
++				"elapsed", time.Since(started),
++			)
++		})
++		defer func() {
++			close(handlerDone)
++			stop()
++		}()
++
++		return next(c)
++	}
++}
+diff --git a/internal/routes/routes_offline.go b/internal/routes/routes_offline.go
+index 034abea8..d20c186f 100644
+--- a/internal/routes/routes_offline.go
++++ b/internal/routes/routes_offline.go
+@@ -209,11 +209,7 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 		}
+ 
+ 		if requestConfig.OfflineMode.ExpirationHours > 0 {
+-			timeout := time.Duration(requestConfig.Kiosk.HTTPTimeout) * time.Second
+-			if timeout <= 0 {
+-				timeout = 20 * time.Second
+-			}
+-			expirationCtx, cancel := context.WithTimeout(com.Context(), timeout)
++			expirationCtx, cancel := requestContextWithShutdown(c.Request().Context(), com.Context(), requestConfig.Kiosk.HTTPTimeout, routeHandlerTimeout)
+ 			expired, expiredErr := checkOfflineAssetsExpiration(expirationCtx, requestConfig.ImmichURL)
+ 			cancel()
+ 			if expiredErr != nil {
+@@ -253,7 +249,7 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 			viewData.Theme = requestConfig.Theme
+ 			viewData.Kiosk.DemoMode = requestConfig.Kiosk.DemoMode
+ 
+-			go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewOfflineAsset, viewData)
++			webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewOfflineAsset, viewData)
+ 
+ 			return Render(c, http.StatusOK, imageComponent.Image(viewData, com.Secret()))
+ 		}
+@@ -340,7 +336,7 @@ func downloadOfflineAssets(parent context.Context, requestConfig config.Config,
+ 
+ 				viewData, err := generateViewData(egCtx, requestConfig, requestCtx, requestID, deviceID, false)
+ 				if err != nil {
+-					log.Error("SaveOfflineAsset: generateViewData", "err", err)
++					logRequestOutcome("SaveOfflineAsset: generateViewData", err)
+ 					if errorCount.Add(1) > fileExistsTolerance*2 {
+ 						once.Do(func() {
+ 							log.Info("Too many errors — cancelling download",
+diff --git a/internal/routes/routes_previous_asset.go b/internal/routes/routes_previous_asset.go
+index 4b20d1d0..e32d9874 100644
+--- a/internal/routes/routes_previous_asset.go
++++ b/internal/routes/routes_previous_asset.go
+@@ -1,6 +1,7 @@
+ package routes
+ 
+ import (
++	"context"
+ 	"fmt"
+ 	"image/color"
+ 	"net/http"
+@@ -124,7 +125,9 @@ func historyAsset(baseConfig *config.Config, com *common.Common, c *echo.Context
+ 		Config:       requestConfig,
+ 	}
+ 
+-	g, _ := errgroup.WithContext(c.Request().Context())
++	historyCtx, cancel := requestContextWithShutdown(c.Request().Context(), com.Context(), requestConfig.Kiosk.HTTPTimeout, routeHandlerTimeout)
++	defer cancel()
++	g, gctx := errgroup.WithContext(historyCtx)
+ 
+ 	for i, assetID := range wantedAssets {
+ 
+@@ -135,7 +138,7 @@ func historyAsset(baseConfig *config.Config, com *common.Common, c *echo.Context
+ 
+ 		prevAssetsID := i
+ 
+-		g.Go(getHistoryAsset(requestConfig, com, requestID, deviceID, selectedUser, &viewData, prevAssetsID, currentAssetID))
++		g.Go(getHistoryAsset(gctx, requestConfig, requestID, deviceID, selectedUser, &viewData, prevAssetsID, currentAssetID))
+ 	}
+ 
+ 	// Wait for all goroutines to complete and check for errors
+@@ -150,7 +153,7 @@ func historyAsset(baseConfig *config.Config, com *common.Common, c *echo.Context
+ 		webhookEvent = webhooks.NextHistoryAsset
+ 	}
+ 
+-	go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhookEvent, viewData)
++	webhooks.Trigger(com.Context(), requestData, KioskVersion, webhookEvent, viewData)
+ 
+ 	s := transitionHandler(useNextImage, requestConfig.Transition)
+ 
+@@ -214,11 +217,11 @@ func splitTransition(transition string) (string, string, bool) {
+ // getHistoryAsset returns a function that processes a single asset from the navigation history.
+ // It fetches asset metadata, album details (if configured), and generates regular and blurred preview images.
+ // The function is intended to be run as a goroutine (via errgroup) for each asset in the history entry.
+-func getHistoryAsset(requestConfig config.Config, com *common.Common, requestID, deviceID, selectedUser string, viewData *common.ViewData, prevAssetsID int, currentAssetID string) func() error {
++func getHistoryAsset(ctx context.Context, requestConfig config.Config, requestID, deviceID, selectedUser string, viewData *common.ViewData, prevAssetsID int, currentAssetID string) func() error {
+ 	return func() error {
+ 		requestConfig.SelectedUser = selectedUser
+ 
+-		asset := immich.New(com.Context(), requestConfig)
++		asset := immich.New(ctx, requestConfig)
+ 		asset.ID = currentAssetID
+ 		if requestConfig.Memories {
+ 			if ok, memory, assetIndex := asset.IsMemory(); ok {
+@@ -280,7 +283,7 @@ func getHistoryAsset(requestConfig config.Config, com *common.Common, requestID,
+ 			return fmt.Errorf("converting image to base64: %w", base64Err)
+ 		}
+ 
+-		imgBlurString, blurErr := processBlurredImage(img, asset.Type, requestConfig, requestID, deviceID, false)
++		imgBlurString, blurErr := processBlurredImage(ctx, img, asset.Type, requestConfig, requestID, deviceID, false)
+ 		if blurErr != nil {
+ 			return fmt.Errorf("converting blurred image to base64: %w", blurErr)
+ 		}
+@@ -378,7 +381,7 @@ func historyAssetOffline(c *echo.Context, requestData *common.RouteRequestData,
+ 	viewData.Theme = requestConfig.Theme
+ 	viewData.Kiosk.DemoMode = requestConfig.Kiosk.DemoMode
+ 
+-	go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhookEvent, viewData)
++	webhooks.Trigger(com.Context(), requestData, KioskVersion, webhookEvent, viewData)
+ 
+ 	return Render(c, http.StatusOK, imageComponent.Image(viewData, com.Secret()))
+ }
+diff --git a/internal/routes/routes_url_builder.go b/internal/routes/routes_url_builder.go
+index 9d56ff0c..c42c376c 100644
+--- a/internal/routes/routes_url_builder.go
++++ b/internal/routes/routes_url_builder.go
+@@ -127,7 +127,10 @@ func URLBuilderPage(baseConfig *config.Config, com *common.Common, extended bool
+ 			"requestConfig", requestConfig.String(),
+ 		)
+ 
+-		im := immich.New(com.Context(), requestConfig)
++		routeCtx, cancel := requestContextWithShutdown(c.Request().Context(), com.Context(), requestConfig.Kiosk.HTTPTimeout, routeHandlerTimeout)
++		defer cancel()
++
++		im := immich.New(routeCtx, requestConfig)
+ 
+ 		ppl, pplErr := im.AllNamedPeople(requestID, deviceID)
+ 		if pplErr != nil {
+diff --git a/internal/routes/routes_webhooks.go b/internal/routes/routes_webhooks.go
+index 2e990c0b..0a4175f1 100644
+--- a/internal/routes/routes_webhooks.go
++++ b/internal/routes/routes_webhooks.go
+@@ -103,7 +103,9 @@ func Webhooks(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 				Config:       requestConfig,
+ 			}
+ 
+-			g, _ := errgroup.WithContext(c.Request().Context())
++			webhookCtx, cancel := requestContextWithShutdown(c.Request().Context(), com.Context(), requestConfig.Kiosk.HTTPTimeout, routeHandlerTimeout)
++			defer cancel()
++			g, gctx := errgroup.WithContext(webhookCtx)
+ 
+ 			for i, id := range prevImages {
+ 
+@@ -114,9 +116,10 @@ func Webhooks(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 
+ 				currentAssetID := strings.Replace(imageID, kiosk.HistoryIndicator, "", 1)
+ 
+-				g.Go(func(currentAssetID string) func() error {
++				assetIndex := i
++				g.Go(func(currentAssetID string, assetIndex int) func() error {
+ 					return func() error {
+-						image := immich.New(com.Context(), requestConfig)
++						image := immich.New(gctx, requestConfig)
+ 						image.ID = currentAssetID
+ 
+ 						assetInfoErr := image.AssetInfo(requestID, deviceID)
+@@ -125,12 +128,12 @@ func Webhooks(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 							return assetInfoErr
+ 						}
+ 
+-						viewData.Assets[i] = common.ViewImageData{
++						viewData.Assets[assetIndex] = common.ViewImageData{
+ 							ImmichAsset: image,
+ 						}
+ 						return nil
+ 					}
+-				}(currentAssetID))
++				}(currentAssetID, assetIndex))
+ 			}
+ 
+ 			// Wait for all goroutines to complete and check for errors
+@@ -140,7 +143,7 @@ func Webhooks(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 				return RenderError(c, errGroupWait, t("retrieving_image_data"), requestConfig.Duration)
+ 			}
+ 
+-			go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.WebhookEvent(kioskWebhookEvent), viewData)
++			webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.WebhookEvent(kioskWebhookEvent), viewData)
+ 
+ 			if kioskWebhookEvent == webhooks.UserWebhookTriggerInfoOverlay.String() {
+ 				return c.String(http.StatusOK, "Triggered")
+diff --git a/internal/templates/views/views_home.templ b/internal/templates/views/views_home.templ
+index c2c283d6..8787ed22 100644
+--- a/internal/templates/views/views_home.templ
++++ b/internal/templates/views/views_home.templ
+@@ -122,12 +122,13 @@ templ Home(viewData common.ViewData, secret string) {
+ }
+ 
+ func formatTimeout(timeout int) int {
+-
+ 	if timeout <= 0 {
+ 		return 0
+ 	}
+-
+-	return timeout * 100 * 4
++	if timeout > 40 {
++		timeout = 40
++	}
++	return timeout*1000 + 2000
+ }
+ 
+ // isIframeUrl checks if iframeURL is a valid URL. If not, it tries to read it as a file path.
+diff --git a/internal/video/video.go b/internal/video/video.go
+index 13378a62..ee48746b 100644
+--- a/internal/video/video.go
++++ b/internal/video/video.go
+@@ -21,6 +21,12 @@ import (
+ 
+ var customTempVideoDir = filepath.Join(os.TempDir(), "immich-kiosk", "videos")
+ 
++const (
++	defaultDownloadTimeout = 20 * time.Second
++	maxDownloadTimeout     = 40 * time.Second
++	defaultDownloadWorkers = 4
++)
++
+ // Video represents a downloaded video file and its metadata
+ type Video struct {
+ 	ID           string
+@@ -35,9 +41,14 @@ type Video struct {
+ type Manager struct {
+ 	DownloadQueue []string
+ 
+-	Videos []Video
+-	MaxAge time.Duration
+-	mu     sync.RWMutex
++	Videos            []Video
++	MaxAge            time.Duration
++	mu                sync.RWMutex
++	ctx               context.Context
++	downloadAdmission chan struct{}
++	downloadWorkers   sync.WaitGroup
++	admissionMu       sync.Mutex
++	draining          bool
+ }
+ 
+ // New creates a new VideoManager instance
+@@ -46,7 +57,10 @@ func New(ctx context.Context) (*Manager, error) {
+ 		return nil, err
+ 	}
+ 
+-	v := &Manager{}
++	v := &Manager{
++		downloadAdmission: make(chan struct{}, defaultDownloadWorkers),
++	}
++	v.ctx = ctx
+ 	cache.RegisterInvalidationHook(v.FlushCache)
+ 	go v.VideoCleanup(ctx)
+ 
+@@ -183,13 +197,13 @@ func (v *Manager) GetVideo(id string) (Video, error) {
+ 	return Video{}, errors.New("video not found")
+ }
+ 
+-// AddVideoToViewCache adds a downloaded video to the cache
+-func (v *Manager) AddVideoToViewCache(generation uint64, id, fileName, filePath, contentType string, requestConfig *config.Config, deviceID, requestURL string, immichAsset immich.Asset, imageData, imageBlurData string) {
++// AddVideoToViewCache adds a downloaded video to the cache.
++// It returns true when the video is committed to the in-memory store.
++func (v *Manager) AddVideoToViewCache(generation uint64, id, fileName, filePath, contentType string, requestConfig *config.Config, deviceID, requestURL string, immichAsset immich.Asset, imageData, imageBlurData string) bool {
+ 	v.mu.Lock()
+ 	defer v.mu.Unlock()
+ 	if !cache.IsCurrentGeneration(generation) {
+-		v.discardDownloadedVideo(fileName)
+-		return
++		return false
+ 	}
+ 
+ 	viewDataToAdd := common.ViewData{
+@@ -206,8 +220,7 @@ func (v *Manager) AddVideoToViewCache(generation uint64, id, fileName, filePath,
+ 
+ 	if requestURL != "" && requestConfig.Kiosk.Cache &&
+ 		!cache.AssetToCacheWithPositionIfGeneration(generation, viewDataToAdd, requestConfig, deviceID, requestURL, cache.PREPEND) {
+-		v.discardDownloadedVideo(fileName)
+-		return
++		return false
+ 	}
+ 
+ 	v.Videos = append(v.Videos, Video{
+@@ -218,6 +231,7 @@ func (v *Manager) AddVideoToViewCache(generation uint64, id, fileName, filePath,
+ 		ContentType:  contentType,
+ 		ImmichAsset:  immichAsset,
+ 	})
++	return true
+ }
+ 
+ func (v *Manager) discardDownloadedVideo(fileName string) {
+@@ -242,21 +256,128 @@ func (v *Manager) removeFromQueue(id string) {
+ 	}
+ }
+ 
+-// addToQueue adds a video ID to the download queue
+-func (v *Manager) addToQueue(id string) {
++func (v *Manager) reserveDownload(id string) bool {
+ 	v.mu.Lock()
+ 	defer v.mu.Unlock()
+ 
++	if slices.Contains(v.DownloadQueue, id) {
++		return false
++	}
++	for _, video := range v.Videos {
++		if video.ID == id {
++			return false
++		}
++	}
++
+ 	v.DownloadQueue = append(v.DownloadQueue, id)
++	return true
++}
++
++func (v *Manager) releaseReservedDownload(id string) {
++	v.removeFromQueue(id)
++}
++
++func (v *Manager) downloadTimeout(timeoutSeconds int) time.Duration {
++	timeout := time.Duration(timeoutSeconds) * time.Second
++	switch {
++	case timeout <= 0:
++		timeout = defaultDownloadTimeout
++	case timeout > maxDownloadTimeout:
++		timeout = maxDownloadTimeout
++	}
++	return timeout
++}
++
++func (v *Manager) ScheduleDownload(immichAsset immich.Asset, requestConfig config.Config, timeoutSeconds int, deviceID string, requestURL string) bool {
++	return v.scheduleDownload(immichAsset.ID, timeoutSeconds, func(ctx context.Context) {
++		v.downloadVideo(ctx, immichAsset.WithContext(ctx), requestConfig, deviceID, requestURL)
++	})
++}
++
++func (v *Manager) ScheduleDownloadLookup(videoID string, lookup func(context.Context) (immich.Asset, error), requestConfig config.Config, timeoutSeconds int, deviceID string, requestURL string) bool {
++	return v.scheduleDownload(videoID, timeoutSeconds, func(ctx context.Context) {
++		immichAsset, err := lookup(ctx)
++		if err != nil {
++			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
++				log.Debug("cancelled video lookup", "video", videoID, "err", err)
++				return
++			}
++			log.Error("getting video asset info", "video", videoID, "err", err)
++			return
++		}
++		v.downloadVideo(ctx, immichAsset, requestConfig, deviceID, requestURL)
++	})
++}
++
++func (v *Manager) scheduleDownload(videoID string, timeoutSeconds int, work func(context.Context)) bool {
++	v.admissionMu.Lock()
++	defer v.admissionMu.Unlock()
++
++	if v.ctx.Err() != nil {
++		return false
++	}
++	if v.draining {
++		return false
++	}
++	if !v.reserveDownload(videoID) {
++		return false
++	}
++	select {
++	case v.downloadAdmission <- struct{}{}:
++	default:
++		v.releaseReservedDownload(videoID)
++		return false
++	}
++	v.downloadWorkers.Add(1)
++
++	go func() {
++		defer v.downloadWorkers.Done()
++		defer func() { <-v.downloadAdmission }()
++		defer v.releaseReservedDownload(videoID)
++		ctx, cancel := context.WithTimeout(v.ctx, v.downloadTimeout(timeoutSeconds))
++		defer cancel()
++		work(ctx)
++	}()
++	return true
++}
++
++// DrainDownloads waits for admitted background download workers to exit.
++func (v *Manager) DrainDownloads(ctx context.Context) bool {
++	v.admissionMu.Lock()
++	v.draining = true
++	v.admissionMu.Unlock()
++
++	done := make(chan struct{})
++	go func() {
++		v.downloadWorkers.Wait()
++		close(done)
++	}()
++
++	select {
++	case <-done:
++		return true
++	case <-ctx.Done():
++		return false
++	}
+ }
+ 
+ // DownloadVideo downloads a video file and adds it to the cache
+-func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.Config, deviceID string, requestURL string) {
++func (v *Manager) DownloadVideo(ctx context.Context, immichAsset immich.Asset, requestConfig config.Config, deviceID string, requestURL string) {
++	if !v.reserveDownload(immichAsset.ID) {
++		return
++	}
++	defer v.releaseReservedDownload(immichAsset.ID)
++	v.downloadVideo(ctx, immichAsset, requestConfig, deviceID, requestURL)
++}
++
++func (v *Manager) downloadVideo(ctx context.Context, immichAsset immich.Asset, requestConfig config.Config, deviceID string, requestURL string) {
+ 	generation := cache.CurrentGeneration()
+ 	videoID := immichAsset.ID
+ 
+-	v.addToQueue(videoID)
+-	defer v.removeFromQueue(videoID)
++	if err := ctx.Err(); err != nil {
++		log.Debug("cancelled video download before start", "video", videoID, "err", err)
++		return
++	}
+ 
+ 	// Get the video data
+ 	videoBytes, contentType, videoBytesErr := immichAsset.Video()
+@@ -264,6 +385,10 @@ func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.C
+ 		log.Error("getting video", "err", videoBytesErr)
+ 		return
+ 	}
++	if err := ctx.Err(); err != nil {
++		log.Debug("cancelled video download after fetch", "video", videoID, "err", err)
++		return
++	}
+ 
+ 	ext := filepath.Ext(immichAsset.OriginalFileName)
+ 	if strings.HasPrefix(contentType, "video/") {
+@@ -284,6 +409,12 @@ func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.C
+ 		log.Error("Error creating video file", "err", videoFileErr)
+ 		return
+ 	}
++	committed := false
++	defer func() {
++		if !committed {
++			v.discardDownloadedVideo(filename)
++		}
++	}()
+ 	defer videoFile.Close()
+ 
+ 	// Write the video data to the file
+@@ -292,19 +423,22 @@ func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.C
+ 		log.Error("Error writing video file", "err", videoFileErr)
+ 		return
+ 	}
++	if err := ctx.Err(); err != nil {
++		log.Debug("cancelled video download after write", "video", videoID, "err", err)
++		return
++	}
+ 
+ 	var imageData, imageBlurData string
+ 
+-	defer func() {
+-		log.Debug(kiosk.DebugID+" Downloaded video", "path", filePath)
+-		v.AddVideoToViewCache(generation, videoID, filename, filePath, contentType, &requestConfig, deviceID, requestURL, immichAsset, imageData, imageBlurData)
+-	}()
+-
+ 	imgBytes, _, imgBytesErr := immichAsset.ImagePreview()
+ 	if imgBytesErr != nil {
+ 		log.Debug("Getting image preview for video", "id", videoID, "err", imgBytesErr)
+ 		return
+ 	}
++	if err := ctx.Err(); err != nil {
++		log.Debug("cancelled video preview", "video", videoID, "err", err)
++		return
++	}
+ 
+ 	img, _, imgErr := utils.BytesToImage(imgBytes, false)
+ 	if imgErr != nil {
+@@ -317,19 +451,38 @@ func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.C
+ 			log.Error("OptimizeImages", "err", imgErr)
+ 		}
+ 	}
++	if err := ctx.Err(); err != nil {
++		log.Debug("cancelled video optimize", "video", videoID, "err", err)
++		return
++	}
+ 
+ 	imgBlur, imgBlurErr := utils.BlurImage(img, requestConfig.BackgroundBlurAmount, false, 0, 0)
+ 	if imgBlurErr != nil {
+ 		log.Error("Getting image preview", "err", imgBlurErr)
+ 	}
++	if err := ctx.Err(); err != nil {
++		log.Debug("cancelled video blur", "video", videoID, "err", err)
++		return
++	}
+ 
+ 	imageData, imageDataErr := utils.ImageToBase64(img, kiosk.MimeTypeJpeg)
+ 	if imageDataErr != nil {
+ 		log.Error("Converting image to base64", "err", imageDataErr)
+ 	}
++	if err := ctx.Err(); err != nil {
++		log.Debug("cancelled video base64", "video", videoID, "err", err)
++		return
++	}
+ 
+ 	imageBlurData, err := utils.ImageToBase64(imgBlur, kiosk.MimeTypeJpeg)
+ 	if err != nil {
+ 		log.Error("Converting image to base64", "err", err)
+ 	}
++	if err := ctx.Err(); err != nil {
++		log.Debug("cancelled video blurred base64", "video", videoID, "err", err)
++		return
++	}
++
++	log.Debug(kiosk.DebugID+" Downloaded video", "path", filePath)
++	committed = v.AddVideoToViewCache(generation, videoID, filename, filePath, contentType, &requestConfig, deviceID, requestURL, immichAsset, imageData, imageBlurData)
+ }
+diff --git a/internal/webhooks/webhooks.go b/internal/webhooks/webhooks.go
+index ef7d869d..c97c5431 100644
+--- a/internal/webhooks/webhooks.go
++++ b/internal/webhooks/webhooks.go
+@@ -1,19 +1,12 @@
+ package webhooks
+ 
+ import (
+-	"bytes"
+ 	"context"
+-	"encoding/json"
+-	"net/http"
+-	"net/url"
+-	"sync"
+-	"time"
+ 
+ 	"charm.land/log/v2"
+ 	"github.com/damongolding/immich-kiosk/internal/common"
+ 	"github.com/damongolding/immich-kiosk/internal/config"
+ 	"github.com/damongolding/immich-kiosk/internal/immich"
+-	"github.com/damongolding/immich-kiosk/internal/utils"
+ )
+ 
+ type WebhookEvent string
+@@ -50,6 +43,7 @@ type Meta struct {
+ 
+ type Payload struct {
+ 	Meta       Meta           `json:"meta"`
++	EventID    string         `json:"eventID"`
+ 	Event      string         `json:"event"`
+ 	Timestamp  string         `json:"timestamp"`
+ 	DeviceID   string         `json:"deviceID"`
+@@ -59,23 +53,8 @@ type Payload struct {
+ 	AssetCount int            `json:"assetCount"`
+ }
+ 
+-// newHTTPClient creates a new HTTP client with the specified timeout duration.
+-// It returns a pointer to an http.Client configured with the given timeout.
+-// This client is used for making webhook requests to external endpoints.
+-func newHTTPClient(timeout time.Duration) *http.Client {
+-	return &http.Client{
+-		Timeout: timeout,
+-	}
+-}
+-
+-// Trigger handles sending webhook payloads to configured webhooks endpoints for specified events.
+-// It packages up the current request context, images, and config into a JSON payload and sends it
+-// to any webhook URLs configured for the event type.
+-//
+-// requestData contains the current request context including device ID and client name.
+-// kioskVersion is the current version string of the kiosk application.
+-// event specifies which webhook event (NewAsset, PreviousAsset, etc) triggered this webhook.
+-// viewData contains the images and other view context for the current request.
++// Trigger enqueues outbound webhook deliveries on a bounded dispatcher so event
++// delivery can outlive browser navigation but still drain during shutdown.
+ func Trigger(ctx context.Context, requestData *common.RouteRequestData, kioskVersion string, event WebhookEvent, viewData common.ViewData) {
+ 	if viewData.Kiosk.DemoMode {
+ 		return
+@@ -86,79 +65,5 @@ func Trigger(ctx context.Context, requestData *common.RouteRequestData, kioskVer
+ 		return
+ 	}
+ 
+-	requestConfig := requestData.RequestConfig
+-
+-	httpClient := newHTTPClient(time.Second * time.Duration(requestConfig.Kiosk.HTTPTimeout))
+-
+-	var wg sync.WaitGroup
+-	for _, userWebhook := range requestConfig.Webhooks {
+-		if userWebhook.Event != string(event) {
+-			continue
+-		}
+-
+-		if _, err := url.Parse(userWebhook.URL); err != nil {
+-			log.Error("invalid webhook URL", "url", userWebhook.URL, "err", err)
+-			continue
+-		}
+-
+-		images := make([]immich.Asset, len(viewData.Assets))
+-
+-		for i, image := range viewData.Assets {
+-			images[i] = image.ImmichAsset
+-		}
+-
+-		payload := Payload{
+-			Event:      string(event),
+-			Timestamp:  time.Now().Format(time.RFC3339),
+-			DeviceID:   requestData.DeviceID,
+-			ClientName: requestData.ClientName,
+-			AssetCount: len(images),
+-			Assets:     images,
+-			Config:     requestConfig,
+-			Meta: Meta{
+-				Source:  "immich-kiosk",
+-				Version: kioskVersion,
+-			},
+-		}
+-
+-		jsonPayload, err := json.Marshal(payload)
+-		if err != nil {
+-			log.Error("webhook marshal", "err", err)
+-			continue
+-		}
+-
+-		wg.Add(1)
+-		go func(webhook config.Webhook, payload []byte) {
+-			defer wg.Done()
+-
+-			req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, webhook.URL, bytes.NewBuffer(payload))
+-			if reqErr != nil {
+-				log.Error("webhook request creation", "err", reqErr)
+-				return
+-			}
+-
+-			req.Header.Set("Content-Type", "application/json")
+-
+-			if webhook.Secret != "" {
+-				signature := utils.CalculateSignature(webhook.Secret, string(payload))
+-				req.Header.Set("X-Kiosk-Signature-256", "sha256="+signature)
+-			}
+-
+-			resp, respErr := httpClient.Do(req)
+-			if respErr != nil {
+-				log.Error("webhook post", "err", respErr)
+-				return
+-			}
+-			defer resp.Body.Close()
+-
+-			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+-				log.Error("webhook request failed",
+-					"url", webhook.URL,
+-					"status", resp.StatusCode)
+-				return
+-			}
+-		}(userWebhook, jsonPayload)
+-	}
+-
+-	wg.Wait()
++	enqueueWebhook(ctx, requestData, kioskVersion, event, viewData)
+ }
+diff --git a/internal/webhooks/webhooks_dispatcher.go b/internal/webhooks/webhooks_dispatcher.go
+new file mode 100644
+index 00000000..98c8d967
+--- /dev/null
++++ b/internal/webhooks/webhooks_dispatcher.go
+@@ -0,0 +1,239 @@
++package webhooks
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"errors"
++	"net/http"
++	"net/url"
++	"sync"
++	"time"
++
++	"charm.land/log/v2"
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/damongolding/immich-kiosk/internal/utils"
++)
++
++const (
++	defaultWebhookDispatchCapacity = 4
++	defaultWebhookTimeout          = 20 * time.Second
++	maxWebhookTimeout              = 40 * time.Second
++)
++
++type dispatcher struct {
++	sem       chan struct{}
++	timeout   time.Duration
++	inFlight  sync.Map
++	workers   sync.WaitGroup
++	admission sync.Mutex
++	draining  bool
++}
++
++func newDispatcher(capacity int, timeout time.Duration) *dispatcher {
++	if capacity < 1 {
++		capacity = 1
++	}
++	if timeout <= 0 {
++		timeout = defaultWebhookTimeout
++	}
++	return &dispatcher{
++		sem:     make(chan struct{}, capacity),
++		timeout: timeout,
++	}
++}
++
++func (d *dispatcher) scheduleWithContext(parent context.Context, key string, work func(context.Context)) bool {
++	return d.scheduleWithContextAndTimeout(parent, key, d.timeout, work)
++}
++
++func (d *dispatcher) scheduleWithContextAndTimeout(parent context.Context, key string, timeout time.Duration, work func(context.Context)) bool {
++	d.admission.Lock()
++	defer d.admission.Unlock()
++
++	select {
++	case <-parent.Done():
++		return false
++	default:
++	}
++	if d.draining {
++		return false
++	}
++	if _, loaded := d.inFlight.LoadOrStore(key, struct{}{}); loaded {
++		return false
++	}
++	select {
++	case d.sem <- struct{}{}:
++	default:
++		d.inFlight.Delete(key)
++		return false
++	}
++
++	d.workers.Add(1)
++	go func() {
++		defer d.workers.Done()
++		defer func() {
++			<-d.sem
++			d.inFlight.Delete(key)
++		}()
++
++		if timeout <= 0 {
++			timeout = d.timeout
++		}
++		ctx, cancel := context.WithTimeout(parent, timeout)
++		defer cancel()
++		work(ctx)
++	}()
++
++	return true
++}
++
++func (d *dispatcher) drain(ctx context.Context) bool {
++	d.admission.Lock()
++	d.draining = true
++	d.admission.Unlock()
++
++	done := make(chan struct{})
++	go func() {
++		d.workers.Wait()
++		close(done)
++	}()
++
++	select {
++	case <-done:
++		return true
++	case <-ctx.Done():
++		return false
++	}
++}
++
++var webhookDispatcher = newDispatcher(defaultWebhookDispatchCapacity, defaultWebhookTimeout)
++
++func logDispatchOutcome(message string, err error, attrs ...any) {
++	fields := append([]any{"err", err}, attrs...)
++	switch {
++	case errors.Is(err, context.Canceled):
++		log.Debug(message, fields...)
++	case errors.Is(err, context.DeadlineExceeded):
++		log.Warn(message, fields...)
++	default:
++		log.Error(message, fields...)
++	}
++}
++
++func webhookTimeoutSeconds(httpTimeout int) time.Duration {
++	timeout := time.Duration(httpTimeout) * time.Second
++	switch {
++	case timeout <= 0:
++		return defaultWebhookTimeout
++	case timeout > maxWebhookTimeout:
++		return maxWebhookTimeout
++	default:
++		return timeout
++	}
++}
++
++func DrainWebhookDispatch(ctx context.Context) bool {
++	return webhookDispatcher.drain(ctx)
++}
++
++func enqueueWebhook(ctx context.Context, requestData *common.RouteRequestData, kioskVersion string, event WebhookEvent, viewData common.ViewData) {
++	requestConfig := requestData.RequestConfig
++	timeout := webhookTimeoutSeconds(requestConfig.Kiosk.HTTPTimeout)
++	eventID := utils.GenerateUUID()
++
++	for _, userWebhook := range requestConfig.Webhooks {
++		if userWebhook.Event != string(event) {
++			continue
++		}
++
++		parsedURL, err := url.Parse(userWebhook.URL)
++		if err != nil {
++			log.Error("invalid webhook URL", "event", event, "eventID", eventID, "err", err)
++			continue
++		}
++
++		images := make([]immich.Asset, len(viewData.Assets))
++		for i, image := range viewData.Assets {
++			images[i] = image.ImmichAsset
++		}
++
++		payload := Payload{
++			Meta: Meta{
++				Source:  "immich-kiosk",
++				Version: kioskVersion,
++			},
++			EventID:    eventID,
++			Event:      string(event),
++			Timestamp:  time.Now().Format(time.RFC3339),
++			DeviceID:   requestData.DeviceID,
++			ClientName: requestData.ClientName,
++			Assets:     images,
++			Config:     requestConfig,
++			AssetCount: len(images),
++		}
++
++		jsonPayload, err := json.Marshal(payload)
++		if err != nil {
++			log.Error("webhook marshal", "event", event, "eventID", eventID, "err", err)
++			continue
++		}
++
++		key := eventID + "|" + userWebhook.URL
++		log.Debug("webhook dispatch admission",
++			"event", event,
++			"eventID", eventID,
++			"host", parsedURL.Host,
++			"timeout", timeout,
++		)
++		if !webhookDispatcher.scheduleWithContextAndTimeout(ctx, key, timeout, func(workerCtx context.Context) {
++			deliverWebhook(workerCtx, userWebhook, parsedURL, jsonPayload, event, eventID)
++		}) {
++			log.Warn("webhook dispatch rejected",
++				"event", event,
++				"eventID", eventID,
++				"host", parsedURL.Host,
++			)
++		}
++	}
++}
++
++func deliverWebhook(ctx context.Context, webhook config.Webhook, parsedURL *url.URL, payload []byte, event WebhookEvent, eventID string) {
++	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook.URL, bytes.NewBuffer(payload))
++	if err != nil {
++		log.Error("webhook request creation", "event", event, "eventID", eventID, "host", parsedURL.Host, "err", err)
++		return
++	}
++
++	req.Header.Set("Content-Type", "application/json")
++	req.Header.Set("X-Kiosk-Event-ID", eventID)
++	if webhook.Secret != "" {
++		signature := utils.CalculateSignature(webhook.Secret, string(payload))
++		req.Header.Set("X-Kiosk-Signature-256", "sha256="+signature)
++	}
++
++	resp, err := (&http.Client{}).Do(req)
++	if err != nil {
++		logDispatchOutcome("webhook post", err, "event", event, "eventID", eventID, "host", parsedURL.Host)
++		return
++	}
++	defer resp.Body.Close()
++
++	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
++		log.Error("webhook request failed",
++			"event", event,
++			"eventID", eventID,
++			"host", parsedURL.Host,
++			"status", resp.StatusCode,
++		)
++		return
++	}
++
++	log.Debug("webhook dispatched",
++		"event", event,
++		"eventID", eventID,
++		"host", parsedURL.Host,
++	)
++}
+diff --git a/main.go b/main.go
+index abfdfb50..21ad4494 100644
+--- a/main.go
++++ b/main.go
+@@ -35,6 +35,7 @@ import (
+ 	"github.com/damongolding/immich-kiosk/internal/utils"
+ 	"github.com/damongolding/immich-kiosk/internal/video"
+ 	"github.com/damongolding/immich-kiosk/internal/weather"
++	"github.com/damongolding/immich-kiosk/internal/webhooks"
+ )
+ 
+ const (
+@@ -253,7 +254,25 @@ func main() {
+ 	// Shutting down, clean up. Prefetch derives from c.Context(), so cancellation
+ 	// above requests worker exit before temporary assets are removed.
+ 	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+-	routes.DrainAssetPrefetch(drainCtx)
++	prefetchDone := make(chan bool, 1)
++	webhooksDone := make(chan bool, 1)
++	videoDone := make(chan bool, 1)
++	go func() { prefetchDone <- routes.DrainAssetPrefetch(drainCtx) }()
++	go func() { webhooksDone <- webhooks.DrainWebhookDispatch(drainCtx) }()
++	if videoManager != nil {
++		go func() { videoDone <- videoManager.DrainDownloads(drainCtx) }()
++	} else {
++		videoDone <- true
++	}
++	if !<-prefetchDone {
++		log.Warn("asset prefetch drain timed out")
++	}
++	if !<-webhooksDone {
++		log.Warn("webhook drain timed out")
++	}
++	if !<-videoDone {
++		log.Warn("video download drain timed out")
++	}
+ 	drainCancel()
+ 	video.DeleteTmpDir()
+ 
+@@ -272,6 +291,7 @@ func addMiddleware(e *echo.Echo, baseConfig *config.Config) {
+ 	e.Pre(NoCacheMiddleware)
+ 	e.Use(middleware.Recover())
+ 	e.Use(middleware.RequestID())
++	e.Use(routes.RequestCancellationObserver)
+ 
+ 	e.Use(middleware.GzipWithConfig(middleware.GzipConfig{
+ 		Level: 6,

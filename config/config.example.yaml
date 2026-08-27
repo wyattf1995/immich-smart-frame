@@ -2,6 +2,9 @@
 # people. The Immich URL and API key are supplied by Docker Compose.
 
 duration: 45
+# Keep backend caches and date candidate pools alive for an hour instead of
+# the 5-minute floor, so recently served photos stay out of the immediate mix.
+cache_duration: 3600
 disable_screensaver: true
 optimize_images: true
 use_gpu: true
@@ -49,6 +52,15 @@ image_location:
   hide_state: false
   hide_country: true
 
+# Persist a bounded fallback pool. It is refreshed single-flight after live
+# selections and served automatically when Immich becomes unavailable.
+offline_mode:
+  enabled: true
+  number_of_assets: 100
+  parallel_downloads: 1
+  max_size: 750MB
+  expiration_hours: 168
+
 kiosk:
   port: 3000
   behind_proxy: false
@@ -56,7 +68,14 @@ kiosk:
   disable_config_endpoint: true
   enable_url_builder: false
   watch_config: true
-  fetched_assets_size: 1000
+  # 150 bounds decoded candidate-pool memory while retaining ample variety.
+  fetched_assets_size: 150
+  # Widen a last-N date window when a refill returns fewer candidates than
+  # this floor (0 disables). 120 suits a 150-asset fetch size.
+  date_pool_minimum: 120
+  # Pick a random capture hour before picking a photo inside it, so one
+  # burst shoot cannot monopolize a date pool.
+  date_pool_session_spread: true
   http_timeout: 20
   cache: true
   prefetch: true

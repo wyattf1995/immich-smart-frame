@@ -11,27 +11,87 @@ views:
       - type: grid
         cards:
           - type: heading
-            heading: At a glance
-            icon: mdi:home-outline
+            heading: Today
+            icon: mdi:calendar-today
           - type: markdown
             content: |-
-              # {{ states('sensor.time') }} · {{ as_timestamp(states('sensor.date')) | timestamp_custom('%a, %b %d') }}
-              **🌅 Sunrise {{ as_timestamp(states('sensor.sun_next_rising')) | timestamp_custom('%-I:%M %p') }} · 🌇 Sunset {{ as_timestamp(states('sensor.sun_next_setting')) | timestamp_custom('%-I:%M %p') }}**
+              {% set date_value = as_datetime(states('sensor.date'), none) %}
+              {% if has_value('sensor.time') and has_value('sensor.date') and date_value %}
+              # {{ states('sensor.time') }}
+              ## {{ as_timestamp(date_value) | timestamp_custom('%A, %B %-d') }}
+              {% else %}
+              # Time and date are temporarily unavailable
+              {% endif %}
             grid_options:
               columns: 12
               rows: auto
+          - type: heading
+            heading: Up next
+            icon: mdi:calendar-clock
+          - type: markdown
+            content: |-
+              {% set calendars = [
+                {'entity': 'calendar.family', 'name': 'Family'},
+                {'entity': 'calendar.personal', 'name': 'Personal'},
+                {'entity': 'calendar.birthdays', 'name': 'Birthdays'},
+                {'entity': 'calendar.holidays', 'name': 'Holidays'}
+              ] %}
+              {% set agenda = namespace(events=[], unavailable=[]) %}
+              {% for calendar in calendars %}
+                {% if has_value(calendar.entity) %}
+                  {% set message = state_attr(calendar.entity, 'message') %}
+                  {% set start_time = state_attr(calendar.entity, 'start_time') %}
+                  {% set all_day = state_attr(calendar.entity, 'all_day') | default(false, true) %}
+                  {% set location = state_attr(calendar.entity, 'location') %}
+                  {% if message and start_time %}
+                    {% set start = as_datetime(start_time, none) %}
+                    {% if start %}
+                      {% set agenda.events = agenda.events + [{'calendar': calendar.name, 'message': message, 'start': start, 'all_day': all_day, 'location': location}] %}
+                    {% endif %}
+                  {% endif %}
+                {% else %}
+                  {% set agenda.unavailable = agenda.unavailable + [calendar.name] %}
+                {% endif %}
+              {% endfor %}
+              {% set events = agenda.events | sort(attribute='start') %}
+              {% if events %}
+                {% for event in events[:4] %}
+                  {% set event_year = as_timestamp(event.start) | timestamp_custom('%Y') | int %}
+                  {% set date_format = '%a, %b %-d, %Y' if event_year != now().year else '%a, %b %-d' %}
+                  {% set event_date = as_timestamp(event.start) | timestamp_custom(date_format) %}
+                  {% if event.all_day %}
+              - **{{ event_date }} · All day** — {{ event.message }} · {{ event.calendar }}{% if event.location %} · {{ event.location }}{% endif %}
+                  {% else %}
+              - **{{ event_date }} · {{ as_timestamp(event.start) | timestamp_custom('%-I:%M %p') }}** — {{ event.message }} · {{ event.calendar }}{% if event.location %} · {{ event.location }}{% endif %}
+                  {% endif %}
+                {% endfor %}
+              {% else %}
+                {% if agenda.unavailable | length == calendars | length %}
+              _Calendar data is temporarily unavailable_
+                {% else %}
+              _No upcoming events_
+                {% endif %}
+              {% endif %}
+              {% if agenda.unavailable %}
+              _Unavailable calendars: {{ agenda.unavailable | join(', ') }}_
+              {% endif %}
+            grid_options:
+              columns: 12
+              rows: auto
+      - type: grid
+        cards:
+          - type: heading
+            heading: Home status
+            icon: mdi:home-heart
           - type: tile
             entity: binary_sensor.internet_status
             name: Internet
             icon: mdi:web
             tap_action:
-              action: more-info
+              action: none
             grid_options:
               columns: 12
               rows: 1
-          - type: heading
-            heading: Home status
-            icon: mdi:home-heart
           - type: glance
             columns: 3
             show_name: true
@@ -40,10 +100,16 @@ views:
             entities:
               - entity: vacuum.robot_cleaner
                 name: Robot
+                tap_action:
+                  action: none
               - entity: sensor.robot_battery
                 name: Battery
+                tap_action:
+                  action: none
               - entity: sensor.robot_cleaning_progress
                 name: Cleaning
+                tap_action:
+                  action: none
             grid_options:
               columns: 12
               rows: auto
@@ -52,18 +118,70 @@ views:
             name: Last HA backup
             icon: mdi:backup-restore
             tap_action:
-              action: more-info
+              action: none
             grid_options:
               columns: 12
               rows: 1
+    animated_background: weather
+
+  - title: Weather
+    path: weather
+    icon: mdi:weather-partly-cloudy
+    type: sections
+    max_columns: 2
+    sections:
       - type: grid
         cards:
           - type: heading
-            heading: Weather
-            icon: mdi:weather-partly-cloudy
+            heading: Current conditions
+            icon: mdi:home-thermometer-outline
           - type: weather-forecast
             entity: weather.home
             show_current: true
+            show_forecast: false
+            grid_options:
+              columns: 12
+              rows: auto
+          - type: markdown
+            content: |-
+              {% set humidity = state_attr('weather.home', 'humidity') %}
+              {% set wind = state_attr('weather.home', 'wind_speed') %}
+              {% set wind_unit = state_attr('weather.home', 'wind_speed_unit') or '' %}
+              {% set bearing = state_attr('weather.home', 'wind_bearing') %}
+              {% set pressure = state_attr('weather.home', 'pressure') %}
+              {% set pressure_unit = state_attr('weather.home', 'pressure_unit') or '' %}
+              {% set apparent = state_attr('weather.home', 'apparent_temperature') %}
+              {% set temperature_unit = state_attr('weather.home', 'temperature_unit') or '' %}
+              {% set visibility = state_attr('weather.home', 'visibility') %}
+              {% set visibility_unit = state_attr('weather.home', 'visibility_unit') or '' %}
+              {% set sun_ready = has_value('sensor.sun_next_rising') and has_value('sensor.sun_next_setting') %}
+
+              | Humidity | Wind | Pressure |
+              | :--- | :--- | :--- |
+              | **{{ humidity ~ '%' if humidity is not none else '—' }}** | **{% if wind is not none %}{{ wind }} {{ wind_unit }}{% if bearing is not none %} ({{ bearing }}){% endif %}{% else %}—{% endif %}** | **{{ pressure ~ ' ' ~ pressure_unit if pressure is not none else '—' }}** |
+
+              | Feels like | Visibility | Sun |
+              | :--- | :--- | :--- |
+              | **{{ apparent ~ temperature_unit if apparent is not none else '—' }}** | **{{ visibility ~ ' ' ~ visibility_unit if visibility is not none else '—' }}** | **{% if sun_ready %}🌅 {{ as_timestamp(states('sensor.sun_next_rising')) | timestamp_custom('%-I:%M %p') }} · 🌇 {{ as_timestamp(states('sensor.sun_next_setting')) | timestamp_custom('%-I:%M %p') }}{% else %}Sun times unavailable{% endif %}** |
+            grid_options:
+              columns: 12
+              rows: auto
+          - type: history-graph
+            title: Past 24 hours
+            hours_to_show: 24
+            entities:
+              - weather.home
+            grid_options:
+              columns: 12
+              rows: auto
+      - type: grid
+        cards:
+          - type: heading
+            heading: Daily forecast
+            icon: mdi:calendar-week
+          - type: weather-forecast
+            entity: weather.home
+            show_current: false
             show_forecast: true
             forecast_type: daily
             grid_options:
@@ -77,6 +195,17 @@ views:
             show_current: false
             show_forecast: true
             forecast_type: hourly
+            forecast_slots: 12
+            grid_options:
+              columns: 12
+              rows: auto
+          - type: logbook
+            title: Recent condition changes
+            target:
+              entity_id:
+                - weather.home
+            hours_to_show: 24
+            name_detail: none
             grid_options:
               columns: 12
               rows: auto
@@ -100,7 +229,7 @@ views:
                 fit_mode: contain
                 aspect_ratio: "16:9"
                 tap_action:
-                  action: more-info
+                  action: none
               - type: picture-entity
                 entity: camera.camera_2
                 name: Camera 2
@@ -110,7 +239,7 @@ views:
                 fit_mode: contain
                 aspect_ratio: "16:9"
                 tap_action:
-                  action: more-info
+                  action: none
           - type: vertical-stack
             cards:
               - type: picture-entity
@@ -122,7 +251,7 @@ views:
                 fit_mode: contain
                 aspect_ratio: "16:9"
                 tap_action:
-                  action: more-info
+                  action: none
               - type: picture-entity
                 entity: camera.camera_4
                 name: Camera 4
@@ -132,7 +261,7 @@ views:
                 fit_mode: contain
                 aspect_ratio: "16:9"
                 tap_action:
-                  action: more-info
+                  action: none
     animated_background: neutral
 
   - title: Calendar
@@ -150,29 +279,29 @@ views:
           - calendar.holidays
 
 animated_background:
-  default_url: /local/wallpanel-weather/neutral.png
+  default_url: /local/wallpanel-weather/neutral.png?v=9fb6f0f237b4
   transparent_panel: true
   groups:
     - name: weather
       config:
         entity: weather.home
-        default_url: /local/wallpanel-weather/cloudy.mp4
+        default_url: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
         state_url:
-          clear-night: /local/wallpanel-weather/clear-night.mp4
-          cloudy: /local/wallpanel-weather/cloudy.mp4
-          exceptional: /local/wallpanel-weather/sunny.mp4
-          fog: /local/wallpanel-weather/cloudy.mp4
-          hail: /local/wallpanel-weather/rainy.mp4
-          lightning: /local/wallpanel-weather/rainy.mp4
-          lightning-rainy: /local/wallpanel-weather/rainy.mp4
-          partlycloudy: /local/wallpanel-weather/cloudy.mp4
-          pouring: /local/wallpanel-weather/rainy.mp4
-          rainy: /local/wallpanel-weather/rainy.mp4
-          snowy: /local/wallpanel-weather/cloudy.mp4
-          snowy-rainy: /local/wallpanel-weather/rainy.mp4
-          sunny: /local/wallpanel-weather/sunny.mp4
-          windy: /local/wallpanel-weather/sunny.mp4
-          windy-variant: /local/wallpanel-weather/cloudy.mp4
+          clear-night: /local/wallpanel-weather/clear-night.mp4?v=9fb6f0f237b4
+          cloudy: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
+          exceptional: /local/wallpanel-weather/sunny.mp4?v=9fb6f0f237b4
+          fog: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
+          hail: /local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4
+          lightning: /local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4
+          lightning-rainy: /local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4
+          partlycloudy: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
+          pouring: /local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4
+          rainy: /local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4
+          snowy: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
+          snowy-rainy: /local/wallpanel-weather/rainy.mp4?v=9fb6f0f237b4
+          sunny: /local/wallpanel-weather/sunny.mp4?v=9fb6f0f237b4
+          windy: /local/wallpanel-weather/sunny.mp4?v=9fb6f0f237b4
+          windy-variant: /local/wallpanel-weather/cloudy.mp4?v=9fb6f0f237b4
     - name: neutral
       config:
-        default_url: /local/wallpanel-weather/neutral.png
+        default_url: /local/wallpanel-weather/neutral.png?v=9fb6f0f237b4

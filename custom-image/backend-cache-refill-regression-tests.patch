@@ -1,0 +1,102 @@
+diff --git a/internal/cache/cache_backend_regression_test.go b/internal/cache/cache_backend_regression_test.go
+index 1ed9b3d..74fdc53 100644
+--- a/internal/cache/cache_backend_regression_test.go
++++ b/internal/cache/cache_backend_regression_test.go
+@@ -51,0 +52,23 @@ func TestOldGenerationCannotRefillAfterInvalidation(t *testing.T) {
++func TestConditionalUpdateRejectsOldGeneration(t *testing.T) {
++	Flush()
++	oldGeneration := CurrentGeneration()
++	InvalidateAll()
++	if UpdateIfGeneration(oldGeneration, "stale-view", func(values []string) []string {
++		return append(values, "stale")
++	}, 60, 60) {
++		t.Fatal("stale generation view append was accepted")
++	}
++	if _, found := Get("stale-view"); found {
++		t.Fatal("stale view append repopulated the cache")
++	}
++}
++
++func TestConditionalVideoPrependRejectsOldGeneration(t *testing.T) {
++	Flush()
++	oldGeneration := CurrentGeneration()
++	InvalidateAll()
++	if AssetToCacheWithPositionIfGeneration(oldGeneration, "stale-video", &config.Config{Kiosk: config.KioskSettings{Cache: true}}, "device", "url", PREPEND) {
++		t.Fatal("stale generation video prepend was accepted")
++	}
++}
++
+diff --git a/internal/immich/immich_cache_backend_regression_test.go b/internal/immich/immich_cache_backend_regression_test.go
+index b7ae8b4..d65d865 100644
+--- a/internal/immich/immich_cache_backend_regression_test.go
++++ b/internal/immich/immich_cache_backend_regression_test.go
+@@ -6,0 +7 @@ import (
++	"net/url"
+@@ -32,0 +34 @@ func TestMemoriesPastDaysDoesNotPopulateCacheWhenDisabled(t *testing.T) {
++	cache.Initialize()
+@@ -48,0 +51,31 @@ func TestMemoriesPastDaysDoesNotPopulateCacheWhenDisabled(t *testing.T) {
++func TestPaginatedFetchDoesNotRefillAfterInvalidation(t *testing.T) {
++	cache.Initialize()
++	cache.Flush()
++	started := make(chan struct{})
++	release := make(chan struct{})
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		close(started)
++		<-release
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = w.Write([]byte(`{"assets":{"items":[],"nextPage":""}}`))
++	}))
++	defer server.Close()
++
++	asset := New(context.Background(), config.Config{
++		ImmichURL: server.URL,
++		Kiosk:     config.KioskSettings{Cache: true},
++	})
++	u, err := url.Parse(server.URL)
++	require.NoError(t, err)
++	result := make(chan error, 1)
++	go func() {
++		_, callErr := asset.fetchPaginatedMetadataWithCache(u, SearchRandomBody{Page: 1, Size: 1}, "request", "device")
++		result <- callErr
++	}()
++	<-started
++	cache.InvalidateAll()
++	close(release)
++	require.NoError(t, <-result)
++	require.Zero(t, cache.ItemCount(), "pre-invalidation aggregate response was cached")
++}
++
+diff --git a/internal/video/video_cache_backend_regression_test.go b/internal/video/video_cache_backend_regression_test.go
+--- a/internal/video/video_cache_backend_regression_test.go
++++ b/internal/video/video_cache_backend_regression_test.go
+@@ -5,0 +6,4 @@ import (
++
++	"github.com/damongolding/immich-kiosk/internal/cache"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/immich"
+@@ -17,0 +22,25 @@ func TestGetVideoPersistsLastAccessed(t *testing.T) {
++func TestAddVideoRejectsStaleDownloadGeneration(t *testing.T) {
++	cache.Initialize()
++	cache.Flush()
++	t.Cleanup(cache.Flush)
++
++	manager := &Manager{}
++	staleGeneration := cache.CurrentGeneration()
++	cache.InvalidateAll()
++	manager.AddVideoToViewCache(
++		staleGeneration,
++		"video",
++		"",
++		"",
++		"video/mp4",
++		&config.Config{Kiosk: config.KioskSettings{Cache: true}},
++		"device",
++		"/view",
++		immich.Asset{ID: "video"},
++		"",
++		"",
++	)
++	if len(manager.Videos) != 0 {
++		t.Fatal("video downloaded before invalidation was retained")
++	}
++}

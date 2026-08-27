@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="frame_safe_inset">48dp</dimen>
+    <dimen name="frame_hud_width">312dp</dimen>
+    <dimen name="frame_hud_min_height">76dp</dimen>
+    <dimen name="frame_hud_padding_horizontal">24dp</dimen>
+    <dimen name="frame_hud_padding_vertical">12dp</dimen>
+    <dimen name="frame_corner_radius">18dp</dimen>
+</resources>

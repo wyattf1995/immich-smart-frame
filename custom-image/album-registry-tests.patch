@@ -1,0 +1,47 @@
+diff --git a/internal/immich/immich_album_registry_test.go b/internal/immich/immich_album_registry_test.go
+new file mode 100644
+index 0000000..d4d4d4d
+--- /dev/null
++++ b/internal/immich/immich_album_registry_test.go
+@@ -0,0 +1,41 @@
++package immich
++
++import (
++	"testing"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/stretchr/testify/require"
++)
++
++func TestAlbumRestrictionRegistryBoundsAndExpiresEntries(t *testing.T) {
++	now := time.Unix(2_000, 0)
++	registry := newAlbumRestrictionRegistry(2, time.Minute, func() time.Time { return now })
++	requestConfig := func(excluded string) config.Config {
++		return config.Config{ExcludedAlbums: []string{excluded}}
++	}
++
++	first := registry.get(requestConfig("one"))
++	require.Contains(t, first.excluded, "one")
++	second := registry.get(requestConfig("two"))
++	require.Contains(t, second.excluded, "two")
++	third := registry.get(requestConfig("three"))
++	require.Contains(t, third.excluded, "three")
++	require.LessOrEqual(t, registry.size(), 2)
++
++	now = now.Add(2 * time.Minute)
++	fourth := registry.get(requestConfig("four"))
++	require.Contains(t, fourth.excluded, "four")
++	require.Equal(t, 1, registry.size(), "expired restrictions should be pruned during the next cold insert")
++}
++
++func BenchmarkWarmAlbumRestrictionRegistry(b *testing.B) {
++	registry := newAlbumRestrictionRegistry(4, time.Minute, time.Now)
++	requestConfig := config.Config{ExcludedAlbums: []string{"one", "two", "three"}}
++	registry.get(requestConfig)
++	b.ReportAllocs()
++	b.ResetTimer()
++	for range b.N {
++		_ = registry.get(requestConfig)
++	}
++}

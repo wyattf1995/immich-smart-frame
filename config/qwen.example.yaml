@@ -22,44 +22,51 @@ excluded_tags:
   - "Style/Timelapse"
   - "Skip/**"
 
-# Keep "on this day" in the mix without letting memories overwhelm the curated
-# family/travel/animal pools.
-memory_weight: 0.15
+# Keep backend caches and date candidate pools alive for an hour instead of the
+# 5-minute floor, so recently served photos stay out of the immediate remix.
+cache_duration: 3600
 
 # Positive-source curation. The selected profile replaces album=all and other
-# source buckets. In balanced, 65% of selections come from overlapping
-# recent-date pools and 35% retain the evergreen Qwen/face mix. The overlap is
-# intentional: a photo from the last 30 days is eligible through all three date
-# pools, producing a steep recency boost that decays over two years. Hard tag
-# exclusions still apply to every source. Weights are direct relative
-# probabilities and intentionally sum to 100 per profile.
+# source buckets. In balanced, 50% of selections come from an overlapping
+# recency ladder whose final rung spans the whole library, so every photo
+# stays reachable while recent photos are strongly boosted. The remaining 50%
+# is an evergreen Qwen/face mix. Hard tag exclusions still apply to every
+# source. Weights are direct relative probabilities and sum to 100 per profile.
 curation_profile: balanced
 curation:
   profiles:
     balanced:
       sources:
-        # Explicit recency ladder (65%). These dynamic ranges overlap.
-        - { type: date, value: "last-30", weight: 35 }
-        - { type: date, value: "last-180", weight: 20 }
+        # Overlapping recency ladder (50%). A new photo is eligible through
+        # every rung, so its boost decays with age; the all-time rung keeps
+        # the entire library reachable.
+        - { type: date, value: "last-30", weight: 8 }
+        - { type: date, value: "last-90", weight: 12 }
+        - { type: date, value: "last-180", weight: 10 }
         - { type: date, value: "last-730", weight: 10 }
+        - { type: date, value: "1900-01-01_to_today", weight: 10 }
 
-        # Evergreen curated mix (35%).
-        - { type: person, value: all, weight: 6 }
-        - { type: tag, value: "People/Family", weight: 4 }
-        - { type: tag, value: "People/Candid", weight: 2 }
-        - { type: tag, value: "People/Portrait", weight: 2 }
+        # Family (22%).
+        - { type: person, value: all, weight: 8 }
+        - { type: tag, value: "People/Family", weight: 7 }
+        - { type: tag, value: "People/Baby", weight: 4 }
+        - { type: tag, value: "People/Child", weight: 3 }
+
+        # Photography (14%).
+        - { type: tag, value: "Style/Landscape", weight: 5 }
+        - { type: tag, value: "Style/Astrophotography", weight: 3 }
+        - { type: tag, value: "Scene/Mountains", weight: 2 }
+        - { type: tag, value: "Light/Sunset", weight: 2 }
+        - { type: tag, value: "Scene/Canyon", weight: 1 }
+        - { type: tag, value: "Light/GoldenHour", weight: 1 }
+
+        # Anchors (14%).
         - { type: tag, value: "Animals/Dog", weight: 3 }
         - { type: tag, value: "Activity/Travel", weight: 3 }
         - { type: tag, value: "Event/Wedding", weight: 2 }
         - { type: tag, value: "Event/Holiday", weight: 2 }
-        - { type: tag, value: "Event/Birthday", weight: 1 }
-        - { type: tag, value: "Style/Landscape", weight: 2 }
-        - { type: tag, value: "Light/Sunset", weight: 1 }
-        - { type: tag, value: "Light/GoldenHour", weight: 1 }
-        - { type: tag, value: "Style/Macro", weight: 1 }
-        - { type: tag, value: "Animals/Wildlife", weight: 1 }
-        - { type: tag, value: "Scene/PublicAquarium", weight: 1 }
-        - { type: memories, weight: 3 }
+        - { type: tag, value: "People/Portrait", weight: 2 }
+        - { type: memories, weight: 2 }
 
       # Optional soft de-ranking keeps an album eligible but accepts matching
       # candidates less often. Keep real album IDs only in config/config.yaml.
@@ -118,6 +125,15 @@ image_location:
   hide_state: false
   hide_country: true
 
+# Persist a bounded fallback pool. It is refreshed single-flight after live
+# selections and served automatically when Immich becomes unavailable.
+offline_mode:
+  enabled: true
+  number_of_assets: 100
+  parallel_downloads: 1
+  max_size: 750MB
+  expiration_hours: 168
+
 kiosk:
   port: 3000
   behind_proxy: false
@@ -125,7 +141,14 @@ kiosk:
   disable_config_endpoint: true
   enable_url_builder: false
   watch_config: true
-  fetched_assets_size: 1000
+  # 150 bounds decoded candidate-pool memory while retaining ample variety.
+  fetched_assets_size: 150
+  # Widen a last-N date window when a refill returns fewer candidates than
+  # this floor (0 disables). 120 suits a 150-asset fetch size.
+  date_pool_minimum: 120
+  # Pick a random capture hour before picking a photo inside it, so one
+  # burst shoot cannot monopolize a date pool.
+  date_pool_session_spread: true
   http_timeout: 20
   cache: true
   prefetch: true

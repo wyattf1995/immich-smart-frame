@@ -1,0 +1,95 @@
+diff --git a/main_resilience_test.go b/main_resilience_test.go
+index 0f52a57..e312e71 100644
+--- a/main_resilience_test.go
++++ b/main_resilience_test.go
+@@ -3,6 +3,8 @@ package main
+ import (
+ 	"net/http"
+ 	"net/http/httptest"
++	"os"
++	"strings"
+ 	"testing"
+ 	"time"
+ 
+@@ -52,6 +54,36 @@ func TestHealthRoutesSeparateLocalLivenessFromImmichReadiness(t *testing.T) {
+ 	require.Equal(t, http.StatusOK, rec.Code)
+ }
+ 
++func TestRequestTimeMiddlewareConfigReadsAreSnapshotGuarded(t *testing.T) {
++	source, err := os.ReadFile("main.go")
++	require.NoError(t, err)
++	mainSource := string(source)
++	start := strings.Index(mainSource, "func addMiddleware")
++	end := strings.Index(mainSource, "func setLogLevel")
++	require.NotEqual(t, -1, start)
++	require.NotEqual(t, -1, end)
++	middlewareSource := mainSource[start:end]
++	for _, directRead := range []string{
++		"baseConfig.Kiosk.Password",
++		"baseConfig.Kiosk.Debug",
++		"baseConfig.Kiosk.DebugVerbose",
++		"baseConfig.Kiosk.AllowedOrigins",
++	} {
++		require.NotContains(t, middlewareSource, directRead)
++	}
++	require.Contains(t, middlewareSource, "baseConfig.Snapshot()")
++
++	for _, functionName := range []string{"func StaticCacheMiddlewareWithConfig", "func AssetCacheMiddlewareWithConfig"} {
++		functionStart := strings.Index(mainSource, functionName)
++		require.NotEqual(t, -1, functionStart)
++		functionEnd := strings.Index(mainSource[functionStart:], "\nfunc ")
++		require.NotEqual(t, -1, functionEnd)
++		functionSource := mainSource[functionStart : functionStart+functionEnd]
++		require.NotContains(t, functionSource, "baseConfig.Kiosk.Debug")
++		require.Contains(t, functionSource, "baseConfig.Snapshot()")
++	}
++}
++
+ func TestHealthcheckCLIAndServerLimits(t *testing.T) {
+ 	endpoint, ok := checkEndpoint([]string{"--healthcheck"})
+ 	require.True(t, ok)
+diff --git a/internal/immich/immich_resilience_coverage_test.go b/internal/immich/immich_resilience_coverage_test.go
+index fc0c3d5..0cfd494 100644
+--- a/internal/immich/immich_resilience_coverage_test.go
++++ b/internal/immich/immich_resilience_coverage_test.go
+@@ -6,6 +6,7 @@ import (
+ 	"io"
+ 	"net/http"
+ 	"strings"
++	"sync"
+ 	"testing"
+ 	"time"
+ 
+@@ -49,3 +50,31 @@ func TestReadinessCachesRecentSuccessAndBacksOffFailures(t *testing.T) {
+ 	require.Error(t, Ready(context.Background(), failingCfg))
+ 	require.Error(t, Ready(context.Background(), failingCfg))
+ }
++
++func TestReadinessCoalescesConcurrentInitialProbes(t *testing.T) {
++	original := HTTPClient
++	t.Cleanup(func() { HTTPClient = original })
++	var calls int
++	var mu sync.Mutex
++	start := make(chan struct{})
++	HTTPClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
++		mu.Lock()
++		calls++
++		mu.Unlock()
++		time.Sleep(50 * time.Millisecond)
++		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"total":1}`))}, nil
++	})}
++	cfg := config.Config{ImmichURL: "http://readiness-singleflight.test", ImmichAPIKey: "key", Kiosk: config.KioskSettings{Cache: false}}
++	var wg sync.WaitGroup
++	for range 12 {
++		wg.Go(func() {
++			<-start
++			require.NoError(t, Ready(context.Background(), cfg))
++		})
++	}
++	close(start)
++	wg.Wait()
++	mu.Lock()
++	defer mu.Unlock()
++	require.Equal(t, 1, calls)
++}
+

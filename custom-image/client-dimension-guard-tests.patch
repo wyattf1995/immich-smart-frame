@@ -1,0 +1,60 @@
+diff --git a/internal/routes/routes_resilience_coverage_test.go b/internal/routes/routes_resilience_coverage_test.go
+index 85253b6..75ba69b 100644
+--- a/internal/routes/routes_resilience_coverage_test.go
++++ b/internal/routes/routes_resilience_coverage_test.go
+@@ -34,6 +34,55 @@ func TestForegroundDeadlineUsesHotSnapshotTimeout(t *testing.T) {
+ 	require.LessOrEqual(t, time.Until(deadline), foregroundAssetTimeout)
+ }
+ 
++func TestOptimizedAssetRequestsRequireClientDimensions(t *testing.T) {
++	tests := []struct {
++		name    string
++		config  config.Config
++		wantErr bool
++	}{
++		{name: "optimization disabled", config: config.Config{}},
++		{name: "bounded dimensions", config: config.Config{OptimizeImages: true, ClientData: config.ClientData{Width: 1920, Height: 1080}}},
++		{name: "missing dimensions", config: config.Config{OptimizeImages: true}, wantErr: true},
++		{name: "missing height", config: config.Config{OptimizeImages: true, ClientData: config.ClientData{Width: 1920}}, wantErr: true},
++		{name: "missing width", config: config.Config{OptimizeImages: true, ClientData: config.ClientData{Height: 1080}}, wantErr: true},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			err := validateOptimizedClientDimensions(tt.config)
++			if tt.wantErr {
++				require.ErrorIs(t, err, ErrClientDimensionsRequired)
++				return
++			}
++			require.NoError(t, err)
++		})
++	}
++}
++
++func TestDimensionGuardPrecedesMemoryHeavyAssetWork(t *testing.T) {
++	assertGuardBefore := func(filename, functionStart, functionEnd, heavyCall string) {
++		t.Helper()
++		source, err := os.ReadFile(filename)
++		require.NoError(t, err)
++		body := string(source)
++		start := strings.Index(body, functionStart)
++		require.NotEqual(t, -1, start)
++		body = body[start:]
++		end := strings.Index(body, functionEnd)
++		require.NotEqual(t, -1, end)
++		body = body[:end]
++		guard := strings.Index(body, "validateOptimizedClientDimensions(requestConfig)")
++		heavy := strings.Index(body, heavyCall)
++		require.NotEqual(t, -1, guard)
++		require.NotEqual(t, -1, heavy)
++		require.Less(t, guard, heavy)
++	}
++
++	assertGuardBefore("routes_asset.go", "func NewAsset", "func Image(", "generateViewData(")
++	assertGuardBefore("routes_asset.go", "func Image(", "func ImageWithReload", "processAsset(")
++	assertGuardBefore("routes_offline.go", "func OfflineMode", "// downloadOfflineAssets", "ensureOfflineCacheScope(")
++}
++
+ func TestExpiredOfflineFallbackSurvivesImmichOutage(t *testing.T) {
+ 	dir := t.TempDir()
+ 	oldWD, err := os.Getwd()

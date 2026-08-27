@@ -1,0 +1,82 @@
+diff --git a/frontend/public/assets/js/sw.js b/frontend/public/assets/js/sw.js
+--- a/frontend/public/assets/js/sw.js
++++ b/frontend/public/assets/js/sw.js
+@@ -1,15 +1,33 @@
+-var staticCacheName = "immich-kiosk";
+-
+-self.addEventListener("install", (e) => {
+-    e.waitUntil(
+-        caches.open(staticCacheName).then((cache) => cache.addAll(["/"])),
+-    );
+-});
+-
+-self.addEventListener("fetch", (event) => {
+-    event.respondWith(
+-        caches
+-            .match(event.request)
+-            .then((response) => response || fetch(event.request)),
+-    );
+-});
++const LEGACY_CACHE_NAME = "immich-kiosk";
++const CACHE_PREFIX = "immich-kiosk-";
++const CACHE_VERSION = new URL(self.location.href).searchParams.get("v") || "unversioned";
++const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
++
++self.addEventListener("install", (event) => {
++    event.waitUntil(self.skipWaiting());
++});
++
++self.addEventListener("activate", (event) => {
++    event.waitUntil(
++        caches.keys()
++            .then((cacheNames) => Promise.all(
++                cacheNames
++                    .filter((name) =>
++                        name === LEGACY_CACHE_NAME ||
++                        (name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME))
++                    .map((name) => caches.delete(name)),
++            ))
++            .then(() => self.clients.claim()),
++    );
++});
++
++self.addEventListener("fetch", (event) => {
++    if (event.request.method !== "GET") return;
++    if (event.request.mode === "navigate") {
++        event.respondWith(
++            fetch(event.request).catch(() => caches.match(event.request)),
++        );
++        return;
++    }
++    event.respondWith(fetch(event.request));
++});
+diff --git a/frontend/src/ts/kiosk.ts b/frontend/src/ts/kiosk.ts
+--- a/frontend/src/ts/kiosk.ts
++++ b/frontend/src/ts/kiosk.ts
+@@ -191,8 +191,12 @@
+-        navigator.serviceWorker.register("/assets/js/sw.js").then(
+-            () => {
+-                console.log("ServiceWorker registration successful");
+-            },
+-            (err) => {
+-                console.log("ServiceWorker registration failed: ", err);
+-            },
+-        );
++        Promise.all([
++            navigator.serviceWorker.getRegistrations().then((registrations) =>
++                Promise.all(registrations.map((registration) => registration.unregister())),
++            ),
++            "caches" in window
++                ? caches.keys().then((names) => Promise.all(
++                    names
++                        .filter((name) => name === "immich-kiosk" || name.startsWith("immich-kiosk-"))
++                        .map((name) => caches.delete(name)),
++                ))
++                : Promise.resolve(),
++        ]).catch(() => undefined);
+diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -373,1 +373,1 @@
+-			c.Response().Header().Set("Cache-Control", "private, max-age=86400, no-transform")
++			c.Response().Header().Set("Cache-Control", "private, no-cache, no-transform")

@@ -1,0 +1,46 @@
+diff --git a/main_resilience_test.go b/main_resilience_test.go
+index 669ae05..40e093c 100644
+--- a/main_resilience_test.go
++++ b/main_resilience_test.go
+@@ -1,6 +1,7 @@
+ package main
+ 
+ import (
++	"io"
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"os"
+@@ -16,11 +17,15 @@ import (
+ func TestHealthRoutesSeparateLocalLivenessFromImmichReadiness(t *testing.T) {
+ 	upstreamStatus := http.StatusServiceUnavailable
+ 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+-		require.Equal(t, "/api/assets/statistics", r.URL.Path)
++		require.Equal(t, http.MethodPost, r.Method)
++		require.Equal(t, "/api/search/random", r.URL.Path)
+ 		require.Equal(t, "key", r.Header.Get("x-api-key"))
++		body, err := io.ReadAll(r.Body)
++		require.NoError(t, err)
++		require.JSONEq(t, `{"size":1}`, string(body))
+ 		w.WriteHeader(upstreamStatus)
+ 		if upstreamStatus == http.StatusOK {
+-			_, _ = w.Write([]byte(`{"total":1}`))
++			_, _ = w.Write([]byte(`[]`))
+ 		}
+ 	}))
+ 	defer upstream.Close()
+@@ -42,8 +47,13 @@ func TestHealthRoutesSeparateLocalLivenessFromImmichReadiness(t *testing.T) {
+ 	require.Empty(t, rec.Body.String())
+ 
+ 	healthyUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		require.Equal(t, http.MethodPost, r.Method)
++		require.Equal(t, "/api/search/random", r.URL.Path)
+ 		require.Equal(t, "key", r.Header.Get("x-api-key"))
+-		_, _ = w.Write([]byte(`{"total":1}`))
++		body, err := io.ReadAll(r.Body)
++		require.NoError(t, err)
++		require.JSONEq(t, `{"size":1}`, string(body))
++		_, _ = w.Write([]byte(`[]`))
+ 	}))
+ 	defer healthyUpstream.Close()
+ 	// Use a distinct upstream identity so the failed probe's backoff cannot hide
+

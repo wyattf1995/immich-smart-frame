@@ -1,0 +1,231 @@
+diff --git a/internal/cache/cache_backend_regression_test.go b/internal/cache/cache_backend_regression_test.go
+new file mode 100644
+index 0000000..1ed9b3d
+--- /dev/null
++++ b/internal/cache/cache_backend_regression_test.go
+@@ -0,0 +1,117 @@
++package cache
++
++import (
++	"fmt"
++	"sync"
++	"testing"
++
++	"github.com/damongolding/immich-kiosk/internal/config"
++)
++
++func TestAssetToCacheHonorsCacheDisabled(t *testing.T) {
++	Flush()
++	AssetToCache("sensitive", &config.Config{Kiosk: config.KioskSettings{Cache: false}}, "device", "url")
++	if ItemCount() != 0 {
++		t.Fatal("view data was cached while caching was disabled")
++	}
++}
++
++func TestGenerationInvalidatesOldNamespace(t *testing.T) {
++	Flush()
++	oldKey := APICacheKey("https://immich.example", "device", "user")
++	Set(oldKey, []byte("old"), 60, 60)
++	InvalidateAll()
++	newKey := APICacheKey("https://immich.example", "device", "user")
++	if oldKey == newKey {
++		t.Fatal("cache generation did not change the API namespace")
++	}
++	if _, found := Get(oldKey); found {
++		t.Fatal("old-generation cache entry remained reachable")
++	}
++}
++
++func TestViewCacheKeySeparatesSelectedUsers(t *testing.T) {
++	if ViewCacheKey("/asset", "device", "alice") == ViewCacheKey("/asset", "device", "bob") {
++		t.Fatal("view cache key does not isolate selected users")
++	}
++}
++
++func TestOldGenerationCannotRefillAfterInvalidation(t *testing.T) {
++	Flush()
++	oldGeneration := CurrentGeneration()
++	key := APICacheKey("https://immich.example", "device", "user")
++	InvalidateAll()
++	if SetIfGeneration(oldGeneration, key, []byte("stale"), 60, 60) {
++		t.Fatal("stale generation write was accepted")
++	}
++	if _, found := Get(key); found {
++		t.Fatal("stale response repopulated the cache")
++	}
++}
++
++func TestUpdateAppendsWithoutLostConcurrentWrites(t *testing.T) {
++	Flush()
++	key := "atomic-append"
++	const writers = 100
++	var wg sync.WaitGroup
++	for i := range writers {
++		wg.Add(1)
++		go func(value int) {
++			defer wg.Done()
++			Update(key, func(values []int) []int { return append(values, value) }, 60, 60)
++		}(i)
++	}
++	wg.Wait()
++	cached, found := Get(key)
++	if !found {
++		t.Fatal("atomic queue was not stored")
++	}
++	values, ok := cached.([]int)
++	if !ok || len(values) != writers {
++		t.Fatalf("got %T with %d values, want %d", cached, len(values), writers)
++	}
++}
++
++func TestPopConsumesEachQueueItemOnce(t *testing.T) {
++	Flush()
++	key := "atomic-pop"
++	items := make([]int, 50)
++	for i := range items {
++		items[i] = i
++	}
++	Set(key, items, 60, 60)
++	seen := make(chan int, len(items))
++	var wg sync.WaitGroup
++	for range items {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			if item, ok := Pop[int](key, 60, 60); ok {
++				seen <- item
++			}
++		}()
++	}
++	wg.Wait()
++	close(seen)
++	got := make(map[int]struct{}, len(items))
++	for item := range seen {
++		got[item] = struct{}{}
++	}
++	if len(got) != len(items) {
++		t.Fatalf("consumed %d unique items, want %d", len(got), len(items))
++	}
++}
++
++func TestCacheBoundsValueAndCardinality(t *testing.T) {
++	Flush()
++	Set("oversized", make([]byte, maxCacheValueSize+1), 60, 60)
++	if _, found := Get("oversized"); found {
++		t.Fatal("oversized value was admitted")
++	}
++	for i := range maxCacheEntries + 10 {
++		Set(fmt.Sprintf("bounded-%d", i), i, 60, 60)
++	}
++	if count := ItemCount(); count > maxCacheEntries {
++		t.Fatalf("cache grew to %d entries, limit is %d", count, maxCacheEntries)
++	}
++}
+diff --git a/internal/config/config_cache_reload_test.go b/internal/config/config_cache_reload_test.go
+new file mode 100644
+index 0000000..832b005
+--- /dev/null
++++ b/internal/config/config_cache_reload_test.go
+@@ -0,0 +1,15 @@
++package config
++
++import (
++	"sync/atomic"
++	"testing"
++)
++
++func TestReloadHooksAreNotified(t *testing.T) {
++	var calls atomic.Int32
++	RegisterReloadHook(func() { calls.Add(1) })
++	notifyReloadHooks()
++	if calls.Load() != 1 {
++		t.Fatalf("reload hook called %d times, want once", calls.Load())
++	}
++}
+diff --git a/internal/immich/immich_cache_backend_regression_test.go b/internal/immich/immich_cache_backend_regression_test.go
+new file mode 100644
+index 0000000..b7ae8b4
+--- /dev/null
++++ b/internal/immich/immich_cache_backend_regression_test.go
+@@ -0,0 +1,58 @@
++package immich
++
++import (
++	"context"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++
++	"github.com/damongolding/immich-kiosk/internal/cache"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/stretchr/testify/require"
++)
++
++func TestAlbumRestrictionKeyUsesConfigurationContent(t *testing.T) {
++	left := config.Config{
++		CurationProfile: "Home",
++		ExcludedAlbums:  []string{"album-b", "album-a"},
++		Curation: config.CurationSettings{Profiles: map[string]config.CurationProfile{
++			"Home": {AlbumPenalties: []config.AlbumPenalty{{Album: "album-c", Factor: .5}}},
++		}},
++	}
++	right := config.Config{
++		CurationProfile: " home ",
++		ExcludedAlbums:  []string{"album-a", "album-b"},
++		Curation: config.CurationSettings{Profiles: map[string]config.CurationProfile{
++			"Home": {AlbumPenalties: []config.AlbumPenalty{{Album: "album-c", Factor: .5}}},
++		}},
++	}
++	require.Equal(t, albumRestrictionKey(left), albumRestrictionKey(right))
++}
++
++func TestMemoriesPastDaysDoesNotPopulateCacheWhenDisabled(t *testing.T) {
++	cache.Flush()
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = w.Write([]byte("[]"))
++	}))
++	defer server.Close()
++
++	asset := New(context.Background(), config.Config{
++		ImmichURL: server.URL,
++		Kiosk:     config.KioskSettings{Cache: false},
++	})
++	_, _, err := asset.MemoriesWithPastDays("request", "device", 1)
++	require.NoError(t, err)
++	require.Zero(t, cache.ItemCount())
++}
++
++func TestCacheInvalidationClearsDateCandidatePools(t *testing.T) {
++	dateCandidatePools = newDatePoolRegistry(4)
++	_, _, err := dateCandidatePools.take(context.Background(), "date-key", 0, func(context.Context) ([]Asset, error) {
++		return []Asset{{ID: "asset"}}, nil
++	})
++	require.NoError(t, err)
++	require.Equal(t, 1, dateCandidatePools.size())
++	cache.InvalidateAll()
++	require.Zero(t, dateCandidatePools.size())
++}
+diff --git a/internal/video/video_cache_backend_regression_test.go b/internal/video/video_cache_backend_regression_test.go
+new file mode 100644
+index 0000000..1420d6f
+--- /dev/null
++++ b/internal/video/video_cache_backend_regression_test.go
+@@ -0,0 +1,17 @@
++package video
++
++import (
++	"testing"
++	"time"
++)
++
++func TestGetVideoPersistsLastAccessed(t *testing.T) {
++	manager := &Manager{Videos: []Video{{ID: "video", LastAccessed: time.Time{}}}}
++	got, err := manager.GetVideo("video")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got.LastAccessed.IsZero() || manager.Videos[0].LastAccessed.IsZero() {
++		t.Fatal("GetVideo did not persist LastAccessed on the manager entry")
++	}
++}

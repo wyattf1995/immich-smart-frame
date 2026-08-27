@@ -1,0 +1,8 @@
+diff --git a/internal/routes/routes_prefetch_context_test.go b/internal/routes/routes_prefetch_context_test.go
+index f10ba46..968c2ce 100644
+--- a/internal/routes/routes_prefetch_context_test.go
++++ b/internal/routes/routes_prefetch_context_test.go
+@@ -41,0 +42 @@ func TestAssetPreFetchPassesDeadlineToBlockingHTTPTransport(t *testing.T) {
++	started := time.Now()
+@@ -50,0 +52 @@ func TestAssetPreFetchPassesDeadlineToBlockingHTTPTransport(t *testing.T) {
++	require.Less(t, time.Since(started), 250*time.Millisecond, "cancellation must bound the complete prefetch call")

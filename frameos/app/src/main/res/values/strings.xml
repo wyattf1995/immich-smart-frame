@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FrameOS</string>
+    <string name="starting_frameos">Starting FrameOS</string>
+    <string name="starting_detail">Getting your family view ready</string>
+    <string name="configuration_title">FrameOS needs attention</string>
+    <string name="configuration_detail">Connect the photo frame from your computer to finish setup.</string>
+    <string name="configuration_footer">No account credentials are stored in the app package.</string>
+</resources>

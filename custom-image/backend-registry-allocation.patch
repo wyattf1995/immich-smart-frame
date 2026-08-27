@@ -1,0 +1,9 @@
+diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
+index 78e7a02..c64b0a7 100644
+--- a/internal/immich/immich_helpers.go
++++ b/internal/immich/immich_helpers.go
+@@ -19,0 +20 @@ import (
++	"unsafe"
+@@ -883 +884 @@ func albumRestrictionKey(requestConfig config.Config) albumRestrictionCacheKey {
+-		excludedPointer = reflect.ValueOf(requestConfig.ExcludedAlbums).Pointer()
++		excludedPointer = uintptr(unsafe.Pointer(unsafe.SliceData(requestConfig.ExcludedAlbums)))

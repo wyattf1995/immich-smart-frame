@@ -89,7 +89,8 @@ cp .env.example .env
 cp config/config.example.yaml config/config.yaml
 install -d -m 700 secrets
 install -m 600 /dev/null secrets/immich_api_key
-mkdir -p offline-assets
+install -d -m 700 -o 65532 -g 65532 offline-assets
+./scripts/check-offline-assets-permissions.sh
 ${EDITOR:-vi} secrets/immich_api_key
 chmod 600 .env
 ```
@@ -103,7 +104,7 @@ Build and start the service:
 
 ```sh
 docker compose build immich-kiosk
-docker compose up -d
+docker compose up -d --wait --wait-timeout 120
 docker compose ps
 ```
 
@@ -181,16 +182,24 @@ This avoids both visible 2x upscaling and sending full camera originals to a
 
 ## What the custom image changes
 
-The Dockerfile pins the exact Immich Kiosk `v0.42.0` commit and applies five
-reviewable patch files:
+The Dockerfile pins the exact Immich Kiosk `v0.42.0` commit and applies an
+ordered, reviewable patch stack. Its main implementation layers are:
 
 1. `fully-kiosk-dpr.patch` requests physical pixels from ordinary WebViews.
 2. `weighted-curation.patch` adds named, directly weighted source profiles.
 3. `runtime-hardening.patch` updates vulnerable Go dependencies, bounds client
    image dimensions, and normalizes curation input.
 4. `album-penalties.patch` adds validated, profile-specific soft de-ranking.
-5. `weighted-curation-tests.patch` guards curation, normalization, dimensions,
-   and exact weights.
+5. The backend performance patches make album filtering and date pools linear
+   and bounded, cache memories availability briefly, and cap concurrent
+   prefetch.
+6. The resilience patches add bounded dependency handling, readiness/liveness,
+   graceful shutdown, and slideshow recovery.
+7. The cache-hardening patches version browser state, scope the durable offline
+   pool, invalidate derived caches after mutations, and reject stale async
+   refills.
+8. Separate regression-test patches guard each behavior before its matching
+   implementation patch is applied.
 
 The build asserts the tag's expected commit, checks that every patch still
 applies, runs the complete upstream Go test suite, then compiles the binary.
@@ -210,16 +219,20 @@ See [Device setup](docs/device-setup.md) and
 MediaTek-specific service failures encountered during testing. The device guide
 also covers VLAN and firewall isolation for a dedicated Android 10 frame.
 
-## Optional Home Assistant companion
+## Optional FrameOS and Home Assistant companion
 
-The same no-touch frame can keep Immich photos in Fully Kiosk Browser while
-Firefox displays a Home Assistant Home, camera, or calendar view. The optional
-[Home Assistant wall-panel guide](docs/home-assistant-wall-panel.md) includes a
-privacy-safe dashboard example, portable local weather-loop builder, and a
-reviewable Key Mapper profile. The separate
-[frame mode router](docs/frame-mode-router.md) can turn two repeatable gestures
-into a circular Photos/Home/Cameras/Calendar control. Home Assistant is not
-required for the slideshow.
+FrameOS can host the slideshow and Home Assistant in one full-screen Android
+app built for the no-touch Lenovo frame. It keeps separate warm Gecko sessions
+for Photos and Home Assistant, adds a native cached Weather view with subtle
+condition-driven animation, and routes Home, Cameras, and Calendar through one
+same-origin iframe without browser chrome or repeated tab loads.
+
+The [Home Assistant wall-panel guide](docs/home-assistant-wall-panel.md)
+includes the privacy-safe dashboard and local wrapper. The protected
+[FrameOS router](docs/frame-mode-router.md) turns two repeatable OEM gestures
+into the circular Photos/Home/Weather/Cameras/Calendar control and documents
+contextual volume/star behavior, deployment, verification, and legacy
+Fully-plus-Firefox rollback. Home Assistant remains optional for the slideshow.
 
 ## Validation
 
@@ -231,10 +244,19 @@ After setup, run:
 
 The validator checks public-repository hygiene, configuration/profile weights,
 the Home Assistant companion examples, Compose rendering, patch applicability,
-and the patched Go tests. This repository intentionally runs its release gates
+and the patched Go tests. `scripts/deployment-input-snapshot.sh` creates and
+verifies a protected, versioned snapshot of the ignored environment, active
+config, API-key file, and offline assets before an upgrade or rollback.
+`scripts/check-frame-readiness.sh` is a read-only, cron-friendly monitor hook;
+it reports Kiosk liveness and dependency readiness separately and never restarts
+a service. This repository intentionally runs its release gates
 locally; the checked-in GitHub Actions workflow remains inert while repository
 Actions are disabled. Use
 `./scripts/validate.sh --static` to skip the Docker image build.
+The offline bind mount is private writable state for the image's non-root
+UID/GID 65532; rerun `scripts/check-offline-assets-permissions.sh` after moving
+the deployment or restoring a snapshot. See [cache operations](docs/cache-operations.md)
+for cache invalidation and upgrade migration details.
 
 ## Security
 
@@ -261,7 +283,7 @@ rollbacks. Each tag identifies the exact upstream Immich Kiosk pin, local
 patches, and documentation state that were validated together.
 
 See [CHANGELOG.md](CHANGELOG.md), [Upgrade and rollback](docs/upgrade-rollback.md),
-[Maintainer releases](docs/releasing.md), and [GOVERNANCE.md](GOVERNANCE.md)
+[Maintainer releases](docs/releasing.md), [Resilience operations](docs/resilience-operations.md), and [GOVERNANCE.md](GOVERNANCE.md)
 for the release process and support expectations.
 
 ## Project status
@@ -285,3 +307,6 @@ See [LICENSE](LICENSE), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and
 The upstream project is not responsible for these device-specific patches or
 support requests. Please reproduce problems against upstream before filing an
 upstream issue.
+The Compose defaults cap the kiosk at three CPUs and 1 GiB RAM, which leaves
+headroom for the NAS-hosted kiosk. Tune `KIOSK_CPUS` and
+`KIOSK_MEMORY_LIMIT` only after observing steady-state memory headroom.
