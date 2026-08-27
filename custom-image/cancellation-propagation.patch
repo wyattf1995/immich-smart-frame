@@ -914,7 +914,7 @@ index c2c283d6..8787ed22 100644
  
  // isIframeUrl checks if iframeURL is a valid URL. If not, it tries to read it as a file path.
 diff --git a/internal/video/video.go b/internal/video/video.go
-index 13378a62..e23fd962 100644
+index 13378a62..ee48746b 100644
 --- a/internal/video/video.go
 +++ b/internal/video/video.go
 @@ -21,6 +21,12 @@ import (
@@ -930,7 +930,7 @@ index 13378a62..e23fd962 100644
  // Video represents a downloaded video file and its metadata
  type Video struct {
  	ID           string
-@@ -35,9 +41,11 @@ type Video struct {
+@@ -35,9 +41,14 @@ type Video struct {
  type Manager struct {
  	DownloadQueue []string
  
@@ -942,10 +942,13 @@ index 13378a62..e23fd962 100644
 +	mu                sync.RWMutex
 +	ctx               context.Context
 +	downloadAdmission chan struct{}
++	downloadWorkers   sync.WaitGroup
++	admissionMu       sync.Mutex
++	draining          bool
  }
  
  // New creates a new VideoManager instance
-@@ -46,7 +54,10 @@ func New(ctx context.Context) (*Manager, error) {
+@@ -46,7 +57,10 @@ func New(ctx context.Context) (*Manager, error) {
  		return nil, err
  	}
  
@@ -957,7 +960,7 @@ index 13378a62..e23fd962 100644
  	cache.RegisterInvalidationHook(v.FlushCache)
  	go v.VideoCleanup(ctx)
  
-@@ -183,13 +194,13 @@ func (v *Manager) GetVideo(id string) (Video, error) {
+@@ -183,13 +197,13 @@ func (v *Manager) GetVideo(id string) (Video, error) {
  	return Video{}, errors.New("video not found")
  }
  
@@ -975,7 +978,7 @@ index 13378a62..e23fd962 100644
  	}
  
  	viewDataToAdd := common.ViewData{
-@@ -206,8 +217,7 @@ func (v *Manager) AddVideoToViewCache(generation uint64, id, fileName, filePath,
+@@ -206,8 +220,7 @@ func (v *Manager) AddVideoToViewCache(generation uint64, id, fileName, filePath,
  
  	if requestURL != "" && requestConfig.Kiosk.Cache &&
  		!cache.AssetToCacheWithPositionIfGeneration(generation, viewDataToAdd, requestConfig, deviceID, requestURL, cache.PREPEND) {
@@ -985,7 +988,7 @@ index 13378a62..e23fd962 100644
  	}
  
  	v.Videos = append(v.Videos, Video{
-@@ -218,6 +228,7 @@ func (v *Manager) AddVideoToViewCache(generation uint64, id, fileName, filePath,
+@@ -218,6 +231,7 @@ func (v *Manager) AddVideoToViewCache(generation uint64, id, fileName, filePath,
  		ContentType:  contentType,
  		ImmichAsset:  immichAsset,
  	})
@@ -993,7 +996,7 @@ index 13378a62..e23fd962 100644
  }
  
  func (v *Manager) discardDownloadedVideo(fileName string) {
-@@ -242,21 +253,100 @@ func (v *Manager) removeFromQueue(id string) {
+@@ -242,21 +256,128 @@ func (v *Manager) removeFromQueue(id string) {
  	}
  }
  
@@ -1053,7 +1056,13 @@ index 13378a62..e23fd962 100644
 +}
 +
 +func (v *Manager) scheduleDownload(videoID string, timeoutSeconds int, work func(context.Context)) bool {
++	v.admissionMu.Lock()
++	defer v.admissionMu.Unlock()
++
 +	if v.ctx.Err() != nil {
++		return false
++	}
++	if v.draining {
 +		return false
 +	}
 +	if !v.reserveDownload(videoID) {
@@ -1065,8 +1074,10 @@ index 13378a62..e23fd962 100644
 +		v.releaseReservedDownload(videoID)
 +		return false
 +	}
++	v.downloadWorkers.Add(1)
 +
 +	go func() {
++		defer v.downloadWorkers.Done()
 +		defer func() { <-v.downloadAdmission }()
 +		defer v.releaseReservedDownload(videoID)
 +		ctx, cancel := context.WithTimeout(v.ctx, v.downloadTimeout(timeoutSeconds))
@@ -1074,6 +1085,26 @@ index 13378a62..e23fd962 100644
 +		work(ctx)
 +	}()
 +	return true
++}
++
++// DrainDownloads waits for admitted background download workers to exit.
++func (v *Manager) DrainDownloads(ctx context.Context) bool {
++	v.admissionMu.Lock()
++	v.draining = true
++	v.admissionMu.Unlock()
++
++	done := make(chan struct{})
++	go func() {
++		v.downloadWorkers.Wait()
++		close(done)
++	}()
++
++	select {
++	case <-done:
++		return true
++	case <-ctx.Done():
++		return false
++	}
  }
  
  // DownloadVideo downloads a video file and adds it to the cache
@@ -1099,7 +1130,7 @@ index 13378a62..e23fd962 100644
  
  	// Get the video data
  	videoBytes, contentType, videoBytesErr := immichAsset.Video()
-@@ -264,6 +354,10 @@ func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.C
+@@ -264,6 +385,10 @@ func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.C
  		log.Error("getting video", "err", videoBytesErr)
  		return
  	}
@@ -1110,7 +1141,7 @@ index 13378a62..e23fd962 100644
  
  	ext := filepath.Ext(immichAsset.OriginalFileName)
  	if strings.HasPrefix(contentType, "video/") {
-@@ -284,6 +378,12 @@ func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.C
+@@ -284,6 +409,12 @@ func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.C
  		log.Error("Error creating video file", "err", videoFileErr)
  		return
  	}
@@ -1123,7 +1154,7 @@ index 13378a62..e23fd962 100644
  	defer videoFile.Close()
  
  	// Write the video data to the file
-@@ -292,19 +392,22 @@ func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.C
+@@ -292,19 +423,22 @@ func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.C
  		log.Error("Error writing video file", "err", videoFileErr)
  		return
  	}
@@ -1151,7 +1182,7 @@ index 13378a62..e23fd962 100644
  
  	img, _, imgErr := utils.BytesToImage(imgBytes, false)
  	if imgErr != nil {
-@@ -317,19 +420,38 @@ func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.C
+@@ -317,19 +451,38 @@ func (v *Manager) DownloadVideo(immichAsset immich.Asset, requestConfig config.C
  			log.Error("OptimizeImages", "err", imgErr)
  		}
  	}
@@ -1575,7 +1606,7 @@ index 00000000..98c8d967
 +	)
 +}
 diff --git a/main.go b/main.go
-index abfdfb50..4c9e4043 100644
+index abfdfb50..21ad4494 100644
 --- a/main.go
 +++ b/main.go
 @@ -35,6 +35,7 @@ import (
@@ -1586,25 +1617,34 @@ index abfdfb50..4c9e4043 100644
  )
  
  const (
-@@ -253,7 +254,16 @@ func main() {
+@@ -253,7 +254,25 @@ func main() {
  	// Shutting down, clean up. Prefetch derives from c.Context(), so cancellation
  	// above requests worker exit before temporary assets are removed.
  	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
 -	routes.DrainAssetPrefetch(drainCtx)
 +	prefetchDone := make(chan bool, 1)
 +	webhooksDone := make(chan bool, 1)
++	videoDone := make(chan bool, 1)
 +	go func() { prefetchDone <- routes.DrainAssetPrefetch(drainCtx) }()
 +	go func() { webhooksDone <- webhooks.DrainWebhookDispatch(drainCtx) }()
++	if videoManager != nil {
++		go func() { videoDone <- videoManager.DrainDownloads(drainCtx) }()
++	} else {
++		videoDone <- true
++	}
 +	if !<-prefetchDone {
 +		log.Warn("asset prefetch drain timed out")
 +	}
 +	if !<-webhooksDone {
 +		log.Warn("webhook drain timed out")
 +	}
++	if !<-videoDone {
++		log.Warn("video download drain timed out")
++	}
  	drainCancel()
  	video.DeleteTmpDir()
  
-@@ -272,6 +282,7 @@ func addMiddleware(e *echo.Echo, baseConfig *config.Config) {
+@@ -272,6 +291,7 @@ func addMiddleware(e *echo.Echo, baseConfig *config.Config) {
  	e.Pre(NoCacheMiddleware)
  	e.Use(middleware.Recover())
  	e.Use(middleware.RequestID())
