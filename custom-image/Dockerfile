@@ -51,6 +51,8 @@ COPY browser-cache-hardening.patch /tmp/browser-cache-hardening.patch
 COPY offline-cache-hardening.patch /tmp/offline-cache-hardening.patch
 COPY offline-mutation-hardening.patch /tmp/offline-mutation-hardening.patch
 COPY client-dimension-guard.patch /tmp/client-dimension-guard.patch
+COPY date-pool-hardening.patch /tmp/date-pool-hardening.patch
+COPY date-pool-hardening-tests.patch /tmp/date-pool-hardening-tests.patch
 COPY cancellation-propagation.patch /tmp/cancellation-propagation.patch
 COPY cancellation-propagation-tests.patch /tmp/cancellation-propagation-tests.patch
 RUN cd /src \
@@ -138,6 +140,10 @@ RUN cd /src \
 	&& git apply --unidiff-zero /tmp/offline-mutation-hardening.patch \
 	&& git apply --check /tmp/client-dimension-guard.patch \
 	&& git apply /tmp/client-dimension-guard.patch \
+	&& git apply --check /tmp/date-pool-hardening.patch \
+	&& git apply /tmp/date-pool-hardening.patch \
+	&& git apply --check /tmp/date-pool-hardening-tests.patch \
+	&& git apply /tmp/date-pool-hardening-tests.patch \
 	&& git apply --check /tmp/cancellation-propagation.patch \
 	&& git apply /tmp/cancellation-propagation.patch \
 	&& git apply --check /tmp/cancellation-propagation-tests.patch \

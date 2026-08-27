@@ -37,23 +37,42 @@ YAML or with `?curation_profile=NAME` when URL queries are enabled.
 Consider three sources:
 
 ```yaml
-- { type: date, value: "last-30", weight: 35 }
-- { type: date, value: "last-180", weight: 20 }
+- { type: date, value: "last-30", weight: 8 }
+- { type: date, value: "last-90", weight: 12 }
+- { type: date, value: "last-180", weight: 10 }
 - { type: date, value: "last-730", weight: 10 }
+- { type: date, value: "1900-01-01_to_today", weight: 10 }
 ```
 
-A photo from the last month can be returned by all three buckets. A
-six-month-old photo can only be returned by the widest bucket. The overlap
-therefore creates a natural decay curve while the remaining profile weights
-continue to surface older family, travel, or photography assets.
+A photo from the last month can be returned by every bucket. A six-month-old
+photo can only be returned by the wider buckets. The overlap therefore creates
+a natural decay curve, and the final all-time rung keeps every library photo
+reachable so the archive never goes completely dark.
 
-In the advanced example, these buckets total 65. With profile weights totaling
-100, at least 65% of selections come from the last two years, and the overlap
-boosts the newest photos again inside that share.
+In the advanced example, these buckets total 50. With profile weights totaling
+100, half of all selections come from the recency ladder, and the overlap
+boosts the newest photos again inside that share. Keep the top rung's weight
+modest: a sliding `last-30` window can collapse to a handful of photos when a
+large shoot ages out, and any weight it carries then concentrates on whatever
+remains.
 
-This is bucket weighting, not a persistent per-photo score. Kiosk's cache
-reduces short-term repeats, but the project does not yet maintain a lifetime
-“already shown on this display” ledger.
+This is bucket weighting, not a persistent per-photo score, but three pool
+behaviors bound repetition:
+
+- Date pools refill without discarding unserved candidates and track served
+  IDs, so a pool smaller than `fetched_assets_size` cycles through every photo
+  once before any repeat (a shuffle bag).
+- `kiosk.date_pool_minimum` (default `0`, disabled) widens a `last-N` window
+  (N times 3 per step, capped at ten years) whenever a refill returns fewer
+  candidates than the configured floor, logging a warning per step. Widening
+  re-evaluates from the original window on every refill, so it stops on its
+  own once the library recovers.
+- `kiosk.date_pool_session_spread` (default `true`) picks a random capture
+  hour before picking a photo inside it, so a thousand-frame burst afternoon
+  carries no more weight per pick than a single photo from another day.
+
+`cache_duration` (seconds) extends both the backend cache and the date pool
+TTL; an hour keeps recently served photos out of the immediate remix.
 
 ## Boosting a milestone album
 

@@ -1,0 +1,407 @@
+diff --git a/config.schema.json b/config.schema.json
+index e9d7bcd..e634d13 100644
+--- a/config.schema.json
++++ b/config.schema.json
+@@ -674,6 +674,13 @@
+           "minimum": 1,
+           "maximum": 1000
+         },
++        "date_pool_minimum": {
++          "type": "integer",
++          "minimum": 0
++        },
++        "date_pool_session_spread": {
++          "type": "boolean"
++        },
+         "http_timeout": {
+           "type": "integer"
+         },
+diff --git a/internal/config/config.go b/internal/config/config.go
+index a5f47c8..b67b7c1 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -114,6 +114,14 @@ type KioskSettings struct {
+ 	// FetchedAssetsSize the size of assets requests from Immich. min=1 max=1000
+ 	FetchedAssetsSize int `json:"fetchedAssetsSize" yaml:"fetched_assets_size" mapstructure:"fetched_assets_size" default:"1000"`
+ 
++	// DatePoolMinimum the minimum number of candidates a last-N date pool refill
++	// should return before the window is widened. 0 disables widening
++	DatePoolMinimum int `json:"datePoolMinimum" yaml:"date_pool_minimum" mapstructure:"date_pool_minimum" query:"date_pool_minimum" form:"date_pool_minimum" default:"0"`
++
++	// DatePoolSessionSpread spreads date pool picks across capture hours so a
++	// burst shoot cannot monopolize the pool
++	DatePoolSessionSpread bool `json:"datePoolSessionSpread" yaml:"date_pool_session_spread" mapstructure:"date_pool_session_spread" query:"date_pool_session_spread" form:"date_pool_session_spread" default:"true"`
++
+ 	// HTTPTimeout time in seconds before an http request will timeout
+ 	HTTPTimeout int `json:"httpTimeout" yaml:"http_timeout" mapstructure:"http_timeout" default:"20"`
+ 
+diff --git a/internal/immich/immich_date.go b/internal/immich/immich_date.go
+index 98f64f0..ea3f6dd 100644
+--- a/internal/immich/immich_date.go
++++ b/internal/immich/immich_date.go
+@@ -6,6 +6,7 @@ import (
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
++	"math/rand/v2"
+ 	"net/http"
+ 	"net/url"
+ 	"regexp"
+@@ -24,6 +25,13 @@ import (
+ const (
+ 	defaultDatePoolRegistrySize = 128
+ 	maxDateCandidates           = 200
++	// servedDateLedgerCap bounds the served-ID ledger. Populations that large
++	// repeat rarely enough that draw-without-replacement bookkeeping is not
++	// worth unbounded growth, so the ledger clears itself at this size.
++	servedDateLedgerCap = 2 * maxDateCandidates
++	// maxDatePoolWidenDays caps how far a sliding last-N window may widen when
++	// a refill comes back below the configured date_pool_minimum.
++	maxDatePoolWidenDays = 3650
+ )
+ 
+ var errDatePoolRegistryBusy = errors.New("date candidate pool registry is at capacity")
+@@ -33,6 +41,7 @@ type datePoolFetch func(context.Context) ([]Asset, error)
+ type dateCandidatePool struct {
+ 	mu         sync.Mutex
+ 	candidates []Asset
++	served     map[string]struct{}
+ 	expiresAt  time.Time
+ 	refreshing bool
+ 	ready      chan struct{}
+@@ -74,13 +83,13 @@ func newDatePoolRegistryWithClock(maxEntries int, now func() time.Time) *datePoo
+ 	return &datePoolRegistry{entries: make(map[string]*datePoolEntry, maxEntries), maxEntries: maxEntries, now: now}
+ }
+ 
+-func (r *datePoolRegistry) take(ctx context.Context, key string, ttl time.Duration, fetch datePoolFetch) (Asset, bool, error) {
++func (r *datePoolRegistry) take(ctx context.Context, key string, ttl time.Duration, sessionSpread bool, fetch datePoolFetch) (Asset, bool, error) {
+ 	entry, err := r.acquire(key)
+ 	if err != nil {
+ 		return Asset{}, false, err
+ 	}
+ 	defer r.release(entry)
+-	return entry.pool.takeOrRefill(ctx, ttl, r.now, fetch)
++	return entry.pool.takeOrRefill(ctx, ttl, r.now, sessionSpread, fetch)
+ }
+ 
+ func (r *datePoolRegistry) acquire(key string) (*datePoolEntry, error) {
+@@ -88,7 +97,9 @@ func (r *datePoolRegistry) acquire(key string) (*datePoolEntry, error) {
+ 	defer r.mu.Unlock()
+ 	now := r.now()
+ 	for candidateKey, entry := range r.entries {
+-		if entry.active == 0 && entry.pool.expired(now) {
++		// The requested pool survives its own expiry: takeOrRefill merges a
++		// refresh into it, preserving unserved candidates and the served ledger.
++		if candidateKey != key && entry.active == 0 && entry.pool.expired(now) {
+ 			delete(r.entries, candidateKey)
+ 		}
+ 	}
+@@ -147,18 +158,18 @@ func (p *dateCandidatePool) take() (Asset, bool) {
+ 	if len(p.candidates) == 0 {
+ 		return Asset{}, false
+ 	}
+-	return popDateCandidate(&p.candidates), true
++	asset := popDateCandidate(&p.candidates)
++	p.recordServed(asset.ID)
++	return asset, true
+ }
+ 
+-func (p *dateCandidatePool) takeOrRefill(ctx context.Context, ttl time.Duration, now func() time.Time, fetch datePoolFetch) (Asset, bool, error) {
++func (p *dateCandidatePool) takeOrRefill(ctx context.Context, ttl time.Duration, now func() time.Time, sessionSpread bool, fetch datePoolFetch) (Asset, bool, error) {
+ 	for {
+ 		p.mu.Lock()
+-		if !p.expiresAt.IsZero() && !now().Before(p.expiresAt) && !p.refreshing {
+-			clear(p.candidates)
+-			p.candidates = nil
+-		}
+-		if len(p.candidates) > 0 {
+-			asset := popDateCandidate(&p.candidates)
++		expired := !p.expiresAt.IsZero() && !now().Before(p.expiresAt) && !p.refreshing
++		if len(p.candidates) > 0 && !expired {
++			asset := pickDateCandidate(&p.candidates, sessionSpread)
++			p.recordServed(asset.ID)
+ 			p.mu.Unlock()
+ 			return asset, true, nil
+ 		}
+@@ -173,35 +184,130 @@ func (p *dateCandidatePool) takeOrRefill(ctx context.Context, ttl time.Duration,
+ 			}
+ 		}
+ 
++		// Keep the unserved remainder aside across the refresh so a TTL
++		// expiry never resets draw-without-replacement progress.
++		remaining := p.candidates
++		p.candidates = nil
+ 		p.refreshing = true
+ 		p.ready = make(chan struct{})
+ 		ready := p.ready
+ 		p.mu.Unlock()
+ 
+-		candidates, err := fetch(ctx)
+-		candidates = uniqueDateCandidates(candidates, maxDateCandidates)
++		fetched, err := fetch(ctx)
+ 
+ 		p.mu.Lock()
+-		if err == nil {
+-			p.candidates = candidates
+-			p.expiresAt = now().Add(ttl)
+-		}
+-		p.refreshing = false
+-		close(ready)
+ 		if err != nil {
++			// The unserved remainder is still valid; restore it so a later
++			// call can serve it once a refresh succeeds.
++			p.candidates = remaining
++			p.refreshing = false
++			close(ready)
+ 			p.mu.Unlock()
+ 			return Asset{}, false, err
+ 		}
++		p.candidates = p.mergeRefill(remaining, fetched)
++		p.expiresAt = now().Add(ttl)
++		p.refreshing = false
++		close(ready)
+ 		if len(p.candidates) == 0 {
+ 			p.mu.Unlock()
+ 			return Asset{}, false, nil
+ 		}
+-		asset := popDateCandidate(&p.candidates)
++		asset := pickDateCandidate(&p.candidates, sessionSpread)
++		p.recordServed(asset.ID)
+ 		p.mu.Unlock()
+ 		return asset, true, nil
+ 	}
+ }
+ 
++// recordServed marks an asset ID as handed out. Callers must hold p.mu.
++func (p *dateCandidatePool) recordServed(id string) {
++	if id == "" {
++		return
++	}
++	if p.served == nil {
++		p.served = make(map[string]struct{})
++	}
++	p.served[id] = struct{}{}
++	if len(p.served) >= servedDateLedgerCap {
++		p.served = nil
++	}
++}
++
++// mergeRefill combines the unserved remainder with freshly fetched candidates.
++// The remainder goes first so a fetched duplicate cannot displace an unserved
++// copy, and fetched assets already handed out this pass are skipped. When that
++// filters everything out the whole population has been served once, so the
++// ledger resets and the next pass begins. Callers must hold p.mu.
++func (p *dateCandidatePool) mergeRefill(remaining, fetched []Asset) []Asset {
++	merged := make([]Asset, 0, min(len(remaining)+len(fetched), maxDateCandidates))
++	seen := make(map[string]struct{}, cap(merged))
++	for _, candidate := range remaining {
++		if candidate.ID == "" {
++			continue
++		}
++		if _, exists := seen[candidate.ID]; exists {
++			continue
++		}
++		seen[candidate.ID] = struct{}{}
++		merged = append(merged, candidate)
++		if len(merged) == maxDateCandidates {
++			return merged
++		}
++	}
++	for _, candidate := range fetched {
++		if candidate.ID == "" {
++			continue
++		}
++		if _, exists := seen[candidate.ID]; exists {
++			continue
++		}
++		if _, alreadyServed := p.served[candidate.ID]; alreadyServed {
++			continue
++		}
++		seen[candidate.ID] = struct{}{}
++		merged = append(merged, candidate)
++		if len(merged) == maxDateCandidates {
++			return merged
++		}
++	}
++	if len(merged) == 0 && len(fetched) > 0 {
++		p.served = nil
++		return uniqueDateCandidates(fetched, maxDateCandidates)
++	}
++	return merged
++}
++
++func pickDateCandidate(candidates *[]Asset, sessionSpread bool) Asset {
++	if !sessionSpread {
++		return popDateCandidate(candidates)
++	}
++	return popSessionSpreadCandidate(candidates)
++}
++
++// popSessionSpreadCandidate draws a uniformly random capture hour first and
++// only then a candidate within it, so a burst shoot of thousands of frames in
++// one hour weighs the same per pick as a lone photo from another session.
++func popSessionSpreadCandidate(candidates *[]Asset) Asset {
++	hours := make([]int64, 0, len(*candidates))
++	groups := make(map[int64][]int, len(*candidates))
++	for index, candidate := range *candidates {
++		hour := candidate.LocalDateTime.Truncate(time.Hour).Unix()
++		if _, exists := groups[hour]; !exists {
++			hours = append(hours, hour)
++		}
++		groups[hour] = append(groups[hour], index)
++	}
++	indexes := groups[hours[rand.IntN(len(hours))]]
++	index := indexes[rand.IntN(len(indexes))]
++	asset := (*candidates)[index]
++	last := len(*candidates) - 1
++	(*candidates)[index] = (*candidates)[last]
++	(*candidates)[last] = Asset{}
++	*candidates = (*candidates)[:last]
++	return asset
++}
++
+ func popDateCandidate(candidates *[]Asset) Asset {
+ 	last := len(*candidates) - 1
+ 	asset := (*candidates)[last]
+@@ -282,51 +388,94 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+ 		return fmt.Errorf("parsing url: %w", err)
+ 	}
+ 
+-	requestBody := SearchRandomBody{
+-		Type:        string(ImageType),
+-		TakenAfter:  dateStart.Format(time.RFC3339),
+-		TakenBefore: dateEnd.Format(time.RFC3339),
+-		WithExif:    true,
+-		WithPeople:  true,
+-		Size:        a.requestConfig.Kiosk.FetchedAssetsSize,
+-	}
+-	if a.requestConfig.Kiosk.Cache {
+-		requestBody.Size = dateCandidateRequestSize(requestBody.Size)
+-	}
+-	if a.requestConfig.ShowVideos {
+-		requestBody.Type = ""
+-	}
+-	if a.requestConfig.ShowArchived {
+-		requestBody.WithArchived = true
++	buildSearchRequest := func(takenAfter time.Time) (SearchRandomBody, string, []byte, error) {
++		requestBody := SearchRandomBody{
++			Type:        string(ImageType),
++			TakenAfter:  takenAfter.Format(time.RFC3339),
++			TakenBefore: dateEnd.Format(time.RFC3339),
++			WithExif:    true,
++			WithPeople:  true,
++			Size:        a.requestConfig.Kiosk.FetchedAssetsSize,
++		}
++		if a.requestConfig.Kiosk.Cache {
++			requestBody.Size = dateCandidateRequestSize(requestBody.Size)
++		}
++		if a.requestConfig.ShowVideos {
++			requestBody.Type = ""
++		}
++		if a.requestConfig.ShowArchived {
++			requestBody.WithArchived = true
++		}
++		filterFavorites(&requestBody, a.requestConfig.FilterFavorites)
++
++		queries, _ := query.Values(requestBody)
++		apiURL := url.URL{
++			Scheme:   u.Scheme,
++			Host:     u.Host,
++			Path:     "api/search/random",
++			RawQuery: fmt.Sprintf("kiosk=%x", sha256.Sum256([]byte(queries.Encode()))),
++		}
++		jsonBody, marshalErr := json.Marshal(requestBody)
++		if marshalErr != nil {
++			return requestBody, "", nil, fmt.Errorf("marshaling request body: %w", marshalErr)
++		}
++		return requestBody, apiURL.String(), jsonBody, nil
+ 	}
+-	filterFavorites(&requestBody, a.requestConfig.FilterFavorites)
+ 
+-	queries, _ := query.Values(requestBody)
+-	apiURL := url.URL{
+-		Scheme:   u.Scheme,
+-		Host:     u.Host,
+-		Path:     "api/search/random",
+-		RawQuery: fmt.Sprintf("kiosk=%x", sha256.Sum256([]byte(queries.Encode()))),
+-	}
+-	jsonBody, marshalErr := json.Marshal(requestBody)
+-	if marshalErr != nil {
+-		return fmt.Errorf("marshaling request body: %w", marshalErr)
++	requestBody, searchURL, searchBody, buildErr := buildSearchRequest(dateStart)
++	if buildErr != nil {
++		return buildErr
+ 	}
+ 
+-	fetchCandidates := func(ctx context.Context) ([]Asset, error) {
++	searchRandomAssets := func(ctx context.Context, requestURL string, body []byte) ([]Asset, error) {
+ 		var candidates []Asset
+-		apiBody, _, _, callErr := a.immichAPICall(ctx, http.MethodPost, apiURL.String(), jsonBody)
++		apiBody, _, _, callErr := a.immichAPICall(ctx, http.MethodPost, requestURL, body)
+ 		if callErr != nil {
+-			_, _, callErr = immichAPIFail(candidates, callErr, apiBody, apiURL.String())
++			_, _, callErr = immichAPIFail(candidates, callErr, apiBody, requestURL)
+ 			return nil, callErr
+ 		}
+ 		if unmarshalErr := json.Unmarshal(apiBody, &candidates); unmarshalErr != nil {
+-			_, _, unmarshalErr = immichAPIFail(candidates, unmarshalErr, apiBody, apiURL.String())
++			_, _, unmarshalErr = immichAPIFail(candidates, unmarshalErr, apiBody, requestURL)
+ 			return nil, unmarshalErr
+ 		}
+ 		return candidates, nil
+ 	}
+ 
++	lastDays := 0
++	if !strings.EqualFold(dateRange, "today") && !strings.Contains(dateRange, "_to_") && strings.Contains(dateRange, "last-") {
++		if days, daysErr := extractDays(dateRange); daysErr == nil {
++			lastDays = days
++		}
++	}
++
++	fetchCandidates := func(ctx context.Context) ([]Asset, error) {
++		// Every refill starts from the original window, so widening stops on
++		// its own once the original window holds enough photos again.
++		candidates, fetchErr := searchRandomAssets(ctx, searchURL, searchBody)
++		if fetchErr != nil {
++			return nil, fetchErr
++		}
++		floor := min(a.requestConfig.Kiosk.DatePoolMinimum, requestBody.Size)
++		if floor < 1 || lastDays < 1 {
++			return candidates, nil
++		}
++		for days := lastDays; len(candidates) < floor && days < maxDatePoolWidenDays; {
++			days = min(days*3, maxDatePoolWidenDays)
++			log.Warn("Date range candidates below date_pool_minimum, widening window",
++				"range", dateRange, "widenedDays", days, "candidates", len(candidates))
++			_, widenedURL, widenedBody, widenErr := buildSearchRequest(dateStart.AddDate(0, 0, lastDays-days))
++			if widenErr != nil {
++				return nil, widenErr
++			}
++			widened, widenedErr := searchRandomAssets(ctx, widenedURL, widenedBody)
++			if widenedErr != nil {
++				return nil, widenedErr
++			}
++			candidates = widened
++		}
++		return candidates, nil
++	}
++
+ 	wantedAssetType := ImageOnlyAssetTypes
+ 	if a.requestConfig.ShowVideos {
+ 		wantedAssetType = AllAssetTypes
+@@ -359,11 +508,13 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+ 		return fmt.Errorf("no assets found for '%s'. Max retries reached", dateRange)
+ 	}
+ 
+-	poolKey := cache.APICacheKey(apiURL.String(), deviceID, a.requestConfig.SelectedUser)
++	// The pool key stays derived from the original range's URL so widening
++	// never changes the pool identity.
++	poolKey := cache.APICacheKey(searchURL, deviceID, a.requestConfig.SelectedUser)
+ 	poolTTL := dateCandidatePoolTTL(a.requestConfig)
+ 	for range MaxRetries {
+ 		for range requestBody.Size {
+-			candidate, ok, takeErr := dateCandidatePools.take(a.ctx, poolKey, poolTTL, fetchCandidates)
++			candidate, ok, takeErr := dateCandidatePools.take(a.ctx, poolKey, poolTTL, a.requestConfig.Kiosk.DatePoolSessionSpread, fetchCandidates)
+ 			if takeErr != nil {
+ 				return takeErr
+ 			}
