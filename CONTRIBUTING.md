@@ -15,6 +15,9 @@ every Android frame, browser build, or Immich release will be supported.
 5. State the exact versions you tested: frame model, Android version, browser
    version, Immich version, and Immich Kiosk upstream pin if relevant.
 
+This repository does not use GitHub Actions. Contributors and maintainers run
+the documented validation and security gates on a trusted local machine.
+
 ## Inbound equals outbound
 
 This repository is licensed under the GNU Affero General Public License v3.0.

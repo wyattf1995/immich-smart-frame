@@ -39,7 +39,7 @@ fi
 # shellcheck source=scripts/ci-lib.sh
 source scripts/ci-lib.sh
 if [[ ! "$(ci_upstream_ref)" =~ ^[0-9a-f]{40}$ ]]; then
-  printf 'CI audits must fetch the exact KIOSK_UPSTREAM_COMMIT\n' >&2
+  printf 'local audits must fetch the exact KIOSK_UPSTREAM_COMMIT\n' >&2
   exit 1
 fi
 
@@ -66,66 +66,22 @@ def load_trusted_yaml(file)
   YAML.load_file(file)
 end
 
-workflow_files = Dir[".github/workflows/*.yml"].sort
-files = workflow_files + [".github/dependabot.yml"]
-files.each do |file|
-  load_trusted_yaml(file)
+workflow_files = Dir[".github/workflows/**/*.{yml,yaml}"].sort
+unless workflow_files.empty?
+  warn "GitHub Actions workflows are prohibited; run validation locally instead: #{workflow_files.join(', ')}"
+  exit 1
 end
 
 dependabot = load_trusted_yaml(".github/dependabot.yml")
 updates = dependabot.fetch("updates")
 ecosystems = updates.map { |entry| entry.fetch("package-ecosystem") }
-%w[docker github-actions].each do |ecosystem|
-  next if ecosystems.include?(ecosystem)
-
-  warn ".github/dependabot.yml is missing #{ecosystem}"
+unless ecosystems.include?("docker")
+  warn ".github/dependabot.yml is missing docker"
   exit 1
 end
-
-def each_uses(node, &block)
-  case node
-  when Hash
-    node.each do |key, value|
-      yield value if key == "uses"
-      each_uses(value, &block)
-    end
-  when Array
-    node.each { |value| each_uses(value, &block) }
-  end
-end
-
-workflow_files.each do |file|
-  workflow = load_trusted_yaml(file)
-  permissions = workflow.fetch("permissions")
-  workflow_on = workflow["on"] || workflow[true]
-  unless permissions.is_a?(Hash)
-    warn "#{file} must declare explicit permissions"
-    exit 1
-  end
-
-  if file.end_with?("/release.yml")
-    unless permissions == { "contents" => "read", "packages" => "write" }
-      warn "#{file} must keep only contents:read and packages:write"
-      exit 1
-    end
-
-    push = workflow_on.fetch("push")
-    unless workflow_on.keys == ["push"] && push["tags"] == ["v*"]
-      warn "#{file} must be tag-only on v*"
-      exit 1
-    end
-  elsif !permissions.values.all? { |value| value == "read" }
-    warn "#{file} must keep read-only permissions"
-    exit 1
-  end
-
-  each_uses(workflow) do |uses_value|
-    next if uses_value.start_with?("./", "docker://")
-    next if uses_value.match?(/@[0-9a-f]{40}\z/)
-
-    warn "#{file} has an unpinned action reference: #{uses_value}"
-    exit 1
-  end
+if ecosystems.include?("github-actions")
+  warn ".github/dependabot.yml must not configure GitHub Actions updates"
+  exit 1
 end
 
 {
@@ -175,7 +131,7 @@ unless dockerfile.include?("node --test tests/browser-cache-contract.test.mjs te
 end
 
 unless File.read("scripts/audit-licenses.sh").include?('--user "$(id -u):$(id -g)"')
-  warn "Node license audit must not leave root-owned files in the CI workspace"
+  warn "Node license audit must not leave root-owned files in the validation workspace"
   exit 1
 end
 
@@ -290,4 +246,4 @@ RUBY
 
 ./scripts/test-offline-assets-permissions.sh
 
-printf 'ci static validation passed\n'
+printf 'local static validation passed\n'

@@ -14,7 +14,6 @@ fi
 
 required_files=(
   .github/dependabot.yml
-  .github/workflows/release.yml
   .env.example
   LICENSE
   README.md

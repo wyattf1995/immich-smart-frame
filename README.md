@@ -1,6 +1,5 @@
 # Lenovo Smart Frame + Immich
 
-[![CI](https://github.com/wyattf1995/immich-smart-frame/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/wyattf1995/immich-smart-frame/actions/workflows/validate.yml)
 [![License](https://img.shields.io/github/license/wyattf1995/immich-smart-frame)](./LICENSE)
 
 Turn a discontinued Lenovo Smart Frame into a fullscreen, native-resolution
@@ -249,10 +248,11 @@ verifies a protected, versioned snapshot of the ignored environment, active
 config, API-key file, and offline assets before an upgrade or rollback.
 `scripts/check-frame-readiness.sh` is a read-only, cron-friendly monitor hook;
 it reports Kiosk liveness and dependency readiness separately and never restarts
-a service. This repository intentionally runs its release gates
-locally; the checked-in GitHub Actions workflow remains inert while repository
-Actions are disabled. Use
-`./scripts/validate.sh --static` to skip the Docker image build.
+a service. This repository has no GitHub Actions workflows: repository Actions
+are disabled, and all validation and release gates run locally. The local
+validator rejects workflow files and GitHub Actions dependency automation so
+that policy cannot silently regress. Use `./scripts/validate.sh --static` to
+skip the Docker image build.
 The offline bind mount is private writable state for the image's non-root
 UID/GID 65532; rerun `scripts/check-offline-assets-permissions.sh` after moving
 the deployment or restoring a snapshot. See [cache operations](docs/cache-operations.md)
