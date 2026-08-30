@@ -17,6 +17,8 @@ every Android frame, browser build, or Immich release will be supported.
 
 This repository does not use GitHub Actions. Contributors and maintainers run
 the documented validation and security gates on a trusted local machine.
+Dependency updates are reviewed and opened manually; Dependabot version updates
+are also disabled because GitHub implements them as hosted Actions jobs.
 
 ## Inbound equals outbound
 

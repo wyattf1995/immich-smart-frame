@@ -62,25 +62,14 @@ require "yaml"
 require "json"
 require "base64"
 
-def load_trusted_yaml(file)
-  YAML.load_file(file)
-end
-
 workflow_files = Dir[".github/workflows/**/*.{yml,yaml}"].sort
 unless workflow_files.empty?
   warn "GitHub Actions workflows are prohibited; run validation locally instead: #{workflow_files.join(', ')}"
   exit 1
 end
 
-dependabot = load_trusted_yaml(".github/dependabot.yml")
-updates = dependabot.fetch("updates")
-ecosystems = updates.map { |entry| entry.fetch("package-ecosystem") }
-unless ecosystems.include?("docker")
-  warn ".github/dependabot.yml is missing docker"
-  exit 1
-end
-if ecosystems.include?("github-actions")
-  warn ".github/dependabot.yml must not configure GitHub Actions updates"
+if File.exist?(".github/dependabot.yml")
+  warn "Dependabot version updates are prohibited because they launch GitHub-hosted Actions jobs"
   exit 1
 end
 

@@ -13,7 +13,6 @@ elif [[ $# -gt 0 ]]; then
 fi
 
 required_files=(
-  .github/dependabot.yml
   .env.example
   LICENSE
   README.md
