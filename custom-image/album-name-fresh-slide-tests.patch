@@ -1,0 +1,109 @@
+diff --git a/internal/routes/routes_album_name_test.go b/internal/routes/routes_album_name_test.go
+new file mode 100644
+index 0000000..3460ecf
+--- /dev/null
++++ b/internal/routes/routes_album_name_test.go
+@@ -0,0 +1,103 @@
++package routes
++
++import (
++	"context"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"sync/atomic"
++	"testing"
++
++	"github.com/damongolding/immich-kiosk/internal/cache"
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/damongolding/immich-kiosk/internal/kiosk"
++	"github.com/labstack/echo/v5"
++	"github.com/stretchr/testify/require"
++)
++
++func TestFreshSlideLoadsAlbumNamesWhenEnabled(t *testing.T) {
++	var albumRequests atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch r.URL.Path {
++		case "/api/search/random":
++			w.Header().Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
++			require.NoError(t, json.NewEncoder(w).Encode([]immich.Asset{testImageAsset("asset-a")}))
++		case "/api/assets/asset-a/thumbnail":
++			w.Header().Set(echo.HeaderContentType, kiosk.MimeTypeJpeg)
++			_, err := w.Write(mustEncodeJPEG(t))
++			require.NoError(t, err)
++		case "/api/assets/asset-a":
++			w.Header().Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
++			require.NoError(t, json.NewEncoder(w).Encode(testImageAsset("asset-a")))
++		case "/api/albums":
++			albumRequests.Add(1)
++			require.Equal(t, "asset-a", r.URL.Query().Get("assetId"))
++			w.Header().Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
++			require.NoError(t, json.NewEncoder(w).Encode(immich.Albums{
++				{ID: "album-a", AlbumName: "Family"},
++				{ID: "album-b", AlbumName: "Road Trips"},
++			}))
++		default:
++			t.Fatalf("unexpected fresh-slide test request: %s", r.URL.String())
++		}
++	}))
++	defer server.Close()
++
++	cache.Initialize()
++	requestConfig := *newCancellationTestConfig(server.URL)
++	requestConfig.ShowAlbumName = true
++	requestContext := common.ContextCopy{
++		URL:            url.URL{Path: "/"},
++		RequestHeader:  http.Header{"kiosk-device-id": []string{"frame-a"}},
++		ResponseHeader: http.Header{echo.HeaderXRequestID: []string{"request-a"}},
++	}
++
++	viewImage, err := processViewImageDataWithContext(context.Background(), requestConfig, requestContext, false, common.ViewImageDataOptions{})
++	require.NoError(t, err)
++	require.EqualValues(t, 1, albumRequests.Load())
++	require.Equal(t, immich.Albums{
++		{ID: "album-a", AlbumName: "Family"},
++		{ID: "album-b", AlbumName: "Road Trips"},
++	}, viewImage.ImmichAsset.AppearsIn)
++}
++
++func TestFreshSlideSkipsAlbumLookupWhenDisabled(t *testing.T) {
++	var albumRequests atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch r.URL.Path {
++		case "/api/search/random":
++			w.Header().Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
++			require.NoError(t, json.NewEncoder(w).Encode([]immich.Asset{testImageAsset("asset-a")}))
++		case "/api/assets/asset-a/thumbnail":
++			w.Header().Set(echo.HeaderContentType, kiosk.MimeTypeJpeg)
++			_, err := w.Write(mustEncodeJPEG(t))
++			require.NoError(t, err)
++		case "/api/assets/asset-a":
++			w.Header().Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
++			require.NoError(t, json.NewEncoder(w).Encode(testImageAsset("asset-a")))
++		case "/api/albums":
++			albumRequests.Add(1)
++			w.Header().Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
++			_, err := w.Write([]byte("[]"))
++			require.NoError(t, err)
++		default:
++			t.Fatalf("unexpected fresh-slide test request: %s", r.URL.String())
++		}
++	}))
++	defer server.Close()
++
++	cache.Initialize()
++	requestConfig := *newCancellationTestConfig(server.URL)
++	requestContext := common.ContextCopy{
++		URL:            url.URL{Path: "/"},
++		RequestHeader:  http.Header{"kiosk-device-id": []string{"frame-a"}},
++		ResponseHeader: http.Header{echo.HeaderXRequestID: []string{"request-a"}},
++	}
++
++	viewImage, err := processViewImageDataWithContext(context.Background(), requestConfig, requestContext, false, common.ViewImageDataOptions{})
++	require.NoError(t, err)
++	require.Zero(t, albumRequests.Load())
++	require.Empty(t, viewImage.ImmichAsset.AppearsIn)
++}
