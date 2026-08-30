@@ -9,6 +9,12 @@ changes will still be called out explicitly.
 
 ## [Unreleased]
 
+### Removed
+
+- Removed the inert GitHub Actions validation and release workflows plus their
+  Dependabot updater. Validation and release gates now run only on trusted local
+  infrastructure, and the local validator rejects future workflow files.
+
 ### Added
 
 - Fresh slideshow selections now load their Immich album memberships when
