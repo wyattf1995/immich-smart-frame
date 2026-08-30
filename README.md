@@ -250,9 +250,9 @@ config, API-key file, and offline assets before an upgrade or rollback.
 it reports Kiosk liveness and dependency readiness separately and never restarts
 a service. This repository has no GitHub Actions workflows: repository Actions
 are disabled, and all validation and release gates run locally. The local
-validator rejects workflow files and GitHub Actions dependency automation so
-that policy cannot silently regress. Use `./scripts/validate.sh --static` to
-skip the Docker image build.
+validator rejects workflow files and Dependabot version-update configuration
+because both can launch GitHub-hosted jobs. Use `./scripts/validate.sh --static`
+to skip the Docker image build.
 The offline bind mount is private writable state for the image's non-root
 UID/GID 65532; rerun `scripts/check-offline-assets-permissions.sh` after moving
 the deployment or restoring a snapshot. See [cache operations](docs/cache-operations.md)

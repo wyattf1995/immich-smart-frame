@@ -11,9 +11,10 @@ changes will still be called out explicitly.
 
 ### Removed
 
-- Removed the inert GitHub Actions validation and release workflows plus their
-  Dependabot updater. Validation and release gates now run only on trusted local
-  infrastructure, and the local validator rejects future workflow files.
+- Removed the inert GitHub Actions validation and release workflows and all
+  Dependabot version-update configuration. Validation, dependency maintenance,
+  and release gates now run only on trusted local infrastructure, and the local
+  validator rejects configuration that could launch GitHub-hosted jobs.
 
 ### Added
 
