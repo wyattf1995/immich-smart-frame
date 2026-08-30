@@ -29,6 +29,7 @@ that permission enabled when it appears in your Immich version.
 | Source type or feature | Additional permission |
 | --- | --- |
 | `album` sources | `album.read`, `album.statistics` |
+| Album-name labels, exclusions, or penalties | `album.read` |
 | `person` sources | `face.read`, `person.read`, `person.statistics` |
 | `tag` sources | `tag.read` |
 | Kiosk `/about` page | `server.about` |

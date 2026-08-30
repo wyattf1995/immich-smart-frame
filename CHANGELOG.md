@@ -11,6 +11,9 @@ changes will still be called out explicitly.
 
 ### Added
 
+- Fresh slideshow selections now load their Immich album memberships when
+  `show_album_name` is enabled, so the existing lower-left album label works
+  for date, person, tag, memory, and random sources as well as history views.
 - Added date-pool hardening to the custom image: shuffle-bag refills that never
   discard unserved candidates (small pools now cycle every photo once before
   any repeat), an optional `kiosk.date_pool_minimum` floor that widens a

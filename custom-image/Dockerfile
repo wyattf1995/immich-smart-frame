@@ -56,6 +56,7 @@ COPY date-pool-hardening-tests.patch /tmp/date-pool-hardening-tests.patch
 COPY cancellation-propagation.patch /tmp/cancellation-propagation.patch
 COPY cancellation-propagation-tests.patch /tmp/cancellation-propagation-tests.patch
 COPY album-name-fresh-slide-tests.patch /tmp/album-name-fresh-slide-tests.patch
+COPY album-name-fresh-slide.patch /tmp/album-name-fresh-slide.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -150,7 +151,9 @@ RUN cd /src \
 	&& git apply --check /tmp/cancellation-propagation-tests.patch \
 	&& git apply /tmp/cancellation-propagation-tests.patch \
 	&& git apply --check /tmp/album-name-fresh-slide-tests.patch \
-	&& git apply /tmp/album-name-fresh-slide-tests.patch
+	&& git apply /tmp/album-name-fresh-slide-tests.patch \
+	&& git apply --check /tmp/album-name-fresh-slide.patch \
+	&& git apply /tmp/album-name-fresh-slide.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 

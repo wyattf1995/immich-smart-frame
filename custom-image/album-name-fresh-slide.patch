@@ -1,0 +1,17 @@
+diff --git a/internal/routes/routes_asset_helpers.go b/internal/routes/routes_asset_helpers.go
+index c7c4df4..6ecdd64 100644
+--- a/internal/routes/routes_asset_helpers.go
++++ b/internal/routes/routes_asset_helpers.go
+@@ -638,6 +638,12 @@ func processViewImageDataWithContext(ctx context.Context, requestConfig config.C
+ 	if err := checkCanceled(ctx); err != nil {
+ 		return common.ViewImageData{}, err
+ 	}
++	if requestConfig.ShowAlbumName && len(immichAsset.AppearsIn) == 0 {
++		immichAsset.AlbumsThatContainAsset(metadata.requestID, metadata.deviceID)
++	}
++	if err := checkCanceled(ctx); err != nil {
++		return common.ViewImageData{}, err
++	}
+ 
+ 	// Handle face detection and smart zoom
+ 	img = handleFaceProcessing(img, &immichAsset, requestConfig, metadata)
