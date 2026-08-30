@@ -23,6 +23,8 @@ required_files=(
   config/config.example.yaml
   config/qwen.example.yaml
   custom-image/album-penalties.patch
+  custom-image/album-name-fresh-slide-tests.patch
+  custom-image/album-name-fresh-slide.patch
   custom-image/backend-cache-hardening.patch
   custom-image/backend-cache-refill-hardening.patch
   custom-image/backend-cache-refill-regression-tests.patch
