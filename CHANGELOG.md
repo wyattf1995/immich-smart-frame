@@ -18,6 +18,9 @@ changes will still be called out explicitly.
 
 ### Added
 
+- Lower-left photo dates now stay hidden when a visible album title begins with
+  the same full date, month, or year; time-only display and More Info retain
+  their existing detail.
 - Fresh slideshow selections now load their Immich album memberships when
   `show_album_name` is enabled, so the existing lower-left album label works
   for date, person, tag, memory, and random sources as well as history views.

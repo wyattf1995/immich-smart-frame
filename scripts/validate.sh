@@ -24,6 +24,7 @@ required_files=(
   custom-image/album-name-fresh-slide-tests.patch
   custom-image/album-name-fresh-slide.patch
   custom-image/album-date-metadata-tests.patch
+  custom-image/album-date-metadata.patch
   custom-image/backend-cache-hardening.patch
   custom-image/backend-cache-refill-hardening.patch
   custom-image/backend-cache-refill-regression-tests.patch

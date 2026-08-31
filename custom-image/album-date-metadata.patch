@@ -1,0 +1,174 @@
+diff --git a/internal/templates/partials/metadata.templ b/internal/templates/partials/metadata.templ
+index 44740f4..99f5348 100644
+--- a/internal/templates/partials/metadata.templ
++++ b/internal/templates/partials/metadata.templ
+@@ -193,23 +193,125 @@ func AssetCameraData(exifInfo immich.ExifInfo) string {
+ 	return strings.TrimSpace(fmt.Sprintf("%s %s", ma, mo))
+ }
+ 
+-// AssetDateTime generates a formatted date/time string for an asset.
+-// The format is controlled by the ViewData settings, allowing for different
+-// date formats, 12/24hr time, and showing/hiding date or time components.
+-//
+-// Parameters:
+-//   - viewData: ViewData struct containing display settings and assets
+-//   - assetIndex: Index of the asset in the ViewData assets slice
+-//   - moreInfo: Boolean indicating if additional date/time info should be shown
+-//
+-// Returns:
+-//   - string: Formatted date/time string based on settings
+-func AssetDateTime(viewData common.ViewData, assetIndex int, moreInfo bool) string {
+-
++// assetDisplayDateTime resolves the timestamp in the same timezone used for display.
++func assetDisplayDateTime(viewData common.ViewData, assetIndex int) (time.Time, bool) {
+ 	if assetIndex < 0 || assetIndex >= len(viewData.Assets) {
+-		return ""
++		return time.Time{}, false
+ 	}
+ 	if viewData.Assets[assetIndex].ImmichAsset.LocalDateTime.IsZero() {
++		return time.Time{}, false
++	}
++
++	parsedDateTime := viewData.Assets[assetIndex].ImmichAsset.LocalDateTime
++	timeZone := viewData.Assets[assetIndex].ImmichAsset.ExifInfo.TimeZone
++	if timeZone != "" {
++		loc, err := time.LoadLocation(timeZone)
++		if err == nil {
++			parsedDateTime = viewData.Assets[assetIndex].ImmichAsset.ExifInfo.DateTimeOriginal.In(loc)
++		}
++	}
++
++	return parsedDateTime, true
++}
++
++func isASCIIDigit(value byte) bool {
++	return value >= '0' && value <= '9'
++}
++
++func isASCIIAlphaNumeric(value byte) bool {
++	return isASCIIDigit(value) || value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z'
++}
++
++func albumNameContainsAssetDate(albumName string, assetDate time.Time) bool {
++	name := strings.TrimSpace(albumName)
++	if len(name) < 4 || !isASCIIDigit(name[0]) || !isASCIIDigit(name[1]) ||
++		!isASCIIDigit(name[2]) || !isASCIIDigit(name[3]) {
++		return false
++	}
++
++	year, err := strconv.Atoi(name[:4])
++	if err != nil || year != assetDate.Year() {
++		return false
++	}
++	if len(name) == 4 {
++		return true
++	}
++	if name[4] != '-' {
++		return !isASCIIAlphaNumeric(name[4])
++	}
++	if len(name) == 5 {
++		return false
++	}
++	if !isASCIIDigit(name[5]) {
++		return true
++	}
++	if len(name) < 7 || !isASCIIDigit(name[6]) {
++		return false
++	}
++
++	month, err := strconv.Atoi(name[5:7])
++	if err != nil || month < 1 || month > 12 || month != int(assetDate.Month()) {
++		return false
++	}
++	if len(name) == 7 {
++		return true
++	}
++	if name[7] != '-' {
++		return !isASCIIAlphaNumeric(name[7])
++	}
++	if len(name) == 8 {
++		return false
++	}
++	if !isASCIIDigit(name[8]) {
++		return true
++	}
++	if len(name) < 10 || !isASCIIDigit(name[9]) {
++		return false
++	}
++
++	day, err := strconv.Atoi(name[8:10])
++	if err != nil || day != assetDate.Day() {
++		return false
++	}
++	candidate := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
++	if candidate.Year() != year || int(candidate.Month()) != month || candidate.Day() != day {
++		return false
++	}
++
++	return len(name) == 10 || !isASCIIAlphaNumeric(name[10])
++}
++
++func albumNamesContainAssetDate(albums immich.Albums, assetDate time.Time) bool {
++	for _, album := range albums {
++		if albumNameContainsAssetDate(album.AlbumName, assetDate) {
++			return true
++		}
++	}
++
++	return false
++}
++
++func shouldShowImageDate(viewData common.ViewData, assetIndex int) bool {
++	if !viewData.ShowImageDate {
++		return false
++	}
++	assetDate, ok := assetDisplayDateTime(viewData, assetIndex)
++	if !ok {
++		return false
++	}
++	if !viewData.ShowAlbumName {
++		return true
++	}
++
++	return !albumNamesContainAssetDate(viewData.Assets[assetIndex].ImmichAsset.AppearsIn, assetDate)
++}
++
++// AssetDateTime generates a formatted date/time string for an asset.
++// More Info always includes both values; slide metadata honors the configured
++// date/time settings and suppresses a date already present in a visible album name.
++func AssetDateTime(viewData common.ViewData, assetIndex int, moreInfo bool) string {
++	parsedDateTime, ok := assetDisplayDateTime(viewData, assetIndex)
++	if !ok {
+ 		return ""
+ 	}
+ 
+@@ -225,24 +327,18 @@ func AssetDateTime(viewData common.ViewData, assetIndex int, moreInfo bool) stri
+ 		assetDateFormat = config.DefaultDateLayout
+ 	}
+ 
+-	parsedDateTime := viewData.Assets[assetIndex].ImmichAsset.LocalDateTime
+-	timeZone := viewData.Assets[assetIndex].ImmichAsset.ExifInfo.TimeZone
+-	if timeZone != "" {
+-		loc, err := time.LoadLocation(timeZone)
+-		if err == nil {
+-			parsedDateTime = viewData.Assets[assetIndex].ImmichAsset.ExifInfo.DateTimeOriginal.In(loc)
+-		}
+-	}
++	showImageDate := moreInfo || shouldShowImageDate(viewData, assetIndex)
++	showImageTime := moreInfo || viewData.ShowImageTime
+ 	switch {
+-	case moreInfo || (viewData.ShowImageDate && viewData.ShowImageTime):
++	case showImageDate && showImageTime:
+ 		assetDate = fmt.Sprintf(
+ 			"%s %s",
+ 			monday.Format(parsedDateTime, assetDateFormat, viewData.SystemLang),
+ 			parsedDateTime.Format(assetTimeFormat),
+ 		)
+-	case viewData.ShowImageDate:
++	case showImageDate:
+ 		assetDate = monday.Format(parsedDateTime, assetDateFormat, viewData.SystemLang)
+-	case viewData.ShowImageTime:
++	case showImageTime:
+ 		assetDate = parsedDateTime.Format(assetTimeFormat)
+ 	}
+ 

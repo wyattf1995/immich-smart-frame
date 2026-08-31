@@ -32,7 +32,8 @@ experience. This one adds:
 - named, explicitly weighted curation profiles;
 - recency ladders, Immich memories, people, albums, tags, and date ranges;
 - per-profile album penalties for soft de-ranking without exclusion;
-- exact capture date and optional city/state metadata;
+- exact capture date and optional city/state metadata, with redundant slide
+  dates hidden when a visible album title starts with the same date;
 - reviewable patches against a pinned upstream release.
 
 ## Architecture
