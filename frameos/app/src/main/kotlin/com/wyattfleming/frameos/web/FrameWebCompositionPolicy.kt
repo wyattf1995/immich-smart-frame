@@ -31,7 +31,7 @@ internal object FrameWebCompositionPolicy {
             retainHomeAssistantSurface = true,
             warmCalendarInBackground = true,
         )
-        FrameMode.CAMERAS -> FrameWebComposition(
+        FrameMode.CAMERAS, FrameMode.BIRDS -> FrameWebComposition(
             foreground = FrameWebForeground.PRIMARY,
             retainHomeAssistantSurface = true,
             warmCalendarInBackground = true,

@@ -22,6 +22,7 @@ class FrameControlReceiver : BroadcastReceiver() {
                     .ifBlank { DEFAULT_WEATHER_ENTITY_ID },
                 homeAssistantFallbackUrl = intent
                     .getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_FALLBACK_URL),
+                birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
             )
             if (configuration != null) {
                 SharedPreferencesWeatherCache(context).clear()

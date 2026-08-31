@@ -28,6 +28,7 @@ import android.widget.TextView
 import com.wyattfleming.frameos.navigation.FrameEffect
 import com.wyattfleming.frameos.navigation.FrameIntent
 import com.wyattfleming.frameos.navigation.FrameMode
+import com.wyattfleming.frameos.navigation.FrameModeAvailability
 import com.wyattfleming.frameos.navigation.FrameReducer
 import com.wyattfleming.frameos.navigation.FrameState
 import com.wyattfleming.frameos.navigation.FrameStartupPolicy
@@ -77,7 +78,7 @@ import java.util.concurrent.Future
 import kotlin.math.abs
 
 class MainActivity : Activity() {
-    private val reducer = FrameReducer()
+    private val reducer = FrameReducer { FrameModeAvailability(configuration?.birdsUrl).cycleModes }
     private val inputMapper = PhysicalInputMapper()
     private val contextualInputMapper = ContextualInputMapper()
     private val handler = Handler(Looper.getMainLooper())
@@ -406,6 +407,7 @@ class MainActivity : Activity() {
                 photosUrl = activeConfiguration.photosUrl,
                 homeAssistantUrl = activeConfiguration.homeAssistantUrl,
                 homeAssistantFallbackUrl = activeConfiguration.homeAssistantFallbackUrl,
+                birdsUrl = activeConfiguration.birdsUrl,
                 warmHomeAssistantView = warmHomeAssistantView,
                 listener = webListener,
                 operationLogger = operationLogger,
@@ -600,7 +602,13 @@ class MainActivity : Activity() {
                     hideWebRecovery()
                     webSurface?.show(target.slot, target.url, takeFocus = true)
                 }
+                FrameWebSlot.BIRDS -> {
+                    weatherContent.visibility = View.GONE
+                    hideWebRecovery()
+                    webSurface?.show(target.slot, target.url, takeFocus = true)
+                }
             }
+            is FrameSurfaceTarget.Unavailable -> Unit
             FrameSurfaceTarget.NativeWeather -> {
                 hideWebRecovery()
                 webSurface?.hide()
@@ -637,6 +645,7 @@ class MainActivity : Activity() {
         FrameMode.PHOTOS.label -> state.mode == FrameMode.PHOTOS
         "Home Assistant" -> state.mode in HOME_ASSISTANT_MODES
         FrameMode.CAMERAS.label -> state.mode == FrameMode.CAMERAS
+        FrameMode.BIRDS.label -> state.mode == FrameMode.BIRDS
         else -> false
     }
 
@@ -671,14 +680,16 @@ class MainActivity : Activity() {
     }
 
     private fun showMode(mode: FrameMode) {
-        val changed = state.mode != mode
+        val resolvedMode = FrameModeAvailability(configuration?.birdsUrl).resolve(mode)
+        val unavailableBirds = mode == FrameMode.BIRDS && resolvedMode != mode
+        val changed = state.mode != resolvedMode
         state = state.copy(
-            mode = mode,
-            photosPaused = if (mode == FrameMode.PHOTOS) false else state.photosPaused,
+            mode = resolvedMode,
+            photosPaused = if (resolvedMode == FrameMode.PHOTOS) false else state.photosPaused,
         )
         render(state, announce = changed)
-        if (mode == FrameMode.WEATHER) refreshWeather()
-        if (changed) showHud()
+        if (resolvedMode == FrameMode.WEATHER) refreshWeather()
+        if (unavailableBirds) showHud("Birds is not configured") else if (changed) showHud()
         scheduleIdleReset()
     }
 
@@ -696,6 +707,7 @@ class MainActivity : Activity() {
                 .ifBlank { DEFAULT_WEATHER_ENTITY_ID },
             homeAssistantFallbackUrl = intent
                 .getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_FALLBACK_URL),
+            birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
         ) ?: return null
         configurationStore.write(provisioned)
         SharedPreferencesWeatherCache(this).clear()
@@ -969,10 +981,11 @@ class MainActivity : Activity() {
     }
 
     private fun showHud(message: String = state.mode.label) {
-        val position = state.mode.ordinal
+        val modes = FrameModeAvailability(configuration?.birdsUrl).cycleModes
+        val position = modes.indexOf(state.mode).coerceAtLeast(0)
         hudLabel.text = message
-        hudPosition.text = FrameMode.entries.indices.joinToString("  ") { index -> if (index == position) "●" else "○" }
-        hud.contentDescription = "$message. ${position + 1} of ${FrameMode.entries.size}."
+        hudPosition.text = modes.indices.joinToString("  ") { index -> if (index == position) "●" else "○" }
+        hud.contentDescription = "$message. ${position + 1} of ${modes.size}."
         hud.visibility = View.VISIBLE
         hud.alpha = 0f
         hud.translationY = -dp(8).toFloat()
