@@ -58,6 +58,24 @@ class FrameWebSurfaceContractTest {
         assertTrue("Birds must close its Gecko session", source.contains("birdsSession?.close()"))
     }
 
+    @Test
+    fun `Birds stops its attached session before detaching and defers only final close`() {
+        val disposeBirdsSession = methodBody(source(), "private fun disposeBirdsSession()")
+
+        assertContainsInOrder(
+            disposeBirdsSession,
+            listOf(
+                "cancelRecovery(disposable)",
+                "disposable.prepareForDisposal()",
+                "if (foregroundSlot == FrameWebSlot.BIRDS)",
+                "releaseForegroundAttachedSession()",
+                "val close = Runnable",
+                "disposable.close()",
+                "post(close)",
+            ),
+        )
+    }
+
     private fun source(): String {
         val candidates = listOf(
             Paths.get("app/src/main/kotlin/com/wyattfleming/frameos/web/FrameWebSurface.kt"),
