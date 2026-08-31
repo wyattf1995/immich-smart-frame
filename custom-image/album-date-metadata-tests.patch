@@ -1,0 +1,99 @@
+diff --git a/internal/templates/partials/album_date_metadata_test.go b/internal/templates/partials/album_date_metadata_test.go
+new file mode 100644
+index 0000000..36f436c
+--- /dev/null
++++ b/internal/templates/partials/album_date_metadata_test.go
+@@ -0,0 +1,93 @@
++package partials
++
++import (
++	"testing"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/stretchr/testify/require"
++)
++
++func albumDateViewData(assetDate time.Time, albumNames ...string) common.ViewData {
++	albums := make(immich.Albums, len(albumNames))
++	for i, albumName := range albumNames {
++		albums[i] = immich.Album{AlbumName: albumName}
++	}
++
++	return common.ViewData{
++		Config: config.Config{
++			ShowAlbumName:   true,
++			ShowImageDate:   true,
++			ImageDateFormat: "YYYY-MM-DD",
++			ImageTimeFormat: "24",
++		},
++		Assets: []common.ViewImageData{{
++			ImmichAsset: immich.Asset{
++				LocalDateTime: assetDate,
++				ExifInfo: immich.ExifInfo{
++					DateTimeOriginal: assetDate,
++				},
++				AppearsIn: albums,
++			},
++		}},
++	}
++}
++
++func TestShouldShowImageDateForAlbumDatePrefixes(t *testing.T) {
++	assetDate := time.Date(2024, time.March, 15, 20, 45, 0, 0, time.UTC)
++	tests := []struct {
++		name       string
++		albumNames []string
++		want       bool
++	}{
++		{name: "matching full date", albumNames: []string{"2024-03-15 Birthday"}, want: false},
++		{name: "different full date", albumNames: []string{"2024-03-14 Birthday"}, want: true},
++		{name: "matching month", albumNames: []string{"2024-03 Spring"}, want: false},
++		{name: "different month", albumNames: []string{"2024-04 Spring"}, want: true},
++		{name: "matching year", albumNames: []string{"2024 Family"}, want: false},
++		{name: "matching year with hyphen delimiter", albumNames: []string{"2024-Family"}, want: false},
++		{name: "different year", albumNames: []string{"2023 Family"}, want: true},
++		{name: "matching later album", albumNames: []string{"Road Trips", "2024-03-15 Birthday"}, want: false},
++		{name: "date not at start", albumNames: []string{"Birthday 2024-03-15"}, want: true},
++		{name: "invalid date", albumNames: []string{"2024-03-99 Birthday"}, want: true},
++		{name: "malformed boundary", albumNames: []string{"2024-03-150 Birthday"}, want: true},
++		{name: "empty album name", albumNames: []string{""}, want: true},
++		{name: "no albums", want: true},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			viewData := albumDateViewData(assetDate, tt.albumNames...)
++			require.Equal(t, tt.want, shouldShowImageDate(viewData, 0))
++		})
++	}
++}
++
++func TestShouldShowImageDateRequiresVisibleAlbumName(t *testing.T) {
++	assetDate := time.Date(2024, time.March, 15, 20, 45, 0, 0, time.UTC)
++	viewData := albumDateViewData(assetDate, "2024-03-15 Birthday")
++	viewData.ShowAlbumName = false
++	require.True(t, shouldShowImageDate(viewData, 0))
++
++	viewData.ShowImageDate = false
++	require.False(t, shouldShowImageDate(viewData, 0))
++}
++
++func TestShouldShowImageDateUsesDisplayedAssetTimezone(t *testing.T) {
++	instant := time.Date(2024, time.January, 1, 1, 30, 0, 0, time.UTC)
++	viewData := albumDateViewData(instant, "2023-12-31 New Year's Eve")
++	viewData.Assets[0].ImmichAsset.ExifInfo.TimeZone = "America/Los_Angeles"
++
++	require.False(t, shouldShowImageDate(viewData, 0))
++}
++
++func TestAssetDateTimeKeepsTimeAndMoreInfoWhenAlbumDateMatches(t *testing.T) {
++	assetDate := time.Date(2024, time.March, 15, 20, 45, 0, 0, time.UTC)
++	viewData := albumDateViewData(assetDate, "2024-03-15 Birthday")
++	viewData.ShowImageTime = true
++
++	require.Equal(t, "20:45", AssetDateTime(viewData, 0, false))
++	require.Equal(t, "2024-03-15 20:45", AssetDateTime(viewData, 0, true))
++}
