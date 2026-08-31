@@ -9,7 +9,7 @@ import org.junit.Test
 class FrameWebCompositionPolicyTest {
     @Test
     fun `non HA views retain an attached calendar surface for bounded warming`() {
-        listOf(FrameMode.PHOTOS, FrameMode.WEATHER, FrameMode.CAMERAS).forEach { mode ->
+        listOf(FrameMode.PHOTOS, FrameMode.WEATHER, FrameMode.CAMERAS, FrameMode.BIRDS).forEach { mode ->
             val plan = FrameWebCompositionPolicy.forMode(mode)
 
             assertTrue("$mode should retain the HA surface", plan.retainHomeAssistantSurface)
@@ -37,6 +37,10 @@ class FrameWebCompositionPolicyTest {
         assertEquals(
             FrameWebForeground.PRIMARY,
             FrameWebCompositionPolicy.forMode(FrameMode.CAMERAS).foreground,
+        )
+        assertEquals(
+            FrameWebForeground.PRIMARY,
+            FrameWebCompositionPolicy.forMode(FrameMode.BIRDS).foreground,
         )
         assertEquals(
             FrameWebForeground.NATIVE_WEATHER,

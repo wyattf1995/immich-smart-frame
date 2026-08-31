@@ -44,6 +44,20 @@ class FrameWebSurfaceContractTest {
         assertFalse(suspendAllContent.contains("hiddenHomeLifecycle.onEvicted()"))
     }
 
+    @Test
+    fun `Birds follows Cameras disposable lifecycle and is never preloaded`() {
+        val source = source()
+        assertContainsInOrder(
+            source,
+            listOf(
+                "FrameWebSlot.BIRDS",
+                "if (displayedSlot == FrameWebSlot.BIRDS)",
+                "disposeBirdsSession()",
+            ),
+        )
+        assertTrue("Birds must close its Gecko session", source.contains("birdsSession?.close()"))
+    }
+
     private fun source(): String {
         val candidates = listOf(
             Paths.get("app/src/main/kotlin/com/wyattfleming/frameos/web/FrameWebSurface.kt"),

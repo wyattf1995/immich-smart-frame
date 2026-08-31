@@ -28,7 +28,7 @@ class FrameSurfaceRouterTest {
     }
 
     @Test
-    fun `Home and Calendar stay warm while Cameras use a disposable surface`() {
+    fun `Home and Calendar stay warm while Cameras and Birds use disposable surfaces`() {
         val home = router.target(FrameMode.HOME) as FrameSurfaceTarget.Web
         val cameras = router.target(FrameMode.CAMERAS) as FrameSurfaceTarget.Web
         val calendar = router.target(FrameMode.CALENDAR) as FrameSurfaceTarget.Web
@@ -45,9 +45,34 @@ class FrameSurfaceRouterTest {
         assertTrue(FrameWebSlot.PHOTOS.isPersistent)
         assertTrue(FrameWebSlot.HOME_ASSISTANT.isPersistent)
         assertFalse(FrameWebSlot.CAMERAS.isPersistent)
+        assertFalse(FrameWebSlot.BIRDS.isPersistent)
         assertFalse(FrameWebSlot.PHOTOS.canPreload)
         assertTrue(FrameWebSlot.HOME_ASSISTANT.canPreload)
         assertFalse(FrameWebSlot.CAMERAS.canPreload)
+        assertFalse(FrameWebSlot.BIRDS.canPreload)
+    }
+
+    @Test
+    fun `configured Birds routes to its own origin without query credentials`() {
+        val configured = FrameConfiguration.from(
+            photosUrl = "https://photos.example.invalid/",
+            homeAssistantUrl = "https://home-assistant.example.invalid/",
+            birdsUrl = "http://birdnet.example.invalid:8080/dashboard",
+        )!!
+        val birds = FrameSurfaceRouter(configured).target(FrameMode.BIRDS)
+
+        assertEquals(
+            FrameSurfaceTarget.Web(
+                slot = FrameWebSlot.BIRDS,
+                url = "http://birdnet.example.invalid:8080/dashboard",
+            ),
+            birds,
+        )
+    }
+
+    @Test
+    fun `unconfigured Birds target is explicit and cannot start a session`() {
+        assertEquals(FrameSurfaceTarget.Unavailable(FrameMode.BIRDS), router.target(FrameMode.BIRDS))
     }
 
     @Test
