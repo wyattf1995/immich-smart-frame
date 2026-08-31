@@ -156,14 +156,21 @@ class FrameWebSurface(
         }
 
         fun close() {
+            prepareForDisposal()
+            runCatching { session.close() }
+                .onFailure { crashRecovery.markClosedByContentProcess() }
+        }
+
+        fun prepareForDisposal() {
+            lifecycleSuspended = true
             disarmPageLoadWatchdog()
             if (!crashRecovery.canUseSession) return
-            runCatching {
-                session.setFocused(false)
-                session.setActive(false)
-                session.stop()
-                session.close()
-            }.onFailure { crashRecovery.markClosedByContentProcess() }
+            val clean = FrameWebSessionDisposal.prepare(
+                clearFocus = { session.setFocused(false) },
+                deactivate = { session.setActive(false) },
+                stop = { session.stop() },
+            )
+            if (!clean) crashRecovery.markClosedByContentProcess()
         }
 
         fun suspendForLifecycle() {
@@ -475,12 +482,13 @@ class FrameWebSurface(
 
     private fun disposeBirdsSession() {
         val disposable = birdsSession ?: return
+        cancelRecovery(disposable)
+        disposable.prepareForDisposal()
         if (foregroundSlot == FrameWebSlot.BIRDS) {
             if (session != null) releaseForegroundAttachedSession()
             foregroundSlot = null
         }
         if (displayedSlot == FrameWebSlot.BIRDS) displayedSlot = null
-        cancelRecovery(disposable)
         birdsSession = null
         val close = Runnable {
             pendingCameraClosures.remove(disposable)
