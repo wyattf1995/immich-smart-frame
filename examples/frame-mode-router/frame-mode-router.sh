@@ -15,7 +15,7 @@ usage() {
 
 is_mode() {
   case "$1" in
-    photos|home|weather|cameras|calendar) return 0 ;;
+    photos|home|weather|birds|cameras|calendar) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -58,6 +58,7 @@ FRAMEOS_PACKAGE="${FRAMEOS_PACKAGE:-}"
 FRAMEOS_ACTIVITY="${FRAMEOS_ACTIVITY:-}"
 FRAMEOS_RECEIVER="${FRAMEOS_RECEIVER:-}"
 FRAMEOS_CONTROL_ACTION="${FRAMEOS_CONTROL_ACTION:-com.wyattfleming.frameos.CONTROL}"
+FRAMEOS_BIRDS_ENABLED="${FRAMEOS_BIRDS_ENABLED:-0}"
 FIREFOX_READY_MAX_PROBES="${FIREFOX_READY_MAX_PROBES:-4}"
 FIREFOX_READY_POLL_SECONDS="${FIREFOX_READY_POLL_SECONDS:-1}"
 LOCK_LEASE_SECONDS="${LOCK_LEASE_SECONDS:-90}"
@@ -68,6 +69,16 @@ if [ -n "$FRAMEOS_PACKAGE" ] || [ -n "$FRAMEOS_ACTIVITY" ] || [ -n "$FRAMEOS_REC
   [ -n "$FRAMEOS_PACKAGE" ] && [ -n "$FRAMEOS_ACTIVITY" ] && [ -n "$FRAMEOS_RECEIVER" ] || \
     fail 'FRAMEOS_PACKAGE, FRAMEOS_ACTIVITY, and FRAMEOS_RECEIVER must be configured together'
   frameos_enabled=1
+fi
+
+case "$FRAMEOS_BIRDS_ENABLED" in
+  0|1) ;;
+  *) fail 'FRAMEOS_BIRDS_ENABLED must be 0 or 1' ;;
+esac
+[ "$FRAMEOS_BIRDS_ENABLED" = 0 ] || [ "$frameos_enabled" = 1 ] || \
+  fail 'FRAMEOS_BIRDS_ENABLED requires FrameOS'
+if [ "$action" = show ] && [ "$requested_mode" = birds ] && [ "$FRAMEOS_BIRDS_ENABLED" != 1 ]; then
+  fail 'Birds mode is not enabled'
 fi
 
 case "$STATE_FILE:$LOCK_DIR" in
@@ -131,7 +142,9 @@ saved_mode() {
   if [ -r "$STATE_FILE" ]; then
     IFS= read -r mode < "$STATE_FILE"
   fi
-  if is_mode "$mode" && { [ "$frameos_enabled" = 1 ] || [ "$mode" != weather ]; }; then
+  if is_mode "$mode" && \
+      { [ "$frameos_enabled" = 1 ] || { [ "$mode" != weather ] && [ "$mode" != birds ]; }; } && \
+      { [ "$mode" != birds ] || [ "$FRAMEOS_BIRDS_ENABLED" = 1 ]; }; then
     printf '%s\n' "$mode"
   else
     printf '%s\n' home
@@ -157,7 +170,14 @@ next_mode() {
     case "$1" in
       photos) printf '%s\n' home ;;
       home) printf '%s\n' weather ;;
-      weather) printf '%s\n' cameras ;;
+      weather)
+        if [ "$FRAMEOS_BIRDS_ENABLED" = 1 ]; then
+          printf '%s\n' birds
+        else
+          printf '%s\n' cameras
+        fi
+        ;;
+      birds) printf '%s\n' cameras ;;
       cameras) printf '%s\n' calendar ;;
       calendar) printf '%s\n' photos ;;
     esac
@@ -177,7 +197,14 @@ previous_mode() {
       photos) printf '%s\n' calendar ;;
       home) printf '%s\n' photos ;;
       weather) printf '%s\n' home ;;
-      cameras) printf '%s\n' weather ;;
+      birds) printf '%s\n' weather ;;
+      cameras)
+        if [ "$FRAMEOS_BIRDS_ENABLED" = 1 ]; then
+          printf '%s\n' birds
+        else
+          printf '%s\n' weather
+        fi
+        ;;
       calendar) printf '%s\n' cameras ;;
     esac
     return
@@ -234,6 +261,7 @@ open_frameos_mode() {
     photos) frameos_mode=PHOTOS ;;
     home) frameos_mode=HOME ;;
     weather) frameos_mode=WEATHER ;;
+    birds) frameos_mode=BIRDS ;;
     cameras) frameos_mode=CAMERAS ;;
     calendar) frameos_mode=CALENDAR ;;
     *) return 2 ;;
