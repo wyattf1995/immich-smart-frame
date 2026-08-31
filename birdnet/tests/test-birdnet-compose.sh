@@ -47,6 +47,11 @@ grep -Fq 'streams: []' "$CONFIG_FILE" || fail 'sample config must be safe before
 grep -Eq '#[[:space:]]+url: rtsp://[^[:space:]]+' "$CONFIG_FILE" || \
   fail 'sample config must include an explicit RTSP URL placeholder'
 grep -Fq 'RTSP_USER' "$CONFIG_FILE" || fail 'RTSP placeholder must show credential indirection'
+grep -Fq 'thumbnails:' "$CONFIG_FILE" || fail 'Birds dashboard must configure species thumbnails explicitly'
+grep -Fq 'summary: true' "$CONFIG_FILE" || fail 'species summary must include bird images'
+grep -Fq 'recent: true' "$CONFIG_FILE" || fail 'recent detections must include bird images'
+grep -Fq 'imageprovider: avicommons' "$CONFIG_FILE" || fail 'bird images must prefer the attribution-aware AviCommons provider'
+grep -Fq 'fallbackpolicy: all' "$CONFIG_FILE" || fail 'bird images must fall back across supported providers'
 grep -Fq 'backup' "$OPS_FILE" || fail 'operations notes must cover backups'
 grep -Fq 'rollback' "$OPS_FILE" || fail 'operations notes must cover rollback'
 grep -Fq '/boot/config/birdnet-go/' "$OPS_FILE" || fail 'operations must use a persistent Unraid Compose project'
