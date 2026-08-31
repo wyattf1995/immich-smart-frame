@@ -115,8 +115,10 @@ show_more_info: false
 show_more_info_image_link: false
 show_more_info_qr_code: false
 
-# Show the exact capture date plus location in the lower-left metadata. Country
-# is redundant for this library; city and state remain visible when available.
+# Show the exact capture date plus location in the lower-left metadata. A date
+# already represented at the start of a visible album title is not repeated.
+# Country is redundant for this library; city and state remain visible when
+# available.
 show_image_date: true
 image_date_format: YYYY-MM-DD
 show_image_location: true

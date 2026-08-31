@@ -57,6 +57,8 @@ COPY cancellation-propagation.patch /tmp/cancellation-propagation.patch
 COPY cancellation-propagation-tests.patch /tmp/cancellation-propagation-tests.patch
 COPY album-name-fresh-slide-tests.patch /tmp/album-name-fresh-slide-tests.patch
 COPY album-name-fresh-slide.patch /tmp/album-name-fresh-slide.patch
+COPY album-date-metadata-tests.patch /tmp/album-date-metadata-tests.patch
+COPY album-date-metadata.patch /tmp/album-date-metadata.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -153,7 +155,11 @@ RUN cd /src \
 	&& git apply --check /tmp/album-name-fresh-slide-tests.patch \
 	&& git apply /tmp/album-name-fresh-slide-tests.patch \
 	&& git apply --check /tmp/album-name-fresh-slide.patch \
-	&& git apply /tmp/album-name-fresh-slide.patch
+	&& git apply /tmp/album-name-fresh-slide.patch \
+	&& git apply --check /tmp/album-date-metadata-tests.patch \
+	&& git apply /tmp/album-date-metadata-tests.patch \
+	&& git apply --check /tmp/album-date-metadata.patch \
+	&& git apply /tmp/album-date-metadata.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
