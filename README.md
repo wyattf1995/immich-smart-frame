@@ -225,14 +225,26 @@ FrameOS can host the slideshow and Home Assistant in one full-screen Android
 app built for the no-touch Lenovo frame. It keeps separate warm Gecko sessions
 for Photos and Home Assistant, adds a native cached Weather view with subtle
 condition-driven animation, and routes Home, Cameras, and Calendar through one
-same-origin iframe without browser chrome or repeated tab loads.
+same-origin wrapper without browser chrome or repeated tab loads. An optional
+Birds view opens a separately hosted BirdNET-Go dashboard in a disposable,
+non-preloaded Gecko session so its live resources are released on exit.
 
 The [Home Assistant wall-panel guide](docs/home-assistant-wall-panel.md)
 includes the privacy-safe dashboard and local wrapper. The protected
 [FrameOS router](docs/frame-mode-router.md) turns two repeatable OEM gestures
-into the circular Photos/Home/Weather/Cameras/Calendar control and documents
+into the circular Photos/Home/Weather/Birds/Cameras/Calendar control when Birds
+is configured, while preserving the original five-view cycle for existing
+installations. It documents
 contextual volume/star behavior, deployment, verification, and legacy
 Fully-plus-Firefox rollback. Home Assistant remains optional for the slideshow.
+
+The separate [BirdNET-Go package](birdnet/OPERATIONS.md) pins a stable upstream
+container, keeps mutable state on Unraid appdata, exposes the dashboard only on
+an explicitly selected LAN address, and starts with no audio source or embedded
+credential. Its recent and summary views show compact species images through
+BirdNET-Go's attributed AviCommons/Wikimedia provider pipeline. A dependable
+deployment requires a local RTSP microphone or camera; the current Nest WebRTC
+feeds are not treated as production audio inputs.
 
 ## Validation
 

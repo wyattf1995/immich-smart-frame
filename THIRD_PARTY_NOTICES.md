@@ -35,6 +35,22 @@ This repository is independent from the Immich Kiosk project. Upstream
 maintainers are not responsible for these patches, hardware instructions, or
 support.
 
+## BirdNET-Go
+
+The optional deployment package references the unmodified
+[BirdNET-Go](https://github.com/tphakala/birdnet-go) container release
+`20260823` by its immutable multi-platform manifest digest. BirdNET-Go is not
+vendored, modified, or redistributed by this repository; Docker retrieves it
+from the upstream GitHub Container Registry when an operator explicitly pulls
+the service.
+
+BirdNET-Go is licensed under Creative Commons Attribution-NonCommercial-
+ShareAlike 4.0 International. Its code, models, taxonomy data, images, and other
+third-party inputs retain their respective upstream terms. Review those terms
+before any use beyond this project's personal, noncommercial home deployment.
+BirdNET-Go's maintainers are not responsible for FrameOS, this Compose package,
+or Lenovo hardware support.
+
 ## Fully Kiosk Browser
 
 Fully Kiosk Browser is referenced as a tested Android renderer but is not

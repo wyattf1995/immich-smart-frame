@@ -18,6 +18,12 @@ changes will still be called out explicitly.
 
 ### Added
 
+- Added an optional sixth FrameOS Birds mode backed by a safe configured
+  BirdNET-Go URL. Existing stored configurations retain the five-view cycle;
+  configured Birds sessions are disposable and never preloaded.
+- Added a pinned, LAN-bound BirdNET-Go Unraid package with appdata persistence,
+  no committed audio credentials, attributed bird-species thumbnails, local
+  validation, and backup/rollback notes.
 - Lower-left photo dates now stay hidden when a visible album title begins with
   the same full date, month, or year; time-only display and More Info retain
   their existing detail.

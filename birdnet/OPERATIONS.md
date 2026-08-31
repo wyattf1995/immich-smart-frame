@@ -52,6 +52,11 @@ The in-app RTSP health monitor is configured for 60 seconds of data and a
 30-second check interval. Use the BirdNET-Go RTSP troubleshooting page when a
 source is repeatedly unhealthy.
 
+The tracked dashboard configuration enables compact species images for recent
+detections and the summary. It prefers AviCommons and falls back across the
+other providers supported by BirdNET-Go. Keep the upstream attribution visible;
+do not copy remote images into this repository.
+
 ## Frame integration
 
 Once the source is producing detections, the FrameOS Birds view can load the

@@ -1,10 +1,11 @@
 # Gesture-driven FrameOS router
 
-FrameOS turns the Lenovo frame into one full-screen, no-touch application with
-five circular views:
+FrameOS turns the Lenovo frame into one full-screen, no-touch application. The
+default remains the original five-view cycle. Provisioning a safe BirdNET-Go
+dashboard URL enables a sixth disposable view:
 
 ```text
-Photos <-> Home <-> Weather <-> Cameras <-> Calendar <-> Photos
+Photos <-> Home <-> Weather <-> [Birds] <-> Cameras <-> Calendar <-> Photos
 ```
 
 The router translates the frame's two OEM gesture events into protected
@@ -16,6 +17,9 @@ showing an address bar:
   route in place.
 - Weather is native, caches the last forecast, and renders condition-specific
   scenes without a browser.
+- Birds loads the separately hosted BirdNET-Go dashboard in a fresh Gecko
+  session, including compact attributed species images in its recent and
+  summary lists. It is never preloaded, and leaving the view closes that session.
 - Leaving a legacy browser releases its background media processes; subsequent
   FrameOS-to-FrameOS transitions stay on the warm path.
 
@@ -25,11 +29,15 @@ without Weather.
 
 ## Verification boundary
 
-The protected receiver, direct `show` commands for all five destinations, the
-forward/reverse cycle, warm Home Assistant routing, native Weather UI, and
-foreground recovery were exercised on a mounted Lenovo CD-3L501F running stock
-Android 10. The same five-view contract is covered by the repository tests and
-was also exercised on an Android emulator.
+The protected receiver, direct `show` commands for the original five
+destinations, the forward/reverse cycle, warm Home Assistant routing, native
+Weather UI, and foreground recovery were exercised on a mounted Lenovo
+CD-3L501F running stock Android 10. The same five-view contract is covered by
+the repository tests and was also exercised on an Android emulator.
+
+The optional Birds configuration, six-view ordering, URL policy, disposable
+session lifecycle, and shell routing are covered by local unit and contract
+tests. They have not been installed or visually verified on a physical Lenovo.
 
 OEM gesture directions are still hardware input, not Android touch gestures.
 They can change with frame rotation, firmware state, and the input device
@@ -40,7 +48,8 @@ directions.
 ## Files
 
 - [`frame-mode-router.sh`](../examples/frame-mode-router/frame-mode-router.sh)
-  contains the five-view state machine and protected launch sequence.
+  contains the five-view state machine, optional Birds insertion, and protected
+  launch sequence.
 - [`frame-mode-router.example.conf`](../examples/frame-mode-router/frame-mode-router.example.conf)
   keeps deployment values outside the reusable script.
 - [`keymapper-mode-router.example.json`](../examples/frame-mode-router/keymapper-mode-router.example.json)
@@ -98,6 +107,7 @@ adb -s DEVICE_SERIAL shell am broadcast --user 0 \
   -n com.wyattfleming.frameos/.control.FrameControlReceiver \
   --es frameos.photos_url 'http://FRAME-LAN-HOST:3000/' \
   --es frameos.home_assistant_url 'https://HOME-ASSISTANT-HOST/' \
+  --es frameos.birds_url 'http://UNRAID-LAN-HOST:8090/' \
   --es frameos.weather_entity_id 'weather.forecast_home'
 adb -s DEVICE_SERIAL shell am start --activity-reorder-to-front \
   -n com.wyattfleming.frameos/.MainActivity
@@ -106,6 +116,9 @@ adb -s DEVICE_SERIAL shell am start --activity-reorder-to-front \
 Do not put a password, access token, camera URL, or other credential in these
 commands. Home Assistant authentication occurs in its own browser session, and
 native Weather stores the resulting OAuth session with Android Keystore.
+Omit `frameos.birds_url` until the BirdNET-Go dashboard is reachable. Legacy
+stored configurations remain valid and omit Birds from the cycle. FrameOS
+rejects a Birds URL containing user information or other forbidden URL data.
 
 ## Install the router
 
@@ -115,7 +128,12 @@ Prepare a private config from the example. Set all three `FRAMEOS_*` values:
 FRAMEOS_PACKAGE='com.wyattfleming.frameos'
 FRAMEOS_ACTIVITY='com.wyattfleming.frameos/.MainActivity'
 FRAMEOS_RECEIVER='com.wyattfleming.frameos/.control.FrameControlReceiver'
+FRAMEOS_BIRDS_ENABLED='1'
 ```
+
+Enable the router flag only after FrameOS has accepted `frameos.birds_url`.
+Leaving it at the default `0` preserves the existing five-view sequence, and a
+direct `show birds` fails without changing the saved mode.
 
 The legacy Home, Cameras, and Calendar URLs remain syntactically required but
 are not opened while FrameOS is enabled. They may remain safe
@@ -141,6 +159,8 @@ adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh.new \
   show home /data/local/tmp/frame-mode-router.conf.new
 adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh.new \
   show weather /data/local/tmp/frame-mode-router.conf.new
+adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh.new \
+  show birds /data/local/tmp/frame-mode-router.conf.new
 adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh.new \
   show cameras /data/local/tmp/frame-mode-router.conf.new
 adb -s DEVICE_SERIAL shell sh /data/local/tmp/frame-mode-router.sh.new \
@@ -178,17 +198,19 @@ Mode gestures and within-view controls remain separate:
 
 | Physical input | FrameOS action |
 | --- | --- |
-| Forward gesture | Next view in the five-view cycle |
-| Reverse gesture | Previous view in the five-view cycle |
-| Volume Down | Next photo, next Weather page, or `Tab` in Home Assistant |
-| Volume Up | Previous photo, previous Weather page, or `Shift+Tab` in Home Assistant |
-| Star | Primary action or `Enter` in Home Assistant |
+| Forward gesture | Next configured view |
+| Reverse gesture | Previous configured view |
+| Volume Down | Next photo, next Weather page, or `Tab` in a web view |
+| Volume Up | Previous photo, previous Weather page, or `Shift+Tab` in a web view |
+| Star | Primary action or `Enter` in a web view |
 | Long raw Star, when not converted by Key Mapper | Return directly to Home |
 
 The native Weather view automatically rotates through all 24 forecast hours;
 the volume buttons move those pages manually. Calendar focus can reach its
 Today, previous/next, and view-mode controls. The same Tab/Enter behavior works
 for future focusable controls added to the Home and Cameras dashboards.
+Birds uses the same Tab/Shift+Tab/Enter forwarding without retaining its web
+session after another mode is selected.
 The supplied Key Mapper profile converts Star to Enter, so its normal physical
 deployment does not claim a separate long-press shortcut.
 
