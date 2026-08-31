@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..36f436c
 --- /dev/null
 +++ b/internal/templates/partials/album_date_metadata_test.go
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,95 @@
 +package partials
 +
 +import (
@@ -92,6 +92,8 @@ index 0000000..36f436c
 +func TestAssetDateTimeKeepsTimeAndMoreInfoWhenAlbumDateMatches(t *testing.T) {
 +	assetDate := time.Date(2024, time.March, 15, 20, 45, 0, 0, time.UTC)
 +	viewData := albumDateViewData(assetDate, "2024-03-15 Birthday")
++	require.Empty(t, AssetDateTime(viewData, 0, false))
++
 +	viewData.ShowImageTime = true
 +
 +	require.Equal(t, "20:45", AssetDateTime(viewData, 0, false))
