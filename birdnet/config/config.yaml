@@ -32,6 +32,14 @@ realtime:
         minclips: 10
         keepspectrograms: true
         checkinterval: 15
+  dashboard:
+    thumbnails:
+      # Show a compact visual reference beside species names. BirdNET-Go keeps
+      # provider attribution in the dashboard rather than bundling images here.
+      summary: true
+      recent: true
+      imageprovider: avicommons
+      fallbackpolicy: all
   rtsp:
     # Keep this empty until a real microphone/camera is selected.
     streams: []
