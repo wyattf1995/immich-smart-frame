@@ -1,9 +1,9 @@
 diff --git a/internal/templates/partials/album_date_metadata_test.go b/internal/templates/partials/album_date_metadata_test.go
 new file mode 100644
-index 0000000..36f436c
+index 0000000..456b511
 --- /dev/null
 +++ b/internal/templates/partials/album_date_metadata_test.go
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,120 @@
 +package partials
 +
 +import (
@@ -59,6 +59,8 @@ index 0000000..36f436c
 +		{name: "date not at start", albumNames: []string{"Birthday 2024-03-15"}, want: true},
 +		{name: "invalid date", albumNames: []string{"2024-03-99 Birthday"}, want: true},
 +		{name: "malformed boundary", albumNames: []string{"2024-03-150 Birthday"}, want: true},
++		{name: "incomplete year prefix", albumNames: []string{"2024-"}, want: true},
++		{name: "incomplete month prefix", albumNames: []string{"2024-03-"}, want: true},
 +		{name: "empty album name", albumNames: []string{""}, want: true},
 +		{name: "no albums", want: true},
 +	}
@@ -98,4 +100,27 @@ index 0000000..36f436c
 +
 +	require.Equal(t, "20:45", AssetDateTime(viewData, 0, false))
 +	require.Equal(t, "2024-03-15 20:45", AssetDateTime(viewData, 0, true))
++}
++
++func TestAssetMetadataConditionallyRendersCalendar(t *testing.T) {
++	assetDate := time.Date(2024, time.March, 15, 20, 45, 0, 0, time.UTC)
++	viewData := albumDateViewData(assetDate, "2024-03-15 Birthday")
++
++	matchingHTML, err := TemplString(AssetMetadata(viewData, 0))
++	require.NoError(t, err)
++	require.Contains(t, matchingHTML, "2024-03-15 Birthday")
++	require.NotContains(t, matchingHTML, "asset--metadata--datetime")
++
++	viewData.Assets[0].ImmichAsset.AppearsIn = immich.Albums{{AlbumName: "Birthday"}}
++	nonmatchingHTML, err := TemplString(AssetMetadata(viewData, 0))
++	require.NoError(t, err)
++	require.Contains(t, nonmatchingHTML, "asset--metadata--datetime")
++	require.Contains(t, nonmatchingHTML, "2024-03-15")
++
++	viewData.Assets[0].ImmichAsset.AppearsIn = immich.Albums{{AlbumName: "2024-03-15 Birthday"}}
++	viewData.ShowImageTime = true
++	timeOnlyHTML, err := TemplString(AssetMetadata(viewData, 0))
++	require.NoError(t, err)
++	require.Contains(t, timeOnlyHTML, "asset--metadata--datetime")
++	require.Contains(t, timeOnlyHTML, ">20:45</div>")
 +}
