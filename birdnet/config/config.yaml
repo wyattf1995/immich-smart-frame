@@ -1,0 +1,78 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/tphakala/birdnet-go/20260823/config.schema.json
+# Safe starting configuration for the Lenovo Smart Frame bird view.
+#
+# This file deliberately has no active audio source. Add an RTSP source only
+# after confirming that it is a local, stable audio endpoint. Do not commit a
+# URL containing a real username, password, or access token.
+
+birdnet:
+  version: "2.4"
+  latitude: 0
+  longitude: 0
+  locationconfigured: false
+  modelregion: global
+  sensitivity: 1.0
+  threshold: 0.8
+  overlap: 1.5
+  threads: 0
+  usexnnpack: true
+
+realtime:
+  interval: 15
+  processingtime: false
+  audio:
+    # RTSP is configured below, so no host sound card is required.
+    sources: []
+    export:
+      enabled: true
+      path: /data/clips/
+      type: wav
+      retention:
+        policy: usage
+        maxage: 30d
+        maxusage: 80%
+        minclips: 10
+        keepspectrograms: true
+        checkinterval: 15
+  rtsp:
+    # Keep this empty until a real microphone/camera is selected.
+    streams: []
+    # Example only. Uncomment and replace every placeholder locally:
+    # - name: Backyard microphone
+    #   url: rtsp://RTSP_USER:RTSP_PASSWORD@192.0.2.20:554/audio
+    #   type: rtsp
+    #   transport: tcp
+    health:
+      healthydatathreshold: 60
+      monitoringinterval: 30
+  telemetry:
+    enabled: false
+  monitoring:
+    enabled: true
+    checkinterval: 60
+    cpu:
+      enabled: true
+    memory:
+      enabled: true
+    disk:
+      enabled: true
+      paths:
+        - /data
+
+webserver:
+  enabled: true
+  port: "8080"
+  allowembedding: false
+
+security:
+  # The service is LAN-only by default. Configure authentication in the
+  # BirdNET-Go UI before adding a reverse proxy, tunnel, or wider exposure.
+  host: ""
+  baseurl: ""
+  autoTls: false
+  redirecttohttps: false
+  privatemode: false
+  publicaccess:
+    liveaudio: false
+  basicauth:
+    enabled: false
