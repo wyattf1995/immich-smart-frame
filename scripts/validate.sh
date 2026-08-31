@@ -14,6 +14,11 @@ fi
 
 required_files=(
   .env.example
+  birdnet/.env.example
+  birdnet/config/config.yaml
+  birdnet/docker-compose.yaml
+  birdnet/OPERATIONS.md
+  birdnet/tests/test-birdnet-compose.sh
   LICENSE
   README.md
   SECURITY.md
@@ -114,6 +119,8 @@ fi
 ./scripts/validate-ci.sh
 
 ./scripts/test-frame-mode-router.sh
+
+./birdnet/tests/test-birdnet-compose.sh
 
 ./scripts/test-check-frame-readiness.sh
 
