@@ -19,6 +19,7 @@ required_files=(
   birdnet/docker-compose.yaml
   birdnet/OPERATIONS.md
   birdnet/tests/test-birdnet-compose.sh
+  birdnet/tests/test-frame-view.sh
   LICENSE
   README.md
   SECURITY.md
@@ -121,6 +122,8 @@ fi
 ./scripts/test-frame-mode-router.sh
 
 ./birdnet/tests/test-birdnet-compose.sh
+
+./birdnet/tests/test-frame-view.sh
 
 ./scripts/test-check-frame-readiness.sh
 
