@@ -5,10 +5,12 @@ data class FrameTransition(
     val effects: List<FrameEffect> = emptyList(),
 )
 
-class FrameReducer {
+class FrameReducer(
+    private val availableModes: () -> List<FrameMode> = { FrameMode.cycleModes(birdsConfigured = false) },
+) {
     fun reduce(state: FrameState, intent: FrameIntent): FrameTransition = when (intent) {
-        FrameIntent.NextMode -> state.changeMode(state.mode.next())
-        FrameIntent.PreviousMode -> state.changeMode(state.mode.previous())
+        FrameIntent.NextMode -> state.changeMode(state.mode.next(availableModes()))
+        FrameIntent.PreviousMode -> state.changeMode(state.mode.previous(availableModes()))
         FrameIntent.GoHome -> state.changeMode(FrameMode.HOME)
         FrameIntent.IdleExpired -> state
             .copy(mode = FrameMode.PHOTOS, photosPaused = false)
@@ -53,11 +55,15 @@ class FrameReducer {
         )
     }
 
-    private fun FrameMode.next(): FrameMode =
-        FrameMode.entries[(ordinal + 1) % FrameMode.entries.size]
+    private fun FrameMode.next(modes: List<FrameMode>): FrameMode {
+        val index = modes.indexOf(this).takeIf { it >= 0 } ?: 0
+        return modes[(index + 1) % modes.size]
+    }
 
-    private fun FrameMode.previous(): FrameMode =
-        FrameMode.entries[(ordinal - 1 + FrameMode.entries.size) % FrameMode.entries.size]
+    private fun FrameMode.previous(modes: List<FrameMode>): FrameMode {
+        val index = modes.indexOf(this).takeIf { it >= 0 } ?: 0
+        return modes[(index - 1 + modes.size) % modes.size]
+    }
 
     private companion object {
         const val MIN_BRIGHTNESS_PERCENT = 10

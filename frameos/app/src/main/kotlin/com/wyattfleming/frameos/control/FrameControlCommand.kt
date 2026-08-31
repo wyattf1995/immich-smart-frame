@@ -51,4 +51,5 @@ object FrameControlContract {
     const val EXTRA_HOME_ASSISTANT_URL = "frameos.home_assistant_url"
     const val EXTRA_HOME_ASSISTANT_FALLBACK_URL = "frameos.home_assistant_fallback_url"
     const val EXTRA_WEATHER_ENTITY_ID = "frameos.weather_entity_id"
+    const val EXTRA_BIRDS_URL = "frameos.birds_url"
 }

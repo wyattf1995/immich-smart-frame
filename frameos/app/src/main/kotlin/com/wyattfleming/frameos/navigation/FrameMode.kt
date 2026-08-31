@@ -6,4 +6,14 @@ enum class FrameMode(val label: String) {
     WEATHER("Weather"),
     CAMERAS("Cameras"),
     CALENDAR("Calendar"),
+    BIRDS("Birds"),
+
+    ;
+
+    companion object {
+        fun cycleModes(birdsConfigured: Boolean): List<FrameMode> = buildList {
+            addAll(listOf(PHOTOS, HOME, WEATHER, CAMERAS, CALENDAR))
+            if (birdsConfigured) add(BIRDS)
+        }
+    }
 }

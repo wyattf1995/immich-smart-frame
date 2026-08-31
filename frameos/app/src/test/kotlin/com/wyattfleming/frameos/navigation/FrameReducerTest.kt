@@ -28,6 +28,26 @@ class FrameReducerTest {
     }
 
     @Test
+    fun `configured Birds mode is included after Calendar and wraps to Photos`() {
+        var state = FrameState()
+        val reducer = FrameReducer { FrameMode.cycleModes(birdsConfigured = true) }
+
+        val expected = listOf(
+            FrameMode.HOME,
+            FrameMode.WEATHER,
+            FrameMode.CAMERAS,
+            FrameMode.CALENDAR,
+            FrameMode.BIRDS,
+            FrameMode.PHOTOS,
+        )
+
+        expected.forEach { mode ->
+            state = reducer.reduce(state, FrameIntent.NextMode).state
+            assertEquals(mode, state.mode)
+        }
+    }
+
+    @Test
     fun `previous cycles in reverse and wraps to calendar`() {
         val transition = reducer.reduce(FrameState(), FrameIntent.PreviousMode)
 
