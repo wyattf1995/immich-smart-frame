@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 sh_files=(
+  birdnet/tests/test-birdnet-compose.sh
   examples/frame-mode-router/frame-mode-router.sh
   examples/home-assistant-wall-panel/build-weather-loops.sh
   scripts/audit-licenses.sh
@@ -33,6 +34,11 @@ shellcheck -x "${sh_files[@]}"
 
 if ! grep -Fxq './scripts/test-check-frame-readiness.sh' scripts/validate.sh; then
   printf 'aggregate validation must execute the frame readiness contract\n' >&2
+  exit 1
+fi
+
+if ! grep -Fxq './birdnet/tests/test-birdnet-compose.sh' scripts/validate.sh; then
+  printf 'aggregate validation must execute the BirdNET deployment contract\n' >&2
   exit 1
 fi
 
