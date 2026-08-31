@@ -1,0 +1,48 @@
+services:
+  birdnet-go:
+    # Stable release manifest, pinned so an unattended pull cannot change it.
+    # Digest verified from the GHCR registry on 2026-08-31.
+    image: ghcr.io/tphakala/birdnet-go:20260823@sha256:233b94f1d3b27b261ec8d997364db0cb953f3e3b3362a89e9e22ad4a589143d6
+    container_name: birdnet-go
+    restart: unless-stopped
+
+    # Fail closed instead of publishing the dashboard on every host interface.
+    # Set BIRDNET_BIND_IP to the Unraid LAN address in .env.
+    ports:
+      - "${BIRDNET_BIND_IP:?Set BIRDNET_BIND_IP to an Unraid LAN address}:${WEB_PORT:-8088}:8080"
+
+    environment:
+      TZ: "${TZ:-UTC}"
+      BIRDNET_UID: "${BIRDNET_UID:-1000}"
+      BIRDNET_GID: "${BIRDNET_GID:-1000}"
+
+    # Run directly as the configured unprivileged ID. This keeps read_only:
+    # true compatible with the upstream entrypoint's rootless path; prepare
+    # the bind-mount ownership on Unraid before starting the service.
+    user: "${BIRDNET_UID:-1000}:${BIRDNET_GID:-1000}"
+
+    volumes:
+      - ./config:/config
+      - ./data:/data
+
+    # The application writes temporary HLS segments and its startup log here.
+    # Both mounts are disposable; detections, models, and configuration remain
+    # in the two persistent bind mounts above.
+    tmpfs:
+      - /config/hls:exec,size=50M,uid=${BIRDNET_UID:-1000},gid=${BIRDNET_GID:-1000},mode=0755
+      - /tmp:exec,size=16M,mode=1777
+
+    # The bind mounts must already be writable by BIRDNET_UID:BIRDNET_GID.
+    # The upstream entrypoint supports this rootless/container-user path.
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      # /health is explicitly unauthenticated in BirdNET-Go and returns JSON.
+      test: ["CMD-SHELL", "curl -fs --connect-timeout 2 --max-time 3 http://127.0.0.1:8080/health | jq -e '.status == \"healthy\"' >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    stop_grace_period: 30s
