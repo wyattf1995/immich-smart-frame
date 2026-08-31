@@ -22,8 +22,8 @@ services:
     user: "${BIRDNET_UID:-1000}:${BIRDNET_GID:-1000}"
 
     volumes:
-      - ./config:/config
-      - ./data:/data
+      - "${BIRDNET_CONFIG_DIR:?Set BIRDNET_CONFIG_DIR to the persistent appdata config path}:/config"
+      - "${BIRDNET_DATA_DIR:?Set BIRDNET_DATA_DIR to the persistent appdata data path}:/data"
 
     # The application writes temporary HLS segments and its startup log here.
     # Both mounts are disposable; detections, models, and configuration remain
@@ -37,6 +37,8 @@ services:
     read_only: true
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
 
     healthcheck:
       # /health is explicitly unauthenticated in BirdNET-Go and returns JSON.

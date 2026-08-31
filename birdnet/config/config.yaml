@@ -6,10 +6,8 @@
 # URL containing a real username, password, or access token.
 
 birdnet:
-  version: "2.4"
   latitude: 0
   longitude: 0
-  locationconfigured: false
   modelregion: global
   sensitivity: 1.0
   threshold: 0.8
@@ -71,8 +69,5 @@ security:
   baseurl: ""
   autoTls: false
   redirecttohttps: false
-  privatemode: false
-  publicaccess:
-    liveaudio: false
   basicauth:
     enabled: false

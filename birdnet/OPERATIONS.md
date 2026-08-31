@@ -5,15 +5,22 @@ contain credentials and it has not been deployed to Unraid.
 
 ## First setup on Unraid
 
-1. Copy this directory to a dedicated appdata location, for example
-   `/mnt/user/appdata/lenovo-birdnet/`.
-2. Create `.env` from `.env.example`. Set `BIRDNET_BIND_IP` to the Unraid LAN
-   address. Do not use `0.0.0.0`; the compose file intentionally fails if this
-   value is omitted.
-3. Ensure `config/` and `data/` are writable by the configured
+1. Keep the Compose project in `/boot/config/birdnet-go/` so Unraid preserves
+   it across reboots. Mutable application state belongs in
+   `/mnt/user/appdata/birdnet-go/`, not on the boot flash.
+2. Copy `config/config.yaml` once to
+   `/mnt/user/appdata/birdnet-go/config/config.yaml`, then create an empty
+   `/mnt/user/appdata/birdnet-go/data/` directory. The tracked file remains a
+   credential-free template; the appdata copy becomes private after adding an
+   audio source.
+3. Create `.env` from `.env.example` in `/boot/config/birdnet-go/`. Set
+   `BIRDNET_BIND_IP` to the Unraid LAN address. Do not use `0.0.0.0`; the
+   compose file intentionally fails if this value is omitted. Keep the two
+   appdata paths unchanged unless the storage design changes deliberately.
+4. Ensure the appdata `config/` and `data/` directories are writable by the configured
    `BIRDNET_UID:BIRDNET_GID` before starting. This compose file intentionally
    runs as that unprivileged ID, so the container cannot repair host ownership.
-4. Validate and start:
+5. Validate and start from `/boot/config/birdnet-go/`:
 
    ```sh
    docker compose --env-file .env -f docker-compose.yaml config --quiet
@@ -30,7 +37,7 @@ contain credentials and it has not been deployed to Unraid.
 The current Nest cameras expose cloud WebRTC sessions rather than dependable
 local RTSP. Do not put a Nest WebRTC URL in this file. Use a dedicated local
 RTSP microphone or another local RTSP audio source. Edit `config/config.yaml`
-locally, set `realtime.rtsp.streams` to one or more sources, and keep the URL's
+in the private appdata copy, set `realtime.rtsp.streams` to one or more sources, and keep the URL's
 credentials out of commits and screenshots. The sample uses the RFC 5737
 documentation address `192.0.2.20`, which must be replaced before use.
 
