@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.wyattfleming.frameos.config.FrameConfiguration
+import com.wyattfleming.frameos.config.FrameConfigurationPatch
 import com.wyattfleming.frameos.config.FrameConfigurationStore
 import com.wyattfleming.frameos.weather.SharedPreferencesWeatherCache
 
@@ -12,7 +13,8 @@ class FrameControlReceiver : BroadcastReceiver() {
         if (intent.action != FrameControlContract.ACTION_CONTROL) return
 
         val configurationStore = FrameConfigurationStore(context)
-        if (configurationStore.read() == null) {
+        val existingConfiguration = configurationStore.read()
+        if (existingConfiguration == null) {
             val configuration = FrameConfiguration.from(
                 photosUrl = intent.getStringExtra(FrameControlContract.EXTRA_PHOTOS_URL).orEmpty(),
                 homeAssistantUrl = intent.getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_URL).orEmpty(),
@@ -28,6 +30,11 @@ class FrameControlReceiver : BroadcastReceiver() {
                 SharedPreferencesWeatherCache(context).clear()
                 configurationStore.write(configuration)
             }
+        } else if (intent.hasExtra(FrameControlContract.EXTRA_BIRDS_URL)) {
+            FrameConfigurationPatch.withBirdsUrl(
+                existing = existingConfiguration,
+                birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
+            )?.let(configurationStore::write)
         }
 
         val command = FrameControlCommandCodec().decode(
