@@ -24,6 +24,16 @@ class FrameModeAvailabilityTest {
 
         assertTrue(availability.isAvailable(FrameMode.BIRDS))
         assertEquals(FrameMode.BIRDS, availability.resolve(FrameMode.BIRDS))
-        assertEquals(FrameMode.BIRDS, availability.cycleModes.last())
+        assertEquals(
+            listOf(
+                FrameMode.PHOTOS,
+                FrameMode.HOME,
+                FrameMode.WEATHER,
+                FrameMode.BIRDS,
+                FrameMode.CAMERAS,
+                FrameMode.CALENDAR,
+            ),
+            availability.cycleModes,
+        )
     }
 }

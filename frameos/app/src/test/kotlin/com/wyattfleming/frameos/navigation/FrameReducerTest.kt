@@ -28,16 +28,16 @@ class FrameReducerTest {
     }
 
     @Test
-    fun `configured Birds mode is included after Calendar and wraps to Photos`() {
+    fun `configured Birds mode follows Weather and wraps through the remaining modes`() {
         var state = FrameState()
         val reducer = FrameReducer { FrameMode.cycleModes(birdsConfigured = true) }
 
         val expected = listOf(
             FrameMode.HOME,
             FrameMode.WEATHER,
+            FrameMode.BIRDS,
             FrameMode.CAMERAS,
             FrameMode.CALENDAR,
-            FrameMode.BIRDS,
             FrameMode.PHOTOS,
         )
 
