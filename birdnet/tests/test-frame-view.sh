@@ -70,4 +70,17 @@ grep -Fq '@media (max-width: 1100px) and (max-height: 650px)' "$VIEW_FILE" || \
 grep -Fq 'Photo unavailable' "$VIEW_FILE" || fail 'broken images must retain a stable fallback'
 grep -Fq 'retrySpeciesImage' "$VIEW_FILE" || fail 'cold species images must be retried in place'
 
+# Species reference art is displayed inside a fixed hero panel. Preserve the
+# complete source image so birds are not cut off by the panel's aspect ratio.
+hero_image_css=$(sed -n '/^[[:space:]]*\.hero-image[[:space:]]*{/,/^[[:space:]]*}/p' "$VIEW_FILE")
+grep -Fq 'object-fit: contain;' <<<"$hero_image_css" || \
+  fail 'hero species image must preserve the complete image with object-fit: contain'
+
+# attachImage hides images until onload. Thumbnails are visible immediately,
+# so createThumb must request eager loading rather than relying on a hidden
+# image's lazy-load visibility heuristics.
+create_thumb_fn=$(sed -n '/^[[:space:]]*function createThumb(/,/^[[:space:]]*function /p' "$VIEW_FILE")
+grep -Eq 'attachImage\(img, fallback, scientificName, .*\, true\);' <<<"$create_thumb_fn" || \
+  fail 'createThumb must request eager species-image loading'
+
 printf 'PASS: BirdNET frame-view contract\n'
