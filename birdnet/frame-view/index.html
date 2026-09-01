@@ -1158,11 +1158,11 @@
         <div class="topbar-right">
           <div class="metric">
             <span class="metric-value" id="speciesCount">0</span>
-            <span class="metric-label">species today</span>
+            <span class="metric-label" id="speciesMetricLabel">species live</span>
           </div>
           <div class="metric">
             <span class="metric-value" id="callCount">0</span>
-            <span class="metric-label">calls today</span>
+            <span class="metric-label" id="callMetricLabel">calls live</span>
           </div>
           <div class="metric">
             <span class="metric-value" id="lifeListCount">—</span>
@@ -1284,6 +1284,8 @@
           todayLabel: document.getElementById("todayLabel"),
           speciesCount: document.getElementById("speciesCount"),
           callCount: document.getElementById("callCount"),
+          speciesMetricLabel: document.getElementById("speciesMetricLabel"),
+          callMetricLabel: document.getElementById("callMetricLabel"),
           status: document.getElementById("status"),
           statusTitle: document.getElementById("statusTitle"),
           statusDetail: document.getElementById("statusDetail"),
@@ -1561,6 +1563,20 @@
             return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(local);
           }
           return "Just now";
+        }
+
+        function formatLastHeard(value) {
+          if (typeof value !== "string") return "";
+          const parsed = new Date(value);
+          if (!Number.isNaN(parsed.getTime())) {
+            return new Intl.DateTimeFormat(undefined, {
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            }).format(parsed);
+          }
+          return formatTime({ time: value });
         }
 
         function confidencePercent(value) {
@@ -1846,7 +1862,8 @@
             name.textContent = commonName;
             const meta = document.createElement("p");
             meta.className = "species-meta";
-            meta.textContent = item.latest_heard ? `Last heard ${formatTime({ time: item.latest_heard })}` : scientificName;
+            const lastHeard = item.last_heard || item.latest_heard;
+            meta.textContent = lastHeard ? `Last heard ${formatLastHeard(lastHeard)}` : scientificName;
             copy.append(name, meta);
             const novelty = noveltyReason(item);
             if (novelty) {
@@ -1946,9 +1963,13 @@
           setStatus(status.title, status.detail, status.tone);
           const summaryCount = state.summary.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
           const kpiCount = Number(state.kpis && state.kpis.today_detections);
-          const count = Number.isFinite(kpiCount) ? kpiCount : summaryCount;
+          const rangePeriod = ["7-days", "30-days"].includes(state.rotationPeriod);
+          const count = !rangePeriod && Number.isFinite(kpiCount) ? kpiCount : summaryCount;
+          const metricPeriod = state.rotationPeriod === "live" ? "live" : state.rotationPeriod === "today" ? "today" : periodTitle().toLowerCase();
           els.speciesCount.textContent = String(state.summary.length);
           els.callCount.textContent = String(count);
+          els.speciesMetricLabel.textContent = `species ${metricPeriod}`;
+          els.callMetricLabel.textContent = `calls ${metricPeriod}`;
           renderAmbientSummary();
           if (state.lastUpdatedAt) {
             const updated = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" })
@@ -1964,7 +1985,7 @@
             ? JSON.stringify([detection.id, detection.timestamp, detection.time, detection.confidence, state.dataError])
             : JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length, state.audioLevelsActive]);
           const speciesKey = state.summary.length > 0
-            ? JSON.stringify([state.dataError, state.summary.slice(0, MAX_SPECIES).map(item => [item.scientific_name, item.count, item.latest_heard])])
+            ? JSON.stringify([state.dataError, state.summary.slice(0, MAX_SPECIES).map(item => [item.scientific_name, item.count, item.last_heard || item.latest_heard])])
             : JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length]);
           const recentKey = state.recent.length > 0
             ? JSON.stringify([state.dataError, state.recent.slice(0, MAX_RECENT).map(item => [item.id, item.timestamp, item.time, item.confidence])])
@@ -2107,6 +2128,7 @@
           detectionStream.onmessage = scheduleRefresh;
           detectionStream.addEventListener("detection", () => {
             setRotationPeriod("live");
+            restartRotationTimer();
             scheduleRefresh();
           });
           audioStream = new EventSource("/api/v2/streams/audio-level");
@@ -2151,13 +2173,17 @@
         function startTimers() {
           window.clearInterval(pollTimer);
           window.clearInterval(clockTimer);
-          window.clearInterval(rotationTimer);
           pollTimer = window.setInterval(() => {
             if (!document.hidden) refresh();
           }, POLL_INTERVAL_MS);
           clockTimer = window.setInterval(() => {
             if (!document.hidden && !disposed) updateClock();
           }, 30000);
+          restartRotationTimer();
+        }
+
+        function restartRotationTimer() {
+          window.clearInterval(rotationTimer);
           rotationTimer = window.setInterval(() => {
             if (!document.hidden && !disposed) rotatePeriod();
           }, ROTATION_INTERVAL_MS);
