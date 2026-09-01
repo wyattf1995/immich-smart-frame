@@ -1,0 +1,38 @@
+# Merge this notification block into the private BirdNET-Go config. Replace the
+# host and webhook ID locally; never commit the resulting endpoint. Home
+# Assistant webhooks use the random ID itself as the credential, so no separate
+# HA API credential or request-authentication header belongs here.
+notification:
+  push:
+    enabled: true
+    default_timeout: 5s
+    max_retries: 3
+    retry_delay: 5s
+    rate_limiting:
+      enabled: true
+      requests_per_minute: 12
+      burst_size: 3
+    providers:
+      - type: webhook
+        enabled: true
+        name: home-assistant-birdnet
+        endpoints:
+          - url: "http://HOME_ASSISTANT_LAN_HOST/api/webhook/REPLACE_WITH_RANDOM_WEBHOOK_ID"
+            method: POST
+            timeout: 5s
+        filter:
+          types: [detection]
+          priorities: [high, critical]
+          components: [detection]
+        # Keep phone payloads useful but private: no coordinates, raw metadata,
+        # internal detection links, image URLs, or household-audio references.
+        template: |
+          {
+            "type": "{{.Type}}",
+            "priority": "{{.Priority}}",
+            "title": "{{.Title}}",
+            "message": "{{.Message}}",
+            "timestamp": "{{.timestamp}}"
+          }
+    min_confidence_threshold: 0
+    species_cooldown_minutes: 0

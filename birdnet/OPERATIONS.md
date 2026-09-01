@@ -240,6 +240,58 @@ view recover without manual intervention. Record the physical test date and
 results with the deployment notes. Do not infer recovery from Compose startup
 or a container restart alone.
 
+## Home Assistant phone alerts
+
+The supported alert path is local and one-way:
+
+`BirdNET-Go push rule → private HA webhook → HA automation → mobile notify service`
+
+BirdNET-Go must never receive a Home Assistant bearer token. Create a new random
+webhook ID, treat it like a password, and keep it only in the private HA
+automation plus the private BirdNET-Go appdata configuration. The tracked
+examples deliberately contain placeholders:
+
+- `home-assistant/birdnet-phone-alerts.yaml.example`
+- `home-assistant/birdnet-webhook-provider.yaml.example`
+
+In Home Assistant, import or reproduce the automation example, replace its
+webhook ID, and replace `notify.mobile_app_REPLACE_ME` with one verified mobile
+service. Keep `local_only: true` and POST as the only allowed method. In the
+private BirdNET configuration, use HA's LAN host with the same random ID. The
+custom provider payload includes only type, priority, title, message, and time;
+it deliberately excludes coordinates, internal URLs, raw detection metadata,
+and clip references. The provider accepts only high-priority detection events.
+
+Keep the built-in **New species** and **Infrequent species** rules enabled with
+both `bell` and `push` actions. Add a custom **High-confidence detection** rule
+for `detection.occurred` with a `confidence greater_or_equal 0.95` condition,
+which is a 95% threshold. Use a 15-minute (`900` second) cooldown and
+`escalation_steps: [0.95]`; BirdNET-Go then scopes that cooldown per species
+instead of silencing every bird after one alert. Give the custom rule both bell
+and push actions. A new or infrequent bird above 95% can intentionally produce
+two notifications—one describing its novelty and one describing confidence.
+
+Prefer the authenticated BirdNET-Go settings and alert-rule UI for changes. Its
+notification settings endpoint replaces the whole provider array, so preserve
+any provider added later instead of blindly applying the example. Alert-rule
+writes require the current CSRF token and same-origin session even when public
+alert reads are available.
+
+Test in three bounded stages, each of which creates a real test notification:
+
+1. Call the chosen mobile notify service once from Home Assistant Developer
+   Tools and confirm the phone receives it.
+2. POST a small detection-shaped JSON body to the private webhook from the LAN;
+   confirm both the HA automation trace and phone delivery.
+3. After enabling the BirdNET provider and push actions, fire one BirdNET alert
+   test and confirm its delivery in BirdNET logs and the HA trace. Do not repeat
+   tests rapidly; they are not dry runs.
+
+For alert rollback, disable or remove the HA automation first, disable the
+BirdNET push provider, restore the two built-in rules to bell-only actions, and
+delete only the custom high-confidence rule by its recorded ID. Do not reset all
+alert defaults as routine rollback because that changes unrelated rules too.
+
 ## Backups
 
 Stop the service briefly for a consistent filesystem-level backup, or use

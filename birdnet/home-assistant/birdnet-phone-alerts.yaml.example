@@ -1,0 +1,26 @@
+alias: BirdNET-Go phone alerts
+description: Receives bounded local BirdNET detection alerts and forwards them to one phone.
+mode: queued
+max: 10
+
+triggers:
+  - trigger: webhook
+    webhook_id: REPLACE_WITH_RANDOM_WEBHOOK_ID
+    allowed_methods:
+      - POST
+    local_only: true
+
+conditions:
+  - condition: template
+    value_template: >-
+      {{ trigger.json is defined and
+         trigger.json.type | default('') == 'detection' }}
+
+actions:
+  - action: notify.mobile_app_REPLACE_ME
+    data:
+      title: "{{ trigger.json.title | default('BirdNET-Go', true) }}"
+      message: "{{ trigger.json.message | default('A bird was detected.', true) }}"
+      data:
+        channel: BirdNET
+        notification_icon: mdi:bird
