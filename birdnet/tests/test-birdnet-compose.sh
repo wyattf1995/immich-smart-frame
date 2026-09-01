@@ -94,8 +94,11 @@ grep -Fq 'nest-audio-bridge' "$WATCHDOG_FILE" || \
 # but it must never restart or recreate a service behind the operator's back.
 ! grep -Eiq 'docker[[:space:]]+(restart|start|stop|kill|rm)|docker[[:space:]]+compose.*(up|down|restart|start|stop|rm)' "$WATCHDOG_FILE" || \
   fail 'BirdNET watchdog must not perform automatic container restarts'
-! grep -Eiq '(^|[[:space:]])(mkdir|touch|rm|mv|cp|tee|install|truncate)([[:space:]]|$)|(^|[^<])>[[:space:]]*[^=]' "$WATCHDOG_FILE" || \
+! grep -Eiq '(^|[[:space:]])(mkdir|touch|rm|mv|cp|tee|install|truncate)([[:space:]]|$)' "$WATCHDOG_FILE" || \
   fail 'BirdNET watchdog must remain read-only and avoid filesystem writes'
+if grep -Ev '>[[:space:]]*/dev/null([[:space:]]|$)' "$WATCHDOG_FILE" | grep -Eq '(^|[^<])>[[:space:]]*[^=]'; then
+  fail 'BirdNET watchdog redirects must only discard helper output to /dev/null'
+fi
 
 grep -Fq 'backup' "$OPS_FILE" || fail 'operations notes must cover backups'
 grep -Fq 'rollback' "$OPS_FILE" || fail 'operations notes must cover rollback'
