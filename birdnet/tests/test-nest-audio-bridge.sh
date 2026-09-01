@@ -95,7 +95,9 @@ assert "no-new-privileges:true" in service.get("security_opt", []), service.get(
 assert service.get("environment", {}).get("CREDENTIALS_DIRECTORY") == "/run/secrets"
 assert service.get("networks") == {"nest-audio": None}, service.get("networks")
 assert service.get("secrets") == [{"source": "ha_token", "target": "HA_TOKEN"}], service.get("secrets")
-assert config["networks"]["nest-audio"].get("internal") is True
+# The bridge needs outbound access to Home Assistant and Nest ICE relays. It is
+# still private because no service port is published and only BirdNET attaches.
+assert config["networks"]["nest-audio"].get("internal") is False
 
 birdnet_networks = config["services"]["birdnet-go"].get("networks", {})
 assert "default" in birdnet_networks and "nest-audio" in birdnet_networks, birdnet_networks
