@@ -215,11 +215,15 @@ checks free space for the persistent data directory. It never writes files or
 restarts/recreates containers. Run it from an Unraid User Script or monitoring
 system and treat a nonzero exit status as an operator alert:
 
+Unraid mounts `/boot` from FAT with executable bits stripped. Invoke the tracked
+script through `bash` when it runs from the persistent boot-flash package; do
+not rely on `chmod +x` surviving there.
+
 ```sh
 BIRDNET_BIND_IP=<Unraid_LAN_IP> \
 WEB_PORT=8090 \
 BIRDNET_DATA_DIR=/mnt/user/appdata/birdnet-go/data \
-./scripts/birdnet-watchdog.sh
+bash ./scripts/birdnet-watchdog.sh
 ```
 
 The bridge is optional; its absent container is reported as `not-created` and
