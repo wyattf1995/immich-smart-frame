@@ -2,6 +2,11 @@
 # The Home Assistant token is loaded from /run/secrets/HA_TOKEN through
 # CREDENTIALS_DIRECTORY. Never replace the placeholders in this tracked file.
 
+app:
+  # Fail closed: unnamed core modules plus these two are sufficient for the
+  # private audio bridge. In particular, API, WebRTC, and SRTP never initialize.
+  modules: [rtsp, hass]
+
 api:
   # No web UI or mutation API is needed for the BirdNET bridge.
   listen: ""
