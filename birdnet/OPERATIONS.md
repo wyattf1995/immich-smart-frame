@@ -208,7 +208,8 @@ household audio, so restrict appdata and backups to trusted administrators; do
 not copy clips into this repository, ticket, or public storage.
 
 `scripts/birdnet-watchdog.sh` is a reporting-only host script. It requests
-`/api/v2/health/audio`, requires a recent audio timestamp or age measurement,
+`/api/v2/health/audio`, requires every reported source to be `HEALTHY`, and
+requires a recent `last_dispatch` timestamp or explicit age measurement. It
 reports Docker `RestartCount` for `birdnet-go` and `nest-audio-bridge`, and
 checks free space for the persistent data directory. It never writes files or
 restarts/recreates containers. Run it from an Unraid User Script or monitoring
@@ -216,6 +217,7 @@ system and treat a nonzero exit status as an operator alert:
 
 ```sh
 BIRDNET_BIND_IP=<Unraid_LAN_IP> \
+WEB_PORT=8090 \
 BIRDNET_DATA_DIR=/mnt/user/appdata/birdnet-go/data \
 ./scripts/birdnet-watchdog.sh
 ```
@@ -226,7 +228,7 @@ or stale audio-health result is a failure. Tune the conservative freshness
 window only when justified by the configured source interval:
 
 ```sh
-BIRDNET_AUDIO_MAX_AGE_SECONDS=120 ./scripts/birdnet-watchdog.sh
+WEB_PORT=8090 BIRDNET_AUDIO_MAX_AGE_SECONDS=120 ./scripts/birdnet-watchdog.sh
 ```
 
 ### Reboot recovery status
