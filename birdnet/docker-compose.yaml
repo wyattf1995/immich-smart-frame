@@ -5,6 +5,9 @@ services:
     image: ghcr.io/tphakala/birdnet-go:20260823@sha256:233b94f1d3b27b261ec8d997364db0cb953f3e3b3362a89e9e22ad4a589143d6
     container_name: birdnet-go
     restart: unless-stopped
+    networks:
+      - default
+      - nest-audio
 
     # Bind to the address supplied by the operator. Use a concrete Unraid LAN
     # address in .env; Compose validates presence, not the address class.
@@ -87,3 +90,57 @@ services:
       retries: 3
       start_period: 10s
     stop_grace_period: 10s
+
+  nest-audio-bridge:
+    # Opt-in only: starting the normal BirdNET stack does not open a camera.
+    # The local image patches go2rtc v1.9.14 for HA's current subscription API.
+    profiles: ["nest-audio"]
+    build:
+      context: ./nest-audio-bridge
+      dockerfile: Dockerfile
+    image: local/nest-audio-bridge:go2rtc-1.9.14-ha2026.8
+    container_name: nest-audio-bridge
+    restart: unless-stopped
+
+    # Match the protected host credential owner. The token is a mounted Docker
+    # secret, never an environment variable or command-line argument.
+    user: "${BIRDNET_UID:-99}:${BIRDNET_GID:-100}"
+    environment:
+      CREDENTIALS_DIRECTORY: /run/secrets
+      HA_HOST: "${HA_HOST:-192.0.2.30}"
+      HA_CAMERA_ENTITY: "${HA_CAMERA_ENTITY:-camera.backyard_camera}"
+    secrets:
+      - source: ha_token
+        target: HA_TOKEN
+
+    # There is deliberately no host port. BirdNET is the bridge's only local
+    # consumer, over this isolated Docker network.
+    networks:
+      - nest-audio
+    tmpfs:
+      - /config:size=1M,uid=${BIRDNET_UID:-99},gid=${BIRDNET_GID:-100},mode=0700
+      - /tmp:exec,size=32M,uid=${BIRDNET_UID:-99},gid=${BIRDNET_GID:-100},mode=0700
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    healthcheck:
+      # Listener readiness only; the camera remains lazy until BirdNET connects.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8554"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 15s
+
+secrets:
+  ha_token:
+    file: "${HA_TOKEN_FILE:-/mnt/user/appdata/birdnet-go/secrets/HA_TOKEN}"
+
+networks:
+  nest-audio:
+    # Isolated membership and no published bridge port keep ingress private;
+    # outbound access remains available for HA signaling and Nest ICE relays.
+    internal: false

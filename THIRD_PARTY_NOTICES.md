@@ -65,6 +65,38 @@ NGINX and the Alpine base packages retain their respective upstream copyright
 and license terms. Their maintainers are not responsible for this project's
 kiosk page, proxy policy, deployment configuration, or hardware support.
 
+## go2rtc
+
+The optional Nest audio bridge builds from
+[go2rtc](https://github.com/AlexxIT/go2rtc) release `v1.9.14`, pinned to commit
+`b5948cfb25404cc5cb37b166ecaa2dca20b11d4b`, and uses the matching upstream
+runtime image by immutable manifest digest. This repository applies focused
+Home Assistant WebRTC subscription tests and a compatibility patch before
+building the replacement binary. The patch is local to this project; upstream
+maintainers are not responsible for it or for the Nest/BirdNET deployment.
+
+go2rtc is distributed under the MIT License:
+
+> Copyright (c) 2022 Alexey Khit
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
 ## Fully Kiosk Browser
 
 Fully Kiosk Browser is referenced as a tested Android renderer but is not

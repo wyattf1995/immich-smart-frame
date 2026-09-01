@@ -1,0 +1,109 @@
+diff --git a/pkg/hass/api.go b/pkg/hass/api.go
+index 1dcedbb..5fbf3a4 100644
+--- a/pkg/hass/api.go
++++ b/pkg/hass/api.go
+@@ -4,0 +5 @@ import (
++	"fmt"
+@@ -5,0 +7 @@ import (
++	"sync"
+@@ -11 +13,3 @@ type API struct {
+-	ws *websocket.Conn
++	ws        *websocket.Conn
++	closeOnce sync.Once
++	closeErr  error
+@@ -54 +58,4 @@ func (a *API) Close() error {
+-	return a.ws.Close()
++	a.closeOnce.Do(func() {
++		a.closeErr = a.ws.Close()
++	})
++	return a.closeErr
+@@ -60 +67 @@ func (a *API) ExchangeSDP(entityID, offer string) (string, error) {
+-		"type":      "camera/web_rtc_offer",
++		"type":      "camera/webrtc/offer",
+@@ -68,4 +75,6 @@ func (a *API) ExchangeSDP(entityID, offer string) (string, error) {
+-	var res ResponseOffer
+-	if err := a.ws.ReadJSON(&res); err != nil {
+-		return "", err
+-	}
++	resultReceived := false
++	for {
++		var res ResponseOffer
++		if err := a.ws.ReadJSON(&res); err != nil {
++			return "", err
++		}
+@@ -73,2 +82,22 @@ func (a *API) ExchangeSDP(entityID, offer string) (string, error) {
+-	if res.Type != "result" || !res.Success {
+-		return "", errors.New("hass: wrong response")
++		switch res.Type {
++		case "result":
++			if !res.Success {
++				return "", fmt.Errorf("hass: offer failed: %s", res.Error.Message)
++			}
++			resultReceived = true
++
++		case "event":
++			if !resultReceived {
++				return "", errors.New("hass: event before offer result")
++			}
++			switch res.Event.Type {
++			case "answer":
++				go a.drain()
++				return res.Event.Answer, nil
++			case "error":
++				return "", fmt.Errorf("hass: offer failed: %s", res.Event.Message)
++			}
++
++		default:
++			return "", errors.New("hass: wrong response type: " + res.Type)
++		}
+@@ -75,0 +105 @@ func (a *API) ExchangeSDP(entityID, offer string) (string, error) {
++}
+@@ -77 +107,9 @@ func (a *API) ExchangeSDP(entityID, offer string) (string, error) {
+-	return res.Result.Answer, nil
++// drain keeps processing websocket control frames while Home Assistant owns
++// the WebRTC subscription. Closing the socket ends the subscription and lets
++// Home Assistant stop the corresponding cloud media session.
++func (a *API) drain() {
++	for {
++		if _, _, err := a.ws.ReadMessage(); err != nil {
++			return
++		}
++	}
+@@ -134 +172 @@ type ResponseOffer struct {
+-	//Id      int    `json:"id"`
++	//Id   int    `json:"id"`
+@@ -137,3 +175,8 @@ type ResponseOffer struct {
+-	Result  struct {
+-		Answer string `json:"answer"`
+-	} `json:"result"`
++	Error   struct {
++		Message string `json:"message"`
++	} `json:"error"`
++	Event struct {
++		Type    string `json:"type"`
++		Answer  string `json:"answer"`
++		Message string `json:"message"`
++	} `json:"event"`
+diff --git a/pkg/hass/client.go b/pkg/hass/client.go
+index a9ea026..15972b7 100644
+--- a/pkg/hass/client.go
++++ b/pkg/hass/client.go
+@@ -13 +13,2 @@ type Client struct {
+-	conn *webrtc.Conn
++	conn    *webrtc.Conn
++	hassAPI *API
+@@ -49 +50,6 @@ func NewClient(rawURL string) (*Client, error) {
+-	defer hassAPI.Close()
++	keepSubscription := false
++	defer func() {
++		if !keepSubscription {
++			_ = hassAPI.Close()
++		}
++	}()
+@@ -93 +99,2 @@ func NewClient(rawURL string) (*Client, error) {
+-	return &Client{conn: conn}, nil
++	keepSubscription = true
++	return &Client{conn: conn, hassAPI: hassAPI}, nil
+@@ -113 +120 @@ func (c *Client) Stop() error {
+-	return c.conn.Stop()
++	return errors.Join(c.conn.Stop(), c.hassAPI.Close())

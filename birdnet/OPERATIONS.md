@@ -51,23 +51,131 @@ host-side files before claiming a particular Unraid deployment is current.
 
 ## Add the audio source
 
-The current Nest cameras expose cloud WebRTC sessions rather than dependable
-local RTSP. Do not put a Nest WebRTC URL in this file. Use a dedicated local
-RTSP microphone or another local RTSP audio source. Edit `config/config.yaml`
-in the private appdata copy, set `realtime.rtsp.streams` to one or more sources, and keep the URL's
-credentials out of commits and screenshots. The sample uses the RFC 5737
-documentation address `192.0.2.20`, which must be replaced before use.
+The optional `nest-audio-bridge` turns one Home Assistant Nest WebRTC session
+into a private RTSP Opus audio endpoint. Home Assistant remains responsible for
+Nest OAuth and session renewal; the bridge does not need raw Google client or
+refresh-token credentials. The pinned go2rtc release is patched for Home
+Assistant's current subscription signaling so the websocket stays open while
+the camera is in use.
 
-After editing, validate the compose file and restart the service:
+Use Backyard first. Its live entity is
+`camera.backyard_backyard_camera`. Garage
+(`camera.garage_garage_camera`) is a manual fallback only; never configure both
+at once. Nest still sends its required video, audio, and data tracks from the
+cloud, even though only audio leaves the bridge for BirdNET.
+
+### Prepare the Home Assistant credential
+
+Create a dedicated non-admin Home Assistant user named `BirdNET Camera Bridge`,
+log into a separate browser session as that user, and create one long-lived
+access token from its profile. Home Assistant tokens are not camera-scoped: a
+non-admin token avoids administrative access but can still have broad entity
+access. Do not reuse the owner token unless that tradeoff is explicitly chosen.
+
+On Unraid, capture the token without putting it in shell history, then make the
+file readable only by the UID that runs the bridge:
+
+```sh
+install -d -m 0700 -o 99 -g 100 /mnt/user/appdata/birdnet-go/secrets
+install -m 0400 -o 99 -g 100 /dev/null \
+  /mnt/user/appdata/birdnet-go/secrets/HA_TOKEN
+read -rsp 'Home Assistant token: ' BIRDNET_HA_TOKEN
+printf '%s' "$BIRDNET_HA_TOKEN" > /mnt/user/appdata/birdnet-go/secrets/HA_TOKEN
+unset BIRDNET_HA_TOKEN
+```
+
+Set the private `.env` values; `HA_HOST` is `host[:port]` without a URL scheme:
+
+```dotenv
+HA_HOST=<HA_LAN_IP>
+HA_CAMERA_ENTITY=camera.backyard_backyard_camera
+HA_TOKEN_FILE=/mnt/user/appdata/birdnet-go/secrets/HA_TOKEN
+```
+
+The token is a mounted Compose secret. It is never passed through an
+environment variable, command argument, go2rtc API, or published port. Revoke
+it in Home Assistant immediately if the file or container boundary is exposed.
+
+### Build and make one controlled connection
+
+Building and starting the idle bridge does not open a camera; go2rtc creates
+the source lazily when an RTSP client connects:
+
+```sh
+docker compose --env-file .env -f docker-compose.yaml \
+  --profile nest-audio build nest-audio-bridge
+docker compose --env-file .env -f docker-compose.yaml \
+  --profile nest-audio up -d --no-deps nest-audio-bridge
+docker compose --env-file .env -f docker-compose.yaml \
+  --profile nest-audio up -d --no-deps --force-recreate birdnet-go
+```
+
+The following 30-second probe is the first camera connection. Make a brief,
+ordinary sound in the Backyard camera's pickup area during the sample. It
+decodes audio to the null sink, so no household audio is retained:
+
+```sh
+docker exec birdnet-go ffmpeg -nostdin -hide_banner -loglevel info \
+  -rtsp_transport tcp -allowed_media_types audio \
+  -i 'rtsp://nest-audio-bridge:8554/nest_camera?audio=opus' \
+  -map 0:a:0 -t 30 -af volumedetect -f null -
+```
+
+The input must report `opus`, `48000 Hz`, and the camera's channel count.
+`mean_volume` and `max_volume` must rise above digital silence during the test
+sound. BirdNET then uses its own FFmpeg path to decode, resample to 48 kHz when
+needed, and downmix to mono. A valid codec declaration alone proves negotiation,
+not that the microphone has useful acoustic signal.
+
+If the probe passes, edit the private appdata `config.yaml` and replace
+`realtime.rtsp.streams: []` with:
+
+```yaml
+streams:
+  - name: Nest Backyard
+    url: rtsp://nest-audio-bridge:8554/nest_camera?audio=opus
+    enabled: true
+    type: rtsp
+    transport: tcp
+    mediaMode: audio-only
+    channelMode: downmix
+    models: [birdnet]
+transport: tcp
+```
+
+Keep `transport: tcp` at the `realtime.rtsp` level: BirdNET-Go 20260823 uses
+the global value in its FFmpeg engine. Then validate and restart:
 
 ```sh
 docker compose --env-file .env -f docker-compose.yaml config --quiet
-docker compose --env-file .env -f docker-compose.yaml restart birdnet-go
+docker compose --env-file .env -f docker-compose.yaml \
+  --profile nest-audio up -d nest-audio-bridge birdnet-go
+docker exec birdnet-go curl -fsS \
+  http://127.0.0.1:8080/api/v2/streams/health
 ```
 
+Require a 12-minute minimum soak—longer than two normal five-minute Nest session
+windows—before calling the bridge stable. During the soak, confirm the same
+BirdNET source remains healthy and that the bridge log has no new producer,
+authentication, websocket, ICE, or FFmpeg failures:
+
+```sh
+docker compose --env-file .env -f docker-compose.yaml \
+  --profile nest-audio logs --since 15m nest-audio-bridge birdnet-go
+docker exec birdnet-go curl -fsS \
+  http://127.0.0.1:8080/api/v2/streams/health
+docker exec birdnet-go curl -fsS \
+  http://127.0.0.1:8080/api/v2/health/audio
+```
+
+If Backyard is acoustically unusable, stop BirdNET first so its active HA
+subscription closes, change only `HA_CAMERA_ENTITY` to the Garage entity,
+recreate the bridge, and repeat the controlled probe and soak. This avoids two
+simultaneous cloud sessions and reconnect storms against Google's camera quota.
+
 The in-app RTSP health monitor is configured for 60 seconds of data and a
-30-second check interval. Use the BirdNET-Go RTSP troubleshooting page when a
-source is repeatedly unhealthy.
+30-second check interval. A local RTSP or USB microphone is still the preferred
+fallback if the cloud path cannot remain healthy through the soak.
 
 The tracked dashboard configuration enables compact species images for recent
 detections and the summary. It prefers AviCommons and falls back across the
@@ -145,3 +253,7 @@ docker compose --env-file .env -f docker-compose.yaml rm -f birdnet-frame-view
 - [Security guidance](https://github.com/tphakala/birdnet-go/wiki/security)
 - [20260823 release](https://github.com/tphakala/birdnet-go/releases/tag/20260823)
 - [Pinned image manifest on GHCR](https://ghcr.io/tphakala/birdnet-go:20260823)
+- [go2rtc v1.9.14 source](https://github.com/AlexxIT/go2rtc/tree/v1.9.14)
+- [Home Assistant 2026.8.3 WebRTC subscription implementation](https://github.com/home-assistant/core/blob/2026.8.3/homeassistant/components/camera/webrtc.py)
+- [Home Assistant 2026.8.3 Nest session renewal](https://github.com/home-assistant/core/blob/2026.8.3/homeassistant/components/nest/camera.py)
+- [Google Camera Live Stream trait](https://developers.google.com/nest/device-access/traits/device/camera-live-stream)

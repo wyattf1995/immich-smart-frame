@@ -24,6 +24,9 @@ changes will still be called out explicitly.
 - Added a pinned, LAN-bound BirdNET-Go Unraid package with appdata persistence,
   no committed audio credentials, attributed bird-species thumbnails, local
   validation, and backup/rollback notes.
+- Added an opt-in Nest-to-BirdNET audio bridge that keeps Home Assistant's
+  renewable WebRTC subscription alive, exposes no host port, loads a dedicated
+  HA token from a mounted secret, and serves native Opus to BirdNET's decoder.
 - Lower-left photo dates now stay hidden when a visible album title begins with
   the same full date, month, or year; time-only display and More Info retain
   their existing detail.

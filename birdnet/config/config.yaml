@@ -43,11 +43,23 @@ realtime:
   rtsp:
     # Keep this empty until a real microphone/camera is selected.
     streams: []
-    # Example only. Uncomment and replace every placeholder locally:
+    # Nest bridge example. Add this block to the private appdata copy only
+    # after its one-camera probe passes:
+    # - name: Nest Backyard
+    #   url: rtsp://nest-audio-bridge:8554/nest_camera?audio=opus
+    #   enabled: true
+    #   type: rtsp
+    #   transport: tcp
+    #   mediaMode: audio-only
+    #   channelMode: downmix
+    #   models: [birdnet]
+    # Generic RTSP example. Replace every placeholder locally:
     # - name: Backyard microphone
     #   url: rtsp://RTSP_USER:RTSP_PASSWORD@192.0.2.20:554/audio
     #   type: rtsp
     #   transport: tcp
+    # BirdNET-Go 20260823 uses this global transport in its FFmpeg engine.
+    transport: tcp
     health:
       healthydatathreshold: 60
       monitoringinterval: 30

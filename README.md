@@ -243,8 +243,11 @@ container, keeps mutable state on Unraid appdata, exposes the dashboard only on
 an explicitly selected LAN address, and starts with no audio source or embedded
 credential. Its recent and summary views show compact species images through
 BirdNET-Go's attributed AviCommons/Wikimedia provider pipeline. A dependable
-deployment requires a local RTSP microphone or camera; the current Nest WebRTC
-feeds are not treated as production audio inputs.
+deployment still prefers a local RTSP or USB microphone. An opt-in, isolated
+Nest audio bridge can instead reuse one Home Assistant camera session, route
+its native Opus track into BirdNET's own decoder, and feed the detector
+without exposing a new LAN port. That cloud path remains provisional until it
+passes the documented audio probe and renewal soak.
 
 The package also includes a small, read-only
 [frame view](birdnet/frame-view/index.html) served by an unprivileged NGINX
