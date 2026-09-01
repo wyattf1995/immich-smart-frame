@@ -96,7 +96,7 @@ grep -Fq 'nest-audio-bridge' "$WATCHDOG_FILE" || \
   fail 'BirdNET watchdog must not perform automatic container restarts'
 ! grep -Eiq '(^|[[:space:]])(mkdir|touch|rm|mv|cp|tee|install|truncate)([[:space:]]|$)' "$WATCHDOG_FILE" || \
   fail 'BirdNET watchdog must remain read-only and avoid filesystem writes'
-if grep -Ev '>[[:space:]]*/dev/null([[:space:]]|$)' "$WATCHDOG_FILE" | grep -Eq '(^|[^<])>[[:space:]]*[^=]'; then
+if grep -Ev '>[[:space:]]*/dev/null([[:space:];]|$)' "$WATCHDOG_FILE" | grep -Eq '(^|[^<])>[[:space:]]*[^=]'; then
   fail 'BirdNET watchdog redirects must only discard helper output to /dev/null'
 fi
 
