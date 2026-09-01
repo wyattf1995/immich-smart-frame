@@ -191,7 +191,9 @@ grep -Fq 'return 404;' "$NGINX_FILE" || fail 'unknown frame API paths must fail 
   fail 'frame proxy must not expose auth or configuration endpoints'
 ! grep -Eiq '(^|[^[:alpha:]])(POST|PUT|PATCH|DELETE)([^[:alpha:]]|$)' "$NGINX_FILE" || \
   fail 'frame proxy must not expose write methods'
+grep -Eiq "credentials[[:space:]]*:[[:space:]]*['\"]same-origin" "$VIEW_FILE" || \
+  fail 'frame view must send cached Basic Auth only to its same-origin API'
 ! grep -Eiq "credentials[[:space:]]*:[[:space:]]*['\"]include|Notification[.]requestPermission" "$VIEW_FILE" || \
-  fail 'frame view must not send browser credentials or request notification permission'
+  fail 'frame view must not send browser credentials cross-origin or request notification permission'
 
 printf 'PASS: BirdNET frame-view contract\n'
