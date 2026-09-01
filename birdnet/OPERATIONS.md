@@ -199,6 +199,47 @@ BirdNET-Go dashboard and frame view remain LAN-only. Do not expose either to the
 public internet or add a Cloudflare tunnel without enabling authentication and
 reviewing the reverse-proxy trust settings.
 
+## Retention, privacy, and watchdog
+
+The tracked configuration exports audio clips as Opus and deletes them by age
+after 30 days. It intentionally has no `maxusage` fallback: the retention
+deadline is deterministic rather than dependent on free space. Clips can contain
+household audio, so restrict appdata and backups to trusted administrators; do
+not copy clips into this repository, ticket, or public storage.
+
+`scripts/birdnet-watchdog.sh` is a reporting-only host script. It requests
+`/api/v2/health/audio`, requires every reported source to be `HEALTHY`, and
+requires a recent `last_dispatch` timestamp or explicit age measurement. It
+reports Docker `RestartCount` for `birdnet-go` and `nest-audio-bridge`, and
+checks free space for the persistent data directory. It never writes files or
+restarts/recreates containers. Run it from an Unraid User Script or monitoring
+system and treat a nonzero exit status as an operator alert:
+
+```sh
+BIRDNET_BIND_IP=<Unraid_LAN_IP> \
+WEB_PORT=8090 \
+BIRDNET_DATA_DIR=/mnt/user/appdata/birdnet-go/data \
+./scripts/birdnet-watchdog.sh
+```
+
+The bridge is optional; its absent container is reported as `not-created` and
+does not make the watchdog fail. When audio monitoring is expected, a missing
+or stale audio-health result is a failure. Tune the conservative freshness
+window only when justified by the configured source interval:
+
+```sh
+WEB_PORT=8090 BIRDNET_AUDIO_MAX_AGE_SECONDS=120 ./scripts/birdnet-watchdog.sh
+```
+
+### Reboot recovery status
+
+**UNVERIFIED: full Unraid reboot recovery remains UNVERIFIED until physically tested.** Before treating recovery as proven, reboot the actual
+server during a maintenance window, confirm the array/appdata mounts return,
+then confirm BirdNET-Go, the optional bridge, audio freshness, and the frame
+view recover without manual intervention. Record the physical test date and
+results with the deployment notes. Do not infer recovery from Compose startup
+or a container restart alone.
+
 ## Backups
 
 Stop the service briefly for a consistent filesystem-level backup, or use
@@ -214,6 +255,12 @@ docker compose --env-file .env -f docker-compose.yaml start birdnet-go
 
 Backups may contain RTSP credentials after setup. Store them in the protected
 Unraid backup destination and never commit or paste them into an issue.
+
+Before restoring a backup, stop BirdNET-Go, preserve the current `config/` and
+`data/` directories as a separate rollback copy, restore both directories with
+their original ownership, then start and verify the audio-health endpoint. A
+backup is useful only if its restore procedure has been rehearsed on the target
+host; that rehearsal is separate from the UNVERIFIED full-reboot recovery test.
 
 ## Upgrade and rollback
 

@@ -5,6 +5,15 @@ services:
     image: ghcr.io/tphakala/birdnet-go:20260823@sha256:233b94f1d3b27b261ec8d997364db0cb953f3e3b3362a89e9e22ad4a589143d6
     container_name: birdnet-go
     restart: unless-stopped
+    # Bound CPU, memory, PID pressure, and Docker's host-side json log growth.
+    cpus: 2.0
+    mem_limit: 2g
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     networks:
       - default
       - nest-audio
@@ -101,6 +110,14 @@ services:
     image: local/nest-audio-bridge:go2rtc-1.9.14-ha2026.8
     container_name: nest-audio-bridge
     restart: unless-stopped
+    cpus: 1.0
+    mem_limit: 512m
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
     # Match the protected host credential owner. The token is a mounted Docker
     # secret, never an environment variable or command-line argument.
