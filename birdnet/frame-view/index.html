@@ -419,6 +419,44 @@
         font-size: clamp(12px, 0.82vw, 15px);
       }
 
+      .period-switcher {
+        display: flex;
+        align-items: center;
+        flex: 0 0 auto;
+        gap: 3px;
+        padding: 3px;
+        border: 1px solid rgba(176, 217, 191, 0.14);
+        border-radius: 999px;
+        background: rgba(6, 18, 13, 0.48);
+      }
+
+      .period-button {
+        min-width: 0;
+        min-height: 28px;
+        padding: 4px 9px;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font: inherit;
+        font-size: clamp(10px, 0.7vw, 13px);
+        font-weight: 650;
+        line-height: 1;
+        white-space: nowrap;
+      }
+
+      .period-button[aria-pressed="true"] {
+        background: var(--green-soft);
+        color: var(--green);
+        box-shadow: inset 0 0 0 1px rgba(105, 213, 154, 0.2);
+      }
+
+      .period-button:focus-visible {
+        outline: 2px solid var(--amber);
+        outline-offset: 2px;
+      }
+
       .species-grid {
         display: grid;
         min-height: 0;
@@ -859,6 +897,16 @@
           margin-bottom: 8px;
         }
 
+        .period-switcher {
+          padding: 2px;
+        }
+
+        .period-button {
+          min-height: 22px;
+          padding: 3px 7px;
+          font-size: 10px;
+        }
+
         .species-grid {
           gap: 8px 10px;
         }
@@ -929,6 +977,27 @@
 
         .recent-time {
           font-size: 12px;
+        }
+      }
+
+      /* The period selector is taller than the former note. At desktop widths
+         with FrameOS-height windows, tighten the optional third species line
+         so a full six-card grid remains contained. */
+      @media (min-width: 1101px) and (max-height: 650px) {
+        .species-name {
+          font-size: 14px;
+          line-height: 1.1;
+        }
+
+        .species-meta {
+          font-size: 10px;
+          line-height: 1.1;
+        }
+
+        .novelty-badge {
+          margin-top: 1px;
+          font-size: 8px;
+          line-height: 1;
         }
       }
 
@@ -1108,6 +1177,17 @@
         .section-header {
           gap: 10px;
           margin-bottom: 6px;
+        }
+
+        .period-switcher {
+          gap: 2px;
+          padding: 1px;
+        }
+
+        .period-button {
+          min-height: 18px;
+          padding: 2px 5px;
+          font-size: 8px;
         }
 
         .section-title {
@@ -1401,6 +1481,17 @@
           margin-bottom: 14px;
         }
 
+        .period-switcher {
+          width: 100%;
+          padding: 3px;
+        }
+
+        .period-button {
+          min-height: 34px;
+          flex: 1 1 0;
+          font-size: 12px;
+        }
+
         .section-title {
           font-size: 24px;
         }
@@ -1540,11 +1631,11 @@
         <div class="topbar-right">
           <div class="metric">
             <span class="metric-value" id="speciesCount">0</span>
-            <span class="metric-label" id="speciesMetricLabel">species live</span>
+            <span class="metric-label" id="speciesMetricLabel">species today</span>
           </div>
           <div class="metric">
             <span class="metric-value" id="callCount">0</span>
-            <span class="metric-label" id="callMetricLabel">calls live</span>
+            <span class="metric-label" id="callMetricLabel">calls today</span>
           </div>
           <div class="metric">
             <span class="metric-value" id="lifeListCount">—</span>
@@ -1587,7 +1678,7 @@
                 <div>
                   <p class="insight-copy" id="insightCopy">Morning and evening birds are expected today as the station listens.</p>
                   <div class="ambient-meta">
-                    <div class="ambient-stat"><strong id="periodLabel">Live</strong><span>ambient view</span></div>
+                    <div class="ambient-stat"><strong id="periodLabel">Today</strong><span>ambient view</span></div>
                     <div class="ambient-stat"><strong id="streakValue">—</strong><span>listening streak</span></div>
                   </div>
                 </div>
@@ -1611,7 +1702,11 @@
           <section class="card section-card" aria-labelledby="speciesTitle">
             <div class="section-header">
               <h2 class="section-title" id="speciesTitle">Today’s species</h2>
-              <span class="section-note" id="speciesNote">Live · up to six most active</span>
+              <div class="period-switcher" role="group" aria-label="Species period">
+                <button class="period-button" type="button" data-species-period="today" aria-pressed="true">Today</button>
+                <button class="period-button" type="button" data-species-period="7-days" aria-pressed="false">7 Days</button>
+                <button class="period-button" type="button" data-species-period="30-days" aria-pressed="false">30 Days</button>
+              </div>
             </div>
             <div class="species-grid" id="speciesGrid"></div>
           </section>
@@ -1657,8 +1752,7 @@
         const POLL_INTERVAL_MS = 15000;
         const IMAGE_RETRY_MS = 60000;
         const AUDIO_LEVEL_STALE_MS = 25000;
-        const ROTATION_INTERVAL_MS = 30000;
-        const ROTATION_PERIODS = ["live", "today", "7-days", "30-days"];
+        const SPECIES_PERIODS = ["today", "7-days", "30-days"];
         const MAX_SPECIES = 6;
         const MAX_RECENT = 4;
 
@@ -1682,8 +1776,9 @@
           heroCredit: document.getElementById("heroCredit"),
           confidence: document.getElementById("confidence"),
           confidenceValue: document.getElementById("confidenceValue"),
+          speciesTitle: document.getElementById("speciesTitle"),
           speciesGrid: document.getElementById("speciesGrid"),
-          speciesNote: document.getElementById("speciesNote"),
+          periodButtons: [...document.querySelectorAll("[data-species-period]")],
           recentList: document.getElementById("recentList"),
           recentNote: document.getElementById("recentNote"),
           updatedLabel: document.getElementById("updatedLabel"),
@@ -1714,12 +1809,13 @@
           dataError: false,
           summary: [],
           dailySummary: [],
-          rangeSummary: [],
+          rangeSummaries: { "7-days": null, "30-days": null },
+          rangeLoadingPeriod: "",
           kpis: null,
           expectedInsight: null,
           hourly: Array(24).fill(0),
           weather: null,
-          rotationPeriod: "live",
+          speciesPeriod: "today",
           audioLevel: 0,
           audioSamples: [],
           audioLastAt: null,
@@ -1733,7 +1829,6 @@
         let refreshPromise = null;
         let pollTimer = null;
         let clockTimer = null;
-        let rotationTimer = null;
         let detectionStream = null;
         let audioStream = null;
         let refreshDebounce = null;
@@ -1767,8 +1862,16 @@
           return date.toISOString().slice(0, 10);
         }
 
-        function periodTitle(period = state.rotationPeriod) {
-          return { live: "Live", today: "Today", "7-days": "7 Days", "30-days": "30 Days" }[period] || "Live";
+        function periodTitle(period = state.speciesPeriod) {
+          return { today: "Today", "7-days": "7 Days", "30-days": "30 Days" }[period] || "Today";
+        }
+
+        function periodHeading(period = state.speciesPeriod) {
+          return { today: "Today’s species", "7-days": "Last 7 days", "30-days": "Last 30 days" }[period] || "Today’s species";
+        }
+
+        function isRangePeriod(period = state.speciesPeriod) {
+          return period === "7-days" || period === "30-days";
         }
 
         function periodRange(period) {
@@ -1783,18 +1886,15 @@
           return [];
         }
 
-        function setRotationPeriod(period) {
-          if (!ROTATION_PERIODS.includes(period)) return;
-          state.rotationPeriod = period;
-          state.summary = period === "7-days" || period === "30-days" ? state.rangeSummary : state.dailySummary;
+        function setSpeciesPeriod(period) {
+          if (!SPECIES_PERIODS.includes(period)) return;
+          state.speciesPeriod = period;
+          const cachedRange = isRangePeriod(period) ? state.rangeSummaries[period] : null;
+          state.summary = isRangePeriod(period) ? (cachedRange || []) : state.dailySummary;
+          state.rangeLoadingPeriod = isRangePeriod(period) && cachedRange === null ? period : "";
           state.renderKeys.species = "";
           render();
-        }
-
-        function rotatePeriod() {
-          const index = ROTATION_PERIODS.indexOf(state.rotationPeriod);
-          setRotationPeriod(ROTATION_PERIODS[(index + 1) % ROTATION_PERIODS.length]);
-          refreshRange();
+          if (isRangePeriod(period)) refreshRange(period);
         }
 
         function applyNightMode() {
@@ -2213,18 +2313,24 @@
         }
 
         function renderSpecies() {
+          els.speciesTitle.textContent = periodHeading();
+          els.periodButtons.forEach(button => {
+            button.setAttribute("aria-pressed", String(button.dataset.speciesPeriod === state.speciesPeriod));
+          });
           clearChildren(els.speciesGrid);
           const species = state.summary.slice(0, MAX_SPECIES);
-          els.speciesNote.textContent = state.dataError
-            ? "Showing last update"
-            : species.length > 0 ? `${periodTitle()} · most active` : `${periodTitle()} · up to six most active`;
           if (species.length === 0) {
-            const title = state.apiOnline === false || state.dataError
-              ? "Bird detector unavailable"
-              : "No birds heard yet";
-            const copy = state.audioKnown && state.configuredSources.length === 0
-              ? "Today’s species will appear after a microphone is connected."
-              : "Species and their photos will fill this space as calls are identified.";
+            const loading = state.rangeLoadingPeriod === state.speciesPeriod;
+            const title = loading
+              ? `Loading ${periodTitle().toLowerCase()}`
+              : state.apiOnline === false || state.dataError
+                ? "Bird detector unavailable"
+                : "No birds heard yet";
+            const copy = loading
+              ? "Fetching the most active species for this period."
+              : state.audioKnown && state.configuredSources.length === 0
+                ? "Species will appear after a microphone is connected."
+                : "Species and their photos will fill this space as calls are identified.";
             const empty = emptyPanel(title, copy);
             empty.style.gridColumn = "1 / -1";
             empty.style.gridRow = "1 / -1";
@@ -2345,9 +2451,9 @@
           setStatus(status.title, status.detail, status.tone);
           const summaryCount = state.summary.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
           const kpiCount = Number(state.kpis && state.kpis.today_detections);
-          const rangePeriod = ["7-days", "30-days"].includes(state.rotationPeriod);
+          const rangePeriod = isRangePeriod();
           const count = !rangePeriod && Number.isFinite(kpiCount) ? kpiCount : summaryCount;
-          const metricPeriod = state.rotationPeriod === "live" ? "live" : state.rotationPeriod === "today" ? "today" : periodTitle().toLowerCase();
+          const metricPeriod = state.speciesPeriod === "today" ? "today" : periodTitle().toLowerCase();
           els.speciesCount.textContent = String(state.summary.length);
           els.callCount.textContent = String(count);
           els.speciesMetricLabel.textContent = `species ${metricPeriod}`;
@@ -2400,17 +2506,23 @@
           return hourly;
         }
 
-        async function refreshRange() {
-          if (disposed || document.hidden || !["7-days", "30-days"].includes(state.rotationPeriod)) return;
-          const { start, end } = periodRange(state.rotationPeriod);
+        async function refreshRange(period = state.speciesPeriod) {
+          if (disposed || document.hidden || !isRangePeriod(period)) return;
+          const requestedPeriod = period;
+          const { start, end } = periodRange(requestedPeriod);
           try {
             const result = await fetchJson(`/api/v2/analytics/species/summary?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`);
-            state.rangeSummary = summaryItems(result);
-            state.summary = state.rangeSummary;
+            state.rangeSummaries[requestedPeriod] = summaryItems(result);
+            if (state.speciesPeriod !== requestedPeriod) return;
+            state.rangeLoadingPeriod = "";
+            state.summary = state.rangeSummaries[requestedPeriod];
             state.renderKeys.species = "";
             render();
           } catch (_error) {
-            // The live daily summary stays visible if an optional range is unavailable.
+            if (state.speciesPeriod !== requestedPeriod) return;
+            state.rangeLoadingPeriod = "";
+            state.renderKeys.species = "";
+            render();
           }
         }
 
@@ -2451,7 +2563,7 @@
             const summaryReady = summary.status === "fulfilled" && summaryItems(summary.value).length >= 0;
             if (summaryReady) {
               state.dailySummary = summaryItems(summary.value);
-              if (!["7-days", "30-days"].includes(state.rotationPeriod)) state.summary = state.dailySummary;
+              if (!isRangePeriod()) state.summary = state.dailySummary;
             }
             const recent = results[3];
             const recentReady = recent.status === "fulfilled" && Array.isArray(recent.value);
@@ -2479,7 +2591,7 @@
             if (weather.status === "fulfilled" && weather.value && typeof weather.value === "object") state.weather = weather.value;
             state.dataError = !summaryReady || !recentReady;
             if (!state.dataError) state.lastUpdatedAt = new Date();
-            if (["7-days", "30-days"].includes(state.rotationPeriod)) refreshRange();
+            if (isRangePeriod()) refreshRange(state.speciesPeriod);
             render();
           })().finally(() => {
             refreshPromise = null;
@@ -2508,11 +2620,7 @@
           if (disposed || document.hidden) return;
           detectionStream = new EventSource("/api/v2/detections/stream");
           detectionStream.onmessage = scheduleRefresh;
-          detectionStream.addEventListener("detection", () => {
-            setRotationPeriod("live");
-            restartRotationTimer();
-            scheduleRefresh();
-          });
+          detectionStream.addEventListener("detection", scheduleRefresh);
           audioStream = new EventSource("/api/v2/streams/audio-level");
           const handleAudioLevel = event => {
             try {
@@ -2561,14 +2669,6 @@
           clockTimer = window.setInterval(() => {
             if (!document.hidden && !disposed) updateClock();
           }, 30000);
-          restartRotationTimer();
-        }
-
-        function restartRotationTimer() {
-          window.clearInterval(rotationTimer);
-          rotationTimer = window.setInterval(() => {
-            if (!document.hidden && !disposed) rotatePeriod();
-          }, ROTATION_INTERVAL_MS);
         }
 
         function pausePageActivity() {
@@ -2586,10 +2686,8 @@
           pausePageActivity();
           window.clearInterval(pollTimer);
           window.clearInterval(clockTimer);
-          window.clearInterval(rotationTimer);
           pollTimer = null;
           clockTimer = null;
-          rotationTimer = null;
         }
 
         document.addEventListener("visibilitychange", () => {
@@ -2607,6 +2705,9 @@
         });
         window.addEventListener("pagehide", disposePage);
         window.addEventListener("beforeunload", disposePage);
+        els.periodButtons.forEach(button => {
+          button.addEventListener("click", () => setSpeciesPeriod(button.dataset.speciesPeriod));
+        });
         els.dialogClose.addEventListener("click", () => els.detectionDialog.close());
         els.detectionDialog.addEventListener("close", () => {
           els.detailAudio.pause();
