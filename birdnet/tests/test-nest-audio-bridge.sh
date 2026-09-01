@@ -48,6 +48,8 @@ grep -Fq 'camera/webrtc/offer' "$SOURCE_PATCH" || \
 
 grep -Fq 'listen: ""' "$BRIDGE_CONFIG" || \
   fail 'go2rtc web/API listener must be disabled'
+grep -Fq 'modules: [rtsp, hass]' "$BRIDGE_CONFIG" || \
+  fail 'bridge must allowlist only the RTSP server and Home Assistant source modules'
 grep -Fq 'hass://${HA_HOST}?entity_id=${HA_CAMERA_ENTITY}&token=${HA_TOKEN}' "$BRIDGE_CONFIG" || \
   fail 'camera source must keep the Home Assistant credential indirect'
 ! grep -Fq 'ffmpeg:' "$BRIDGE_CONFIG" || \
