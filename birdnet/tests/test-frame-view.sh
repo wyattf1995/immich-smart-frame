@@ -122,6 +122,21 @@ novelty_badge_css=$(awk '
 grep -Fq 'display: block;' <<<"$novelty_badge_css" || \
   fail 'species novelty badges must not add inline baseline overflow'
 
+# Every recent row wraps its content in a button. The button must use the
+# row's available height, opt out of its intrinsic minimum, and reset the
+# browser's default button padding or its thumbnail can escape the grid row.
+detection_detail_css=$(awk '
+  /^[[:space:]]*[.]detection-detail[[:space:]]*\{/ { active = 1 }
+  active { print }
+  active && /^[[:space:]]*}/ { exit }
+' "$VIEW_FILE")
+grep -Fq 'height: 100%;' <<<"$detection_detail_css" || \
+  fail 'recent detection controls must fill their row'
+grep -Fq 'min-height: 0;' <<<"$detection_detail_css" || \
+  fail 'recent detection controls must shrink inside their row'
+grep -Fq 'padding: 0;' <<<"$detection_detail_css" || \
+  fail 'recent detection controls must reset browser button padding'
+
 # A 1512x711 desktop is taller than the compact FrameOS breakpoint but too
 # short for the roomy base cards: live geometry otherwise gives 56px species
 # rows that need 66px and 41px recent rows that need 55px. Compact only the
