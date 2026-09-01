@@ -18,8 +18,13 @@ required_files=(
   birdnet/config/config.yaml
   birdnet/docker-compose.yaml
   birdnet/OPERATIONS.md
+  birdnet/nest-audio-bridge/Dockerfile
+  birdnet/nest-audio-bridge/go2rtc.yaml
+  birdnet/nest-audio-bridge/patches/0001-test-hass-current-webrtc-api.patch
+  birdnet/nest-audio-bridge/patches/0002-fix-hass-current-webrtc-api.patch
   birdnet/tests/test-birdnet-compose.sh
   birdnet/tests/test-frame-view.sh
+  birdnet/tests/test-nest-audio-bridge.sh
   LICENSE
   README.md
   SECURITY.md
@@ -124,6 +129,8 @@ fi
 ./birdnet/tests/test-birdnet-compose.sh
 
 ./birdnet/tests/test-frame-view.sh
+
+./birdnet/tests/test-nest-audio-bridge.sh
 
 ./scripts/test-check-frame-readiness.sh
 
