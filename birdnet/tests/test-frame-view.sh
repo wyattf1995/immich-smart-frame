@@ -67,6 +67,34 @@ grep -Fq 'overflow: hidden' "$VIEW_FILE" || fail 'kiosk view must not expose a s
 grep -Fq '@media (max-height: 1100px)' "$VIEW_FILE" || fail 'layout must explicitly fit the 1920x1080 frame'
 grep -Fq '@media (max-width: 1100px) and (max-height: 650px)' "$VIEW_FILE" || \
   fail 'layout must account for the frame 320-dpi CSS viewport'
+
+# Phones need a real document flow instead of the fixed-height kiosk surface.
+# Keep this contract separate from the short-landscape FrameOS breakpoint: a
+# narrow portrait viewport must stack each dashboard panel full-width, remain
+# readable, and permit vertical scrolling without horizontal overflow.
+mobile_css=$(awk '
+  /@media \(max-width: 600px\)/ { active = 1 }
+  active {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (depth == 0) exit
+  }
+' "$VIEW_FILE")
+
+[[ -n "$mobile_css" ]] || fail 'frame view must define a phone layout at 600px or narrower'
+grep -Fq 'overflow-x: hidden;' <<<"$mobile_css" || fail 'phone layout must prevent horizontal overflow'
+grep -Fq 'overflow-y: auto;' <<<"$mobile_css" || fail 'phone layout must allow vertical scrolling'
+grep -Fq 'flex-direction: column;' <<<"$mobile_css" || fail 'phone header must stack cleanly'
+grep -Fq 'grid-template-columns: minmax(0, 1fr);' <<<"$mobile_css" || \
+  fail 'phone layout must use one full-width content column'
+grep -Fq '.species-grid' <<<"$mobile_css" || fail 'phone layout must restack species cards'
+grep -Fq '.recent-list' <<<"$mobile_css" || fail 'phone layout must restack recent detections'
+grep -Fq 'grid-template-rows: none;' <<<"$mobile_css" || \
+  fail 'phone cards must grow with readable text instead of clipping fixed rows'
+grep -Fq 'white-space: normal;' <<<"$mobile_css" || fail 'phone text must be allowed to wrap'
+grep -Fq 'overflow-wrap: anywhere;' <<<"$mobile_css" || fail 'phone text must not overflow narrow cards'
 grep -Fq 'Photo unavailable' "$VIEW_FILE" || fail 'broken images must retain a stable fallback'
 grep -Fq 'retrySpeciesImage' "$VIEW_FILE" || fail 'cold species images must be retried in place'
 
