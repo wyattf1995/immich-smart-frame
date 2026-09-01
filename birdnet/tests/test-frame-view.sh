@@ -65,6 +65,8 @@ grep -Fq 'aria-live="polite"' "$VIEW_FILE" || fail 'status changes must be annou
 grep -Fq 'visibilitychange' "$VIEW_FILE" || fail 'hidden pages must release live streams'
 grep -Fq 'overflow: hidden' "$VIEW_FILE" || fail 'kiosk view must not expose a scrollbar'
 grep -Fq '@media (max-height: 1100px)' "$VIEW_FILE" || fail 'layout must explicitly fit the 1920x1080 frame'
+grep -Fq '@media (max-width: 1100px) and (max-height: 650px)' "$VIEW_FILE" || \
+  fail 'layout must account for the frame 320-dpi CSS viewport'
 grep -Fq 'Photo unavailable' "$VIEW_FILE" || fail 'broken images must retain a stable fallback'
 grep -Fq 'retrySpeciesImage' "$VIEW_FILE" || fail 'cold species images must be retried in place'
 
