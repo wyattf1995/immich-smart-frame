@@ -209,17 +209,26 @@ create_thumb_fn=$(sed -n '/^[[:space:]]*function createThumb(/,/^[[:space:]]*fun
 grep -Eq 'attachImage\(img, fallback, scientificName, .*\, true\);' <<<"$create_thumb_fn" || \
   fail 'createThumb must request eager species-image loading'
 
-# Ambient dashboard contract: the kiosk rotates through bounded time windows,
-# but a fresh detection must immediately bring the live visitor back. Keep the
-# period names in the page source so this behavior remains reviewable without
-# depending on a browser or a live BirdNET installation.
-grep -Fq 'ROTATION_PERIODS' "$VIEW_FILE" || fail 'frame view must define the automatic rotation periods'
-for rotation_period in 'live' 'today' '7[-_ ]?days?' '30[-_ ]?days?'; do
-  grep -Eiq "$rotation_period" "$VIEW_FILE" || fail "rotation must expose the $rotation_period period"
+# Ambient dashboard contract: Today is stable by default and longer windows
+# are viewer-selected. The old timer made the count appear to change at random,
+# especially because every fresh detection restarted it at the daily view.
+grep -Fq 'SPECIES_PERIODS' "$VIEW_FILE" || fail 'frame view must define selectable species periods'
+for species_period in 'today' '7-days' '30-days'; do
+  grep -Fq "data-species-period=\"${species_period}\"" "$VIEW_FILE" || \
+    fail "species period selector must expose ${species_period}"
 done
-grep -Fq 'ROTATION_INTERVAL_MS' "$VIEW_FILE" || fail 'frame view must rotate periods on a timer'
-grep -Fq 'setRotationPeriod("live")' "$VIEW_FILE" || \
-  fail 'a new detection must return the rotating view to Live'
+grep -Eq 'role="group"[^>]+aria-label="[^"]*[Ss]pecies[^"]*[Pp]eriod' "$VIEW_FILE" || \
+  fail 'species period selector must be an accessible labelled group'
+grep -Fq 'aria-pressed="true"' "$VIEW_FILE" || \
+  fail 'species period selector must expose its selected state'
+grep -Fq 'speciesPeriod: "today"' "$VIEW_FILE" || \
+  fail 'species period selector must default to Today'
+grep -Fq 'speciesTitle.textContent = periodHeading()' "$VIEW_FILE" || \
+  fail 'species heading must describe the selected period'
+! grep -Fq 'ROTATION_INTERVAL_MS' "$VIEW_FILE" || \
+  fail 'species periods must not change on an automatic timer'
+! grep -Fq 'setRotationPeriod("live")' "$VIEW_FILE" || \
+  fail 'new detections must not override the viewer-selected species period'
 
 # A species can be interesting even when it is not the newest detection. The
 # four novelty reasons are intentionally visible labels, not only styling or
