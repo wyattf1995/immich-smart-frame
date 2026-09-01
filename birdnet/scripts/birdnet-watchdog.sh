@@ -20,7 +20,7 @@ fail() {
 }
 
 require_command() {
-  command -v "$1" || {
+  command -v "$1" >/dev/null || {
     fail "required command is unavailable: $1"
     return 1
   }
@@ -28,7 +28,7 @@ require_command() {
 
 container_restart_count() {
   local container="$1" count
-  if ! docker inspect --format '{{.Id}}' "$container"; then
+  if ! docker inspect --format '{{.Id}}' "$container" >/dev/null; then
     report "INFO: ${container} RestartCount=not-created"
     return 0
   fi
@@ -121,7 +121,7 @@ require_command docker || true
 require_command df || true
 
 if health_json=$(curl --fail --silent --show-error --connect-timeout 3 --max-time 8 "$HEALTH_URL"); then # /api/v2/health/audio
-  if printf '%s' "$health_json" | sources_are_healthy; then
+  if printf '%s' "$health_json" | sources_are_healthy >/dev/null; then
     report "INFO: every reported audio source is HEALTHY"
   else
     fail "audio health response has no HEALTHY source set"
