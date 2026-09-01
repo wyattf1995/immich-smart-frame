@@ -1331,11 +1331,13 @@
           summary: [],
           dailySummary: [],
           rangeSummary: [],
-          lifetimeSummary: null,
+          kpis: null,
+          expectedInsight: null,
           hourly: Array(24).fill(0),
-          sun: null,
+          weather: null,
           rotationPeriod: "live",
           audioLevel: 0,
+          audioSamples: [],
           audioLastAt: null,
           recent: [],
           lastUpdatedAt: null,
@@ -1413,11 +1415,20 @@
 
         function applyNightMode() {
           const minutes = new Date().getHours() * 60 + new Date().getMinutes();
-          const sunrise = Number(state.sun && (state.sun.sunrise ?? state.sun.sunrise_minutes));
-          const sunset = Number(state.sun && (state.sun.sunset ?? state.sun.sunset_minutes));
+          const daily = state.weather && state.weather.daily;
+          const sunrise = minutesFromTime(daily && daily.sunrise);
+          const sunset = minutesFromTime(daily && daily.sunset);
           const hasSunTimes = Number.isFinite(sunrise) && Number.isFinite(sunset);
           const nightMode = hasSunTimes ? minutes < sunrise || minutes >= sunset : minutes < 6 * 60 || minutes >= 20 * 60;
           document.documentElement.dataset.night = String(nightMode);
+        }
+
+        function minutesFromTime(value) {
+          if (typeof value === "number" && Number.isFinite(value)) return value;
+          if (typeof value !== "string") return Number.NaN;
+          const localTime = value.match(/(?:T|^)(\d{1,2}):(\d{2})/);
+          if (!localTime) return Number.NaN;
+          return Number(localTime[1]) * 60 + Number(localTime[2]);
         }
 
         function renderAudioHealth() {
@@ -1756,27 +1767,40 @@
 
         function noveltyReason(item) {
           // novelty lifetime, year, season, and infrequent classifications are read-only labels.
-          const novelty = item && (item.novelty || item.novelty_reason || item.noveltyReason || "");
-          const values = Array.isArray(novelty) ? novelty : [novelty];
-          const normalized = values.map(value => String(value).toLowerCase()).join(" ");
-          if (item && (item.lifetime_new || item.is_lifetime_new || normalized.includes("lifetime"))) return "Lifetime first";
-          if (item && (item.year_new || item.is_year_new || normalized.includes("year"))) return "New this year";
-          if (item && (item.season_new || item.is_season_new || normalized.includes("season"))) return "New this season";
-          if (item && (item.infrequent || normalized.includes("infrequent") || Number(item.count) <= 2)) return "Infrequent visitor";
+          if (!item || typeof item !== "object") return "";
+          if (item.is_new_species === true) return "Lifetime first";
+          if (item.is_new_this_year === true) return "New this year";
+          if (item.is_new_this_season === true) return `New this ${item.current_season || "season"}`;
+          const firstSeenDays = Number(item.days_since_first_seen);
+          const lastSeenDays = Number(item.days_since_last_seen);
+          if (Number.isFinite(lastSeenDays) && lastSeenDays >= 14 && !(Number.isFinite(firstSeenDays) && firstSeenDays <= 0)) {
+            return "Infrequent visitor";
+          }
           return "";
         }
 
         function renderAmbientSummary() {
           els.periodLabel.textContent = periodTitle();
-          const lifetime = state.lifetimeSummary || {};
-          const lifeList = Number(lifetime.species_count ?? lifetime.total_species ?? lifetime.species ?? lifetime.count);
+          const kpis = state.kpis || {};
+          const lifeList = Number(kpis.lifetime_species);
           els.lifeListCount.textContent = Number.isFinite(lifeList) ? String(lifeList) : "—";
-          const streak = Number(lifetime.listening_streak ?? lifetime.streak_days ?? lifetime.streak);
+          const streak = Number(kpis.detection_streak && kpis.detection_streak.days);
           els.streakValue.textContent = Number.isFinite(streak) ? `${streak} day${streak === 1 ? "" : "s"}` : "Building";
+          const expected = state.expectedInsight && Array.isArray(state.expectedInsight.species)
+            ? state.expectedInsight.species.filter(item => item && typeof item === "object")
+            : [];
           const hour = new Date().getHours();
-          els.insightCopy.textContent = hour < 11
-            ? "Morning visitors are expected today. Evening activity will follow as daylight softens."
-            : "Evening visitors are expected today. Morning activity is preserved in the 24-hour activity strip.";
+          if (expected.length === 0) {
+            els.insightCopy.textContent = "Morning and evening expectations are building history.";
+          } else {
+            const morning = expected[0];
+            const evening = expected[1] || morning;
+            const name = hour < 11 ? morning.common_name : evening.common_name;
+            const years = Number(hour < 11 ? morning.years_seen : evening.years_seen);
+            const lastSeen = hour < 11 ? morning.last_seen_date : evening.last_seen_date;
+            const period = hour < 11 ? "Morning" : "Evening";
+            els.insightCopy.textContent = `${period}: ${name || "a familiar visitor"} is expected today${Number.isFinite(years) ? ` from ${years} year${years === 1 ? "" : "s"} of history` : ""}${lastSeen ? `; last seen ${lastSeen}` : ""}.`;
+          }
           clearChildren(els.activityStrip);
           const maximum = Math.max(1, ...state.hourly);
           state.hourly.slice(0, 24).forEach((count, hourIndex) => {
@@ -1920,7 +1944,9 @@
         function render() {
           const status = statusFromState();
           setStatus(status.title, status.detail, status.tone);
-          const count = state.summary.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+          const summaryCount = state.summary.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+          const kpiCount = Number(state.kpis && state.kpis.today_detections);
+          const count = Number.isFinite(kpiCount) ? kpiCount : summaryCount;
           els.speciesCount.textContent = String(state.summary.length);
           els.callCount.textContent = String(count);
           renderAmbientSummary();
@@ -1994,9 +2020,10 @@
               fetchJson("/api/v2/streams/sources"),
               fetchJson("/api/v2/analytics/species/daily"),
               fetchJson("/api/v2/detections/recent?limit=10"),
-              fetchJson("/api/v2/analytics/species/summary"),
-              fetchJson(`/api/v2/analytics/time/hourly?start_date=${encodeURIComponent(isoDate())}&end_date=${encodeURIComponent(isoDate())}`),
-              fetchJson(`/api/v2/analytics/sun?date=${encodeURIComponent(isoDate())}`),
+              fetchJson("/api/v2/dashboard/kpis"),
+              fetchJson(`/api/v2/analytics/time/distribution/hourly?start_date=${encodeURIComponent(isoDate())}&end_date=${encodeURIComponent(isoDate())}`),
+              fetchJson("/api/v2/insights/expected-today"),
+              fetchJson("/api/v2/weather/latest"),
             ]);
             if (disposed || document.hidden) return;
             const health = results[0];
@@ -2035,14 +2062,18 @@
                 return true;
               });
             }
-            const lifetime = results[4];
-            if (lifetime.status === "fulfilled" && lifetime.value && typeof lifetime.value === "object") {
-              state.lifetimeSummary = lifetime.value;
+            const kpis = results[4];
+            if (kpis.status === "fulfilled" && kpis.value && typeof kpis.value === "object") {
+              state.kpis = kpis.value;
             }
             const hourly = results[5];
             if (hourly.status === "fulfilled") state.hourly = normalizeHourly(hourly.value);
-            const sun = results[6];
-            if (sun.status === "fulfilled" && sun.value && typeof sun.value === "object") state.sun = sun.value;
+            const expected = results[6];
+            if (expected.status === "fulfilled" && expected.value && typeof expected.value === "object") {
+              state.expectedInsight = expected.value;
+            }
+            const weather = results[7];
+            if (weather.status === "fulfilled" && weather.value && typeof weather.value === "object") state.weather = weather.value;
             state.dataError = !summaryReady || !recentReady;
             if (!state.dataError) state.lastUpdatedAt = new Date();
             if (["7-days", "30-days"].includes(state.rotationPeriod)) refreshRange();
@@ -2082,15 +2113,19 @@
           const handleAudioLevel = event => {
             try {
               const payload = JSON.parse(event.data);
-              const levels = payload && payload.levels && typeof payload.levels === "object" ? payload.levels : {};
-              state.audioLevelsActive = Object.values(levels).some(entry => {
-                const level = typeof entry === "number" ? entry : Number(entry && entry.level);
-                return Number.isFinite(level) && level > 0;
-              });
-              const levelValues = Object.values(levels).map(entry => Number(typeof entry === "number" ? entry : entry && entry.level)).filter(Number.isFinite);
-              state.audioLevel = levelValues.length > 0 ? Math.max(...levelValues) : 0;
-              state.audioLastAt = new Date();
-              if (state.audioLevelsActive) {
+              const rawLevels = payload && payload.levels && typeof payload.levels === "object"
+                ? Object.values(payload.levels)
+                : [payload && payload.level];
+              const levelValues = rawLevels
+                .map(entry => Number(typeof entry === "number" ? entry : entry && entry.level))
+                .filter(Number.isFinite)
+                .map(level => Math.max(0, Math.min(100, level)));
+              state.audioLevelsActive = levelValues.some(level => level > 0);
+              if (levelValues.length > 0) {
+                state.audioSamples.push(...levelValues);
+                state.audioSamples = state.audioSamples.slice(-12);
+                state.audioLevel = state.audioSamples.reduce((sum, level) => sum + level, 0) / state.audioSamples.length / 100;
+                state.audioLastAt = new Date();
                 state.audioKnown = true;
                 state.audioError = false;
                 window.clearTimeout(audioFreshnessTimer);
