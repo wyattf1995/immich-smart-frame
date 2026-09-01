@@ -22,6 +22,9 @@ required_files=(
   birdnet/nest-audio-bridge/go2rtc.yaml
   birdnet/nest-audio-bridge/patches/0001-test-hass-current-webrtc-api.patch
   birdnet/nest-audio-bridge/patches/0002-fix-hass-current-webrtc-api.patch
+  birdnet/home-assistant/birdnet-phone-alerts.yaml.example
+  birdnet/home-assistant/birdnet-webhook-provider.yaml.example
+  birdnet/tests/test-birdnet-alerts.sh
   birdnet/tests/test-birdnet-compose.sh
   birdnet/tests/test-frame-view.sh
   birdnet/tests/test-nest-audio-bridge.sh
@@ -127,6 +130,8 @@ fi
 ./scripts/test-frame-mode-router.sh
 
 ./birdnet/tests/test-birdnet-compose.sh
+
+./birdnet/tests/test-birdnet-alerts.sh
 
 ./birdnet/tests/test-frame-view.sh
 
