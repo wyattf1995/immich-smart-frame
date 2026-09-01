@@ -39,6 +39,10 @@ grep -Fq '0002-fix-hass-current-webrtc-api.patch' "$DOCKERFILE" || \
   fail 'bridge image must apply the current Home Assistant signaling fix'
 grep -Fq 'go test ./pkg/hass' "$DOCKERFILE" || \
   fail 'bridge image must run the focused signaling tests before building'
+grep -Fq 'COPY --chmod=0444 go2rtc.yaml /etc/go2rtc.yaml' "$DOCKERFILE" || \
+  fail 'runtime config must live under a traversable directory for the unprivileged bridge user'
+grep -Fq 'CMD ["go2rtc", "-config", "/etc/go2rtc.yaml"]' "$DOCKERFILE" || \
+  fail 'bridge command must load the readable runtime config path'
 grep -Fq 'TestExchangeSDPUsesCurrentHomeAssistantSubscription' "$TEST_PATCH" || \
   fail 'upstream patch must cover the current Home Assistant offer subscription'
 grep -Fq 'TestClientKeepsHomeAssistantSubscriptionUntilStop' "$TEST_PATCH" || \
