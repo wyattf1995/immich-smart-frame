@@ -1120,6 +1120,274 @@
         }
       }
 
+      /* Phone browsers need room to scroll through the complete dashboard.
+         Keep this separate from the short landscape FrameOS breakpoint above:
+         it only applies to narrow portrait and handheld layouts. */
+      @media (max-width: 600px) {
+        html,
+        body {
+          height: auto;
+          min-height: 100%;
+          overflow-x: hidden;
+          overflow-y: auto;
+        }
+
+        .frame {
+          display: block;
+          min-height: 100dvh;
+          height: auto;
+          padding: 20px 16px 24px;
+        }
+
+        .topbar {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 16px;
+        }
+
+        .title-group {
+          align-items: flex-start;
+          gap: 12px;
+        }
+
+        .mark {
+          width: 48px;
+          height: 48px;
+          border-radius: 15px;
+        }
+
+        .mark svg {
+          width: 29px;
+          height: 29px;
+        }
+
+        h1 {
+          font-size: 32px;
+          line-height: 1.05;
+        }
+
+        .subtitle {
+          margin-top: 5px;
+          font-size: 14px;
+          line-height: 1.35;
+        }
+
+        .topbar-right {
+          display: block;
+          width: 100%;
+        }
+
+        .status {
+          width: 100%;
+          min-width: 0;
+          align-items: flex-start;
+          padding: 13px 14px;
+          border-radius: 16px;
+        }
+
+        .status-dot {
+          margin-top: 5px;
+        }
+
+        .content {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 16px;
+          margin-top: 16px;
+        }
+
+        .card {
+          min-height: auto;
+          overflow: visible;
+          border-radius: 22px;
+        }
+
+        .hero {
+          grid-template-rows: auto auto;
+        }
+
+        .hero-media {
+          aspect-ratio: 16 / 10;
+        }
+
+        .hero-badge {
+          top: 14px;
+          left: 14px;
+          font-size: 11px;
+        }
+
+        .hero-body {
+          gap: 12px;
+          padding: 18px;
+        }
+
+        .hero-kicker {
+          font-size: 12px;
+        }
+
+        .hero-name {
+          font-size: 30px;
+        }
+
+        .hero-scientific {
+          font-size: 16px;
+        }
+
+        .hero-meta {
+          gap: 5px 12px;
+          margin-top: 12px;
+          font-size: 13px;
+        }
+
+        .hero-meta span + span::before {
+          margin-right: 12px;
+        }
+
+        .hero-credit {
+          margin-top: 9px;
+          font-size: 11px;
+        }
+
+        .confidence {
+          min-width: 72px;
+        }
+
+        .confidence-value {
+          font-size: 32px;
+        }
+
+        .confidence-label {
+          font-size: 10px;
+        }
+
+        .ambient-context {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 12px;
+          margin-top: 12px;
+          padding-top: 12px;
+        }
+
+        .audio-meter {
+          min-width: 0;
+        }
+
+        .side {
+          grid-template-rows: none;
+          gap: 16px;
+        }
+
+        .section-card {
+          display: block;
+          padding: 18px;
+        }
+
+        .section-header {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 4px;
+          margin-bottom: 14px;
+        }
+
+        .section-title {
+          font-size: 24px;
+        }
+
+        .section-note {
+          font-size: 13px;
+        }
+
+        .species-grid {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-rows: none;
+          gap: 10px;
+        }
+
+        .species-card {
+          grid-template-columns: 68px minmax(0, 1fr) auto;
+          min-height: 76px;
+          gap: 12px;
+          padding: 7px 10px 7px 7px;
+        }
+
+        .thumb {
+          min-height: 60px;
+        }
+
+        .species-name {
+          font-size: 16px;
+        }
+
+        .species-meta {
+          font-size: 12px;
+        }
+
+        .species-count {
+          font-size: 21px;
+        }
+
+        .recent-list {
+          grid-template-rows: none;
+          gap: 8px;
+        }
+
+        .recent-row {
+          min-height: 64px;
+          gap: 10px;
+          padding: 5px 9px 5px 5px;
+        }
+
+        .recent-row .thumb {
+          min-height: 52px;
+        }
+
+        .detection-detail {
+          grid-template-columns: 52px minmax(0, 1fr) auto;
+          gap: 10px;
+        }
+
+        .recent-name {
+          font-size: 15px;
+        }
+
+        .recent-detail,
+        .recent-time {
+          font-size: 12px;
+        }
+
+        .status-title,
+        .status-detail,
+        .hero-name,
+        .hero-scientific,
+        .hero-credit,
+        .species-name,
+        .species-meta,
+        .recent-name,
+        .recent-detail,
+        .recent-time,
+        .section-note,
+        .novelty-badge {
+          overflow: visible;
+          text-overflow: clip;
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+
+        .footer {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 6px;
+          margin-top: 16px;
+        }
+
+        .footer span:last-child {
+          text-align: left;
+        }
+
+        dialog {
+          width: calc(100vw - 32px);
+          max-height: calc(100dvh - 32px);
+        }
+      }
+
       @media (prefers-reduced-motion: no-preference) {
         .status[data-tone="green"] .status-dot {
           animation: breathe 3.2s ease-in-out infinite;
