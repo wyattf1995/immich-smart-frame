@@ -650,6 +650,239 @@
         }
       }
 
+      /* Android exposes the 1920x1080 panel as roughly 960x540 CSS pixels at
+         its native 320 dpi. Keep every fixed kiosk region inside that viewport
+         without changing the panel's physical resolution or system density. */
+      @media (max-width: 1100px) and (max-height: 650px) {
+        .frame {
+          gap: 10px;
+          padding: 18px 28px 14px;
+        }
+
+        .title-group {
+          gap: 13px;
+        }
+
+        .mark {
+          width: 44px;
+          height: 44px;
+          border-radius: 14px;
+        }
+
+        .mark svg {
+          width: 27px;
+          height: 27px;
+        }
+
+        h1 {
+          font-size: 30px;
+        }
+
+        .subtitle {
+          margin-top: 4px;
+          font-size: 13px;
+        }
+
+        .status {
+          min-width: 300px;
+          gap: 10px;
+          padding: 10px 14px;
+          border-radius: 14px;
+        }
+
+        .status-dot {
+          width: 10px;
+          height: 10px;
+        }
+
+        .status-title {
+          font-size: 14px;
+        }
+
+        .status-detail {
+          margin-top: 3px;
+          font-size: 11px;
+        }
+
+        .content {
+          gap: 12px;
+        }
+
+        .card {
+          border-radius: 20px;
+        }
+
+        .hero-badge {
+          top: 14px;
+          left: 14px;
+          padding: 6px 10px;
+          font-size: 10px;
+        }
+
+        .image-fallback svg {
+          width: min(30%, 150px);
+        }
+
+        .image-fallback span {
+          bottom: 14px;
+          font-size: 10px;
+        }
+
+        .hero-body {
+          gap: 10px;
+          padding: 12px 16px;
+        }
+
+        .hero-kicker {
+          margin-bottom: 4px;
+          font-size: 11px;
+        }
+
+        .hero-name {
+          font-size: 26px;
+        }
+
+        .hero-scientific {
+          margin-top: 4px;
+          font-size: 13px;
+        }
+
+        .hero-meta {
+          gap: 4px 10px;
+          margin-top: 7px;
+          font-size: 11px;
+        }
+
+        .hero-meta span + span::before {
+          margin-right: 10px;
+        }
+
+        .hero-credit {
+          margin-top: 6px;
+          font-size: 9px;
+        }
+
+        .confidence {
+          min-width: 70px;
+        }
+
+        .confidence-value {
+          font-size: 28px;
+        }
+
+        .confidence-label {
+          margin-top: 4px;
+          font-size: 9px;
+        }
+
+        .side {
+          grid-template-rows: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+
+        .section-card {
+          padding: 10px 12px;
+        }
+
+        .section-header {
+          gap: 10px;
+          margin-bottom: 6px;
+        }
+
+        .section-title {
+          font-size: 18px;
+        }
+
+        .section-note {
+          font-size: 10px;
+        }
+
+        .species-grid {
+          gap: 6px;
+        }
+
+        .species-card {
+          grid-template-columns: 46px minmax(0, 1fr) auto;
+          gap: 7px;
+          padding: 4px 7px 4px 4px;
+          border-radius: 10px;
+        }
+
+        .thumb {
+          min-height: 32px;
+          border-radius: 8px;
+        }
+
+        .thumb-fallback {
+          font-size: 18px;
+        }
+
+        .species-name {
+          font-size: 13px;
+        }
+
+        .species-meta {
+          margin-top: 2px;
+          font-size: 9px;
+        }
+
+        .species-count {
+          min-width: 20px;
+          font-size: 15px;
+        }
+
+        .recent-list {
+          gap: 4px;
+        }
+
+        .recent-row {
+          grid-template-columns: 32px minmax(0, 1fr) auto;
+          gap: 7px;
+          padding: 2px 6px 2px 2px;
+          border-radius: 8px;
+        }
+
+        .recent-row .thumb {
+          min-height: 26px;
+        }
+
+        .recent-name {
+          font-size: 12px;
+        }
+
+        .recent-detail,
+        .recent-time {
+          font-size: 9px;
+        }
+
+        .empty-panel {
+          padding: 6px;
+        }
+
+        .empty-panel svg {
+          width: 32px;
+          height: 32px;
+          margin-bottom: 4px;
+        }
+
+        .empty-title {
+          font-size: 15px;
+        }
+
+        .empty-copy {
+          display: none;
+        }
+
+        .footer {
+          min-height: 16px;
+          font-size: 9px;
+        }
+
+        .footer span:last-child {
+          display: none;
+        }
+      }
+
       @media (prefers-reduced-motion: no-preference) {
         .status[data-tone="green"] .status-dot {
           animation: breathe 3.2s ease-in-out infinite;
