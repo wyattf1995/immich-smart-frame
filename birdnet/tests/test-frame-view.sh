@@ -36,6 +36,8 @@ grep -Fq 'FRAME_VIEW_PORT=8091' "$ENV_FILE" || fail 'sample env must reserve the
 grep -Fq 'proxy_pass http://birdnet-go:8080;' "$NGINX_FILE" || fail 'NGINX must proxy to BirdNET-Go by service name'
 grep -Fq 'location /api/' "$NGINX_FILE" || fail 'NGINX must expose the BirdNET public API path'
 grep -Fq 'proxy_buffering off;' "$NGINX_FILE" || fail 'SSE proxying must disable response buffering'
+grep -Fq 'proxy_set_header Authorization "";' "$NGINX_FILE" || fail 'frame proxy must strip authorization credentials'
+grep -Fq 'proxy_set_header Cookie "";' "$NGINX_FILE" || fail 'frame proxy must strip browser credentials'
 grep -Fq 'location = /healthz' "$NGINX_FILE" || fail 'frame-view must provide an isolated health endpoint'
 grep -Fq "default-src 'none'" "$NGINX_FILE" || fail 'frame-view must send a restrictive content security policy'
 ! grep -Eq '192[.]168[.]|token=|password=|username=' "$VIEW_FILE" || \
@@ -47,6 +49,8 @@ grep -Fq "default-src 'none'" "$NGINX_FILE" || fail 'frame-view must send a rest
 grep -Fq '/api/v2/analytics/species/daily' "$VIEW_FILE" || fail 'frame view must load today species summary'
 grep -Fq '/api/v2/detections/recent' "$VIEW_FILE" || fail 'frame view must load recent detections'
 grep -Fq '/api/v2/detections/stream' "$VIEW_FILE" || fail 'frame view must refresh on live detections'
+grep -Fq 'addEventListener("detection"' "$VIEW_FILE" || fail 'frame view must consume BirdNET named detection events'
+grep -Fq '/api/v2/streams/sources' "$VIEW_FILE" || fail 'frame view must inspect public audio source state'
 grep -Fq '/api/v2/streams/audio-level' "$VIEW_FILE" || fail 'frame view must distinguish active and missing audio'
 grep -Fq '/api/v2/media/species-image?name=' "$VIEW_FILE" || fail 'frame view must show real species images'
 grep -Fq '/api/v2/media/species-image/info?name=' "$VIEW_FILE" || fail 'hero image must expose provider attribution'
@@ -60,5 +64,6 @@ grep -Fq 'visibilitychange' "$VIEW_FILE" || fail 'hidden pages must release live
 grep -Fq 'overflow: hidden' "$VIEW_FILE" || fail 'kiosk view must not expose a scrollbar'
 grep -Fq '@media (max-height: 1100px)' "$VIEW_FILE" || fail 'layout must explicitly fit the 1920x1080 frame'
 grep -Fq 'Photo unavailable' "$VIEW_FILE" || fail 'broken images must retain a stable fallback'
+grep -Fq 'retrySpeciesImage' "$VIEW_FILE" || fail 'cold species images must be retried in place'
 
 printf 'PASS: BirdNET frame-view contract\n'
