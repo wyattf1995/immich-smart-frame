@@ -253,7 +253,8 @@
       .hero-image {
         width: 100%;
         height: 100%;
-        object-fit: cover;
+        object-fit: contain;
+        object-position: center;
       }
 
       .hero-badge {
@@ -1279,7 +1280,7 @@
           const img = document.createElement("img");
           const fallback = fallbackGlyph();
           wrap.append(img, fallback);
-          attachImage(img, fallback, scientificName, `${commonName} species reference`);
+          attachImage(img, fallback, scientificName, `${commonName} species reference`, true);
           return wrap;
         }
 
