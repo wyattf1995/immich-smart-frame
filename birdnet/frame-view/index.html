@@ -587,6 +587,199 @@
         text-align: right;
       }
 
+      .ambient-context {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 14px;
+        margin-top: 15px;
+        padding-top: 14px;
+        border-top: 1px solid var(--line);
+      }
+
+      .insight-copy {
+        color: #c5d5cc;
+        font-size: clamp(12px, 0.88vw, 16px);
+        line-height: 1.35;
+      }
+
+      .activity-strip {
+        display: flex;
+        height: 28px;
+        align-items: end;
+        gap: 2px;
+      }
+
+      .activity-strip span {
+        width: 4px;
+        min-height: 3px;
+        border-radius: 4px 4px 1px 1px;
+        background: rgba(105, 213, 154, 0.38);
+      }
+
+      .activity-strip span[data-active="true"] {
+        background: var(--green);
+      }
+
+      .ambient-meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .ambient-stat {
+        min-width: 0;
+        padding: 8px 10px;
+        border: 1px solid rgba(176, 217, 191, 0.12);
+        border-radius: 12px;
+        background: rgba(7, 20, 15, 0.35);
+      }
+
+      .ambient-stat strong,
+      .ambient-stat span {
+        display: block;
+      }
+
+      .ambient-stat strong {
+        overflow: hidden;
+        color: #d8eadf;
+        font-size: clamp(13px, 0.95vw, 17px);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .ambient-stat span {
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: clamp(9px, 0.68vw, 12px);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .audio-meter {
+        display: flex;
+        min-width: 138px;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .audio-meter-track {
+        width: 62px;
+        height: 6px;
+        overflow: hidden;
+        border-radius: 99px;
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .audio-meter-level {
+        display: block;
+        width: 0%;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--green);
+        transition: width 280ms ease-out;
+      }
+
+      .novelty-badge {
+        display: inline-block;
+        overflow: hidden;
+        max-width: 100%;
+        margin-top: 3px;
+        color: var(--amber);
+        font-size: clamp(8px, 0.64vw, 11px);
+        font-weight: 700;
+        letter-spacing: 0.045em;
+        text-overflow: ellipsis;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .detection-detail {
+        display: grid;
+        grid-column: 1 / -1;
+        grid-template-columns: clamp(48px, 3.8vw, 66px) minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 14px;
+        width: 100%;
+        min-width: 0;
+        border: 0;
+        border-radius: 15px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        font: inherit;
+        text-align: left;
+      }
+
+      .detection-detail:focus-visible,
+      .dialog-close:focus-visible {
+        outline: 3px solid var(--amber);
+        outline-offset: 2px;
+      }
+
+      .detection-alert {
+        margin-top: 9px;
+        color: var(--amber);
+        font-size: clamp(10px, 0.72vw, 13px);
+      }
+
+      dialog {
+        width: min(660px, calc(100vw - 48px));
+        max-height: min(680px, calc(100vh - 48px));
+        padding: 0;
+        overflow: auto;
+        border: 1px solid rgba(183, 221, 197, 0.28);
+        border-radius: 24px;
+        background: #10251b;
+        color: var(--text);
+        box-shadow: 0 32px 110px rgba(0, 0, 0, 0.62);
+      }
+
+      dialog::backdrop {
+        background: rgba(2, 8, 5, 0.78);
+      }
+
+      .dialog-body {
+        display: grid;
+        gap: 16px;
+        padding: 24px;
+      }
+
+      .dialog-topline {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 18px;
+      }
+
+      .dialog-close {
+        min-width: 40px;
+        min-height: 40px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.06);
+        color: inherit;
+        cursor: pointer;
+        font: inherit;
+      }
+
+      .detail-spectrogram {
+        width: 100%;
+        min-height: 120px;
+        border-radius: 14px;
+        background: rgba(4, 14, 9, 0.52);
+        object-fit: contain;
+      }
+
+      :root[data-night="true"] {
+        --background: #05080d;
+        --panel: rgba(13, 21, 28, 0.94);
+        --panel-strong: rgba(15, 28, 36, 0.99);
+        --green: #76b9d5;
+      }
+
       [hidden] {
         display: none !important;
       }
@@ -763,6 +956,45 @@
           font-size: 9px;
         }
 
+        .ambient-context {
+          gap: 9px;
+          margin-top: 8px;
+          padding-top: 8px;
+        }
+
+        .insight-copy {
+          font-size: 9px;
+        }
+
+        .activity-strip {
+          height: 19px;
+        }
+
+        .activity-strip span {
+          width: 3px;
+        }
+
+        .ambient-meta {
+          gap: 5px;
+          margin-top: 6px;
+        }
+
+        .ambient-stat {
+          padding: 4px 6px;
+          border-radius: 8px;
+        }
+
+        .ambient-stat strong {
+          font-size: 10px;
+        }
+
+        .ambient-stat span,
+        .audio-meter,
+        .novelty-badge,
+        .detection-alert {
+          font-size: 8px;
+        }
+
         .confidence {
           min-width: 70px;
         }
@@ -837,10 +1069,14 @@
         }
 
         .recent-row {
-          grid-template-columns: 32px minmax(0, 1fr) auto;
           gap: 7px;
           padding: 2px 6px 2px 2px;
           border-radius: 8px;
+        }
+
+        .detection-detail {
+          grid-template-columns: 32px minmax(0, 1fr) auto;
+          gap: 7px;
         }
 
         .recent-row .thumb {
@@ -928,6 +1164,10 @@
             <span class="metric-value" id="callCount">0</span>
             <span class="metric-label">calls today</span>
           </div>
+          <div class="metric">
+            <span class="metric-value" id="lifeListCount">—</span>
+            <span class="metric-label">life list</span>
+          </div>
           <div class="status" id="status" data-tone="amber" aria-live="polite">
             <span class="status-dot" aria-hidden="true"></span>
             <span class="status-copy">
@@ -960,6 +1200,23 @@
               <p class="hero-scientific" id="heroScientific">Recent detections will appear here</p>
               <p class="hero-meta" id="heroMeta"></p>
               <p class="hero-credit" id="heroCredit">Bird images and identifications via BirdNET-Go</p>
+              <p class="detection-alert" id="detectionAlert" hidden aria-live="polite"></p>
+              <div class="ambient-context">
+                <div>
+                  <p class="insight-copy" id="insightCopy">Morning and evening birds are expected today as the station listens.</p>
+                  <div class="ambient-meta">
+                    <div class="ambient-stat"><strong id="periodLabel">Live</strong><span>ambient view</span></div>
+                    <div class="ambient-stat"><strong id="streakValue">—</strong><span>listening streak</span></div>
+                  </div>
+                </div>
+                <div>
+                  <div class="audio-meter" aria-label="Rolling audio meter and freshness">
+                    <span class="audio-meter-track" aria-hidden="true"><span class="audio-meter-level" id="audioMeterLevel"></span></span>
+                    <span id="audioFreshness">Audio freshness checking</span>
+                  </div>
+                  <div class="activity-strip" id="activityStrip" aria-label="24-hour activity strip"></div>
+                </div>
+              </div>
             </div>
             <div class="confidence" id="confidence" hidden>
               <span class="confidence-value" id="confidenceValue">—</span>
@@ -972,7 +1229,7 @@
           <section class="card section-card" aria-labelledby="speciesTitle">
             <div class="section-header">
               <h2 class="section-title" id="speciesTitle">Today’s species</h2>
-              <span class="section-note" id="speciesNote">Up to six most active</span>
+              <span class="section-note" id="speciesNote">Live · up to six most active</span>
             </div>
             <div class="species-grid" id="speciesGrid"></div>
           </section>
@@ -989,9 +1246,26 @@
 
       <footer class="footer">
         <span id="updatedLabel">Live data from BirdNET-Go</span>
-        <span>Species photos are resolved by BirdNET-Go; credit appears with the latest visitor.</span>
+        <span>Read-only display · clips retained for 30 days when recording is enabled.</span>
       </footer>
     </div>
+
+    <dialog id="detectionDialog" aria-labelledby="detailName">
+      <div class="dialog-body">
+        <div class="dialog-topline">
+          <div>
+            <p class="hero-kicker">Detection detail</p>
+            <h2 class="section-title" id="detailName">Detection</h2>
+            <p class="hero-scientific" id="detailScientific"></p>
+          </div>
+          <button class="dialog-close" id="dialogClose" type="button" aria-label="Close detection detail">Close</button>
+        </div>
+        <p class="section-note" id="detailMeta">Audio is only loaded after you open this detail.</p>
+        <audio id="detailAudio" controls preload="none"></audio>
+        <img class="detail-spectrogram" id="detailSpectrogram" alt="Detection spectrogram" hidden />
+        <p class="section-note">Clips are retained for 30 days when recording is enabled. Missing clips are not recovered or recreated by this display.</p>
+      </div>
+    </dialog>
 
     <script>
       (() => {
@@ -1001,6 +1275,8 @@
         const POLL_INTERVAL_MS = 15000;
         const IMAGE_RETRY_MS = 60000;
         const AUDIO_LEVEL_STALE_MS = 25000;
+        const ROTATION_INTERVAL_MS = 30000;
+        const ROTATION_PERIODS = ["live", "today", "7-days", "30-days"];
         const MAX_SPECIES = 6;
         const MAX_RECENT = 4;
 
@@ -1027,6 +1303,21 @@
           recentList: document.getElementById("recentList"),
           recentNote: document.getElementById("recentNote"),
           updatedLabel: document.getElementById("updatedLabel"),
+          lifeListCount: document.getElementById("lifeListCount"),
+          periodLabel: document.getElementById("periodLabel"),
+          streakValue: document.getElementById("streakValue"),
+          insightCopy: document.getElementById("insightCopy"),
+          activityStrip: document.getElementById("activityStrip"),
+          audioMeterLevel: document.getElementById("audioMeterLevel"),
+          audioFreshness: document.getElementById("audioFreshness"),
+          detectionDialog: document.getElementById("detectionDialog"),
+          dialogClose: document.getElementById("dialogClose"),
+          detailName: document.getElementById("detailName"),
+          detailScientific: document.getElementById("detailScientific"),
+          detailMeta: document.getElementById("detailMeta"),
+          detailAudio: document.getElementById("detailAudio"),
+          detailSpectrogram: document.getElementById("detailSpectrogram"),
+          detectionAlert: document.getElementById("detectionAlert"),
         };
 
         const state = {
@@ -1038,6 +1329,14 @@
           audioLevelsActive: false,
           dataError: false,
           summary: [],
+          dailySummary: [],
+          rangeSummary: [],
+          lifetimeSummary: null,
+          hourly: Array(24).fill(0),
+          sun: null,
+          rotationPeriod: "live",
+          audioLevel: 0,
+          audioLastAt: null,
           recent: [],
           lastUpdatedAt: null,
           attributionSpecies: "",
@@ -1048,6 +1347,7 @@
         let refreshPromise = null;
         let pollTimer = null;
         let clockTimer = null;
+        let rotationTimer = null;
         let detectionStream = null;
         let audioStream = null;
         let refreshDebounce = null;
@@ -1070,6 +1370,60 @@
             minute: "2-digit",
           }).format(now);
           els.todayLabel.textContent = `${date} · ${time}`;
+          applyNightMode();
+          renderAudioHealth();
+        }
+
+        function isoDate(daysAgo = 0) {
+          const date = new Date();
+          date.setHours(12, 0, 0, 0);
+          date.setDate(date.getDate() - daysAgo);
+          return date.toISOString().slice(0, 10);
+        }
+
+        function periodTitle(period = state.rotationPeriod) {
+          return { live: "Live", today: "Today", "7-days": "7 Days", "30-days": "30 Days" }[period] || "Live";
+        }
+
+        function periodRange(period) {
+          const end = isoDate();
+          const days = period === "30-days" ? 29 : period === "7-days" ? 6 : 0;
+          return { start: isoDate(days), end };
+        }
+
+        function summaryItems(payload) {
+          if (Array.isArray(payload)) return payload.filter(item => item && typeof item === "object");
+          if (payload && Array.isArray(payload.species)) return payload.species.filter(item => item && typeof item === "object");
+          return [];
+        }
+
+        function setRotationPeriod(period) {
+          if (!ROTATION_PERIODS.includes(period)) return;
+          state.rotationPeriod = period;
+          state.summary = period === "7-days" || period === "30-days" ? state.rangeSummary : state.dailySummary;
+          state.renderKeys.species = "";
+          render();
+        }
+
+        function rotatePeriod() {
+          const index = ROTATION_PERIODS.indexOf(state.rotationPeriod);
+          setRotationPeriod(ROTATION_PERIODS[(index + 1) % ROTATION_PERIODS.length]);
+          refreshRange();
+        }
+
+        function applyNightMode() {
+          const minutes = new Date().getHours() * 60 + new Date().getMinutes();
+          const sunrise = Number(state.sun && (state.sun.sunrise ?? state.sun.sunrise_minutes));
+          const sunset = Number(state.sun && (state.sun.sunset ?? state.sun.sunset_minutes));
+          const hasSunTimes = Number.isFinite(sunrise) && Number.isFinite(sunset);
+          const nightMode = hasSunTimes ? minutes < sunrise || minutes >= sunset : minutes < 6 * 60 || minutes >= 20 * 60;
+          document.documentElement.dataset.night = String(nightMode);
+        }
+
+        function renderAudioHealth() {
+          const age = state.audioLastAt ? Math.max(0, Math.round((Date.now() - state.audioLastAt.getTime()) / 1000)) : null;
+          els.audioMeterLevel.style.width = `${Math.round(Math.max(0, Math.min(1, state.audioLevel)) * 100)}%`;
+          els.audioFreshness.textContent = age === null ? "Audio freshness checking" : age <= 5 ? "Audio fresh now" : `Audio last heard ${age}s ago`;
         }
 
         async function fetchJson(path) {
@@ -1311,6 +1665,7 @@
           els.heroFallback.hidden = false;
           els.heroCredit.textContent = "Bird images and identifications via BirdNET-Go";
           clearChildren(els.heroMeta);
+          els.detectionAlert.hidden = true;
 
           if (!detection) {
             state.attributionSpecies = "";
@@ -1360,6 +1715,13 @@
             els.confidence.hidden = false;
             els.confidenceValue.textContent = `${confidence}%`;
           }
+          const rare = detection.rare === true || detection.isRare === true || detection.rarity === "rare";
+          if (rare || confidence !== null && confidence >= 95) {
+            els.detectionAlert.hidden = false;
+            els.detectionAlert.textContent = rare
+              ? "Rare visitor notice · read-only observation"
+              : "High-confidence visitor · read-only observation";
+          }
           loadAttribution(scientificName);
         }
 
@@ -1392,12 +1754,48 @@
           els.heroCredit.textContent = parts.length > 0 ? parts.join(" · ") : "Species photo via BirdNET-Go";
         }
 
+        function noveltyReason(item) {
+          // novelty lifetime, year, season, and infrequent classifications are read-only labels.
+          const novelty = item && (item.novelty || item.novelty_reason || item.noveltyReason || "");
+          const values = Array.isArray(novelty) ? novelty : [novelty];
+          const normalized = values.map(value => String(value).toLowerCase()).join(" ");
+          if (item && (item.lifetime_new || item.is_lifetime_new || normalized.includes("lifetime"))) return "Lifetime first";
+          if (item && (item.year_new || item.is_year_new || normalized.includes("year"))) return "New this year";
+          if (item && (item.season_new || item.is_season_new || normalized.includes("season"))) return "New this season";
+          if (item && (item.infrequent || normalized.includes("infrequent") || Number(item.count) <= 2)) return "Infrequent visitor";
+          return "";
+        }
+
+        function renderAmbientSummary() {
+          els.periodLabel.textContent = periodTitle();
+          const lifetime = state.lifetimeSummary || {};
+          const lifeList = Number(lifetime.species_count ?? lifetime.total_species ?? lifetime.species ?? lifetime.count);
+          els.lifeListCount.textContent = Number.isFinite(lifeList) ? String(lifeList) : "—";
+          const streak = Number(lifetime.listening_streak ?? lifetime.streak_days ?? lifetime.streak);
+          els.streakValue.textContent = Number.isFinite(streak) ? `${streak} day${streak === 1 ? "" : "s"}` : "Building";
+          const hour = new Date().getHours();
+          els.insightCopy.textContent = hour < 11
+            ? "Morning visitors are expected today. Evening activity will follow as daylight softens."
+            : "Evening visitors are expected today. Morning activity is preserved in the 24-hour activity strip.";
+          clearChildren(els.activityStrip);
+          const maximum = Math.max(1, ...state.hourly);
+          state.hourly.slice(0, 24).forEach((count, hourIndex) => {
+            const bar = document.createElement("span");
+            const value = Math.max(0, Number(count) || 0);
+            bar.style.height = `${Math.max(3, Math.round((value / maximum) * 100))}%`;
+            bar.dataset.active = String(hourIndex === new Date().getHours());
+            bar.title = `${hourIndex}:00 · ${value} detections`;
+            els.activityStrip.appendChild(bar);
+          });
+          renderAudioHealth();
+        }
+
         function renderSpecies() {
           clearChildren(els.speciesGrid);
           const species = state.summary.slice(0, MAX_SPECIES);
           els.speciesNote.textContent = state.dataError
             ? "Showing last update"
-            : species.length > 0 ? "Most active today" : "Up to six most active";
+            : species.length > 0 ? `${periodTitle()} · most active` : `${periodTitle()} · up to six most active`;
           if (species.length === 0) {
             const title = state.apiOnline === false || state.dataError
               ? "Bird detector unavailable"
@@ -1426,6 +1824,14 @@
             meta.className = "species-meta";
             meta.textContent = item.latest_heard ? `Last heard ${formatTime({ time: item.latest_heard })}` : scientificName;
             copy.append(name, meta);
+            const novelty = noveltyReason(item);
+            if (novelty) {
+              const badge = document.createElement("span");
+              badge.className = "novelty-badge";
+              badge.textContent = novelty;
+              badge.setAttribute("aria-label", `Novelty: ${novelty}`);
+              copy.appendChild(badge);
+            }
             const count = document.createElement("span");
             count.className = "species-count";
             count.textContent = String(Number(item.count) || 0);
@@ -1458,6 +1864,9 @@
           detections.forEach(detection => {
             const row = document.createElement("article");
             row.className = "recent-row";
+            const button = document.createElement("button");
+            button.className = "detection-detail";
+            button.type = "button";
             const commonName = detection.commonName || "Unknown bird";
             const scientificName = detection.scientificName || "";
             const copy = document.createElement("div");
@@ -1473,9 +1882,39 @@
             const time = document.createElement("time");
             time.className = "recent-time";
             time.textContent = formatTime(detection);
-            row.append(createThumb(scientificName, commonName), copy, time);
+            button.append(createThumb(scientificName, commonName), copy, time);
+            const detailConfidence = confidencePercent(detection.confidence);
+            button.setAttribute("aria-label", `Open detection detail for ${commonName}${detailConfidence === null ? "" : `, ${detailConfidence}% confidence`}`);
+            button.addEventListener("click", () => openDetectionDetail(detection));
+            row.appendChild(button);
             els.recentList.appendChild(row);
           });
+        }
+
+        function detectionId(detection) {
+          const id = Number(detection && detection.id);
+          return Number.isSafeInteger(id) && id >= 0 ? id : null;
+        }
+
+        function openDetectionDetail(detection) {
+          const id = detectionId(detection);
+          const commonName = detection.commonName || "Unknown bird";
+          els.detailName.textContent = commonName;
+          els.detailScientific.textContent = detection.scientificName || "Species name unavailable";
+          els.detailMeta.textContent = id === null
+            ? "This legacy detection has no numeric ID, so media is unavailable."
+            : `Heard ${formatTime(detection)}. Audio and spectrogram are read-only media for detection #${id}.`;
+          els.detailAudio.pause();
+          els.detailAudio.removeAttribute("src");
+          els.detailAudio.load();
+          els.detailSpectrogram.hidden = true;
+          els.detailSpectrogram.removeAttribute("src");
+          if (id !== null) {
+            els.detailAudio.src = `/api/v2/audio/${id}`;
+            els.detailSpectrogram.src = `/api/v2/spectrogram/${id}`;
+            els.detailSpectrogram.hidden = false;
+          }
+          if (typeof els.detectionDialog.showModal === "function") els.detectionDialog.showModal();
         }
 
         function render() {
@@ -1484,6 +1923,7 @@
           const count = state.summary.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
           els.speciesCount.textContent = String(state.summary.length);
           els.callCount.textContent = String(count);
+          renderAmbientSummary();
           if (state.lastUpdatedAt) {
             const updated = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" })
               .format(state.lastUpdatedAt);
@@ -1518,6 +1958,33 @@
           }
         }
 
+        function normalizeHourly(payload) {
+          const values = Array.isArray(payload) ? payload : payload && (payload.hours || payload.data || payload.hourly);
+          if (!Array.isArray(values)) return Array(24).fill(0);
+          const hourly = Array(24).fill(0);
+          values.forEach((item, index) => {
+            const hour = Number(item && (item.hour ?? item.hour_of_day ?? item.time)) || index;
+            const rawCount = item && typeof item === "object" ? (item.count ?? item.detections ?? item.value) : item;
+            const count = Number(rawCount) || 0;
+            if (Number.isInteger(hour) && hour >= 0 && hour < 24) hourly[hour] = count;
+          });
+          return hourly;
+        }
+
+        async function refreshRange() {
+          if (disposed || document.hidden || !["7-days", "30-days"].includes(state.rotationPeriod)) return;
+          const { start, end } = periodRange(state.rotationPeriod);
+          try {
+            const result = await fetchJson(`/api/v2/analytics/species/summary?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`);
+            state.rangeSummary = summaryItems(result);
+            state.summary = state.rangeSummary;
+            state.renderKeys.species = "";
+            render();
+          } catch (_error) {
+            // The live daily summary stays visible if an optional range is unavailable.
+          }
+        }
+
         async function refresh() {
           if (disposed || document.hidden) return;
           if (refreshPromise) return refreshPromise;
@@ -1527,6 +1994,9 @@
               fetchJson("/api/v2/streams/sources"),
               fetchJson("/api/v2/analytics/species/daily"),
               fetchJson("/api/v2/detections/recent?limit=10"),
+              fetchJson("/api/v2/analytics/species/summary"),
+              fetchJson(`/api/v2/analytics/time/hourly?start_date=${encodeURIComponent(isoDate())}&end_date=${encodeURIComponent(isoDate())}`),
+              fetchJson(`/api/v2/analytics/sun?date=${encodeURIComponent(isoDate())}`),
             ]);
             if (disposed || document.hidden) return;
             const health = results[0];
@@ -1548,9 +2018,10 @@
               state.audioLevelsActive = false;
             }
             const summary = results[2];
-            const summaryReady = summary.status === "fulfilled" && Array.isArray(summary.value);
+            const summaryReady = summary.status === "fulfilled" && summaryItems(summary.value).length >= 0;
             if (summaryReady) {
-              state.summary = summary.value.filter(item => item && typeof item === "object");
+              state.dailySummary = summaryItems(summary.value);
+              if (!["7-days", "30-days"].includes(state.rotationPeriod)) state.summary = state.dailySummary;
             }
             const recent = results[3];
             const recentReady = recent.status === "fulfilled" && Array.isArray(recent.value);
@@ -1564,8 +2035,17 @@
                 return true;
               });
             }
+            const lifetime = results[4];
+            if (lifetime.status === "fulfilled" && lifetime.value && typeof lifetime.value === "object") {
+              state.lifetimeSummary = lifetime.value;
+            }
+            const hourly = results[5];
+            if (hourly.status === "fulfilled") state.hourly = normalizeHourly(hourly.value);
+            const sun = results[6];
+            if (sun.status === "fulfilled" && sun.value && typeof sun.value === "object") state.sun = sun.value;
             state.dataError = !summaryReady || !recentReady;
             if (!state.dataError) state.lastUpdatedAt = new Date();
+            if (["7-days", "30-days"].includes(state.rotationPeriod)) refreshRange();
             render();
           })().finally(() => {
             refreshPromise = null;
@@ -1594,7 +2074,10 @@
           if (disposed || document.hidden) return;
           detectionStream = new EventSource("/api/v2/detections/stream");
           detectionStream.onmessage = scheduleRefresh;
-          detectionStream.addEventListener("detection", scheduleRefresh);
+          detectionStream.addEventListener("detection", () => {
+            setRotationPeriod("live");
+            scheduleRefresh();
+          });
           audioStream = new EventSource("/api/v2/streams/audio-level");
           const handleAudioLevel = event => {
             try {
@@ -1604,6 +2087,9 @@
                 const level = typeof entry === "number" ? entry : Number(entry && entry.level);
                 return Number.isFinite(level) && level > 0;
               });
+              const levelValues = Object.values(levels).map(entry => Number(typeof entry === "number" ? entry : entry && entry.level)).filter(Number.isFinite);
+              state.audioLevel = levelValues.length > 0 ? Math.max(...levelValues) : 0;
+              state.audioLastAt = new Date();
               if (state.audioLevelsActive) {
                 state.audioKnown = true;
                 state.audioError = false;
@@ -1630,12 +2116,16 @@
         function startTimers() {
           window.clearInterval(pollTimer);
           window.clearInterval(clockTimer);
+          window.clearInterval(rotationTimer);
           pollTimer = window.setInterval(() => {
             if (!document.hidden) refresh();
           }, POLL_INTERVAL_MS);
           clockTimer = window.setInterval(() => {
             if (!document.hidden && !disposed) updateClock();
           }, 30000);
+          rotationTimer = window.setInterval(() => {
+            if (!document.hidden && !disposed) rotatePeriod();
+          }, ROTATION_INTERVAL_MS);
         }
 
         function pausePageActivity() {
@@ -1653,8 +2143,10 @@
           pausePageActivity();
           window.clearInterval(pollTimer);
           window.clearInterval(clockTimer);
+          window.clearInterval(rotationTimer);
           pollTimer = null;
           clockTimer = null;
+          rotationTimer = null;
         }
 
         document.addEventListener("visibilitychange", () => {
@@ -1672,6 +2164,13 @@
         });
         window.addEventListener("pagehide", disposePage);
         window.addEventListener("beforeunload", disposePage);
+        els.dialogClose.addEventListener("click", () => els.detectionDialog.close());
+        els.detectionDialog.addEventListener("close", () => {
+          els.detailAudio.pause();
+          els.detailAudio.removeAttribute("src");
+          els.detailAudio.load();
+          els.detailSpectrogram.removeAttribute("src");
+        });
         updateClock();
         render();
         refresh();
