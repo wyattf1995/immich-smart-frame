@@ -68,6 +68,24 @@ grep -Fq '@media (max-height: 1100px)' "$VIEW_FILE" || fail 'layout must explici
 grep -Fq '@media (max-width: 1100px) and (max-height: 650px)' "$VIEW_FILE" || \
   fail 'layout must account for the frame 320-dpi CSS viewport'
 
+# A wide browser shows up to four two-line recent detections. Give that panel
+# the same vertical share as Today's species, and contain every row so a
+# thumbnail can never paint across a neighboring entry at fractional zoom.
+desktop_side_css=$(awk '
+  /^[[:space:]]*[.]side[[:space:]]*\{/ { active = 1 }
+  active { print }
+  active && /^[[:space:]]*}/ { exit }
+' "$VIEW_FILE")
+recent_row_css=$(awk '
+  /^[[:space:]]*[.]recent-row[[:space:]]*\{/ { active = 1 }
+  active { print }
+  active && /^[[:space:]]*}/ { exit }
+' "$VIEW_FILE")
+grep -Fq 'grid-template-rows: repeat(2, minmax(0, 1fr));' <<<"$desktop_side_css" || \
+  fail 'wide dashboard must split species and recent panels evenly'
+grep -Fq 'overflow: hidden;' <<<"$recent_row_css" || \
+  fail 'recent rows must contain thumbnails and text at fractional zoom'
+
 # Phones need a real document flow instead of the fixed-height kiosk surface.
 # Keep this contract separate from the short-landscape FrameOS breakpoint: a
 # narrow portrait viewport must stack each dashboard panel full-width, remain
