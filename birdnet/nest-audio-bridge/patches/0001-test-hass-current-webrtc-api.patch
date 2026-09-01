@@ -1,0 +1,175 @@
+From 5d437b7fcba82996c679bd6334eb4ce288ad50d3 Mon Sep 17 00:00:00 2001
+From: wyattf1995 <wyattf1995@gmail.com>
+Date: Mon, 31 Aug 2026 17:43:40 -0700
+Subject: [PATCH] test(hass): cover current WebRTC subscription protocol
+
+---
+ pkg/hass/api_test.go | 159 +++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 159 insertions(+)
+ create mode 100644 pkg/hass/api_test.go
+
+diff --git a/pkg/hass/api_test.go b/pkg/hass/api_test.go
+new file mode 100644
+index 0000000..ae474e1
+--- /dev/null
++++ b/pkg/hass/api_test.go
+@@ -0,0 +1,159 @@
++package hass
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/gorilla/websocket"
++	pion "github.com/pion/webrtc/v4"
++	"github.com/stretchr/testify/require"
++)
++
++func TestExchangeSDPUsesCurrentHomeAssistantSubscription(t *testing.T) {
++	t.Parallel()
++
++	request := make(chan map[string]any, 1)
++	closed := make(chan struct{})
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
++		require.NoError(t, err)
++		defer conn.Close()
++
++		require.NoError(t, conn.WriteJSON(map[string]any{"type": "auth_required"}))
++		var auth map[string]any
++		require.NoError(t, conn.ReadJSON(&auth))
++		require.Equal(t, "auth", auth["type"])
++		require.Equal(t, "test-token", auth["access_token"])
++		require.NoError(t, conn.WriteJSON(map[string]any{"type": "auth_ok"}))
++
++		var offer map[string]any
++		require.NoError(t, conn.ReadJSON(&offer))
++		request <- offer
++		require.NoError(t, conn.WriteJSON(map[string]any{
++			"id": 1, "type": "result", "success": true,
++		}))
++		require.NoError(t, conn.WriteJSON(map[string]any{
++			"id": 1, "type": "event",
++			"event": map[string]any{"type": "session", "session_id": "session-1"},
++		}))
++		require.NoError(t, conn.WriteJSON(map[string]any{
++			"id": 1, "type": "event",
++			"event": map[string]any{"type": "answer", "answer": "answer-sdp"},
++		}))
++
++		for {
++			if _, _, err := conn.ReadMessage(); err != nil {
++				close(closed)
++				return
++			}
++		}
++	}))
++	t.Cleanup(server.Close)
++
++	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
++	api, err := NewAPI(wsURL, "test-token")
++	require.NoError(t, err)
++
++	answer, err := api.ExchangeSDP("camera.backyard", "offer-sdp")
++	require.NoError(t, err)
++	require.Equal(t, "answer-sdp", answer)
++	require.Equal(t, map[string]any{
++		"id":        float64(1),
++		"type":      "camera/webrtc/offer",
++		"entity_id": "camera.backyard",
++		"offer":     "offer-sdp",
++	}, <-request)
++
++	select {
++	case <-closed:
++		t.Fatal("Home Assistant subscription closed before the media client stopped")
++	case <-time.After(100 * time.Millisecond):
++	}
++
++	require.NoError(t, api.Close())
++	select {
++	case <-closed:
++	case <-time.After(time.Second):
++		t.Fatal("Home Assistant websocket did not close")
++	}
++}
++
++func TestClientKeepsHomeAssistantSubscriptionUntilStop(t *testing.T) {
++	t.Parallel()
++
++	closed := make(chan struct{})
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
++		require.NoError(t, err)
++		defer conn.Close()
++
++		require.NoError(t, conn.WriteJSON(map[string]any{"type": "auth_required"}))
++		var auth map[string]any
++		require.NoError(t, conn.ReadJSON(&auth))
++		require.NoError(t, conn.WriteJSON(map[string]any{"type": "auth_ok"}))
++
++		var offer struct {
++			Type  string `json:"type"`
++			Offer string `json:"offer"`
++		}
++		require.NoError(t, conn.ReadJSON(&offer))
++		require.Equal(t, "camera/webrtc/offer", offer.Type)
++
++		peer, err := pion.NewPeerConnection(pion.Configuration{})
++		require.NoError(t, err)
++		defer peer.Close()
++		require.NoError(t, peer.SetRemoteDescription(pion.SessionDescription{
++			Type: pion.SDPTypeOffer,
++			SDP:  offer.Offer,
++		}))
++		answer, err := peer.CreateAnswer(nil)
++		require.NoError(t, err)
++		gatheringComplete := pion.GatheringCompletePromise(peer)
++		require.NoError(t, peer.SetLocalDescription(answer))
++		<-gatheringComplete
++
++		require.NoError(t, conn.WriteJSON(map[string]any{
++			"id": 1, "type": "result", "success": true,
++		}))
++		require.NoError(t, conn.WriteJSON(map[string]any{
++			"id": 1, "type": "event",
++			"event": map[string]any{"type": "session", "session_id": "session-1"},
++		}))
++		require.NoError(t, conn.WriteJSON(map[string]any{
++			"id": 1, "type": "event",
++			"event": map[string]any{
++				"type":   "answer",
++				"answer": peer.LocalDescription().SDP,
++			},
++		}))
++
++		for {
++			if _, _, err := conn.ReadMessage(); err != nil {
++				close(closed)
++				return
++			}
++		}
++	}))
++	t.Cleanup(server.Close)
++
++	hassURL := "hass://" + strings.TrimPrefix(server.URL, "http://") +
++		"?entity_id=camera.backyard&token=test-token"
++	client, err := NewClient(hassURL)
++	require.NoError(t, err)
++
++	select {
++	case <-closed:
++		t.Fatal("Home Assistant subscription closed while the media client was active")
++	case <-time.After(100 * time.Millisecond):
++	}
++
++	require.NoError(t, client.Stop())
++	select {
++	case <-closed:
++	case <-time.After(time.Second):
++		t.Fatal("Home Assistant subscription did not close with the media client")
++	}
++}
