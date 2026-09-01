@@ -69,8 +69,9 @@ grep -Fq '@media (max-width: 1100px) and (max-height: 650px)' "$VIEW_FILE" || \
   fail 'layout must account for the frame 320-dpi CSS viewport'
 
 # A wide browser shows up to four two-line recent detections. Give that panel
-# the same vertical share as Today's species, and contain every row so a
-# thumbnail can never paint across a neighboring entry at fractional zoom.
+# the same vertical share as Today's species. Do not hide overflow on the base
+# row: at fractional browser zoom that masks the confidence line instead of
+# making room for it.
 desktop_side_css=$(awk '
   /^[[:space:]]*[.]side[[:space:]]*\{/ { active = 1 }
   active { print }
@@ -83,8 +84,31 @@ recent_row_css=$(awk '
 ' "$VIEW_FILE")
 grep -Fq 'grid-template-rows: repeat(2, minmax(0, 1fr));' <<<"$desktop_side_css" || \
   fail 'wide dashboard must split species and recent panels evenly'
-grep -Fq 'overflow: hidden;' <<<"$recent_row_css" || \
-  fail 'recent rows must contain thumbnails and text at fractional zoom'
+if grep -Fq 'overflow: hidden;' <<<"$recent_row_css"; then
+  fail 'recent rows must not clip their confidence line at fractional zoom'
+fi
+
+# A zoomed desktop can have a shorter effective CSS viewport than FrameOS.
+# Let that document scroll and reserve enough height for four complete recent
+# rows, while keeping the 960x540 frame in the fixed kiosk breakpoint above.
+short_desktop_css=$(awk '
+  /@media \(min-width: 601px\) and \(max-height: 480px\)/ { active = 1 }
+  active {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (depth == 0) exit
+  }
+' "$VIEW_FILE")
+
+[[ -n "$short_desktop_css" ]] || fail 'frame view must define a zoomed short-desktop layout'
+grep -Fq 'overflow-y: auto;' <<<"$short_desktop_css" || \
+  fail 'zoomed short desktop must allow vertical scrolling'
+grep -Fq 'min-height: 420px;' <<<"$short_desktop_css" || \
+  fail 'zoomed short desktop must reserve enough dashboard content height'
+grep -Fq 'grid-template-rows: repeat(4, minmax(35px, 1fr));' <<<"$short_desktop_css" || \
+  fail 'zoomed short desktop must preserve all four two-line recent rows'
 
 # Phones need a real document flow instead of the fixed-height kiosk surface.
 # Keep this contract separate from the short-landscape FrameOS breakpoint: a
