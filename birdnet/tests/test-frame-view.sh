@@ -22,14 +22,16 @@ grep -Fq 'birdnet-frame-view:' "$COMPOSE_FILE" || fail 'Compose must define the 
 grep -Eq 'ghcr[.]io/nginx/nginx-unprivileged:1[.]31[.]3-alpine3[.]24@sha256:[0-9a-f]{64}' "$COMPOSE_FILE" || \
   fail 'frame-view image must pin the reviewed NGINX release manifest'
 grep -Fq 'FRAME_VIEW_PORT:-8091' "$COMPOSE_FILE" || fail 'frame-view must use the reserved LAN port'
-grep -Fq './frame-view/index.html:/usr/share/nginx/html/index.html:ro' "$COMPOSE_FILE" || \
-  fail 'frame view HTML must be mounted read-only'
-grep -Fq './frame-view/nginx.conf:/etc/nginx/conf.d/default.conf:ro' "$COMPOSE_FILE" || \
-  fail 'frame view proxy configuration must be mounted read-only'
+grep -Fq '${BIRDNET_FRAME_VIEW_DIR:-/mnt/user/appdata/birdnet-go/frame-view}/index.html:/usr/share/nginx/html/index.html:ro' "$COMPOSE_FILE" || \
+  fail 'frame view HTML must come from readable appdata and be mounted read-only'
+grep -Fq '${BIRDNET_FRAME_VIEW_DIR:-/mnt/user/appdata/birdnet-go/frame-view}/nginx.conf:/etc/nginx/conf.d/default.conf:ro' "$COMPOSE_FILE" || \
+  fail 'frame view proxy configuration must come from readable appdata and be mounted read-only'
 grep -Fq 'read_only: true' "$COMPOSE_FILE" || fail 'frame-view root filesystem must be read-only'
 grep -Fq 'no-new-privileges:true' "$COMPOSE_FILE" || fail 'frame-view must set no-new-privileges'
 grep -Fq 'cap_drop:' "$COMPOSE_FILE" || fail 'frame-view must explicitly drop Linux capabilities'
 grep -Fq 'FRAME_VIEW_PORT=8091' "$ENV_FILE" || fail 'sample env must reserve the frame-view port'
+grep -Fq 'BIRDNET_FRAME_VIEW_DIR=/mnt/user/appdata/birdnet-go/frame-view' "$ENV_FILE" || \
+  fail 'sample env must keep runtime frame assets off the FAT boot filesystem'
 
 # Relative upstream URLs keep browser traffic same-origin and avoid embedding
 # credentials, private addresses, or deployment-specific hostnames in the page.
