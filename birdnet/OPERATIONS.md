@@ -13,6 +13,14 @@ host-side files before claiming a particular Unraid deployment is current.
    `/boot/config/birdnet-go/`, including `frame-view/` and `tests/`. Validate
    that `frame-view/index.html` and `frame-view/nginx.conf` are regular files
    before starting; a missing bind source can otherwise become a directory.
+   Unraid's FAT boot filesystem exposes those copies as root-only inside the
+   UID 101 container, so install readable runtime copies into appdata:
+
+   ```sh
+   install -d -m 0755 /mnt/user/appdata/birdnet-go/frame-view
+   install -m 0644 frame-view/index.html frame-view/nginx.conf \
+     /mnt/user/appdata/birdnet-go/frame-view/
+   ```
 3. Copy `config/config.yaml` once to
    `/mnt/user/appdata/birdnet-go/config/config.yaml`, then create an empty
    `/mnt/user/appdata/birdnet-go/data/` directory. The tracked file remains a
@@ -104,11 +112,13 @@ Unraid backup destination and never commit or paste them into an issue.
 The compose image is pinned to the 20260823 release manifest. To upgrade,
 review the upstream release and registry digest, change only the image line to
 the new release tag plus its complete `sha256:` digest, run the validation test,
-then pull and recreate:
+refresh the appdata copies, then pull and recreate:
 
 ```sh
 ./tests/test-birdnet-compose.sh
 ./tests/test-frame-view.sh
+install -m 0644 frame-view/index.html frame-view/nginx.conf \
+  /mnt/user/appdata/birdnet-go/frame-view/
 docker compose --env-file .env -f docker-compose.yaml pull birdnet-go birdnet-frame-view
 docker compose --env-file .env -f docker-compose.yaml up -d --force-recreate birdnet-go birdnet-frame-view
 ```
