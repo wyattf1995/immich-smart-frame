@@ -128,7 +128,9 @@ services:
 
     healthcheck:
       # Listener readiness only; the camera remains lazy until BirdNET connects.
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 8554"]
+      # Bash is explicitly installed in the pinned upstream runtime; /dev/tcp
+      # avoids depending on BusyBox netcat's unsupported -z option.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8554"]
       interval: 30s
       timeout: 3s
       retries: 3
