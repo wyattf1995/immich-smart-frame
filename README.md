@@ -226,7 +226,7 @@ app built for the no-touch Lenovo frame. It keeps separate warm Gecko sessions
 for Photos and Home Assistant, adds a native cached Weather view with subtle
 condition-driven animation, and routes Home, Cameras, and Calendar through one
 same-origin wrapper without browser chrome or repeated tab loads. An optional
-Birds view opens a separately hosted BirdNET-Go dashboard in a disposable,
+Birds view opens a separately hosted BirdNET-Go frame page in a disposable,
 non-preloaded Gecko session so its live resources are released on exit.
 
 The [Home Assistant wall-panel guide](docs/home-assistant-wall-panel.md)
@@ -245,6 +245,12 @@ credential. Its recent and summary views show compact species images through
 BirdNET-Go's attributed AviCommons/Wikimedia provider pipeline. A dependable
 deployment requires a local RTSP microphone or camera; the current Nest WebRTC
 feeds are not treated as production audio inputs.
+
+The package also includes a small, read-only
+[frame view](birdnet/frame-view/index.html) served by an unprivileged NGINX
+sidecar. It replaces the administration-heavy dashboard on the frame with a
+fixed kiosk layout for the latest visitor, today's species, recent calls,
+species photos and attribution, plus explicit audio and offline states.
 
 ## Validation
 

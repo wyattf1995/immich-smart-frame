@@ -6,8 +6,8 @@ services:
     container_name: birdnet-go
     restart: unless-stopped
 
-    # Fail closed instead of publishing the dashboard on every host interface.
-    # Set BIRDNET_BIND_IP to the Unraid LAN address in .env.
+    # Bind to the address supplied by the operator. Use a concrete Unraid LAN
+    # address in .env; Compose validates presence, not the address class.
     ports:
       - "${BIRDNET_BIND_IP:?Set BIRDNET_BIND_IP to an Unraid LAN address}:${WEB_PORT:-8088}:8080"
 
@@ -48,3 +48,39 @@ services:
       retries: 5
       start_period: 45s
     stop_grace_period: 30s
+
+  birdnet-frame-view:
+    # Unprivileged NGINX 1.31.3 / Alpine 3.24 manifest, verified 2026-08-31.
+    # It serves one static kiosk page and a fail-closed read-only API proxy.
+    image: ghcr.io/nginx/nginx-unprivileged:1.31.3-alpine3.24@sha256:f972e5322b9797dc2a6b830030094426437b1ae7032e4644496395336ac6fdac
+    container_name: birdnet-frame-view
+    restart: unless-stopped
+    depends_on:
+      birdnet-go:
+        condition: service_healthy
+
+    ports:
+      - "${BIRDNET_BIND_IP:?Set BIRDNET_BIND_IP to an Unraid LAN address}:${FRAME_VIEW_PORT:-8091}:8080"
+
+    # The upstream image defaults to UID/GID 101; make that boundary explicit.
+    user: "101:101"
+    volumes:
+      - ./frame-view/index.html:/usr/share/nginx/html/index.html:ro
+      - ./frame-view/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    tmpfs:
+      - /tmp:size=16M,uid=101,gid=101,mode=1777
+
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    healthcheck:
+      # Check the same read path the frame needs, not only NGINX liveness.
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/api/v2/health | grep -q '\"status\":\"healthy\"'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 10s

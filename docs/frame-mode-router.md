@@ -107,7 +107,7 @@ adb -s DEVICE_SERIAL shell am broadcast --user 0 \
   -n com.wyattfleming.frameos/.control.FrameControlReceiver \
   --es frameos.photos_url 'http://FRAME-LAN-HOST:3000/' \
   --es frameos.home_assistant_url 'https://HOME-ASSISTANT-HOST/' \
-  --es frameos.birds_url 'http://UNRAID-LAN-HOST:8090/' \
+  --es frameos.birds_url 'http://UNRAID-LAN-HOST:8091/' \
   --es frameos.weather_entity_id 'weather.forecast_home'
 adb -s DEVICE_SERIAL shell am start --activity-reorder-to-front \
   -n com.wyattfleming.frameos/.MainActivity
@@ -116,7 +116,7 @@ adb -s DEVICE_SERIAL shell am start --activity-reorder-to-front \
 Do not put a password, access token, camera URL, or other credential in these
 commands. Home Assistant authentication occurs in its own browser session, and
 native Weather stores the resulting OAuth session with Android Keystore.
-Omit `frameos.birds_url` until the BirdNET-Go dashboard is reachable. Legacy
+Omit `frameos.birds_url` until the BirdNET-Go frame view is reachable. Legacy
 stored configurations remain valid and omit Birds from the cycle. FrameOS
 rejects a Birds URL containing user information or other forbidden URL data.
 

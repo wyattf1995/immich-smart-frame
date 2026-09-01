@@ -1,26 +1,32 @@
 # BirdNET-Go operations
 
-This directory is a deployment package, not a deployment record. It does not
-contain credentials and it has not been deployed to Unraid.
+This directory is a reproducible deployment package, not the source of truth
+for live state. It contains no credentials; verify the running containers and
+host-side files before claiming a particular Unraid deployment is current.
 
 ## First setup on Unraid
 
 1. Keep the Compose project in `/boot/config/birdnet-go/` so Unraid preserves
    it across reboots. Mutable application state belongs in
    `/mnt/user/appdata/birdnet-go/`, not on the boot flash.
-2. Copy `config/config.yaml` once to
+2. Copy the complete contents of this `birdnet/` package into
+   `/boot/config/birdnet-go/`, including `frame-view/` and `tests/`. Validate
+   that `frame-view/index.html` and `frame-view/nginx.conf` are regular files
+   before starting; a missing bind source can otherwise become a directory.
+3. Copy `config/config.yaml` once to
    `/mnt/user/appdata/birdnet-go/config/config.yaml`, then create an empty
    `/mnt/user/appdata/birdnet-go/data/` directory. The tracked file remains a
    credential-free template; the appdata copy becomes private after adding an
    audio source.
-3. Create `.env` from `.env.example` in `/boot/config/birdnet-go/`. Set
+4. Create `.env` from `.env.example` in `/boot/config/birdnet-go/`. Set
    `BIRDNET_BIND_IP` to the Unraid LAN address. Do not use `0.0.0.0`; the
-   compose file intentionally fails if this value is omitted. Keep the two
-   appdata paths unchanged unless the storage design changes deliberately.
-4. Ensure the appdata `config/` and `data/` directories are writable by the configured
+   compose file fails if this value is omitted but cannot validate the address
+   class. Keep the two appdata paths unchanged unless the storage design
+   changes deliberately.
+5. Ensure the appdata `config/` and `data/` directories are writable by the configured
    `BIRDNET_UID:BIRDNET_GID` before starting. This compose file intentionally
    runs as that unprivileged ID, so the container cannot repair host ownership.
-5. Validate and start from `/boot/config/birdnet-go/`:
+6. Validate and start from `/boot/config/birdnet-go/`:
 
    ```sh
    docker compose --env-file .env -f docker-compose.yaml config --quiet
@@ -28,9 +34,12 @@ contain credentials and it has not been deployed to Unraid.
    docker compose --env-file .env -f docker-compose.yaml ps
    ```
 
-   Open `http://<BIRDNET_BIND_IP>:<WEB_PORT>` from the LAN. A healthy container
-   only proves that the web process is serving; check BirdNET-Go's System Health
-   page separately after adding audio.
+   Open `http://<BIRDNET_BIND_IP>:<WEB_PORT>` from the LAN for BirdNET-Go's full
+   dashboard. The frame-specific view is at
+   `http://<BIRDNET_BIND_IP>:<FRAME_VIEW_PORT>/`. The frame-sidecar health check
+   includes BirdNET-Go's public health response, but it does not prove that a
+   microphone is producing usable audio. Check the page's audio state and
+   BirdNET-Go's System Health page after adding a source.
 
 ## Add the audio source
 
@@ -59,11 +68,20 @@ do not copy remote images into this repository.
 
 ## Frame integration
 
-Once the source is producing detections, the FrameOS Birds view can load the
-LAN dashboard at `http://<BIRDNET_BIND_IP>:<WEB_PORT>`. That integration is
-intentionally outside this package. Do not expose this dashboard to the public
-internet or add a Cloudflare tunnel without enabling BirdNET-Go authentication
-and reviewing the reverse-proxy trust settings.
+FrameOS should load the custom LAN view at
+`http://<BIRDNET_BIND_IP>:<FRAME_VIEW_PORT>/`, not the administration dashboard.
+The sidecar presents a bounded 1920x1080 layout with the latest detection,
+today's six most active species, four recent calls, real species images, and
+image attribution. It distinguishes a healthy detector with no audio source
+from an empty listening station and a backend outage. Species images can return
+503 while BirdNET-Go resolves a cold provider result; the page preserves its
+fallback and retries later instead of blocking the layout.
+
+The sidecar only proxies the public read endpoints its page uses. It does not
+forward arbitrary API routes, mutations, credentials, or CSRF tokens. Both the
+BirdNET-Go dashboard and frame view remain LAN-only. Do not expose either to the
+public internet or add a Cloudflare tunnel without enabling authentication and
+reviewing the reverse-proxy trust settings.
 
 ## Backups
 
@@ -73,7 +91,8 @@ both `config/` and `data/` because models, clips, and settings are persistent:
 
 ```sh
 docker compose --env-file .env -f docker-compose.yaml stop birdnet-go
-tar --xattrs --acls -czf /path/to/protected-backups/birdnet-$(date +%Y%m%d-%H%M%S).tgz config data
+tar --xattrs --acls -czf /path/to/protected-backups/birdnet-$(date +%Y%m%d-%H%M%S).tgz \
+  -C /mnt/user/appdata/birdnet-go config data
 docker compose --env-file .env -f docker-compose.yaml start birdnet-go
 ```
 
@@ -89,8 +108,9 @@ then pull and recreate:
 
 ```sh
 ./tests/test-birdnet-compose.sh
-docker compose --env-file .env -f docker-compose.yaml pull birdnet-go
-docker compose --env-file .env -f docker-compose.yaml up -d --force-recreate birdnet-go
+./tests/test-frame-view.sh
+docker compose --env-file .env -f docker-compose.yaml pull birdnet-go birdnet-frame-view
+docker compose --env-file .env -f docker-compose.yaml up -d --force-recreate birdnet-go birdnet-frame-view
 ```
 
 Record the previous image line before upgrading. To roll back, restore that
@@ -98,6 +118,13 @@ known-good pinned line, validate, and run the same pull/up commands. Never use
 `:latest`, `:nightly`, or an unpinned digest in production. Back up `config/`
 and `data/` first because a newer release may migrate the database; follow the
 upstream release notes for any migration-specific rollback warning.
+
+To remove only the optional frame view without touching BirdNET-Go, run:
+
+```sh
+docker compose --env-file .env -f docker-compose.yaml stop birdnet-frame-view
+docker compose --env-file .env -f docker-compose.yaml rm -f birdnet-frame-view
+```
 
 ## Official references
 

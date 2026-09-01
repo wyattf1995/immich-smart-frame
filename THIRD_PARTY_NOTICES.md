@@ -51,6 +51,20 @@ before any use beyond this project's personal, noncommercial home deployment.
 BirdNET-Go's maintainers are not responsible for FrameOS, this Compose package,
 or Lenovo hardware support.
 
+## NGINX Unprivileged
+
+The optional BirdNET frame view references the unmodified
+[NGINX Unprivileged](https://github.com/nginx/docker-nginx-unprivileged)
+container image `1.31.3-alpine3.24` by its immutable multi-platform manifest
+digest. The image is not vendored or modified by this repository; Docker
+retrieves it from the upstream GitHub Container Registry when an operator
+explicitly pulls the service.
+
+The NGINX Unprivileged container project is licensed under Apache License 2.0.
+NGINX and the Alpine base packages retain their respective upstream copyright
+and license terms. Their maintainers are not responsible for this project's
+kiosk page, proxy policy, deployment configuration, or hardware support.
+
 ## Fully Kiosk Browser
 
 Fully Kiosk Browser is referenced as a tested Android renderer but is not

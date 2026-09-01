@@ -1,0 +1,1449 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a1712" />
+    <title>Birds Around Us</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --background: #08130f;
+        --panel: rgba(17, 36, 29, 0.92);
+        --panel-strong: rgba(21, 45, 36, 0.98);
+        --line: rgba(183, 221, 197, 0.16);
+        --text: #f3f7f4;
+        --muted: #a8bdb1;
+        --green: #69d59a;
+        --green-soft: rgba(105, 213, 154, 0.14);
+        --amber: #f1bd65;
+        --amber-soft: rgba(241, 189, 101, 0.14);
+        --red: #ff8d80;
+        --red-soft: rgba(255, 141, 128, 0.14);
+        --shadow: 0 24px 72px rgba(0, 0, 0, 0.3);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--background);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      body::before {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        content: "";
+        pointer-events: none;
+        background:
+          radial-gradient(circle at 16% 8%, rgba(75, 151, 107, 0.2), transparent 32%),
+          radial-gradient(circle at 92% 92%, rgba(39, 92, 68, 0.2), transparent 34%),
+          linear-gradient(145deg, #0a1812 0%, #07110e 58%, #0b1a14 100%);
+      }
+
+      .frame {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        gap: clamp(14px, 1.4vh, 20px);
+        width: 100%;
+        height: 100vh;
+        padding: clamp(26px, 3.2vh, 42px) clamp(32px, 3.4vw, 64px) clamp(22px, 2.7vh, 34px);
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-width: 0;
+      }
+
+      .title-group {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        gap: 18px;
+      }
+
+      .mark {
+        display: grid;
+        width: 62px;
+        height: 62px;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 1px solid rgba(132, 220, 169, 0.3);
+        border-radius: 20px;
+        background: linear-gradient(145deg, rgba(105, 213, 154, 0.22), rgba(105, 213, 154, 0.07));
+        box-shadow: inset 0 1px rgba(255, 255, 255, 0.08);
+      }
+
+      .mark svg {
+        width: 37px;
+        height: 37px;
+        fill: none;
+        stroke: var(--green);
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-width: 1.8;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(34px, 2.5vw, 48px);
+        font-weight: 650;
+        letter-spacing: -0.035em;
+        line-height: 1;
+      }
+
+      .subtitle {
+        margin-top: 7px;
+        color: var(--muted);
+        font-size: clamp(15px, 1.05vw, 20px);
+      }
+
+      .topbar-right {
+        display: flex;
+        align-items: center;
+        gap: clamp(18px, 2.2vw, 36px);
+      }
+
+      .metric {
+        min-width: 104px;
+        text-align: right;
+      }
+
+      .metric-value {
+        display: block;
+        font-size: clamp(26px, 2vw, 38px);
+        font-variant-numeric: tabular-nums;
+        font-weight: 630;
+        letter-spacing: -0.03em;
+        line-height: 1;
+      }
+
+      .metric-label {
+        display: block;
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: clamp(13px, 0.9vw, 17px);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .status {
+        display: flex;
+        min-width: 250px;
+        align-items: center;
+        gap: 12px;
+        padding: 15px 18px;
+        border: 1px solid rgba(105, 213, 154, 0.28);
+        border-radius: 18px;
+        background: var(--green-soft);
+      }
+
+      .status[data-tone="amber"] {
+        border-color: rgba(241, 189, 101, 0.28);
+        background: var(--amber-soft);
+      }
+
+      .status[data-tone="red"] {
+        border-color: rgba(255, 141, 128, 0.28);
+        background: var(--red-soft);
+      }
+
+      .status-dot {
+        width: 12px;
+        height: 12px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: var(--green);
+        box-shadow: 0 0 0 7px rgba(105, 213, 154, 0.1);
+      }
+
+      .status[data-tone="amber"] .status-dot {
+        background: var(--amber);
+        box-shadow: 0 0 0 7px rgba(241, 189, 101, 0.1);
+      }
+
+      .status[data-tone="red"] .status-dot {
+        background: var(--red);
+        box-shadow: 0 0 0 7px rgba(255, 141, 128, 0.1);
+      }
+
+      .status-copy {
+        min-width: 0;
+      }
+
+      .status-title {
+        overflow: hidden;
+        font-size: clamp(16px, 1.1vw, 21px);
+        font-weight: 620;
+        line-height: 1.1;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .status-detail {
+        display: block;
+        overflow: hidden;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: clamp(12px, 0.82vw, 15px);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .content {
+        display: grid;
+        min-height: 0;
+        grid-template-columns: minmax(0, 1.03fr) minmax(0, 0.97fr);
+        gap: clamp(18px, 1.7vw, 30px);
+      }
+
+      .card {
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: clamp(24px, 2vw, 34px);
+        background: linear-gradient(150deg, var(--panel-strong), var(--panel));
+        box-shadow: var(--shadow), inset 0 1px rgba(255, 255, 255, 0.045);
+      }
+
+      .hero {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) auto;
+      }
+
+      .hero-media {
+        position: relative;
+        min-height: 0;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 50% 45%, rgba(105, 213, 154, 0.12), transparent 37%),
+          linear-gradient(145deg, #132b21, #0d2119);
+      }
+
+      .hero-media::after {
+        position: absolute;
+        inset: auto 0 0;
+        height: 45%;
+        content: "";
+        pointer-events: none;
+        background: linear-gradient(transparent, rgba(7, 17, 14, 0.78));
+      }
+
+      .hero-image {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .hero-badge {
+        position: absolute;
+        z-index: 2;
+        top: 24px;
+        left: 24px;
+        padding: 9px 13px;
+        border: 1px solid rgba(255, 255, 255, 0.17);
+        border-radius: 999px;
+        background: rgba(5, 15, 11, 0.62);
+        backdrop-filter: blur(12px);
+        color: rgba(255, 255, 255, 0.88);
+        font-size: 14px;
+        font-weight: 650;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+
+      .image-fallback {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: rgba(169, 209, 185, 0.58);
+      }
+
+      .image-fallback svg {
+        width: min(35%, 220px);
+        height: auto;
+        fill: none;
+        stroke: currentColor;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-width: 1.45;
+      }
+
+      .image-fallback span {
+        position: absolute;
+        bottom: 26px;
+        font-size: 14px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .hero-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 20px;
+        padding: clamp(22px, 2.5vh, 32px) clamp(24px, 2.3vw, 38px);
+      }
+
+      .hero-kicker {
+        margin-bottom: 8px;
+        color: var(--green);
+        font-size: clamp(13px, 0.92vw, 17px);
+        font-weight: 680;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .hero-name {
+        overflow: hidden;
+        font-size: clamp(34px, 2.7vw, 52px);
+        font-weight: 660;
+        letter-spacing: -0.045em;
+        line-height: 1.03;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .hero-scientific {
+        overflow: hidden;
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: clamp(16px, 1.15vw, 22px);
+        font-style: italic;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .hero-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 18px;
+        margin-top: 16px;
+        color: #c5d5cc;
+        font-size: clamp(14px, 1vw, 18px);
+      }
+
+      .hero-meta span + span::before {
+        margin-right: 18px;
+        color: #587063;
+        content: "•";
+      }
+
+      .hero-credit {
+        overflow: hidden;
+        max-width: 100%;
+        margin-top: 13px;
+        color: #849a8e;
+        font-size: clamp(11px, 0.74vw, 14px);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .confidence {
+        align-self: center;
+        min-width: 110px;
+        text-align: right;
+      }
+
+      .confidence-value {
+        display: block;
+        color: var(--green);
+        font-size: clamp(34px, 2.65vw, 50px);
+        font-variant-numeric: tabular-nums;
+        font-weight: 650;
+        letter-spacing: -0.04em;
+        line-height: 1;
+      }
+
+      .confidence-label {
+        display: block;
+        margin-top: 7px;
+        color: var(--muted);
+        font-size: 13px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+      }
+
+      .side {
+        display: grid;
+        min-height: 0;
+        grid-template-rows: minmax(0, 1.1fr) minmax(0, 0.9fr);
+        gap: clamp(18px, 1.7vh, 24px);
+      }
+
+      .section-card {
+        display: grid;
+        min-height: 0;
+        grid-template-rows: auto minmax(0, 1fr);
+        padding: clamp(20px, 2.2vh, 28px);
+      }
+
+      .section-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: clamp(14px, 1.5vh, 20px);
+      }
+
+      .section-title {
+        font-size: clamp(22px, 1.55vw, 30px);
+        font-weight: 640;
+        letter-spacing: -0.025em;
+      }
+
+      .section-note {
+        color: var(--muted);
+        font-size: clamp(12px, 0.82vw, 15px);
+      }
+
+      .species-grid {
+        display: grid;
+        min-height: 0;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-rows: repeat(3, minmax(0, 1fr));
+        gap: clamp(10px, 1vh, 14px);
+      }
+
+      .species-card {
+        display: grid;
+        min-width: 0;
+        min-height: 0;
+        grid-template-columns: clamp(60px, 5.2vw, 92px) minmax(0, 1fr) auto;
+        align-items: center;
+        gap: clamp(11px, 1vw, 16px);
+        padding: 8px 12px 8px 8px;
+        border: 1px solid rgba(176, 217, 191, 0.12);
+        border-radius: 18px;
+        background: rgba(7, 20, 15, 0.42);
+      }
+
+      .thumb {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        min-height: 58px;
+        overflow: hidden;
+        border-radius: 14px;
+        background: #173126;
+      }
+
+      .thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .thumb-fallback {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: #789987;
+        font-size: clamp(24px, 2vw, 36px);
+      }
+
+      .species-copy {
+        min-width: 0;
+      }
+
+      .species-name {
+        overflow: hidden;
+        font-size: clamp(15px, 1.05vw, 20px);
+        font-weight: 620;
+        line-height: 1.15;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .species-meta {
+        overflow: hidden;
+        margin-top: 5px;
+        color: var(--muted);
+        font-size: clamp(11px, 0.77vw, 14px);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .species-count {
+        min-width: 30px;
+        color: #cae4d5;
+        font-size: clamp(18px, 1.3vw, 25px);
+        font-variant-numeric: tabular-nums;
+        font-weight: 630;
+        text-align: right;
+      }
+
+      .recent-list {
+        display: grid;
+        min-height: 0;
+        grid-template-rows: repeat(4, minmax(0, 1fr));
+        gap: clamp(8px, 0.85vh, 12px);
+      }
+
+      .recent-row {
+        display: grid;
+        min-width: 0;
+        min-height: 0;
+        grid-template-columns: clamp(48px, 3.8vw, 66px) minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 14px;
+        padding: 6px 11px 6px 6px;
+        border-radius: 15px;
+        background: rgba(8, 22, 17, 0.42);
+      }
+
+      .recent-row .thumb {
+        min-height: 42px;
+      }
+
+      .recent-name {
+        overflow: hidden;
+        font-size: clamp(14px, 1vw, 19px);
+        font-weight: 610;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .recent-detail {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: clamp(11px, 0.75vw, 14px);
+      }
+
+      .recent-time {
+        color: #c8dacf;
+        font-size: clamp(13px, 0.9vw, 17px);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      .empty-panel {
+        display: grid;
+        height: 100%;
+        min-height: 0;
+        place-items: center;
+        padding: 24px;
+        text-align: center;
+      }
+
+      .empty-panel svg {
+        width: 58px;
+        height: 58px;
+        margin-bottom: 12px;
+        fill: none;
+        stroke: #6a947d;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-width: 1.6;
+      }
+
+      .empty-title {
+        font-size: clamp(18px, 1.25vw, 24px);
+        font-weight: 620;
+      }
+
+      .empty-copy {
+        max-width: 430px;
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: clamp(13px, 0.88vw, 16px);
+        line-height: 1.45;
+      }
+
+      .footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-height: 22px;
+        color: #72877b;
+        font-size: clamp(11px, 0.72vw, 14px);
+      }
+
+      .footer span:last-child {
+        text-align: right;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      @media (max-height: 1100px) {
+        .frame {
+          gap: 14px;
+          padding-top: 26px;
+          padding-bottom: 22px;
+        }
+
+        .mark {
+          width: 54px;
+          height: 54px;
+          border-radius: 17px;
+        }
+
+        .mark svg {
+          width: 32px;
+          height: 32px;
+        }
+
+        .status {
+          padding-top: 12px;
+          padding-bottom: 12px;
+        }
+
+        .section-card {
+          padding-top: 18px;
+          padding-bottom: 18px;
+        }
+
+        .section-header {
+          margin-bottom: 12px;
+        }
+
+        .hero-body {
+          padding-top: 18px;
+          padding-bottom: 20px;
+        }
+
+        .hero-meta {
+          margin-top: 12px;
+        }
+
+        .hero-credit {
+          margin-top: 9px;
+        }
+      }
+
+      @media (max-width: 1350px) {
+        .topbar-right .metric {
+          display: none;
+        }
+
+        .content {
+          grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+        }
+
+        .species-card {
+          grid-template-columns: 64px minmax(0, 1fr) auto;
+        }
+      }
+
+      @media (prefers-reduced-motion: no-preference) {
+        .status[data-tone="green"] .status-dot {
+          animation: breathe 3.2s ease-in-out infinite;
+        }
+
+        @keyframes breathe {
+          0%,
+          100% {
+            box-shadow: 0 0 0 6px rgba(105, 213, 154, 0.08);
+          }
+          50% {
+            box-shadow: 0 0 0 10px rgba(105, 213, 154, 0.02);
+          }
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="frame">
+      <header class="topbar">
+        <div class="title-group">
+          <div class="mark" aria-hidden="true">
+            <svg viewBox="0 0 48 48">
+              <path d="M10 35c8-1 11-8 12-14 4 4 9 6 16 5-2 8-8 13-16 13-5 0-9-1-12-4Z" />
+              <path d="M22 21c1-7 6-11 12-11 1 4 3 7 6 9-5 1-9 3-12 7" />
+              <path d="m11 35-4 4m15 0-1 4m6-5 2 4" />
+              <circle cx="32.5" cy="15" r="1" />
+            </svg>
+          </div>
+          <div>
+            <h1>Birds around us</h1>
+            <p class="subtitle" id="todayLabel">Listening at home</p>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <div class="metric">
+            <span class="metric-value" id="speciesCount">0</span>
+            <span class="metric-label">species today</span>
+          </div>
+          <div class="metric">
+            <span class="metric-value" id="callCount">0</span>
+            <span class="metric-label">calls today</span>
+          </div>
+          <div class="status" id="status" data-tone="amber" aria-live="polite">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span class="status-copy">
+              <span class="status-title" id="statusTitle">Checking bird detector</span>
+              <span class="status-detail" id="statusDetail">Connecting to BirdNET-Go…</span>
+            </span>
+          </div>
+        </div>
+      </header>
+
+      <main class="content">
+        <section class="card hero" aria-labelledby="heroName">
+          <div class="hero-media">
+            <span class="hero-badge" id="heroBadge">Most recent visitor</span>
+            <img class="hero-image" id="heroImage" alt="" hidden />
+            <div class="image-fallback" id="heroFallback">
+              <svg viewBox="0 0 120 100" aria-hidden="true">
+                <path d="M23 70c22-2 32-22 34-42 11 13 27 20 49 18-5 25-24 40-49 40-14 0-26-5-34-16Z" />
+                <path d="M57 28C61 10 74 3 91 5c2 10 8 19 17 25-14 2-25 8-34 18" />
+                <path d="M25 70 12 82m45 4-3 11m21-12 7 11" />
+                <circle cx="87" cy="17" r="2" />
+              </svg>
+              <span id="fallbackLabel">Photo unavailable</span>
+            </div>
+          </div>
+          <div class="hero-body">
+            <div>
+              <p class="hero-kicker" id="heroKicker">BirdNET-Go is ready</p>
+              <h2 class="hero-name" id="heroName">Checking for visitors…</h2>
+              <p class="hero-scientific" id="heroScientific">Recent detections will appear here</p>
+              <p class="hero-meta" id="heroMeta"></p>
+              <p class="hero-credit" id="heroCredit">Bird images and identifications via BirdNET-Go</p>
+            </div>
+            <div class="confidence" id="confidence" hidden>
+              <span class="confidence-value" id="confidenceValue">—</span>
+              <span class="confidence-label">confidence</span>
+            </div>
+          </div>
+        </section>
+
+        <aside class="side">
+          <section class="card section-card" aria-labelledby="speciesTitle">
+            <div class="section-header">
+              <h2 class="section-title" id="speciesTitle">Today’s species</h2>
+              <span class="section-note" id="speciesNote">Up to six most active</span>
+            </div>
+            <div class="species-grid" id="speciesGrid"></div>
+          </section>
+
+          <section class="card section-card" aria-labelledby="recentTitle">
+            <div class="section-header">
+              <h2 class="section-title" id="recentTitle">Recently heard</h2>
+              <span class="section-note" id="recentNote">Waiting for detections</span>
+            </div>
+            <div class="recent-list" id="recentList"></div>
+          </section>
+        </aside>
+      </main>
+
+      <footer class="footer">
+        <span id="updatedLabel">Live data from BirdNET-Go</span>
+        <span>Species photos are resolved by BirdNET-Go; credit appears with the latest visitor.</span>
+      </footer>
+    </div>
+
+    <script>
+      (() => {
+        "use strict";
+
+        const API_TIMEOUT_MS = 7000;
+        const POLL_INTERVAL_MS = 15000;
+        const IMAGE_RETRY_MS = 60000;
+        const AUDIO_LEVEL_STALE_MS = 25000;
+        const MAX_SPECIES = 6;
+        const MAX_RECENT = 4;
+
+        const els = {
+          todayLabel: document.getElementById("todayLabel"),
+          speciesCount: document.getElementById("speciesCount"),
+          callCount: document.getElementById("callCount"),
+          status: document.getElementById("status"),
+          statusTitle: document.getElementById("statusTitle"),
+          statusDetail: document.getElementById("statusDetail"),
+          heroBadge: document.getElementById("heroBadge"),
+          heroImage: document.getElementById("heroImage"),
+          heroFallback: document.getElementById("heroFallback"),
+          fallbackLabel: document.getElementById("fallbackLabel"),
+          heroKicker: document.getElementById("heroKicker"),
+          heroName: document.getElementById("heroName"),
+          heroScientific: document.getElementById("heroScientific"),
+          heroMeta: document.getElementById("heroMeta"),
+          heroCredit: document.getElementById("heroCredit"),
+          confidence: document.getElementById("confidence"),
+          confidenceValue: document.getElementById("confidenceValue"),
+          speciesGrid: document.getElementById("speciesGrid"),
+          speciesNote: document.getElementById("speciesNote"),
+          recentList: document.getElementById("recentList"),
+          recentNote: document.getElementById("recentNote"),
+          updatedLabel: document.getElementById("updatedLabel"),
+        };
+
+        const state = {
+          health: null,
+          apiOnline: null,
+          configuredSources: [],
+          audioKnown: false,
+          audioError: false,
+          audioLevelsActive: false,
+          dataError: false,
+          summary: [],
+          recent: [],
+          lastUpdatedAt: null,
+          attributionSpecies: "",
+          attribution: null,
+          renderKeys: { hero: "", species: "", recent: "" },
+        };
+
+        let refreshPromise = null;
+        let pollTimer = null;
+        let clockTimer = null;
+        let detectionStream = null;
+        let audioStream = null;
+        let refreshDebounce = null;
+        let attributionRetry = null;
+        let audioFreshnessTimer = null;
+        let disposed = false;
+        const imageRetryAfter = new Map();
+        const imageRetryTimers = new WeakMap();
+        const activeFetchControllers = new Set();
+
+        function updateClock() {
+          const now = new Date();
+          const date = new Intl.DateTimeFormat(undefined, {
+            weekday: "long",
+            month: "long",
+            day: "numeric",
+          }).format(now);
+          const time = new Intl.DateTimeFormat(undefined, {
+            hour: "numeric",
+            minute: "2-digit",
+          }).format(now);
+          els.todayLabel.textContent = `${date} · ${time}`;
+        }
+
+        async function fetchJson(path) {
+          if (disposed) throw new Error("Page is no longer active");
+          const controller = new AbortController();
+          activeFetchControllers.add(controller);
+          const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+          try {
+            const response = await fetch(path, {
+              cache: "no-store",
+              credentials: "omit",
+              signal: controller.signal,
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.json();
+          } finally {
+            window.clearTimeout(timeout);
+            activeFetchControllers.delete(controller);
+          }
+        }
+
+        function abortActiveFetches() {
+          activeFetchControllers.forEach(controller => controller.abort());
+          activeFetchControllers.clear();
+        }
+
+        function sourceName(source) {
+          if (!source || typeof source !== "object") return "Audio source connected";
+          return source.displayName || source.display_name || source.name || source.id || source.source_id || "Audio source connected";
+        }
+
+        function configuredSourceList(payload) {
+          if (!payload || !Array.isArray(payload.sources)) return [];
+          return payload.sources.filter(source => source && typeof source === "object");
+        }
+
+        function sourceState(source) {
+          return source && typeof source.state === "string" ? source.state.toLowerCase() : "unknown";
+        }
+
+        function latestDetection() {
+          return state.recent.length > 0 ? state.recent[0] : null;
+        }
+
+        function setStatus(title, detail, tone) {
+          els.status.dataset.tone = tone;
+          els.statusTitle.textContent = title;
+          els.statusDetail.textContent = detail;
+        }
+
+        function statusFromState() {
+          if (state.apiOnline === false) {
+            return {
+              title: "Bird detector unavailable",
+              detail: state.lastUpdatedAt ? "Showing the last successful update" : "Trying again automatically",
+              tone: "red",
+            };
+          }
+          if (state.dataError) {
+            return {
+              title: "Bird detector unavailable",
+              detail: "Detection data is temporarily unavailable",
+              tone: "red",
+            };
+          }
+          if (state.audioKnown && state.configuredSources.length === 0 && !state.audioLevelsActive) {
+            return {
+              title: "Waiting for a microphone",
+              detail: "BirdNET-Go is online, but it has no audio source",
+              tone: "amber",
+            };
+          }
+          const runningSource = state.configuredSources.find(source => sourceState(source) === "running");
+          if (runningSource || state.audioLevelsActive) {
+            const detail = runningSource ? sourceName(runningSource) : "Live audio levels received";
+            return { title: "Listening", detail, tone: "green" };
+          }
+          const failedSource = state.configuredSources.find(source =>
+            ["error", "failed", "escalated", "alarmed", "stopped"].includes(sourceState(source))
+          );
+          if (failedSource) {
+            return {
+              title: "Microphone needs attention",
+              detail: `${sourceName(failedSource)} · ${sourceState(failedSource)}`,
+              tone: "red",
+            };
+          }
+          if (state.configuredSources.length > 0) {
+            return {
+              title: "Starting microphone",
+              detail: sourceName(state.configuredSources[0]),
+              tone: "amber",
+            };
+          }
+          if (state.audioError) {
+            return {
+              title: "Audio status unavailable",
+              detail: "Detection data is online; checking the microphone again",
+              tone: "amber",
+            };
+          }
+          return {
+            title: "Checking bird detector",
+            detail: "Connecting to BirdNET-Go…",
+            tone: "amber",
+          };
+        }
+
+        function clearChildren(element) {
+          while (element.firstChild) element.removeChild(element.firstChild);
+        }
+
+        function formatTime(detection) {
+          if (detection && typeof detection.timestamp === "string") {
+            const parsed = new Date(detection.timestamp);
+            if (!Number.isNaN(parsed.getTime())) {
+              return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(parsed);
+            }
+          }
+          if (detection && typeof detection.time === "string" && detection.time.length >= 5) {
+            const pieces = detection.time.slice(0, 5).split(":").map(Number);
+            const local = new Date();
+            local.setHours(pieces[0], pieces[1], 0, 0);
+            return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(local);
+          }
+          return "Just now";
+        }
+
+        function confidencePercent(value) {
+          const number = Number(value);
+          if (!Number.isFinite(number)) return null;
+          return Math.max(0, Math.min(100, Math.round(number * 100)));
+        }
+
+        function speciesImageUrl(scientificName) {
+          return `/api/v2/media/species-image?name=${encodeURIComponent(scientificName)}`;
+        }
+
+        function attachImage(img, fallback, scientificName, alt, eager = false) {
+          window.clearTimeout(imageRetryTimers.get(img));
+          imageRetryTimers.delete(img);
+          img.onload = null;
+          img.onerror = null;
+          img.dataset.species = scientificName || "";
+          img.hidden = true;
+          fallback.hidden = false;
+          img.alt = alt;
+          img.loading = eager ? "eager" : "lazy";
+          img.decoding = "async";
+          if (!scientificName) return;
+          const retryAt = imageRetryAfter.get(scientificName) || 0;
+          if (retryAt > Date.now()) {
+            retrySpeciesImage(img, fallback, scientificName, alt, eager, retryAt - Date.now());
+            return;
+          }
+
+          img.onload = () => {
+            img.hidden = false;
+            fallback.hidden = true;
+            imageRetryAfter.delete(scientificName);
+          };
+          img.onerror = () => {
+            img.hidden = true;
+            fallback.hidden = false;
+            const nextRetry = Date.now() + IMAGE_RETRY_MS;
+            imageRetryAfter.set(scientificName, nextRetry);
+            retrySpeciesImage(img, fallback, scientificName, alt, eager, IMAGE_RETRY_MS);
+          };
+          img.removeAttribute("src");
+          img.src = speciesImageUrl(scientificName);
+        }
+
+        function retrySpeciesImage(img, fallback, scientificName, alt, eager, delay) {
+          window.clearTimeout(imageRetryTimers.get(img));
+          const timer = window.setTimeout(() => {
+            imageRetryTimers.delete(img);
+            if (disposed || document.hidden || !img.isConnected || img.dataset.species !== scientificName) return;
+            imageRetryAfter.delete(scientificName);
+            attachImage(img, fallback, scientificName, alt, eager);
+          }, Math.max(250, delay));
+          imageRetryTimers.set(img, timer);
+        }
+
+        function retryDeferredImages() {
+          document.querySelectorAll("img[data-species]").forEach(img => {
+            const scientificName = img.dataset.species;
+            if (!scientificName || !img.hidden) return;
+            const fallback = img === els.heroImage ? els.heroFallback : img.nextElementSibling;
+            if (!fallback) return;
+            const retryAt = imageRetryAfter.get(scientificName) || 0;
+            const delay = Math.max(0, retryAt - Date.now());
+            retrySpeciesImage(img, fallback, scientificName, img.alt, img === els.heroImage, delay);
+          });
+        }
+
+        function fallbackGlyph() {
+          const fallback = document.createElement("span");
+          fallback.className = "thumb-fallback";
+          fallback.textContent = "♩";
+          fallback.setAttribute("role", "img");
+          fallback.setAttribute("aria-label", "Bird photo unavailable");
+          return fallback;
+        }
+
+        function createThumb(scientificName, commonName) {
+          const wrap = document.createElement("div");
+          wrap.className = "thumb";
+          const img = document.createElement("img");
+          const fallback = fallbackGlyph();
+          wrap.append(img, fallback);
+          attachImage(img, fallback, scientificName, `${commonName} species reference`);
+          return wrap;
+        }
+
+        function emptyPanel(title, copy) {
+          const panel = document.createElement("div");
+          panel.className = "empty-panel";
+          panel.innerHTML = `
+            <div>
+              <svg viewBox="0 0 48 48" aria-hidden="true">
+                <path d="M9 35c9-1 13-9 14-17 5 5 11 8 19 6-2 10-9 16-19 16-6 0-11-2-14-5Z"></path>
+                <path d="M23 18c2-8 7-12 14-12 1 5 3 8 7 11-6 1-10 4-14 8"></path>
+                <path d="m10 35-5 5m18 0-1 5m8-6 3 5"></path>
+              </svg>
+              <p class="empty-title"></p>
+              <p class="empty-copy"></p>
+            </div>`;
+          panel.querySelector(".empty-title").textContent = title;
+          panel.querySelector(".empty-copy").textContent = copy;
+          return panel;
+        }
+
+        function renderHero() {
+          const detection = latestDetection();
+          els.heroImage.onload = null;
+          els.heroImage.onerror = null;
+          els.heroImage.removeAttribute("src");
+          els.heroImage.hidden = true;
+          els.heroFallback.hidden = false;
+          els.heroCredit.textContent = "Bird images and identifications via BirdNET-Go";
+          clearChildren(els.heroMeta);
+
+          if (!detection) {
+            state.attributionSpecies = "";
+            state.attribution = null;
+            window.clearTimeout(attributionRetry);
+            els.heroBadge.textContent = "Listening station";
+            els.confidence.hidden = true;
+            els.fallbackLabel.textContent = "Photo unavailable";
+            if (state.apiOnline === false || state.dataError) {
+              els.heroKicker.textContent = "Connection interrupted";
+              els.heroName.textContent = "Bird detector unavailable";
+              els.heroScientific.textContent = "We’ll reconnect automatically";
+            } else if (state.audioKnown && state.configuredSources.length === 0 && !state.audioLevelsActive) {
+              els.heroKicker.textContent = "Detector online";
+              els.heroName.textContent = "Waiting for a microphone";
+              els.heroScientific.textContent = "Connect an audio source to start identifying birds";
+            } else {
+              els.heroKicker.textContent = "Listening now";
+              els.heroName.textContent = "No birds heard yet";
+              els.heroScientific.textContent = "The first visitor will appear here";
+            }
+            return;
+          }
+
+          const commonName = detection.commonName || "Unknown bird";
+          const scientificName = detection.scientificName || "";
+          const confidence = confidencePercent(detection.confidence);
+          const source = detection.source && sourceName(detection.source);
+          els.heroBadge.textContent = state.dataError ? "Last known visitor" : "Most recent visitor";
+          els.heroKicker.textContent = `Heard ${formatTime(detection)}`;
+          els.heroName.textContent = commonName;
+          els.heroScientific.textContent = scientificName || "Species name unavailable";
+          els.fallbackLabel.textContent = "Photo unavailable";
+          attachImage(els.heroImage, els.heroFallback, scientificName, commonName, true);
+
+          const heard = document.createElement("span");
+          heard.textContent = `Heard ${formatTime(detection)}`;
+          els.heroMeta.appendChild(heard);
+          if (source) {
+            const sourceNode = document.createElement("span");
+            sourceNode.textContent = source;
+            els.heroMeta.appendChild(sourceNode);
+          }
+          if (confidence === null) {
+            els.confidence.hidden = true;
+          } else {
+            els.confidence.hidden = false;
+            els.confidenceValue.textContent = `${confidence}%`;
+          }
+          loadAttribution(scientificName);
+        }
+
+        async function loadAttribution(scientificName) {
+          if (!scientificName || disposed || document.hidden) return;
+          if (state.attributionSpecies === scientificName && state.attribution) {
+            renderAttribution(state.attribution);
+            return;
+          }
+          state.attributionSpecies = scientificName;
+          state.attribution = null;
+          window.clearTimeout(attributionRetry);
+          try {
+            const info = await fetchJson(`/api/v2/media/species-image/info?name=${encodeURIComponent(scientificName)}`);
+            if (state.attributionSpecies !== scientificName) return;
+            state.attribution = info;
+            renderAttribution(info);
+          } catch (_error) {
+            if (disposed || document.hidden || state.attributionSpecies !== scientificName) return;
+            els.heroCredit.textContent = "Species photo resolving via BirdNET-Go";
+            attributionRetry = window.setTimeout(() => loadAttribution(scientificName), IMAGE_RETRY_MS);
+          }
+        }
+
+        function renderAttribution(info) {
+          const parts = [];
+          if (info && info.authorName) parts.push(`Photo: ${info.authorName}`);
+          if (info && info.licenseName) parts.push(info.licenseName);
+          if (info && info.sourceProvider) parts.push(`via ${info.sourceProvider}`);
+          els.heroCredit.textContent = parts.length > 0 ? parts.join(" · ") : "Species photo via BirdNET-Go";
+        }
+
+        function renderSpecies() {
+          clearChildren(els.speciesGrid);
+          const species = state.summary.slice(0, MAX_SPECIES);
+          els.speciesNote.textContent = state.dataError
+            ? "Showing last update"
+            : species.length > 0 ? "Most active today" : "Up to six most active";
+          if (species.length === 0) {
+            const title = state.apiOnline === false || state.dataError
+              ? "Bird detector unavailable"
+              : "No birds heard yet";
+            const copy = state.audioKnown && state.configuredSources.length === 0
+              ? "Today’s species will appear after a microphone is connected."
+              : "Species and their photos will fill this space as calls are identified.";
+            const empty = emptyPanel(title, copy);
+            empty.style.gridColumn = "1 / -1";
+            empty.style.gridRow = "1 / -1";
+            els.speciesGrid.appendChild(empty);
+            return;
+          }
+
+          species.forEach(item => {
+            const card = document.createElement("article");
+            card.className = "species-card";
+            const commonName = item.common_name || "Unknown bird";
+            const scientificName = item.scientific_name || "";
+            const copy = document.createElement("div");
+            copy.className = "species-copy";
+            const name = document.createElement("h3");
+            name.className = "species-name";
+            name.textContent = commonName;
+            const meta = document.createElement("p");
+            meta.className = "species-meta";
+            meta.textContent = item.latest_heard ? `Last heard ${formatTime({ time: item.latest_heard })}` : scientificName;
+            copy.append(name, meta);
+            const count = document.createElement("span");
+            count.className = "species-count";
+            count.textContent = String(Number(item.count) || 0);
+            count.setAttribute("aria-label", `${count.textContent} detections`);
+            card.append(createThumb(scientificName, commonName), copy, count);
+            els.speciesGrid.appendChild(card);
+          });
+        }
+
+        function renderRecent() {
+          clearChildren(els.recentList);
+          const detections = state.recent.slice(0, MAX_RECENT);
+          els.recentNote.textContent = state.dataError
+            ? "Showing last update"
+            : detections.length > 0 ? "Latest calls" : "Waiting for detections";
+          if (detections.length === 0) {
+            if (state.apiOnline === false || state.dataError) {
+              els.recentList.appendChild(
+                emptyPanel("Bird detector unavailable", "Recent detection data will return automatically.")
+              );
+              return;
+            }
+            const copy = state.audioKnown && state.configuredSources.length === 0
+              ? "Waiting for a microphone before detection can begin."
+              : "The latest four calls will appear here.";
+            els.recentList.appendChild(emptyPanel("No birds heard yet", copy));
+            return;
+          }
+
+          detections.forEach(detection => {
+            const row = document.createElement("article");
+            row.className = "recent-row";
+            const commonName = detection.commonName || "Unknown bird";
+            const scientificName = detection.scientificName || "";
+            const copy = document.createElement("div");
+            copy.className = "species-copy";
+            const name = document.createElement("h3");
+            name.className = "recent-name";
+            name.textContent = commonName;
+            const detail = document.createElement("p");
+            detail.className = "recent-detail";
+            const confidence = confidencePercent(detection.confidence);
+            detail.textContent = confidence === null ? scientificName : `${confidence}% confidence`;
+            copy.append(name, detail);
+            const time = document.createElement("time");
+            time.className = "recent-time";
+            time.textContent = formatTime(detection);
+            row.append(createThumb(scientificName, commonName), copy, time);
+            els.recentList.appendChild(row);
+          });
+        }
+
+        function render() {
+          const status = statusFromState();
+          setStatus(status.title, status.detail, status.tone);
+          const count = state.summary.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+          els.speciesCount.textContent = String(state.summary.length);
+          els.callCount.textContent = String(count);
+          if (state.lastUpdatedAt) {
+            const updated = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" })
+              .format(state.lastUpdatedAt);
+            els.updatedLabel.textContent = state.dataError
+              ? `Last complete update ${updated} · Data may be stale`
+              : `Updated ${updated} · Live data from BirdNET-Go`;
+          } else {
+            els.updatedLabel.textContent = "Live data from BirdNET-Go";
+          }
+          const detection = latestDetection();
+          const heroKey = detection
+            ? JSON.stringify([detection.id, detection.timestamp, detection.time, detection.confidence, state.dataError])
+            : JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length, state.audioLevelsActive]);
+          const speciesKey = state.summary.length > 0
+            ? JSON.stringify([state.dataError, state.summary.slice(0, MAX_SPECIES).map(item => [item.scientific_name, item.count, item.latest_heard])])
+            : JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length]);
+          const recentKey = state.recent.length > 0
+            ? JSON.stringify([state.dataError, state.recent.slice(0, MAX_RECENT).map(item => [item.id, item.timestamp, item.time, item.confidence])])
+            : JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length]);
+
+          if (heroKey !== state.renderKeys.hero) {
+            state.renderKeys.hero = heroKey;
+            renderHero();
+          }
+          if (speciesKey !== state.renderKeys.species) {
+            state.renderKeys.species = speciesKey;
+            renderSpecies();
+          }
+          if (recentKey !== state.renderKeys.recent) {
+            state.renderKeys.recent = recentKey;
+            renderRecent();
+          }
+        }
+
+        async function refresh() {
+          if (disposed || document.hidden) return;
+          if (refreshPromise) return refreshPromise;
+          refreshPromise = (async () => {
+            const results = await Promise.allSettled([
+              fetchJson("/api/v2/health"),
+              fetchJson("/api/v2/streams/sources"),
+              fetchJson("/api/v2/analytics/species/daily"),
+              fetchJson("/api/v2/detections/recent?limit=10"),
+            ]);
+            if (disposed || document.hidden) return;
+            const health = results[0];
+            if (health.status === "fulfilled") {
+              state.health = health.value;
+              state.apiOnline = true;
+            } else {
+              state.apiOnline = false;
+            }
+            const audio = results[1];
+            if (audio.status === "fulfilled") {
+              state.configuredSources = configuredSourceList(audio.value);
+              state.audioKnown = true;
+              state.audioError = false;
+            } else {
+              state.configuredSources = [];
+              state.audioKnown = false;
+              state.audioError = true;
+              state.audioLevelsActive = false;
+            }
+            const summary = results[2];
+            const summaryReady = summary.status === "fulfilled" && Array.isArray(summary.value);
+            if (summaryReady) {
+              state.summary = summary.value.filter(item => item && typeof item === "object");
+            }
+            const recent = results[3];
+            const recentReady = recent.status === "fulfilled" && Array.isArray(recent.value);
+            if (recentReady) {
+              const ids = new Set();
+              state.recent = recent.value.filter(item => {
+                if (!item || typeof item !== "object") return false;
+                const key = item.id ?? [item.timestamp, item.time, item.scientificName, item.confidence].join("|");
+                if (ids.has(key)) return false;
+                ids.add(key);
+                return true;
+              });
+            }
+            state.dataError = !summaryReady || !recentReady;
+            if (!state.dataError) state.lastUpdatedAt = new Date();
+            render();
+          })().finally(() => {
+            refreshPromise = null;
+          });
+          return refreshPromise;
+        }
+
+        function scheduleRefresh() {
+          if (disposed || document.hidden) return;
+          window.clearTimeout(refreshDebounce);
+          refreshDebounce = window.setTimeout(refresh, 450);
+        }
+
+        function stopLiveStreams() {
+          if (detectionStream) detectionStream.close();
+          if (audioStream) audioStream.close();
+          detectionStream = null;
+          audioStream = null;
+          window.clearTimeout(audioFreshnessTimer);
+          audioFreshnessTimer = null;
+          state.audioLevelsActive = false;
+        }
+
+        function startLiveStreams() {
+          stopLiveStreams();
+          if (disposed || document.hidden) return;
+          detectionStream = new EventSource("/api/v2/detections/stream");
+          detectionStream.onmessage = scheduleRefresh;
+          detectionStream.addEventListener("detection", scheduleRefresh);
+          audioStream = new EventSource("/api/v2/streams/audio-level");
+          const handleAudioLevel = event => {
+            try {
+              const payload = JSON.parse(event.data);
+              const levels = payload && payload.levels && typeof payload.levels === "object" ? payload.levels : {};
+              state.audioLevelsActive = Object.values(levels).some(entry => {
+                const level = typeof entry === "number" ? entry : Number(entry && entry.level);
+                return Number.isFinite(level) && level > 0;
+              });
+              if (state.audioLevelsActive) {
+                state.audioKnown = true;
+                state.audioError = false;
+                window.clearTimeout(audioFreshnessTimer);
+                audioFreshnessTimer = window.setTimeout(() => {
+                  state.audioLevelsActive = false;
+                  render();
+                }, AUDIO_LEVEL_STALE_MS);
+              }
+              render();
+            } catch (_error) {
+              // The periodic public source-state request remains authoritative.
+            }
+          };
+          audioStream.onmessage = handleAudioLevel;
+          audioStream.addEventListener("audio-level", handleAudioLevel);
+          audioStream.onerror = () => {
+            window.clearTimeout(audioFreshnessTimer);
+            state.audioLevelsActive = false;
+            render();
+          };
+        }
+
+        function startTimers() {
+          window.clearInterval(pollTimer);
+          window.clearInterval(clockTimer);
+          pollTimer = window.setInterval(() => {
+            if (!document.hidden) refresh();
+          }, POLL_INTERVAL_MS);
+          clockTimer = window.setInterval(() => {
+            if (!document.hidden && !disposed) updateClock();
+          }, 30000);
+        }
+
+        function pausePageActivity() {
+          stopLiveStreams();
+          abortActiveFetches();
+          window.clearTimeout(refreshDebounce);
+          window.clearTimeout(attributionRetry);
+          refreshDebounce = null;
+          attributionRetry = null;
+        }
+
+        function disposePage() {
+          if (disposed) return;
+          disposed = true;
+          pausePageActivity();
+          window.clearInterval(pollTimer);
+          window.clearInterval(clockTimer);
+          pollTimer = null;
+          clockTimer = null;
+        }
+
+        document.addEventListener("visibilitychange", () => {
+          if (document.hidden) {
+            pausePageActivity();
+          } else {
+            updateClock();
+            refresh();
+            startLiveStreams();
+            retryDeferredImages();
+            if (state.attributionSpecies && !state.attribution) {
+              loadAttribution(state.attributionSpecies);
+            }
+          }
+        });
+        window.addEventListener("pagehide", disposePage);
+        window.addEventListener("beforeunload", disposePage);
+        updateClock();
+        render();
+        refresh();
+        startLiveStreams();
+        startTimers();
+      })();
+    </script>
+  </body>
+</html>
