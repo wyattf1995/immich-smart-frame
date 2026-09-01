@@ -95,6 +95,8 @@ grep -Fq 'backup' "$OPS_FILE" || fail 'operations notes must cover backups'
 grep -Fq 'rollback' "$OPS_FILE" || fail 'operations notes must cover rollback'
 grep -Fq '/boot/config/birdnet-go/' "$OPS_FILE" || fail 'operations must use a persistent Unraid Compose project'
 grep -Fq '/mnt/user/appdata/birdnet-go/' "$OPS_FILE" || fail 'operations must use Unraid appdata for state'
+grep -Fq 'bash ./scripts/birdnet-watchdog.sh' "$OPS_FILE" || \
+  fail 'operations must invoke the boot-flash watchdog through bash on Unraid'
 grep -Eiq 'UNVERIFIED.*(full[[:space:]]+Unraid|Unraid.*reboot)|full[[:space:]]+Unraid.*reboot.*UNVERIFIED' "$OPS_FILE" || \
   fail 'operations must mark full Unraid reboot recovery UNVERIFIED'
 grep -Eiq 'UNVERIFIED.*(physically|physical).*test|(physically|physical).*test.*UNVERIFIED' "$OPS_FILE" || \
