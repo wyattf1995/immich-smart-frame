@@ -50,8 +50,8 @@ grep -Fq 'listen: ""' "$BRIDGE_CONFIG" || \
   fail 'go2rtc web/API listener must be disabled'
 grep -Fq 'hass://${HA_HOST}?entity_id=${HA_CAMERA_ENTITY}&token=${HA_TOKEN}' "$BRIDGE_CONFIG" || \
   fail 'camera source must keep the Home Assistant credential indirect'
-grep -Fq 'ffmpeg:nest_camera#audio=pcm/48000' "$BRIDGE_CONFIG" || \
-  fail 'BirdNET endpoint must be mono 48 kHz linear PCM'
+! grep -Fq 'ffmpeg:' "$BRIDGE_CONFIG" || \
+  fail 'bridge must not let go2rtc renegotiate the native Opus track'
 ! grep -R -Eq '192\.168\.86\.|eyJ[A-Za-z0-9_-]{20,}' "$BRIDGE_DIR" || \
   fail 'bridge package must not contain a private LAN address or access token'
 
@@ -64,8 +64,8 @@ grep -Fq 'HA_TOKEN_FILE=/mnt/user/appdata/birdnet-go/secrets/HA_TOKEN' "$ENV_FIL
 ! grep -Eq '^HA_TOKEN=' "$ENV_FILE" || \
   fail 'Home Assistant tokens must never be supplied as environment variables'
 
-grep -Fq 'rtsp://nest-audio-bridge:8554/bird_audio?audio' "$OPS_FILE" || \
-  fail 'operations must document the private BirdNET audio endpoint'
+grep -Fq 'rtsp://nest-audio-bridge:8554/nest_camera?audio=opus' "$OPS_FILE" || \
+  fail 'operations must document the private native-Opus endpoint'
 grep -Fq 'camera.backyard_backyard_camera' "$OPS_FILE" || \
   fail 'operations must identify the selected live Backyard entity'
 grep -Fq 'Garage' "$OPS_FILE" || \
