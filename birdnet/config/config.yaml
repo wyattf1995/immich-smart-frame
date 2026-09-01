@@ -24,11 +24,12 @@ realtime:
     export:
       enabled: true
       path: /data/clips/
-      type: wav
+      # Opus materially reduces the retained household-audio footprint.
+      type: opus
       retention:
-        policy: usage
+        # Age is deterministic: clips cannot remain merely because disk is free.
+        policy: age
         maxage: 30d
-        maxusage: 80%
         minclips: 10
         keepspectrograms: true
         checkinterval: 15
