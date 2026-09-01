@@ -110,6 +110,17 @@ grep -Fq 'min-height: 420px;' <<<"$short_desktop_css" || \
 grep -Fq 'grid-template-rows: repeat(4, minmax(35px, 1fr));' <<<"$short_desktop_css" || \
   fail 'zoomed short desktop must preserve all four two-line recent rows'
 
+# The lifetime-first badge is a dedicated third line in each species card.
+# An inline-block contributes an additional baseline line box, which makes the
+# thumbnail and badge escape the compact 960x540 card even when the text fits.
+novelty_badge_css=$(awk '
+  /^[[:space:]]*[.]novelty-badge[[:space:]]*\{/ { active = 1 }
+  active { print }
+  active && /^[[:space:]]*}/ { exit }
+' "$VIEW_FILE")
+grep -Fq 'display: block;' <<<"$novelty_badge_css" || \
+  fail 'species novelty badges must not add inline baseline overflow'
+
 # Phones need a real document flow instead of the fixed-height kiosk surface.
 # Keep this contract separate from the short-landscape FrameOS breakpoint: a
 # narrow portrait viewport must stack each dashboard panel full-width, remain
