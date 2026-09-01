@@ -92,7 +92,7 @@ fi
 # Let that document scroll and reserve enough height for four complete recent
 # rows, while keeping the 960x540 frame in the fixed kiosk breakpoint above.
 short_desktop_css=$(awk '
-  /@media \(min-width: 601px\) and \(max-height: 480px\)/ { active = 1 }
+  /@media \(min-width: 601px\) and \(max-height: 539px\)/ { active = 1 }
   active {
     print
     opens = gsub(/\{/, "{")
@@ -102,7 +102,8 @@ short_desktop_css=$(awk '
   }
 ' "$VIEW_FILE")
 
-[[ -n "$short_desktop_css" ]] || fail 'frame view must define a zoomed short-desktop layout'
+[[ -n "$short_desktop_css" ]] || \
+  fail 'frame view must scroll short desktops below the frame 540px height'
 grep -Fq 'overflow-y: auto;' <<<"$short_desktop_css" || \
   fail 'zoomed short desktop must allow vertical scrolling'
 grep -Fq 'min-height: 420px;' <<<"$short_desktop_css" || \
