@@ -844,6 +844,91 @@
         }
       }
 
+      /* Medium-height desktop windows have less vertical room than the roomy
+         base cards but do not enter the FrameOS breakpoint below. Compact the
+         two side panels without changing the page flow or kiosk dimensions. */
+      @media (min-width: 1101px) and (max-height: 800px), (min-width: 601px) and (min-height: 651px) and (max-height: 800px) {
+        .section-card {
+          padding: 14px 16px;
+        }
+
+        .section-header {
+          margin-bottom: 8px;
+        }
+
+        .species-grid {
+          gap: 8px 10px;
+        }
+
+        .species-card {
+          grid-template-columns: 52px minmax(0, 1fr) auto;
+          gap: 9px;
+          padding: 4px 8px 4px 4px;
+          border-radius: 12px;
+        }
+
+        .thumb {
+          min-height: 38px;
+          border-radius: 10px;
+        }
+
+        .species-name {
+          font-size: 15px;
+        }
+
+        .species-meta {
+          margin-top: 2px;
+          font-size: 11px;
+        }
+
+        .novelty-badge {
+          margin-top: 2px;
+          font-size: 9px;
+          line-height: 1.1;
+        }
+
+        .species-count {
+          min-width: 24px;
+          font-size: 18px;
+        }
+
+        .recent-list {
+          gap: 6px;
+        }
+
+        .recent-row {
+          grid-template-columns: 42px minmax(0, 1fr) auto;
+          gap: 10px;
+          padding: 3px 8px 3px 3px;
+          border-radius: 11px;
+        }
+
+        .detection-detail {
+          grid-template-columns: 42px minmax(0, 1fr) auto;
+          gap: 10px;
+          height: 100%;
+          min-height: 0;
+        }
+
+        .recent-row .thumb {
+          min-height: 0;
+        }
+
+        .recent-name {
+          font-size: 14px;
+          line-height: 1.1;
+        }
+
+        .recent-detail {
+          margin-top: 1px;
+          font-size: 11px;
+        }
+
+        .recent-time {
+          font-size: 12px;
+        }
+      }
+
       /* Android exposes the 1920x1080 panel as roughly 960x540 CSS pixels at
          its native 320 dpi. Keep every fixed kiosk region inside that viewport
          without changing the panel's physical resolution or system density. */
