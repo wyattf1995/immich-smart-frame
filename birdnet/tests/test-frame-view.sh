@@ -122,6 +122,35 @@ novelty_badge_css=$(awk '
 grep -Fq 'display: block;' <<<"$novelty_badge_css" || \
   fail 'species novelty badges must not add inline baseline overflow'
 
+# A 1512x711 desktop is taller than the compact FrameOS breakpoint but too
+# short for the roomy base cards: live geometry otherwise gives 56px species
+# rows that need 66px and 41px recent rows that need 55px. Compact only the
+# cards at this middle height, including the nested detection button and thumb.
+middle_height_css=$(awk '
+  /@media \(min-width: 1101px\) and \(max-height: 800px\),/ { active = 1 }
+  active {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (depth == 0) exit
+  }
+' "$VIEW_FILE")
+
+[[ -n "$middle_height_css" ]] || fail 'frame view must define a middle-height desktop layout'
+grep -Fq '(min-width: 601px) and (min-height: 651px) and (max-height: 800px)' \
+  <<<"$middle_height_css" || fail 'middle-height layout must cover the 1100px breakpoint gap'
+grep -Fq '.species-card' <<<"$middle_height_css" || \
+  fail 'middle-height layout must compact species cards'
+grep -Fq '.detection-detail' <<<"$middle_height_css" || \
+  fail 'middle-height layout must size the nested recent-detail control'
+grep -Fq '.recent-row .thumb' <<<"$middle_height_css" || \
+  fail 'middle-height layout must contain recent thumbnails'
+grep -Fq 'height: 100%;' <<<"$middle_height_css" || \
+  fail 'middle-height detection controls must fill their row explicitly'
+grep -Fq 'min-height: 0;' <<<"$middle_height_css" || \
+  fail 'middle-height detection content must be allowed to shrink inside its row'
+
 # Phones need a real document flow instead of the fixed-height kiosk surface.
 # Keep this contract separate from the short-landscape FrameOS breakpoint: a
 # narrow portrait viewport must stack each dashboard panel full-width, remain
