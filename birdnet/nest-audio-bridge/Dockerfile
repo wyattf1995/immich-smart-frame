@@ -36,8 +36,8 @@ LABEL org.opencontainers.image.source="https://github.com/wyattf1995/immich-smar
 
 COPY --from=build --chmod=0755 /out/go2rtc /usr/local/bin/go2rtc
 COPY --from=build --chmod=0444 /src/LICENSE /licenses/go2rtc/LICENSE
-COPY --chmod=0444 go2rtc.yaml /etc/go2rtc/go2rtc.yaml
+COPY --chmod=0444 go2rtc.yaml /etc/go2rtc.yaml
 
 ENV CREDENTIALS_DIRECTORY=/run/secrets
 
-CMD ["go2rtc", "-config", "/etc/go2rtc/go2rtc.yaml"]
+CMD ["go2rtc", "-config", "/etc/go2rtc.yaml"]
