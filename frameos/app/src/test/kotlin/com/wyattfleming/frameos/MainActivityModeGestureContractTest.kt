@@ -1,0 +1,98 @@
+package com.wyattfleming.frameos
+
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.nio.file.Files
+import java.nio.file.Paths
+
+class MainActivityModeGestureContractTest {
+    private val source by lazy {
+        val candidates = listOf(
+            Paths.get("app/src/main/kotlin/com/wyattfleming/frameos/MainActivity.kt"),
+            Paths.get("src/main/kotlin/com/wyattfleming/frameos/MainActivity.kt"),
+        )
+        Files.readString(candidates.firstOrNull(Files::exists) ?: error("Missing MainActivity source"))
+    }
+
+    @Test
+    fun `touch and physical gestures enter the coalescing path with their event metadata`() {
+        val onFling = methodBody("override fun onFling(")
+        val onKeyDown = methodBody("override fun onKeyDown(")
+
+        assertContainsInOrder(
+            onFling,
+            listOf(
+                "queueModeGesture(",
+                "ModeGestureDirection.NEXT",
+                "ModeGestureDirection.PREVIOUS",
+                "eventTimeMillis = end.eventTime",
+            ),
+        )
+        assertContainsInOrder(
+            onKeyDown,
+            listOf(
+                "val physicalIntent = inputMapper.mapKeyDown",
+                "physicalIntent == FrameIntent.NextMode || physicalIntent == FrameIntent.PreviousMode",
+                "queueModeGesture(",
+                "eventTimeMillis = event.eventTime",
+                "repeatCount = event.repeatCount",
+                "val intent = physicalIntent ?: debugKeyboardIntent(keyCode)",
+            ),
+        )
+    }
+
+    @Test
+    fun `pending gestures update the HUD and render only their final destination`() {
+        val queue = methodBody("private fun queueModeGesture(")
+        val dispatch = methodBody("private fun dispatch(")
+        val onPause = methodBody("override fun onPause()")
+
+        assertContainsInOrder(
+            queue,
+            listOf(
+                "modeGestureBurst.offer(",
+                "displayedMode = state.mode",
+                "receivedAtMillis = SystemClock.uptimeMillis()",
+                "handler.removeCallbacks(commitModeGesture)",
+                "showHud(update.targetMode.label, update.targetMode)",
+                "handler.postDelayed(commitModeGesture, update.commitDelayMillis)",
+            ),
+        )
+        assertContainsInOrder(
+            source,
+            listOf(
+                "modeGestureBurst.consumeTarget()",
+                "showMode(target, announceHud = false)",
+            ),
+        )
+        assertTrue("explicit actions must supersede a pending gesture", dispatch.contains("cancelModeGesture()"))
+        assertTrue("a paused activity must discard pending navigation", onPause.contains("cancelModeGesture()"))
+    }
+
+    private fun methodBody(signature: String): String {
+        val start = source.indexOf(signature)
+        require(start >= 0) { "Missing signature: $signature" }
+        val bodyStart = source.indexOf('{', start)
+        require(bodyStart >= 0) { "Missing method body for: $signature" }
+        var depth = 0
+        for (index in bodyStart until source.length) {
+            when (source[index]) {
+                '{' -> depth += 1
+                '}' -> {
+                    depth -= 1
+                    if (depth == 0) return source.substring(bodyStart, index + 1)
+                }
+            }
+        }
+        error("Unterminated method body for: $signature")
+    }
+
+    private fun assertContainsInOrder(body: String, snippets: List<String>) {
+        var searchFrom = 0
+        snippets.forEach { snippet ->
+            val foundAt = body.indexOf(snippet, startIndex = searchFrom)
+            assertTrue("Missing snippet in order: $snippet", foundAt >= 0)
+            searchFrom = foundAt + snippet.length
+        }
+    }
+}
