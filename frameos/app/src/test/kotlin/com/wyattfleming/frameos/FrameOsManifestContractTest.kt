@@ -36,6 +36,36 @@ class FrameOsManifestContractTest {
         assertTrue("FrameOS Home intent must be a default resolution candidate", "android.intent.category.DEFAULT" in categories)
     }
 
+    @Test
+    fun `FrameOS declares a private bounded boot recovery entry point`() {
+        val document = DocumentBuilderFactory.newInstance()
+            .newDocumentBuilder()
+            .parse(File("src/main/AndroidManifest.xml"))
+        val permissionNames = document.getElementsByTagName("uses-permission").elements()
+            .map { permission -> permission.getAttribute("android:name") }
+        val receivers = document.getElementsByTagName("receiver").elements()
+        val bootReceiver = receivers.single { receiver ->
+            receiver.getAttribute("android:name") == ".boot.FrameBootRecoveryReceiver"
+        }
+        val actions = bootReceiver.getElementsByTagName("action").elements()
+            .map { action -> action.getAttribute("android:name") }
+
+        assertTrue(
+            "FrameOS must receive the completed-boot broadcast",
+            "android.permission.RECEIVE_BOOT_COMPLETED" in permissionNames,
+        )
+        assertTrue(
+            "FrameOS must be explicitly approved for Android 10 background activity recovery",
+            "android.permission.SYSTEM_ALERT_WINDOW" in permissionNames,
+        )
+        assertTrue(
+            "The boot receiver must not accept arbitrary external broadcasts",
+            bootReceiver.getAttribute("android:exported") == "false",
+        )
+        assertTrue("android.intent.action.BOOT_COMPLETED" in actions)
+        assertTrue("android.intent.action.MY_PACKAGE_REPLACED" in actions)
+    }
+
     private fun org.w3c.dom.NodeList.elements(): List<Element> =
         (0 until length).map { index -> item(index) as Element }
 }
