@@ -8,9 +8,10 @@ dashboard URL enables a sixth disposable view:
 Photos <-> Home <-> Weather <-> [Birds] <-> Cameras <-> Calendar <-> Photos
 ```
 
-The router translates the frame's two OEM gesture events into protected
-FrameOS commands. FrameOS then changes views without opening browser tabs or
-showing an address bar:
+FrameOS maps the observed OEM raw gesture scan codes directly. The
+shell router remains the protected external-control and legacy-browser
+fallback. FrameOS changes views without opening browser tabs or showing an
+address bar:
 
 - Photos and Home Assistant each retain one warm Gecko session.
 - Home, Cameras, and Calendar share one Home Assistant iframe and change its
@@ -214,6 +215,13 @@ session after another mode is selected.
 The supplied Key Mapper profile converts Star to Enter, so its normal physical
 deployment does not claim a separate long-press shortcut.
 
+FrameOS coalesces a rapid gesture burst before it renders an expensive Gecko
+view. Each intentional gesture advances the pending destination and updates
+the mode HUD immediately; only the final destination renders after a 240 ms
+settle window. A burst cannot postpone rendering beyond 900 ms. Key repeats and
+input delivered more than 500 ms late are consumed without replaying stale
+navigation.
+
 ## Record and map the gesture inputs
 
 Keep trusted ADB attached while recording the actual frame events:
@@ -234,7 +242,40 @@ sh /data/local/tmp/frame-mode-router.sh prev
 Set `Execute with ADB` timeouts to at least 30,000 ms. Enable the rules only
 after confirming that no existing global rule uses the same trigger.
 
+Those shell actions are a fallback for legacy routing. Once physical testing
+proves FrameOS receives both raw gestures directly, leave the two Key Mapper
+gesture-to-shell rules disabled. Running both paths for one gesture queues a
+second router command several seconds later, which can replay old mode changes
+and make navigation appear to bounce. Keep unrelated Key Mapper recovery and
+button rules intact.
+
 ## Reboot and recovery
+
+FrameOS declares a private receiver for completed boot and replacement of its
+own package. It tries to foreground `MainActivity` immediately, then schedules
+at most two inexact wake-up retries around 15 and 60 seconds. A successful
+`onResume` cancels the remaining alarms. This is a bounded recovery window, not
+a permanent foreground service, and it adds no ongoing notification.
+
+Android 10 restricts starting an activity from the background. Grant
+**Display over other apps** to FrameOS once, and explicitly allow FrameOS in
+the firmware's hidden **DuraSpeed** application list. These settings are
+per-package; an existing grant for Fully does not cover FrameOS. With trusted
+USB ADB attached, the special-access grant can be applied and verified without
+navigating the no-touch Settings UI:
+
+```sh
+adb -s DEVICE_SERIAL shell appops set \
+  com.wyattfleming.frameos SYSTEM_ALERT_WINDOW allow
+adb -s DEVICE_SERIAL shell appops get \
+  com.wyattfleming.frameos SYSTEM_ALERT_WINDOW
+```
+
+Keep USB attached for the first controlled reboot. Verify FrameOS becomes the
+resumed activity without an explicit `am start`, then test both physical
+gesture directions and a rapid multi-gesture burst. Do not call automatic boot
+recovery verified merely because the receiver is installed or its unit tests
+pass.
 
 Key Mapper's accessibility setting and rules persist, but its Expert Mode ADB
 sysbridge did not auto-start after an ordinary reboot on the tested Android 10
@@ -247,10 +288,11 @@ adb -s DEVICE_SERIAL shell sh \
 ```
 
 Verify that Key Mapper reports `Running`, its accessibility service is bound,
-and the gesture input device exists. Do not reboot this no-touch frame without
-a trusted USB recovery path. Wireless ADB is privileged shell access and did
-not survive reboot on the locked tested firmware; do not expose it to a
-general-purpose LAN.
+and the gesture input device exists when legacy shell mappings are needed.
+FrameOS direct raw gestures do not require that sysbridge. Wireless ADB is
+privileged shell access and did not survive reboot on the locked tested
+firmware; automatic display recovery does not make remote shell maintenance
+persistent, and wireless ADB must not be exposed to a general-purpose LAN.
 
 An interrupted command normally self-recovers after its lease. A malformed lock
 record intentionally does not auto-delete because ownership cannot be proven.
