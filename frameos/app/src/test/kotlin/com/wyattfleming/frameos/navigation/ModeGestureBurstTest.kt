@@ -96,9 +96,9 @@ class ModeGestureBurstTest {
         val nearLimit = offer(burst, ModeGestureDirection.NEXT, 4_850)
         val overdue = offer(burst, ModeGestureDirection.NEXT, 4_950)
 
-        assertEquals(240, first?.commitDelayMillis)
-        assertEquals(50, nearLimit?.commitDelayMillis)
-        assertEquals(0, overdue?.commitDelayMillis)
+        assertEquals(240L, first?.commitDelayMillis)
+        assertEquals(50L, nearLimit?.commitDelayMillis)
+        assertEquals(0L, overdue?.commitDelayMillis)
     }
 
     @Test
