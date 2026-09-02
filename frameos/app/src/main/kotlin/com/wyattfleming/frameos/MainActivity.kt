@@ -25,6 +25,8 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import com.wyattfleming.frameos.navigation.ContextualFrameAction
+import com.wyattfleming.frameos.navigation.ContextualInputMapper
 import com.wyattfleming.frameos.navigation.FrameEffect
 import com.wyattfleming.frameos.navigation.FrameIntent
 import com.wyattfleming.frameos.navigation.FrameMode
@@ -32,8 +34,8 @@ import com.wyattfleming.frameos.navigation.FrameModeAvailability
 import com.wyattfleming.frameos.navigation.FrameReducer
 import com.wyattfleming.frameos.navigation.FrameState
 import com.wyattfleming.frameos.navigation.FrameStartupPolicy
-import com.wyattfleming.frameos.navigation.ContextualFrameAction
-import com.wyattfleming.frameos.navigation.ContextualInputMapper
+import com.wyattfleming.frameos.navigation.ModeGestureBurst
+import com.wyattfleming.frameos.navigation.ModeGestureDirection
 import com.wyattfleming.frameos.navigation.PhysicalInputMapper
 import com.wyattfleming.frameos.auth.AndroidKeystoreOAuthSessionStore
 import com.wyattfleming.frameos.auth.HomeAssistantOAuthClient
@@ -42,6 +44,7 @@ import com.wyattfleming.frameos.auth.OAuthCallbackVerifier
 import com.wyattfleming.frameos.auth.OAuthState
 import com.wyattfleming.frameos.auth.PendingOAuthStateStore
 import com.wyattfleming.frameos.auth.SharedPreferencesPendingOAuthStateStore
+import com.wyattfleming.frameos.boot.FrameBootRecoveryScheduler
 import com.wyattfleming.frameos.config.FrameConfiguration
 import com.wyattfleming.frameos.config.FrameConfigurationStore
 import com.wyattfleming.frameos.control.FrameControlCommand
@@ -82,6 +85,7 @@ class MainActivity : Activity() {
     private val inputMapper = PhysicalInputMapper()
     private val contextualInputMapper = ContextualInputMapper()
     private val handler = Handler(Looper.getMainLooper())
+    private val modeGestureBurst = ModeGestureBurst()
     private val weatherWorkerExecutor: ExecutorService = Executors.newFixedThreadPool(2)
     private val weatherRequestExecutor: ExecutorService = Executors.newFixedThreadPool(3)
     private val authorizationExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -132,6 +136,12 @@ class MainActivity : Activity() {
     private var webSurface: FrameWebSurface? = null
     private val slowPageLoads = mutableMapOf<String, Runnable>()
 
+    private val commitModeGesture = Runnable {
+        modeGestureBurst.consumeTarget()?.let { target ->
+            showMode(target, announceHud = false)
+        }
+    }
+
     private val hideHud = Runnable {
         hud.animate()
             .alpha(0f)
@@ -165,7 +175,15 @@ class MainActivity : Activity() {
                     if (start == null) return false
                     val horizontalDistance = end.x - start.x
                     if (abs(horizontalDistance) < dp(96) || abs(velocityX) < abs(velocityY)) return false
-                    dispatch(if (horizontalDistance < 0) FrameIntent.NextMode else FrameIntent.PreviousMode)
+                    queueModeGesture(
+                        direction = if (horizontalDistance < 0) {
+                            ModeGestureDirection.NEXT
+                        } else {
+                            ModeGestureDirection.PREVIOUS
+                        },
+                        eventTimeMillis = end.eventTime,
+                        repeatCount = 0,
+                    )
                     return true
                 }
             },
@@ -204,6 +222,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        FrameBootRecoveryScheduler.cancelRetries(this)
         activityResumed = true
         enterImmersiveMode()
         render(state, announce = false)
@@ -221,6 +240,7 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         activityResumed = false
+        cancelModeGesture()
         handler.removeCallbacks(refreshVisibleWeather)
         handler.removeCallbacks(preloadCalendar)
         webSurface?.suspendAllContent()
@@ -315,8 +335,21 @@ class MainActivity : Activity() {
             return true
         }
 
-        val intent = inputMapper.mapKeyDown(keyCode = keyCode, scanCode = event.scanCode)
-            ?: debugKeyboardIntent(keyCode)
+        val physicalIntent = inputMapper.mapKeyDown(keyCode = keyCode, scanCode = event.scanCode)
+        if (physicalIntent == FrameIntent.NextMode || physicalIntent == FrameIntent.PreviousMode) {
+            queueModeGesture(
+                direction = if (physicalIntent == FrameIntent.NextMode) {
+                    ModeGestureDirection.NEXT
+                } else {
+                    ModeGestureDirection.PREVIOUS
+                },
+                eventTimeMillis = event.eventTime,
+                repeatCount = event.repeatCount,
+            )
+            return true
+        }
+
+        val intent = physicalIntent ?: debugKeyboardIntent(keyCode)
         return if (intent != null) {
             dispatch(intent)
             true
@@ -571,6 +604,7 @@ class MainActivity : Activity() {
     }
 
     private fun dispatch(intent: FrameIntent) {
+        cancelModeGesture()
         if (intent == FrameIntent.PrimaryAction && state.mode == FrameMode.WEATHER && weatherNeedsAuthentication) {
             beginWeatherAuthorization()
             scheduleIdleReset()
@@ -584,6 +618,31 @@ class MainActivity : Activity() {
         if (modeChanged && state.mode == FrameMode.WEATHER) refreshWeather()
         transition.effects.forEach(::applyEffect)
         scheduleIdleReset()
+    }
+
+    private fun queueModeGesture(
+        direction: ModeGestureDirection,
+        eventTimeMillis: Long,
+        repeatCount: Int,
+    ) {
+        val update = modeGestureBurst.offer(
+            displayedMode = state.mode,
+            direction = direction,
+            eventTimeMillis = eventTimeMillis,
+            receivedAtMillis = SystemClock.uptimeMillis(),
+            repeatCount = repeatCount,
+            availableModes = FrameModeAvailability(configuration?.birdsUrl).cycleModes,
+        ) ?: return
+
+        handler.removeCallbacks(commitModeGesture)
+        showHud(update.targetMode.label, update.targetMode)
+        handler.postDelayed(commitModeGesture, update.commitDelayMillis)
+        scheduleIdleReset()
+    }
+
+    private fun cancelModeGesture() {
+        handler.removeCallbacks(commitModeGesture)
+        modeGestureBurst.cancel()
     }
 
     private fun render(next: FrameState, announce: Boolean) {
@@ -679,7 +738,8 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun showMode(mode: FrameMode) {
+    private fun showMode(mode: FrameMode, announceHud: Boolean = true) {
+        cancelModeGesture()
         val resolvedMode = FrameModeAvailability(configuration?.birdsUrl).resolve(mode)
         val unavailableBirds = mode == FrameMode.BIRDS && resolvedMode != mode
         val changed = state.mode != resolvedMode
@@ -689,7 +749,11 @@ class MainActivity : Activity() {
         )
         render(state, announce = changed)
         if (resolvedMode == FrameMode.WEATHER) refreshWeather()
-        if (unavailableBirds) showHud("Birds is not configured") else if (changed) showHud()
+        if (unavailableBirds) {
+            showHud("Birds is not configured")
+        } else if (changed && announceHud) {
+            showHud()
+        }
         scheduleIdleReset()
     }
 
@@ -981,8 +1045,14 @@ class MainActivity : Activity() {
     }
 
     private fun showHud(message: String = state.mode.label) {
+        showHud(message, state.mode)
+    }
+
+    private fun showHud(message: String, positionMode: FrameMode) {
         val modes = FrameModeAvailability(configuration?.birdsUrl).cycleModes
-        val position = modes.indexOf(state.mode).coerceAtLeast(0)
+        val position = modes.indexOf(positionMode).coerceAtLeast(0)
+        handler.removeCallbacks(hideHud)
+        hud.animate().cancel()
         hudLabel.text = message
         hudPosition.text = modes.indices.joinToString("  ") { index -> if (index == position) "●" else "○" }
         hud.contentDescription = "$message. ${position + 1} of ${modes.size}."
@@ -996,7 +1066,6 @@ class MainActivity : Activity() {
             .setDuration(HUD_FADE_IN_MILLIS)
             .start()
         hud.sendAccessibilityEvent(AccessibilityEvent.TYPE_ANNOUNCEMENT)
-        handler.removeCallbacks(hideHud)
         handler.postDelayed(hideHud, HUD_VISIBLE_MILLIS)
     }
 
