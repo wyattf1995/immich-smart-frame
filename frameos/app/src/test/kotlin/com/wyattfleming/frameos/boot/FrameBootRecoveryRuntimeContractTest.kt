@@ -42,6 +42,7 @@ class FrameBootRecoveryRuntimeContractTest {
         val launch = methodBody(receiver, "fun launch(")
         val onNewIntent = methodBody(activity, "override fun onNewIntent(")
         val onResume = methodBody(activity, "override fun onResume()")
+        val onPageRendered = methodBody(activity, "override fun onPageRendered(")
         val confirmAfterDraw = methodBody(activity, "private fun confirmBootRecoveryAfterNextDraw(")
         val completeAfterDraw = methodBody(activity, "private fun completeBootRecoveryAfterDraw(")
         val onPause = methodBody(activity, "override fun onPause()")
@@ -66,6 +67,14 @@ class FrameBootRecoveryRuntimeContractTest {
         assertFalse(
             "resume alone does not prove the frame rendered usable content",
             onResume.contains("FrameBootRecoveryScheduler.cancelRetries(this)"),
+        )
+        assertContainsInOrder(
+            onPageRendered,
+            listOf(
+                "isWebLabelActive(label)",
+                "webSurface?.isDisplayingRenderedLabel(label) == true",
+                "confirmBootRecoveryAfterNextDraw(webLabel = label)",
+            ),
         )
         assertContainsInOrder(
             confirmAfterDraw,

@@ -61,10 +61,20 @@ grep -Eq '^  overlap:[[:space:]]*2[.]4([[:space:]]|$)' "$CONFIG_FILE" || \
   fail 'BirdNET overlap must support balanced repeated-detection filtering'
 grep -Eq '^  falsepositivefilter:[[:space:]]*$' "$CONFIG_FILE" || \
   fail 'BirdNET config must include false-positive filtering'
-grep -Eq '^    level:[[:space:]]*3([[:space:]]|$)' "$CONFIG_FILE" || \
-  fail 'BirdNET config must use balanced false-positive filtering'
+awk '
+  /^  falsepositivefilter:[[:space:]]*$/ { in_filter = 1; next }
+  in_filter && /^  [^[:space:]]/ { in_filter = 0 }
+  in_filter && /^    level:[[:space:]]*3([[:space:]]|$)/ { balanced = 1 }
+  END { exit(balanced ? 0 : 1) }
+' "$CONFIG_FILE" || fail 'BirdNET config must use balanced false-positive filtering'
 grep -Eq '^  dogbarkfilter:[[:space:]]*$' "$CONFIG_FILE" || \
   fail 'BirdNET config must include dog-bark filtering'
+awk '
+  /^  dogbarkfilter:[[:space:]]*$/ { in_filter = 1; next }
+  in_filter && /^  [^[:space:]]/ { in_filter = 0 }
+  in_filter && /^    enabled:[[:space:]]*true([[:space:]]|$)/ { enabled = 1 }
+  END { exit(enabled ? 0 : 1) }
+' "$CONFIG_FILE" || fail 'BirdNET dog-bark filtering must be enabled'
 grep -Eq '^      - american crow[[:space:]]*$' "$CONFIG_FILE" || \
   fail 'dog-bark filter must include the observed American Crow confusion'
 grep -Eq '^  locationconfigured:[[:space:]]*false([[:space:]]|$)' "$CONFIG_FILE" || \
