@@ -107,6 +107,43 @@ class FrameWebSurfaceContractTest {
     }
 
     @Test
+    fun `hidden or inactive content cannot retain a paint recovery watchdog`() {
+        val source = source()
+        val setActive = methodBody(source, "fun setActive(active: Boolean)")
+        val stopWatching = methodBody(source, "fun stopWatchingDisplayedContent()")
+        val show = methodBody(source, "fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean)")
+        val hide = methodBody(source, "fun hide()")
+
+        assertContainsInOrder(
+            setActive,
+            listOf(
+                "if (active)",
+                "lifecycleSuspended = false",
+                "else",
+                "lifecycleSuspended = true",
+                "stopWatchingDisplayedContent()",
+                "session.setActive(active)",
+            ),
+        )
+        assertContainsInOrder(
+            stopWatching,
+            listOf(
+                "val pageLoad = disarmPageLoadWatchdog()",
+                "if (pageLoad.hadActiveLoad && !renderedState.rendered)",
+                "loadState.recordFailure()",
+            ),
+        )
+        assertContainsInOrder(
+            show,
+            listOf(
+                "if (displayedSlot != null && displayedSlot != slot)",
+                "displayedManagedSession()?.stopWatchingDisplayedContent()",
+            ),
+        )
+        assertTrue(hide.contains("displayedManagedSession()?.stopWatchingDisplayedContent()"))
+    }
+
+    @Test
     fun `only the displayed rendered session can report boot readiness`() {
         val source = source()
         val show = methodBody(source, "fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean)")

@@ -31,13 +31,13 @@ const helpers = new Function(
 
 assert.deepEqual(helpers.verificationStatus({ verified: "correct" }), {
   key: "confirmed",
-  label: "Confirmed by review",
-  shortLabel: "Confirmed",
+  label: "Marked correct",
+  shortLabel: "Marked correct",
 });
 assert.deepEqual(helpers.verificationStatus({ verified: "false_positive" }), {
   key: "rejected",
-  label: "Rejected after review",
-  shortLabel: "Rejected",
+  label: "Marked false positive",
+  shortLabel: "False positive",
 });
 
 for (const detection of [
