@@ -69,6 +69,69 @@ class MainActivityModeGestureContractTest {
     }
 
     @Test
+    fun `lenovo firmware gestures navigate once from key release`() {
+        val dispatchKeyEvent = methodBody("override fun dispatchKeyEvent(")
+        val handleLenovoGestureKeyEvent = methodBody("private fun handleLenovoGestureKeyEvent(")
+
+        assertContainsInOrder(
+            dispatchKeyEvent,
+            listOf(
+                "if (handleLenovoGestureKeyEvent(event)) return true",
+                "if (handleTranslatedGestureKeyEvent(event)) return true",
+                "contextualInputMapper.map(state.mode, event.keyCode, event.isShiftPressed)",
+            ),
+        )
+        assertContainsInOrder(
+            handleLenovoGestureKeyEvent,
+            listOf(
+                "val physicalIntent = inputMapper.mapLenovoGesture",
+                "if (physicalIntent == null) return false",
+                "event.action == KeyEvent.ACTION_UP",
+                "queueModeGesture(",
+                "eventTimeMillis = event.eventTime",
+                "repeatCount = event.repeatCount",
+                "return true",
+            ),
+        )
+    }
+
+    @Test
+    fun `volume buttons release contextual tab clicks instead of changing views`() {
+        val dispatchKeyEvent = methodBody("override fun dispatchKeyEvent(")
+        val handleContextualVolumeKeyEvent = methodBody("private fun handleContextualVolumeKeyEvent(")
+        val dispatchContextualTabClick = methodBody("private fun dispatchContextualTabClick(")
+
+        assertContainsInOrder(
+            dispatchKeyEvent,
+            listOf(
+                "if (handleContextualVolumeKeyEvent(event)) return true",
+                "contextualInputMapper.map(state.mode, event.keyCode, event.isShiftPressed)",
+            ),
+        )
+        assertContainsInOrder(
+            handleContextualVolumeKeyEvent,
+            listOf(
+                "KeyEvent.KEYCODE_VOLUME_DOWN -> true",
+                "KeyEvent.KEYCODE_VOLUME_UP -> false",
+                "event.action == KeyEvent.ACTION_UP",
+                "dispatchContextualTabClick(forward, event.eventTime)",
+                "return true",
+            ),
+        )
+        assertContainsInOrder(
+            dispatchContextualTabClick,
+            listOf(
+                "KeyEvent.KEYCODE_TAB",
+                "KeyEvent.META_SHIFT_ON",
+                "KeyEvent.ACTION_DOWN",
+                "KeyEvent.ACTION_UP",
+                "dispatchKeyEvent(down)",
+                "dispatchKeyEvent(up)",
+            ),
+        )
+    }
+
+    @Test
     fun `pending gestures update the HUD and render only their final destination`() {
         val queue = methodBody("private fun queueModeGesture(")
         val dispatch = methodBody("private fun dispatch(")

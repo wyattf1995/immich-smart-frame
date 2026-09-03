@@ -45,15 +45,9 @@ class PhysicalInputMapperTest {
     }
 
     @Test
-    fun `volume buttons provide direct mode navigation without a shell bridge`() {
-        assertEquals(
-            FrameIntent.NextMode,
-            mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_VOLUME_UP, scanCode = 115),
-        )
-        assertEquals(
-            FrameIntent.PreviousMode,
-            mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_VOLUME_DOWN, scanCode = 114),
-        )
+    fun `volume buttons remain reserved for contextual view controls`() {
+        assertNull(mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_VOLUME_UP, scanCode = 115))
+        assertNull(mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_VOLUME_DOWN, scanCode = 114))
     }
 
     @Test
