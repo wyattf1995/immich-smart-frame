@@ -27,6 +27,12 @@ class PhysicalInputMapperTest {
     }
 
     @Test
+    fun `lenovo vendor gesture key codes navigate without a scan code bridge`() {
+        assertEquals(FrameIntent.NextMode, mapper.mapKeyDown(keyCode = 291, scanCode = 0))
+        assertEquals(FrameIntent.PreviousMode, mapper.mapKeyDown(keyCode = 292, scanCode = 0))
+    }
+
+    @Test
     fun `star is contextual and long star goes directly home`() {
         assertEquals(
             FrameIntent.PrimaryAction,
