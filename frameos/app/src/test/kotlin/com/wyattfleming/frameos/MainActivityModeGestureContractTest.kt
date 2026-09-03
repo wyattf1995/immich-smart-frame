@@ -96,7 +96,7 @@ class MainActivityModeGestureContractTest {
     }
 
     @Test
-    fun `volume buttons release contextual tab clicks instead of changing views`() {
+    fun `volume plus advances and volume minus goes back within the current view`() {
         val dispatchKeyEvent = methodBody("override fun dispatchKeyEvent(")
         val handleContextualVolumeKeyEvent = methodBody("private fun handleContextualVolumeKeyEvent(")
         val dispatchContextualTabClick = methodBody("private fun dispatchContextualTabClick(")
@@ -111,8 +111,8 @@ class MainActivityModeGestureContractTest {
         assertContainsInOrder(
             handleContextualVolumeKeyEvent,
             listOf(
-                "KeyEvent.KEYCODE_VOLUME_DOWN -> true",
-                "KeyEvent.KEYCODE_VOLUME_UP -> false",
+                "KeyEvent.KEYCODE_VOLUME_UP -> true",
+                "KeyEvent.KEYCODE_VOLUME_DOWN -> false",
                 "event.action == KeyEvent.ACTION_UP",
                 "dispatchContextualTabClick(forward, event.eventTime)",
                 "return true",
