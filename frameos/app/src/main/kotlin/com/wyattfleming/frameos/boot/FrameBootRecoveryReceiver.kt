@@ -54,7 +54,7 @@ internal object FrameBootRecoveryScheduler {
             Log.w(LOG_TAG, "Boot recovery skipped until display-over-other-apps access is granted")
             return
         }
-        val launchIntent = Intent(context, MainActivity::class.java).addFlags(
+        val launchIntent = Intent(context, MainActivity::class.java).setAction(ACTION_RETRY).addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_CLEAR_TOP or
                 Intent.FLAG_ACTIVITY_SINGLE_TOP,

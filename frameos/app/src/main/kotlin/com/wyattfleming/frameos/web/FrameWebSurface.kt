@@ -40,6 +40,7 @@ class FrameWebSurface(
         fun onPageUnavailable(label: String)
         fun onPageRecovery(label: String, attempt: Int, retryInMillis: Long)
         fun onPageRecovered(label: String)
+        fun onPageRenderInvalidated(label: String)
         fun onPageRendered(label: String)
     }
 
@@ -96,20 +97,19 @@ class FrameWebSurface(
             }
             session.progressDelegate = object : GeckoSession.ProgressDelegate {
                 override fun onPageStart(session: GeckoSession, url: String) {
+                    renderedState.recordPageStart()
+                    listener.onPageRenderInvalidated(label)
                     armPageLoadWatchdog(session)
                     listener.onPageLoading(label, true)
                 }
 
                 override fun onPageStop(session: GeckoSession, success: Boolean) {
-                    val pageLoad = disarmPageLoadWatchdog()
                     listener.onPageLoading(label, false)
                     if (!success) {
+                        val pageLoad = disarmPageLoadWatchdog()
                         renderedState.recordFailure()
                         if (!pageLoad.timedOut) reportUnavailable(this@ManagedSession)
                     } else {
-                        loadState.recordSuccess()
-                        resetRecovery(this@ManagedSession)
-                        listener.onPageRecovered(label)
                         val newlyRendered = renderedState.recordPageStop(success = true)
                         maybeReportRendered(newlyRendered)
                     }
@@ -119,6 +119,21 @@ class FrameWebSurface(
                 override fun onFirstContentfulPaint(session: GeckoSession) {
                     val newlyRendered = renderedState.recordFirstContentfulPaint()
                     maybeReportRendered(newlyRendered)
+                }
+
+                override fun onPaintStatusReset(session: GeckoSession) {
+                    val invalidatedRenderedContent = renderedState.recordPaintStatusReset()
+                    listener.onPageRenderInvalidated(label)
+                    if (!invalidatedRenderedContent) return
+                    if (
+                        lifecycleSuspended ||
+                        this@ManagedSession !== displayedManagedSession() ||
+                        !displayedSurfaceVisible()
+                    ) {
+                        loadState.recordFailure()
+                        return
+                    }
+                    armPageLoadWatchdog(session)
                 }
 
                 override fun onCrash(session: GeckoSession) {
@@ -159,12 +174,32 @@ class FrameWebSurface(
 
         private fun maybeReportRendered(newlyRendered: Boolean) {
             if (!newlyRendered) return
+            val pageLoad = disarmPageLoadWatchdog()
+            if (pageLoad.timedOut) {
+                renderedState.recordFailure()
+                return
+            }
+            loadState.recordSuccess()
+            resetRecovery(this)
+            listener.onPageRecovered(label)
             this@FrameWebSurface.reportRenderedIfDisplayed(this)
         }
 
-        fun setActive(active: Boolean) = runWhenSessionUsable {
-            if (active) lifecycleSuspended = false
-            session.setActive(active)
+        fun setActive(active: Boolean) {
+            if (active) {
+                lifecycleSuspended = false
+            } else {
+                lifecycleSuspended = true
+                stopWatchingDisplayedContent()
+            }
+            runWhenSessionUsable { session.setActive(active) }
+        }
+
+        fun stopWatchingDisplayedContent() {
+            val pageLoad = disarmPageLoadWatchdog()
+            if (pageLoad.hadActiveLoad && !renderedState.rendered) {
+                loadState.recordFailure()
+            }
         }
 
         fun setFocused(focused: Boolean) = runWhenSessionUsable {
@@ -293,6 +328,9 @@ class FrameWebSurface(
     }
 
     fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean) {
+        if (displayedSlot != null && displayedSlot != slot) {
+            displayedManagedSession()?.stopWatchingDisplayedContent()
+        }
         if (slot == FrameWebSlot.HOME_ASSISTANT) {
             removeCallbacks(evictHiddenHome)
             hiddenHomeLifecycle.onHomeShown()
@@ -340,6 +378,7 @@ class FrameWebSurface(
     }
 
     fun hide() {
+        displayedManagedSession()?.stopWatchingDisplayedContent()
         visibility = View.GONE
         if (displayedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
         if (displayedSlot == FrameWebSlot.BIRDS) disposeBirdsSession()
@@ -373,6 +412,14 @@ class FrameWebSurface(
     fun isDisplayingRenderedLabel(label: String): Boolean {
         val managed = displayedManagedSession() ?: return false
         return managed.label == label && managed.renderedState.rendered && displayedSurfaceVisible()
+    }
+
+    fun retryDisplayedContentIfUnrendered(): Boolean {
+        val managed = displayedManagedSession() ?: return false
+        if (managed.renderedState.rendered) return false
+        val url = managed.loadState.recoveryUrl() ?: return false
+        cancelRecovery(managed)
+        return managed.request(url)
     }
 
     fun suspendAllContent() {

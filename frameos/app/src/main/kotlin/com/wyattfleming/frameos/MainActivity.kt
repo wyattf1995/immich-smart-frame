@@ -141,6 +141,7 @@ class MainActivity : Activity() {
     private var bootRecoveryConfirmed = false
     private var pendingBootRecoveryDraw: ViewTreeObserver.OnDrawListener? = null
     private var pendingBootRecoveryObserver: ViewTreeObserver? = null
+    private var pendingBootRecoveryWebLabel: String? = null
 
     private val commitModeGesture = Runnable {
         modeGestureBurst.consumeTarget()?.let { target ->
@@ -224,6 +225,9 @@ class MainActivity : Activity() {
         handleOAuthCallback(intent)
         handleFrameCommand(intent)
         handlePendingControl()
+        if (!bootRecoveryConfirmed && intent.action == FrameBootRecoveryScheduler.ACTION_RETRY) {
+            webSurface?.retryDisplayedContentIfUnrendered()
+        }
     }
 
     override fun onResume() {
@@ -514,6 +518,12 @@ class MainActivity : Activity() {
                     }
                 }
 
+                override fun onPageRenderInvalidated(label: String) {
+                    runOnUiThread {
+                        if (pendingBootRecoveryWebLabel == label) cancelPendingBootRecoveryConfirmation()
+                    }
+                }
+
                 override fun onPageRendered(label: String) {
                     runOnUiThread {
                         if (
@@ -521,7 +531,7 @@ class MainActivity : Activity() {
                             isWebLabelActive(label) &&
                             webSurface?.isDisplayingRenderedLabel(label) == true
                         ) {
-                            confirmBootRecoveryAfterNextDraw()
+                            confirmBootRecoveryAfterNextDraw(webLabel = label)
                         }
                     }
                 }
@@ -776,14 +786,19 @@ class MainActivity : Activity() {
         scheduleWeatherRefresh()
     }
 
-    private fun confirmBootRecoveryAfterNextDraw() {
-        if (bootRecoveryConfirmed || !activityResumed || pendingBootRecoveryDraw != null) return
+    private fun confirmBootRecoveryAfterNextDraw(webLabel: String? = null) {
+        if (bootRecoveryConfirmed || !activityResumed) return
+        if (pendingBootRecoveryDraw != null) {
+            if (pendingBootRecoveryWebLabel == webLabel) return
+            cancelPendingBootRecoveryConfirmation()
+        }
         lateinit var drawListener: ViewTreeObserver.OnDrawListener
         drawListener = ViewTreeObserver.OnDrawListener {
             completeBootRecoveryAfterDraw(drawListener)
         }
         pendingBootRecoveryDraw = drawListener
         pendingBootRecoveryObserver = root.viewTreeObserver
+        pendingBootRecoveryWebLabel = webLabel
         root.viewTreeObserver.addOnDrawListener(drawListener)
         root.invalidate()
     }
@@ -791,8 +806,15 @@ class MainActivity : Activity() {
     private fun completeBootRecoveryAfterDraw(drawListener: ViewTreeObserver.OnDrawListener) {
         root.post {
             if (pendingBootRecoveryDraw !== drawListener) return@post
+            val pendingWebLabel = pendingBootRecoveryWebLabel
             cancelPendingBootRecoveryConfirmation()
             if (!activityResumed || bootRecoveryConfirmed) return@post
+            if (
+                pendingWebLabel != null &&
+                webSurface?.isDisplayingRenderedLabel(pendingWebLabel) != true
+            ) {
+                return@post
+            }
             FrameBootRecoveryScheduler.cancelRetries(this)
             bootRecoveryConfirmed = true
         }
@@ -804,6 +826,7 @@ class MainActivity : Activity() {
         if (observer?.isAlive == true && listener != null) observer.removeOnDrawListener(listener)
         pendingBootRecoveryObserver = null
         pendingBootRecoveryDraw = null
+        pendingBootRecoveryWebLabel = null
     }
 
     private fun scheduleCalendarPreload() {
