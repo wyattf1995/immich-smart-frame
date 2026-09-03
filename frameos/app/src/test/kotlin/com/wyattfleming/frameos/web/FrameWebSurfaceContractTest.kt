@@ -10,8 +10,10 @@ class FrameWebSurfaceContractTest {
     @Test
     fun `render readiness requires both a successful stop and contentful paint`() {
         val source = source()
+        val pageStart = methodBody(source, "override fun onPageStart(")
         val pageStop = methodBody(source, "override fun onPageStop(")
         val firstContentfulPaint = methodBody(source, "override fun onFirstContentfulPaint(")
+        val paintStatusReset = methodBody(source, "override fun onPaintStatusReset(")
         val request = methodBody(source, "fun request(url: String)")
         val maybeReportRendered = methodBody(source, "private fun maybeReportRendered(")
 
@@ -28,6 +30,14 @@ class FrameWebSurfaceContractTest {
             ),
         )
         assertContainsInOrder(
+            pageStart,
+            listOf(
+                "renderedState.recordPageStart()",
+                "listener.onPageRenderInvalidated(label)",
+                "armPageLoadWatchdog(session)",
+            ),
+        )
+        assertContainsInOrder(
             pageStop,
             listOf(
                 "if (!success)",
@@ -35,6 +45,14 @@ class FrameWebSurfaceContractTest {
                 "renderedState.recordPageStop(success = true)",
                 "maybeReportRendered(",
             ),
+        )
+        assertFalse(
+            "a successful network load is not usable until Gecko paints it",
+            pageStop.contains("resetRecovery(") || pageStop.contains("listener.onPageRecovered("),
+        )
+        assertFalse(
+            "the page watchdog must remain armed after page stop until paint qualifies",
+            pageStop.substringAfter("} else {").contains("disarmPageLoadWatchdog()"),
         )
         assertContainsInOrder(
             firstContentfulPaint,
@@ -44,10 +62,39 @@ class FrameWebSurfaceContractTest {
             ),
         )
         assertContainsInOrder(
+            paintStatusReset,
+            listOf(
+                "renderedState.recordPaintStatusReset()",
+                "listener.onPageRenderInvalidated(label)",
+            ),
+        )
+        assertContainsInOrder(
             maybeReportRendered,
             listOf(
                 "if (!newlyRendered) return",
+                "val pageLoad = disarmPageLoadWatchdog()",
+                "if (pageLoad.timedOut)",
+                "renderedState.recordFailure()",
+                "loadState.recordSuccess()",
+                "resetRecovery(this)",
+                "listener.onPageRecovered(label)",
                 "reportRenderedIfDisplayed(this)",
+            ),
+        )
+    }
+
+    @Test
+    fun `boot retry actively reloads only an unrendered displayed web session`() {
+        val retry = methodBody(source(), "fun retryDisplayedContentIfUnrendered()")
+
+        assertContainsInOrder(
+            retry,
+            listOf(
+                "val managed = displayedManagedSession() ?: return false",
+                "if (managed.renderedState.rendered) return false",
+                "val url = managed.loadState.recoveryUrl() ?: return false",
+                "cancelRecovery(managed)",
+                "managed.request(url)",
             ),
         )
     }

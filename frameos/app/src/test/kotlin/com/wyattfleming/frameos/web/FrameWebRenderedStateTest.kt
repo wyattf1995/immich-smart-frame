@@ -10,6 +10,7 @@ class FrameWebRenderedStateTest {
         val state = FrameWebRenderedState()
 
         state.recordRequest()
+        state.recordPageStart()
         assertFalse(state.recordPageStop(success = true))
         assertTrue(state.recordFirstContentfulPaint())
         assertFalse(state.recordFirstContentfulPaint())
@@ -21,6 +22,7 @@ class FrameWebRenderedStateTest {
         val state = FrameWebRenderedState()
 
         state.recordRequest()
+        state.recordPageStart()
         assertFalse(state.recordFirstContentfulPaint())
         assertTrue(state.recordPageStop(success = true))
         assertFalse(state.recordPageStop(success = true))
@@ -32,6 +34,7 @@ class FrameWebRenderedStateTest {
         val state = FrameWebRenderedState()
 
         state.recordRequest()
+        state.recordPageStart()
         assertFalse(state.recordFirstContentfulPaint())
         assertFalse(state.recordPageStop(success = false))
         assertFalse(state.rendered)
@@ -42,11 +45,13 @@ class FrameWebRenderedStateTest {
         val state = FrameWebRenderedState()
 
         state.recordRequest()
+        state.recordPageStart()
         state.recordPageStop(success = true)
         state.recordFirstContentfulPaint()
         assertTrue(state.rendered)
 
         state.recordRequest()
+        state.recordPageStart()
         assertFalse(state.rendered)
         assertFalse(state.recordPageStop(success = true))
 
@@ -54,5 +59,50 @@ class FrameWebRenderedStateTest {
         assertTrue(state.rendered)
         state.recordFailure()
         assertFalse(state.rendered)
+    }
+
+    @Test
+    fun `callbacks before page start cannot qualify initial blank content`() {
+        val state = FrameWebRenderedState()
+
+        state.recordRequest()
+        assertFalse(state.recordFirstContentfulPaint())
+        assertFalse(state.recordPageStop(success = true))
+        assertFalse(state.rendered)
+
+        state.recordPageStart()
+        assertFalse(state.recordPageStop(success = true))
+        assertTrue(state.recordFirstContentfulPaint())
+    }
+
+    @Test
+    fun `new page start discards both successful load and painted content`() {
+        val state = FrameWebRenderedState()
+
+        state.recordRequest()
+        state.recordPageStart()
+        state.recordPageStop(success = true)
+        assertTrue(state.recordFirstContentfulPaint())
+
+        state.recordPageStart()
+        assertFalse(state.rendered)
+        assertFalse(state.recordFirstContentfulPaint())
+        assertTrue(state.recordPageStop(success = true))
+    }
+
+    @Test
+    fun `paint reset invalidates content but preserves a successful loaded page`() {
+        val state = FrameWebRenderedState()
+
+        state.recordRequest()
+        state.recordPageStart()
+        state.recordPageStop(success = true)
+        assertTrue(state.recordFirstContentfulPaint())
+
+        assertTrue(state.recordPaintStatusReset())
+        assertFalse(state.rendered)
+        assertFalse(state.recordPaintStatusReset())
+        assertTrue(state.recordFirstContentfulPaint())
+        assertFalse(state.recordFirstContentfulPaint())
     }
 }

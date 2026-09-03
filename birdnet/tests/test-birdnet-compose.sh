@@ -54,6 +54,24 @@ grep -Fq 'recent: true' "$CONFIG_FILE" || fail 'recent detections must include b
 grep -Fq 'imageprovider: avicommons' "$CONFIG_FILE" || fail 'bird images must prefer the attribution-aware AviCommons provider'
 grep -Fq 'fallbackpolicy: all' "$CONFIG_FILE" || fail 'bird images must fall back across supported providers'
 
+# Require repeated agreement before a model result reaches the dashboard, and
+# explicitly cover the observed dog-bark-to-crow failure mode. The tracked
+# coordinates remain placeholders; the private deployment must set location.
+grep -Eq '^  overlap:[[:space:]]*2[.]4([[:space:]]|$)' "$CONFIG_FILE" || \
+  fail 'BirdNET overlap must support balanced repeated-detection filtering'
+grep -Eq '^  falsepositivefilter:[[:space:]]*$' "$CONFIG_FILE" || \
+  fail 'BirdNET config must include false-positive filtering'
+grep -Eq '^    level:[[:space:]]*3([[:space:]]|$)' "$CONFIG_FILE" || \
+  fail 'BirdNET config must use balanced false-positive filtering'
+grep -Eq '^  dogbarkfilter:[[:space:]]*$' "$CONFIG_FILE" || \
+  fail 'BirdNET config must include dog-bark filtering'
+grep -Eq '^      - american crow[[:space:]]*$' "$CONFIG_FILE" || \
+  fail 'dog-bark filter must include the observed American Crow confusion'
+grep -Eq '^  locationconfigured:[[:space:]]*false([[:space:]]|$)' "$CONFIG_FILE" || \
+  fail 'public config must explicitly mark placeholder coordinates as unconfigured'
+grep -Eiq 'private.*location|location.*private' "$OPS_FILE" || \
+  fail 'operations must require private deployment coordinates'
+
 # Audio clips contain household audio and need a deterministic, age-based
 # retention policy. A usage-only policy can retain old clips indefinitely on a
 # mostly-empty disk, so the 30-day age bound is part of the tracked safe

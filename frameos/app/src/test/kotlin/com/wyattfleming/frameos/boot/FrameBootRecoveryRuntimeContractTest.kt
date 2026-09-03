@@ -40,6 +40,7 @@ class FrameBootRecoveryRuntimeContractTest {
         val receiver = source("app/src/main/kotlin/com/wyattfleming/frameos/boot/FrameBootRecoveryReceiver.kt")
         val activity = source("app/src/main/kotlin/com/wyattfleming/frameos/MainActivity.kt")
         val launch = methodBody(receiver, "fun launch(")
+        val onNewIntent = methodBody(activity, "override fun onNewIntent(")
         val onResume = methodBody(activity, "override fun onResume()")
         val confirmAfterDraw = methodBody(activity, "private fun confirmBootRecoveryAfterNextDraw(")
         val completeAfterDraw = methodBody(activity, "private fun completeBootRecoveryAfterDraw(")
@@ -50,8 +51,16 @@ class FrameBootRecoveryRuntimeContractTest {
             listOf(
                 "Settings.canDrawOverlays(context)",
                 "Intent(context, MainActivity::class.java)",
+                ".setAction(ACTION_RETRY)",
                 "Intent.FLAG_ACTIVITY_NEW_TASK",
                 "context.startActivity(launchIntent)",
+            ),
+        )
+        assertContainsInOrder(
+            onNewIntent,
+            listOf(
+                "if (!bootRecoveryConfirmed && intent.action == FrameBootRecoveryScheduler.ACTION_RETRY)",
+                "webSurface?.retryDisplayedContentIfUnrendered()",
             ),
         )
         assertFalse(
@@ -71,6 +80,8 @@ class FrameBootRecoveryRuntimeContractTest {
             listOf(
                 "root.post",
                 "if (!activityResumed || bootRecoveryConfirmed)",
+                "pendingWebLabel != null",
+                "webSurface?.isDisplayingRenderedLabel(pendingWebLabel) != true",
                 "FrameBootRecoveryScheduler.cancelRetries(this)",
                 "bootRecoveryConfirmed = true",
             ),

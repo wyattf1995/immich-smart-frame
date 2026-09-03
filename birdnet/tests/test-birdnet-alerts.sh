@@ -37,10 +37,8 @@ grep -Eq 'types:[[:space:]]*\[detection\]' "$PROVIDER_FILE" || \
   fail 'provider must filter to detection notifications'
 grep -Eq 'priorities:[[:space:]]*\[high,[[:space:]]*critical\]' "$PROVIDER_FILE" || \
   fail 'provider must filter to high and critical notifications'
-grep -Eq 'min_confidence_threshold:[[:space:]]*0[.]95([[:space:]]|$)' "$PROVIDER_FILE" || \
-  fail 'provider must reject phone alerts below the documented 95% confidence gate'
-grep -Eq 'species_cooldown_minutes:[[:space:]]*15([[:space:]]|$)' "$PROVIDER_FILE" || \
-  fail 'provider must retain the documented 15-minute per-species cooldown'
+! grep -Eq 'min_confidence_threshold:|species_cooldown_minutes:' "$PROVIDER_FILE" || \
+  fail 'provider-level gates are bypassed by the pinned alert engine and must not imply protection'
 for payload_field in Type Priority Title Message timestamp; do
   grep -Fq "{{.${payload_field}}}" "$PROVIDER_FILE" || fail "bounded payload is missing ${payload_field}"
 done
@@ -52,12 +50,14 @@ done
 ! grep -Eq '[[:xdigit:]]{32,}' "$AUTOMATION_FILE" "$PROVIDER_FILE" || \
   fail 'tracked alert examples must not contain a real high-entropy webhook ID'
 
-grep -Eiq 'new species' "$OPS_FILE" || fail 'operations must document new-species phone alerts'
-grep -Eiq 'infrequent species' "$OPS_FILE" || fail 'operations must document infrequent-species phone alerts'
+grep -Eiq 'built-in.*bell.only|bell.only.*built-in' "$OPS_FILE" || \
+  fail 'operations must keep ungated built-in novelty rules off phone push'
 grep -Eiq 'high-confidence|high confidence' "$OPS_FILE" || fail 'operations must document high-confidence phone alerts'
 grep -Eq '95%' "$OPS_FILE" || fail 'operations must state the high-confidence threshold'
 grep -Eiq '15[- ]minute|900[- ]second' "$OPS_FILE" || fail 'operations must document high-confidence cooldown'
 grep -Eiq 'test notification|test alert' "$OPS_FILE" || fail 'operations must document an end-to-end phone alert test'
 grep -Eiq 'alert.*rollback|rollback.*alert' "$OPS_FILE" || fail 'operations must document phone-alert rollback'
+grep -Eiq 'candidate.*not.*confirm|not.*confirm.*candidate' "$OPS_FILE" || \
+  fail 'operations must state that confidence-gated alerts are still unconfirmed candidates'
 
 printf 'PASS: BirdNET Home Assistant alert contract\n'
