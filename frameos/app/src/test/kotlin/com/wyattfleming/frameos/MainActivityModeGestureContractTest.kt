@@ -111,10 +111,12 @@ class MainActivityModeGestureContractTest {
         assertContainsInOrder(
             handleContextualVolumeKeyEvent,
             listOf(
-                "KeyEvent.KEYCODE_VOLUME_UP -> true",
-                "KeyEvent.KEYCODE_VOLUME_DOWN -> false",
-                "event.action == KeyEvent.ACTION_UP",
-                "dispatchContextualTabClick(forward, event.eventTime)",
+                "KeyEvent.KEYCODE_VOLUME_UP -> VolumeButton.UP",
+                "KeyEvent.KEYCODE_VOLUME_DOWN -> VolumeButton.DOWN",
+                "KeyEvent.ACTION_DOWN -> volumeInput.onDown(button, event.repeatCount)",
+                "KeyEvent.ACTION_UP -> volumeInput.onUp(button)",
+                "VolumeInputEffect.Step -> dispatchContextualTabClick(effect.forward, event.eventTime)",
+                "VolumeInputEffect.RestoreAutoBrightness -> dispatch(FrameIntent.RestoreAutoBrightness)",
                 "return true",
             ),
         )
@@ -127,6 +129,21 @@ class MainActivityModeGestureContractTest {
                 "KeyEvent.ACTION_UP",
                 "dispatchKeyEvent(down)",
                 "dispatchKeyEvent(up)",
+            ),
+        )
+    }
+
+    @Test
+    fun `volume state is discarded whenever activity input ownership is lost`() {
+        val onPause = methodBody("override fun onPause()")
+        val onWindowFocusChanged = methodBody("override fun onWindowFocusChanged(")
+
+        assertTrue("pausing must discard held volume state", onPause.contains("volumeInput.reset()"))
+        assertContainsInOrder(
+            onWindowFocusChanged,
+            listOf(
+                "super.onWindowFocusChanged(hasFocus)",
+                "if (!hasFocus) volumeInput.reset()",
             ),
         )
     }
