@@ -42,6 +42,7 @@ class FrameBootRecoveryRuntimeContractTest {
         val launch = methodBody(receiver, "fun launch(")
         val onResume = methodBody(activity, "override fun onResume()")
         val confirmAfterDraw = methodBody(activity, "private fun confirmBootRecoveryAfterNextDraw(")
+        val completeAfterDraw = methodBody(activity, "private fun completeBootRecoveryAfterDraw(")
         val onPause = methodBody(activity, "override fun onPause()")
 
         assertContainsInOrder(
@@ -63,6 +64,11 @@ class FrameBootRecoveryRuntimeContractTest {
                 "if (bootRecoveryConfirmed || !activityResumed",
                 "root.viewTreeObserver.addOnDrawListener",
                 "root.invalidate()",
+            ),
+        )
+        assertContainsInOrder(
+            completeAfterDraw,
+            listOf(
                 "root.post",
                 "if (!activityResumed || bootRecoveryConfirmed)",
                 "FrameBootRecoveryScheduler.cancelRetries(this)",
