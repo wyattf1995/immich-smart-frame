@@ -37,6 +37,10 @@ grep -Eq 'types:[[:space:]]*\[detection\]' "$PROVIDER_FILE" || \
   fail 'provider must filter to detection notifications'
 grep -Eq 'priorities:[[:space:]]*\[high,[[:space:]]*critical\]' "$PROVIDER_FILE" || \
   fail 'provider must filter to high and critical notifications'
+grep -Eq 'min_confidence_threshold:[[:space:]]*0[.]95([[:space:]]|$)' "$PROVIDER_FILE" || \
+  fail 'provider must reject phone alerts below the documented 95% confidence gate'
+grep -Eq 'species_cooldown_minutes:[[:space:]]*15([[:space:]]|$)' "$PROVIDER_FILE" || \
+  fail 'provider must retain the documented 15-minute per-species cooldown'
 for payload_field in Type Priority Title Message timestamp; do
   grep -Fq "{{.${payload_field}}}" "$PROVIDER_FILE" || fail "bounded payload is missing ${payload_field}"
 done

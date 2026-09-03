@@ -111,7 +111,7 @@ grep -Fq 'min-height: 420px;' <<<"$short_desktop_css" || \
 grep -Fq 'grid-template-rows: repeat(4, minmax(35px, 1fr));' <<<"$short_desktop_css" || \
   fail 'zoomed short desktop must preserve all four two-line recent rows'
 
-# The lifetime-first badge is a dedicated third line in each species card.
+# The recorded-first badge is a dedicated third line in each species card.
 # An inline-block contributes an additional baseline line box, which makes the
 # thumbnail and badge escape the compact 960x540 card even when the text fits.
 novelty_badge_css=$(awk '
@@ -230,14 +230,35 @@ grep -Fq 'speciesTitle.textContent = periodHeading()' "$VIEW_FILE" || \
 ! grep -Fq 'setRotationPeriod("live")' "$VIEW_FILE" || \
   fail 'new detections must not override the viewer-selected species period'
 
-# A species can be interesting even when it is not the newest detection. The
-# four novelty reasons are intentionally visible labels, not only styling or
-# an inaccessible tooltip.
+# A species can be interesting even when it is not the newest detection. These
+# remain model-record labels rather than claims that a bird was truly present.
 grep -Fq 'novelty-badge' "$VIEW_FILE" || fail 'species cards must provide an accessible novelty badge'
-for novelty_reason in 'lifetime' 'year' 'season' 'infrequent'; do
-  grep -Eiq "novelty[^[:cntrl:]]*${novelty_reason}|${novelty_reason}[^[:cntrl:]]*novelty" "$VIEW_FILE" || \
-    fail "novelty badges must support the ${novelty_reason} reason"
+for novelty_copy in 'First recorded' 'Recorded this year' 'Recorded this season' 'Infrequent detection'; do
+  grep -Fq "$novelty_copy" "$VIEW_FILE" || fail "missing model-record novelty copy: ${novelty_copy}"
 done
+
+# BirdNET classifications are candidates until an authenticated human review
+# marks the upstream record correct. Preserve raw rejected rows as evidence,
+# but never let one remain the hero or silently call confidence confirmation.
+grep -Fq 'function verificationStatus(detection)' "$VIEW_FILE" || \
+  fail 'frame view must normalize upstream review status'
+for verification_value in 'correct' 'false_positive'; do
+  grep -Fq "$verification_value" "$VIEW_FILE" || fail "missing upstream verification state: ${verification_value}"
+done
+for verification_copy in 'Model candidate · needs review' 'Confirmed by review' 'Rejected after review'; do
+  grep -Fq "$verification_copy" "$VIEW_FILE" || fail "missing honest verification copy: ${verification_copy}"
+done
+grep -Fq 'latestDisplayDetection(state.recent)' "$VIEW_FILE" || \
+  fail 'hero must select a non-rejected display detection'
+grep -Fq 'state.recent.slice(0, MAX_RECENT)' "$VIEW_FILE" || \
+  fail 'recent panel must retain raw candidates and rejected evidence'
+grep -Fq 'detection.verified' "$VIEW_FILE" || fail 'hero render key must react to review changes'
+grep -Fq 'item.verified' "$VIEW_FILE" || fail 'recent render key must react to review changes'
+! grep -Fq 'High-confidence visitor' "$VIEW_FILE" || \
+  fail 'model confidence must not be described as a confirmed visitor'
+grep -Fq '>recorded species<' "$VIEW_FILE" || \
+  fail 'opaque upstream lifetime KPI must be labelled as recorded, not confirmed'
+grep -Fq 'Recent candidates' "$VIEW_FILE" || fail 'recent panel must identify model candidates'
 
 # Detection details are deliberately user-initiated: audio is available with
 # native controls, a spectrogram is represented, and no media may autoplay on
@@ -265,13 +286,12 @@ grep -Eiq 'audio[-_ ]?meter' "$VIEW_FILE" || fail 'frame view must expose a roll
 grep -Eiq 'audio[^[:cntrl:]]*(fresh|last|age)|(fresh|last|age)[^[:cntrl:]]*audio' "$VIEW_FILE" || \
   fail 'frame view must expose live audio freshness'
 
-# Long-term value belongs in read-only KPIs: a life list and an explicit
-# listening streak, in addition to the existing today counters.
-grep -Eiq '(species|life list)[^[:cntrl:]]*(lifetime|ever|all[-_ ]?time)|(lifetime|ever|all[-_ ]?time)[^[:cntrl:]]*(species|life list)' "$VIEW_FILE" || \
-  fail 'frame view must expose lifetime species KPI'
+# Long-term value belongs in read-only KPIs: recorded species and an explicit
+# listening streak, in addition to the existing detection counters.
+grep -Fq 'lifetime_species' "$VIEW_FILE" || fail 'frame view must expose the upstream recorded-species KPI'
 grep -Eiq 'streak' "$VIEW_FILE" || fail 'frame view must expose a listening streak KPI'
 
-# Rare/high-confidence notices are presentation-only. They may be announced
+# Rare/high-confidence candidate notices are presentation-only. They may be announced
 # in the page, but must not create a notification permission flow or a write
 # endpoint.
 grep -Fq 'detection-alert' "$VIEW_FILE" || fail 'frame view must present detection alerts in the page'
