@@ -201,8 +201,8 @@ Mode gestures and within-view controls remain separate:
 | --- | --- |
 | Forward gesture | Next configured view |
 | Reverse gesture | Previous configured view |
-| Volume Down | Next photo, next Weather page, or `Tab` in a web view |
-| Volume Up | Previous photo, previous Weather page, or `Shift+Tab` in a web view |
+| Volume Up | Next photo, next Weather page, or `Tab` in a web view |
+| Volume Down | Previous photo, previous Weather page, or `Shift+Tab` in a web view |
 | Star | Primary action or `Enter` in a web view |
 | Long raw Star, when not converted by Key Mapper | Return directly to Home |
 
