@@ -79,7 +79,10 @@ class FrameBootRecoveryRuntimeContractTest {
         assertContainsInOrder(
             confirmAfterDraw,
             listOf(
-                "if (bootRecoveryConfirmed || !activityResumed",
+                "if (bootRecoveryConfirmed || !activityResumed) return",
+                "if (pendingBootRecoveryDraw != null)",
+                "if (pendingBootRecoveryWebLabel == webLabel) return",
+                "cancelPendingBootRecoveryConfirmation()",
                 "root.viewTreeObserver.addOnDrawListener",
                 "root.invalidate()",
             ),

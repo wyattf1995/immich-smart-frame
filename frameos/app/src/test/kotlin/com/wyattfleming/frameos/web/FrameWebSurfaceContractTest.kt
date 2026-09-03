@@ -66,7 +66,13 @@ class FrameWebSurfaceContractTest {
             listOf(
                 "val invalidatedRenderedContent = renderedState.recordPaintStatusReset()",
                 "listener.onPageRenderInvalidated(label)",
-                "if (invalidatedRenderedContent) armPageLoadWatchdog(session)",
+                "if (!invalidatedRenderedContent) return",
+                "lifecycleSuspended ||",
+                "this@ManagedSession !== displayedManagedSession()",
+                "!displayedSurfaceVisible()",
+                "loadState.recordFailure()",
+                "return",
+                "armPageLoadWatchdog(session)",
             ),
         )
         assertContainsInOrder(

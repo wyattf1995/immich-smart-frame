@@ -81,6 +81,15 @@ grep -Eq '^  locationconfigured:[[:space:]]*false([[:space:]]|$)' "$CONFIG_FILE"
   fail 'public config must explicitly mark placeholder coordinates as unconfigured'
 grep -Eiq 'private.*location|location.*private' "$OPS_FILE" || \
   fail 'operations must require private deployment coordinates'
+grep -Eiq 'authentication.*before.*(trust|trusted|confirm)|before.*(trust|trusted|confirm).*authentication' "$OPS_FILE" || \
+  fail 'operations must require administration authentication before review marks are trusted'
+awk '
+  /^  basicauth:[[:space:]]*$/ { in_auth = 1; next }
+  in_auth && /^  [^[:space:]]/ { in_auth = 0 }
+  in_auth && /^    clientid:[[:space:]]*/ { client_id = 1 }
+  in_auth && /^    userid:[[:space:]]*/ { stale_user_id = 1 }
+  END { exit(client_id && !stale_user_id ? 0 : 1) }
+' "$CONFIG_FILE" || fail 'basic-auth template must use the pinned clientid schema without stale userid'
 
 # Audio clips contain household audio and need a deterministic, age-based
 # retention policy. A usage-only policy can retain old clips indefinitely on a

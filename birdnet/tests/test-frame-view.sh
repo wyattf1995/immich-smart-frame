@@ -237,15 +237,15 @@ for novelty_copy in 'First recorded' 'Recorded this year' 'Recorded this season'
   grep -Fq "$novelty_copy" "$VIEW_FILE" || fail "missing model-record novelty copy: ${novelty_copy}"
 done
 
-# BirdNET classifications are candidates until an authenticated human review
-# marks the upstream record correct. Preserve raw rejected rows as evidence,
-# but never let one remain the hero or silently call confidence confirmation.
+# BirdNET classifications are candidates until an operator marks the upstream
+# record. Preserve false-positive rows as evidence, but never let one remain the
+# hero or silently call confidence confirmation.
 grep -Fq 'function verificationStatus(detection)' "$VIEW_FILE" || \
   fail 'frame view must normalize upstream review status'
 for verification_value in 'correct' 'false_positive'; do
   grep -Fq "$verification_value" "$VIEW_FILE" || fail "missing upstream verification state: ${verification_value}"
 done
-for verification_copy in 'Model candidate · needs review' 'Confirmed by review' 'Rejected after review'; do
+for verification_copy in 'Model candidate · needs review' 'Marked correct' 'Marked false positive'; do
   grep -Fq "$verification_copy" "$VIEW_FILE" || fail "missing honest verification copy: ${verification_copy}"
 done
 grep -Fq 'latestDisplayDetection(state.recent)' "$VIEW_FILE" || \
@@ -258,7 +258,7 @@ grep -Fq 'item.verified' "$VIEW_FILE" || fail 'recent render key must react to r
   fail 'model confidence must not be described as a confirmed visitor'
 grep -Fq '>recorded species<' "$VIEW_FILE" || \
   fail 'opaque upstream lifetime KPI must be labelled as recorded, not confirmed'
-grep -Fq 'Recent candidates' "$VIEW_FILE" || fail 'recent panel must identify model candidates'
+grep -Fq 'Recent model results' "$VIEW_FILE" || fail 'recent panel must include candidates and false-positive evidence'
 
 # Detection details are deliberately user-initiated: audio is available with
 # native controls, a spectrogram is represented, and no media may autoplay on
