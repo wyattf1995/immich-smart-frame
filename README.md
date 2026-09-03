@@ -239,10 +239,10 @@ contextual volume/star behavior, deployment, verification, and legacy
 Fully-plus-Firefox rollback. Home Assistant remains optional for the slideshow.
 
 The separate [BirdNET-Go package](birdnet/OPERATIONS.md) pins a stable upstream
-container, keeps mutable state on Unraid appdata, exposes the dashboard only on
-an explicitly selected LAN address, and starts with no audio source or embedded
-credential. Its recent and summary views show compact species images through
-BirdNET-Go's attributed AviCommons/Wikimedia provider pipeline. A dependable
+container, keeps mutable state on Unraid appdata, keeps its administration
+dashboard on an explicitly selected LAN address, and starts with no audio source
+or embedded credential. Its recent and summary views show compact species
+images through BirdNET-Go's attributed AviCommons/Wikimedia provider pipeline. A dependable
 deployment still prefers a local RTSP or USB microphone. An opt-in, isolated
 Nest audio bridge can instead reuse one Home Assistant camera session, route
 its native Opus track into BirdNET's own decoder, and feed the detector
@@ -252,8 +252,11 @@ passes the documented audio probe and renewal soak.
 The package also includes a small, read-only
 [frame view](birdnet/frame-view/index.html) served by an unprivileged NGINX
 sidecar. It replaces the administration-heavy dashboard on the frame with a
-fixed kiosk layout for the latest visitor, today's species, recent calls,
-species photos and attribution, plus explicit audio and offline states.
+fixed kiosk layout for the latest model candidate, detected-species aggregates,
+recent model results, species photos and attribution, plus explicit audio and
+offline states. Exact BirdNET-Go review states distinguish unreviewed candidates,
+records marked correct, and records marked false positive; model confidence
+alone is never presented as confirmation.
 
 ## Validation
 
@@ -269,11 +272,13 @@ and the patched Go tests. `scripts/deployment-input-snapshot.sh` creates and
 verifies a protected, versioned snapshot of the ignored environment, active
 config, API-key file, and offline assets before an upgrade or rollback.
 `scripts/check-frame-readiness.sh` is a read-only, cron-friendly monitor hook;
-it reports Kiosk liveness and dependency readiness separately and never restarts
-a service. This repository has no GitHub Actions workflows: repository Actions
-are disabled, and all validation and release gates run locally. The local
-validator rejects workflow files and Dependabot version-update configuration
-because both can launch GitHub-hosted jobs. Use `./scripts/validate.sh --static`
+it reports Kiosk liveness and dependency readiness separately, verifies the
+FrameOS overlay and Lenovo DuraSpeed survival policy when ADB is requested, and
+never restarts a service or changes a device setting. This repository has no
+GitHub Actions workflows: repository Actions are disabled, and all validation
+and release gates run locally. The local validator rejects workflow files and
+Dependabot version-update configuration because both can launch GitHub-hosted
+jobs. Use `./scripts/validate.sh --static`
 to skip the Docker image build.
 The offline bind mount is private writable state for the image's non-root
 UID/GID 65532; rerun `scripts/check-offline-assets-permissions.sh` after moving

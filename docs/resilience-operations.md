@@ -184,7 +184,12 @@ normal cron/monitoring mechanism:
 
 It exits nonzero on a failed requested check, so it can feed an existing alert
 mechanism. It does not send alerts itself and does not claim an alerting service
-is installed.
+is installed. With `--adb`, it also checks that FrameOS still has
+`SYSTEM_ALERT_WINDOW`, that Lenovo DuraSpeed is either disabled globally or has
+the exact `com.wyattfleming.frameos` package in its enabled whitelist, that the
+app is running and resumed, and that input accessibility is not suppressed by a
+leftover UI-automation session. All of those probes are reads; the sampler does
+not grant an app-op, edit a setting, start an activity, or reboot the frame.
 
 ## Full-stack power or reboot audit
 

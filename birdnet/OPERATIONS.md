@@ -24,8 +24,11 @@ host-side files before claiming a particular Unraid deployment is current.
 3. Copy `config/config.yaml` once to
    `/mnt/user/appdata/birdnet-go/config/config.yaml`, then create an empty
    `/mnt/user/appdata/birdnet-go/data/` directory. The tracked file remains a
-   credential-free template; the appdata copy becomes private after adding an
-   audio source.
+   credential-free template. Before treating its detections as locally
+   plausible, set the exact private location (latitude and longitude) only in
+   that appdata copy and set `birdnet.locationconfigured: true`. Never commit
+   the household location. Treat the appdata copy as private as soon as it
+   contains either the location or an audio source.
 4. Create `.env` from `.env.example` in `/boot/config/birdnet-go/`. Set
    `BIRDNET_BIND_IP` to the Unraid LAN address. Do not use `0.0.0.0`; the
    compose file fails if this value is omitted but cannot validate the address
@@ -182,22 +185,66 @@ detections and the summary. It prefers AviCommons and falls back across the
 other providers supported by BirdNET-Go. Keep the upstream attribution visible;
 do not copy remote images into this repository.
 
+## Detection quality and human review
+
+BirdNET confidence is a model score, not proof that the species was present.
+Dogs, people, vehicles, electronics, and overlapping animals can produce
+high-confidence false positives. Treat every unreviewed result as a **model
+candidate**. Before calling one a sighting, visitor, or life-list addition,
+listen to its retained clip and inspect the spectrogram in BirdNET-Go, then mark
+the record `correct` or `false_positive` using the administration view. Enable
+administration authentication before trusting any operator review mark, and
+verify in a signed-out browser that protected review actions are rejected.
+Until that check passes, `correct` is only an upstream record value, not an
+identity-backed human confirmation. The read-only frame view mirrors the exact
+stored state and keeps false-positive records visible in recent history as audit
+evidence; it never turns confidence alone into confirmation.
+
+The tracked baseline reduces isolated sounds in two complementary ways:
+
+- balanced false-positive filtering (`level: 3`) requires five matching model
+  windows in six seconds and therefore requires `birdnet.overlap: 2.4` on the
+  pinned 20260823 release;
+- the dog-bark filter remembers a dog detection and suppresses the observed
+  American Crow confusion for five minutes.
+
+The dog filter is a targeted heuristic, not a general authenticity guarantee:
+it can act only when the model also recognizes the dog sound. The pinned release
+lowercases each detected species before exact comparison, so manually added
+species names in the private YAML list must be lowercase. When another recurring
+bark-confused species is demonstrated, add its exact common or scientific name
+through the authenticated filter UI or private appdata configuration, then
+validate and observe new detections. Do not delete or relabel old records merely
+because filtering changed; review them individually. Filters affect new audio,
+not historical detections.
+
+Do not compensate for noisy input by immediately raising or lowering the global
+raw threshold. First set the private location so BirdNET can apply its local
+range model, collect several retained examples, compare clips and spectrograms,
+and measure which candidates survive the balanced filter. A dedicated outdoor
+microphone placed away from hard reflective surfaces is the longer-term input
+improvement; the Nest camera bridge remains a useful trial source.
+
 ## Frame integration
 
 FrameOS should load the custom LAN view at
 `http://<BIRDNET_BIND_IP>:<FRAME_VIEW_PORT>/`, not the administration dashboard.
-The sidecar presents a bounded 1920x1080 layout with the latest detection,
-today's six most active species, four recent calls, real species images, and
-image attribution. It distinguishes a healthy detector with no audio source
-from an empty listening station and a backend outage. Species images can return
-503 while BirdNET-Go resolves a cold provider result; the page preserves its
-fallback and retries later instead of blocking the layout.
+The sidecar presents a bounded 1920x1080 layout with the latest non-rejected
+candidate or marked-correct result, the selected Today/7 Days/30 Days
+detected-species aggregate, four recent model results, reference species images,
+image attribution, and exact stored review state. The hero skips false-positive
+records, while recent history preserves them as audit evidence. It distinguishes
+a healthy detector with no audio source from an empty listening station and a
+backend outage. Species images can return 503 while BirdNET-Go resolves a cold
+provider result; the page preserves its fallback and retries later instead of
+blocking the layout.
 
 The sidecar only proxies the public read endpoints its page uses. It does not
-forward arbitrary API routes, mutations, credentials, or CSRF tokens. Both the
-BirdNET-Go dashboard and frame view remain LAN-only. Do not expose either to the
-public internet or add a Cloudflare tunnel without enabling authentication and
-reviewing the reverse-proxy trust settings.
+forward arbitrary API routes, mutations, credentials, or CSRF tokens. The
+BirdNET-Go administration dashboard must remain LAN-only. Publishing the
+read-only frame view requires authentication, TLS, a rate limit, strict path and
+method confinement, and a reverse-proxy trust review; never expose its origin or
+the administration routes directly.
 
 ## Retention, privacy, and watchdog
 
@@ -266,14 +313,20 @@ custom provider payload includes only type, priority, title, message, and time;
 it deliberately excludes coordinates, internal URLs, raw detection metadata,
 and clip references. The provider accepts only high-priority detection events.
 
-Keep the built-in **New species** and **Infrequent species** rules enabled with
-both `bell` and `push` actions. Add a custom **High-confidence detection** rule
-for `detection.occurred` with a `confidence greater_or_equal 0.95` condition,
-which is a 95% threshold. Use a 15-minute (`900` second) cooldown and
-`escalation_steps: [0.95]`; BirdNET-Go then scopes that cooldown per species
-instead of silencing every bird after one alert. Give the custom rule both bell
-and push actions. A new or infrequent bird above 95% can intentionally produce
-two notifications—one describing its novelty and one describing confidence.
+Keep the built-in **New species** and **Infrequent species** rules bell-only; do
+not give those ungated built-in rules a push action. Add one custom
+**High-confidence detection** rule for `detection.occurred` with a
+`confidence greater_or_equal 0.95` condition, which is a 95% threshold. Use a
+15-minute (`900` second) cooldown and `escalation_steps: [0.95]`, and give only
+that custom rule both bell and push actions. This avoids duplicate phone
+notifications while retaining local novelty events.
+
+With the pinned alert engine active, confidence and cooldown fields on the
+webhook provider are bypassed; the custom alert rule above is the phone gate and
+the provider only transports already-selected events. A candidate is not confirmation.
+Even above 95%, a dog false positive can still pass the rule. Treat the phone
+notification as a prompt to review the retained clip and spectrogram, not as a
+verified species report.
 
 Prefer the authenticated BirdNET-Go settings and alert-rule UI for changes. Its
 notification settings endpoint replaces the whole provider array, so preserve

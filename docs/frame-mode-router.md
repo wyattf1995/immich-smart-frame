@@ -18,9 +18,11 @@ address bar:
   route in place.
 - Weather is native, caches the last forecast, and renders condition-specific
   scenes without a browser.
-- Birds loads the separately hosted BirdNET-Go dashboard in a fresh Gecko
-  session, including compact attributed species images in its recent and
-  summary lists. It is never preloaded, and leaving the view closes that session.
+- Birds loads the separately hosted BirdNET-Go frame view in a fresh Gecko
+  session, including compact attributed reference images and explicit
+  candidate, marked-correct, or marked-false-positive state. Detected-species
+  aggregates are not presented as confirmed sightings. It is never preloaded,
+  and leaving the view closes that session.
 - Leaving a legacy browser releases its background media processes; subsequent
   FrameOS-to-FrameOS transitions stay on the warm path.
 
@@ -222,6 +224,12 @@ settle window. A burst cannot postpone rendering beyond 900 ms. Key repeats and
 input delivered more than 500 ms late are consumed without replaying stale
 navigation.
 
+Volume input also has explicit press ownership. A held key produces one action
+on release, repeated `DOWN` events do not accumulate, and losing activity or
+window focus discards the incomplete press. Pressing both volume buttons still
+restores automatic brightness once, but a missing release can no longer turn a
+later single press into a chord or delayed navigation.
+
 ## Record and map the gesture inputs
 
 Keep trusted ADB attached while recording the actual frame events:
@@ -253,9 +261,25 @@ button rules intact.
 
 FrameOS declares a private receiver for completed boot and replacement of its
 own package. It tries to foreground `MainActivity` immediately, then schedules
-at most two inexact wake-up retries around 15 and 60 seconds. A successful
-`onResume` cancels the remaining alarms. This is a bounded recovery window, not
-a permanent foreground service, and it adds no ongoing notification.
+at most two inexact wake-up retries around 15 and 60 seconds. Merely resuming the
+activity does not cancel those alarms. Each web navigation establishes a new
+page boundary, and Gecko paint resets invalidate prior readiness. The page
+watchdog stays armed until a successful stop and first-contentful-paint callback
+are both observed for the current session state. If already-rendered visible
+content loses its paint state, it gets a fresh bounded deadline; hidden or
+paused content is instead marked for reload on its next display. A scheduled
+boot retry also actively reloads an active web surface that has not reached a
+painted state. The qualifying web label is checked again after an Android root
+draw before the alarms are cancelled; native Weather and configuration surfaces
+must also draw. Pausing or invalidating content before that draw preserves the
+retry budget.
+
+GeckoView 154 does not attach a navigation identifier to page-stop or paint
+callbacks, so these boundaries are the strongest available liveness signal, not
+strict callback attribution or proof that application data is meaningful. A
+first contentful paint can be only the page background. This is a bounded
+recovery window, not a permanent foreground service, and it adds no ongoing
+notification.
 
 Android 10 restricts starting an activity from the background. Grant
 **Display over other apps** to FrameOS once, and explicitly allow FrameOS in
