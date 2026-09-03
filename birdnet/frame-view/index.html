@@ -566,9 +566,12 @@
       }
 
       .recent-detail {
+        overflow: hidden;
         margin-top: 3px;
         color: var(--muted);
         font-size: clamp(11px, 0.75vw, 14px);
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .recent-time {
@@ -1639,7 +1642,7 @@
           </div>
           <div class="metric">
             <span class="metric-value" id="lifeListCount">—</span>
-            <span class="metric-label">life list</span>
+            <span class="metric-label">recorded species</span>
           </div>
           <div class="status" id="status" data-tone="amber" aria-live="polite">
             <span class="status-dot" aria-hidden="true"></span>
@@ -1654,7 +1657,7 @@
       <main class="content">
         <section class="card hero" aria-labelledby="heroName">
           <div class="hero-media">
-            <span class="hero-badge" id="heroBadge">Most recent visitor</span>
+            <span class="hero-badge" id="heroBadge">Latest model candidate</span>
             <img class="hero-image" id="heroImage" alt="" hidden />
             <div class="image-fallback" id="heroFallback">
               <svg viewBox="0 0 120 100" aria-hidden="true">
@@ -1669,7 +1672,7 @@
           <div class="hero-body">
             <div>
               <p class="hero-kicker" id="heroKicker">BirdNET-Go is ready</p>
-              <h2 class="hero-name" id="heroName">Checking for visitors…</h2>
+              <h2 class="hero-name" id="heroName">Checking for bird sounds…</h2>
               <p class="hero-scientific" id="heroScientific">Recent detections will appear here</p>
               <p class="hero-meta" id="heroMeta"></p>
               <p class="hero-credit" id="heroCredit">Bird images and identifications via BirdNET-Go</p>
@@ -1701,7 +1704,7 @@
         <aside class="side">
           <section class="card section-card" aria-labelledby="speciesTitle">
             <div class="section-header">
-              <h2 class="section-title" id="speciesTitle">Today’s species</h2>
+              <h2 class="section-title" id="speciesTitle">Detected today</h2>
               <div class="period-switcher" role="group" aria-label="Species period">
                 <button class="period-button" type="button" data-species-period="today" aria-pressed="true">Today</button>
                 <button class="period-button" type="button" data-species-period="7-days" aria-pressed="false">7 Days</button>
@@ -1713,7 +1716,7 @@
 
           <section class="card section-card" aria-labelledby="recentTitle">
             <div class="section-header">
-              <h2 class="section-title" id="recentTitle">Recently heard</h2>
+              <h2 class="section-title" id="recentTitle">Recent candidates</h2>
               <span class="section-note" id="recentNote">Waiting for detections</span>
             </div>
             <div class="recent-list" id="recentList"></div>
@@ -1723,7 +1726,7 @@
 
       <footer class="footer">
         <span id="updatedLabel">Live data from BirdNET-Go</span>
-        <span>Read-only display · clips retained for 30 days when recording is enabled.</span>
+        <span>Model candidates · review audio to confirm · clips retained for 30 days.</span>
       </footer>
     </div>
 
@@ -1867,7 +1870,7 @@
         }
 
         function periodHeading(period = state.speciesPeriod) {
-          return { today: "Today’s species", "7-days": "Last 7 days", "30-days": "Last 30 days" }[period] || "Today’s species";
+          return { today: "Detected today", "7-days": "Detected · 7 days", "30-days": "Detected · 30 days" }[period] || "Detected today";
         }
 
         function isRangePeriod(period = state.speciesPeriod) {
@@ -1959,8 +1962,26 @@
           return source && typeof source.state === "string" ? source.state.toLowerCase() : "unknown";
         }
 
+        function verificationStatus(detection) {
+          const value = detection && typeof detection.verified === "string"
+            ? detection.verified.trim().toLowerCase()
+            : "";
+          if (value === "correct") {
+            return { key: "confirmed", label: "Confirmed by review", shortLabel: "Confirmed" };
+          }
+          if (value === "false_positive") {
+            return { key: "rejected", label: "Rejected after review", shortLabel: "Rejected" };
+          }
+          return { key: "candidate", label: "Model candidate · needs review", shortLabel: "Candidate" };
+        }
+
+        function latestDisplayDetection(detections) {
+          if (!Array.isArray(detections)) return null;
+          return detections.find(detection => verificationStatus(detection).key !== "rejected") || null;
+        }
+
         function latestDetection() {
-          return state.recent.length > 0 ? state.recent[0] : null;
+          return latestDisplayDetection(state.recent);
         }
 
         function setStatus(title, detail, tone) {
@@ -2172,9 +2193,10 @@
           els.heroImage.removeAttribute("src");
           els.heroImage.hidden = true;
           els.heroFallback.hidden = false;
-          els.heroCredit.textContent = "Bird images and identifications via BirdNET-Go";
+          els.heroCredit.textContent = "Bird reference images and model classifications via BirdNET-Go";
           clearChildren(els.heroMeta);
           els.detectionAlert.hidden = true;
+          els.detectionAlert.removeAttribute("data-verification");
 
           if (!detection) {
             state.attributionSpecies = "";
@@ -2194,7 +2216,7 @@
             } else {
               els.heroKicker.textContent = "Listening now";
               els.heroName.textContent = "No birds heard yet";
-              els.heroScientific.textContent = "The first visitor will appear here";
+              els.heroScientific.textContent = "The first model candidate will appear here";
             }
             return;
           }
@@ -2203,7 +2225,9 @@
           const scientificName = detection.scientificName || "";
           const confidence = confidencePercent(detection.confidence);
           const source = detection.source && sourceName(detection.source);
-          els.heroBadge.textContent = state.dataError ? "Last known visitor" : "Most recent visitor";
+          const verification = verificationStatus(detection);
+          const heroKind = verification.key === "confirmed" ? "confirmed identification" : "model candidate";
+          els.heroBadge.textContent = state.dataError ? `Last known ${heroKind}` : `Latest ${heroKind}`;
           els.heroKicker.textContent = `Heard ${formatTime(detection)}`;
           els.heroName.textContent = commonName;
           els.heroScientific.textContent = scientificName || "Species name unavailable";
@@ -2225,12 +2249,12 @@
             els.confidenceValue.textContent = `${confidence}%`;
           }
           const rare = detection.rare === true || detection.isRare === true || detection.rarity === "rare";
-          if (rare || confidence !== null && confidence >= 95) {
-            els.detectionAlert.hidden = false;
-            els.detectionAlert.textContent = rare
-              ? "Rare visitor notice · read-only observation"
-              : "High-confidence visitor · read-only observation";
-          }
+          const notices = [verification.label];
+          if (rare) notices.push("Rare model flag");
+          if (confidence !== null && confidence >= 95) notices.push("High-confidence model result");
+          els.detectionAlert.dataset.verification = verification.key;
+          els.detectionAlert.textContent = notices.join(" · ");
+          els.detectionAlert.hidden = false;
           loadAttribution(scientificName);
         }
 
@@ -2264,15 +2288,15 @@
         }
 
         function noveltyReason(item) {
-          // novelty lifetime, year, season, and infrequent classifications are read-only labels.
+          // These describe the model's stored records, not confirmed bird sightings.
           if (!item || typeof item !== "object") return "";
-          if (item.is_new_species === true) return "Lifetime first";
-          if (item.is_new_this_year === true) return "New this year";
-          if (item.is_new_this_season === true) return `New this ${item.current_season || "season"}`;
+          if (item.is_new_species === true) return "First recorded";
+          if (item.is_new_this_year === true) return "Recorded this year";
+          if (item.is_new_this_season === true) return "Recorded this season";
           const firstSeenDays = Number(item.days_since_first_seen);
           const lastSeenDays = Number(item.days_since_last_seen);
           if (Number.isFinite(lastSeenDays) && lastSeenDays >= 14 && !(Number.isFinite(firstSeenDays) && firstSeenDays <= 0)) {
-            return "Infrequent visitor";
+            return "Infrequent detection";
           }
           return "";
         }
@@ -2297,7 +2321,7 @@
             const years = Number(hour < 11 ? morning.years_seen : evening.years_seen);
             const lastSeen = hour < 11 ? morning.last_seen_date : evening.last_seen_date;
             const period = hour < 11 ? "Morning" : "Evening";
-            els.insightCopy.textContent = `${period}: ${name || "a familiar visitor"} is expected today${Number.isFinite(years) ? ` from ${years} year${years === 1 ? "" : "s"} of history` : ""}${lastSeen ? `; last seen ${lastSeen}` : ""}.`;
+            els.insightCopy.textContent = `${period}: ${name || "a familiar species"} is expected today${Number.isFinite(years) ? ` from ${years} year${years === 1 ? "" : "s"} of history` : ""}${lastSeen ? `; last recorded ${lastSeen}` : ""}.`;
           }
           clearChildren(els.activityStrip);
           const maximum = Math.max(1, ...state.hourly);
@@ -2329,8 +2353,8 @@
             const copy = loading
               ? "Fetching the most active species for this period."
               : state.audioKnown && state.configuredSources.length === 0
-                ? "Species will appear after a microphone is connected."
-                : "Species and their photos will fill this space as calls are identified.";
+                ? "Detected species will appear after a microphone is connected."
+                : "Model-detected species and reference photos will fill this space.";
             const empty = emptyPanel(title, copy);
             empty.style.gridColumn = "1 / -1";
             empty.style.gridRow = "1 / -1";
@@ -2375,7 +2399,7 @@
           const detections = state.recent.slice(0, MAX_RECENT);
           els.recentNote.textContent = state.dataError
             ? "Showing last update"
-            : detections.length > 0 ? "Latest calls" : "Waiting for detections";
+            : detections.length > 0 ? "Latest model results" : "Waiting for detections";
           if (detections.length === 0) {
             if (state.apiOnline === false || state.dataError) {
               els.recentList.appendChild(
@@ -2406,14 +2430,18 @@
             const detail = document.createElement("p");
             detail.className = "recent-detail";
             const confidence = confidencePercent(detection.confidence);
-            detail.textContent = confidence === null ? scientificName : `${confidence}% confidence`;
+            const verification = verificationStatus(detection);
+            row.dataset.verification = verification.key;
+            detail.textContent = confidence === null
+              ? verification.shortLabel
+              : `${confidence}% confidence · ${verification.shortLabel}`;
             copy.append(name, detail);
             const time = document.createElement("time");
             time.className = "recent-time";
             time.textContent = formatTime(detection);
             button.append(createThumb(scientificName, commonName), copy, time);
             const detailConfidence = confidencePercent(detection.confidence);
-            button.setAttribute("aria-label", `Open detection detail for ${commonName}${detailConfidence === null ? "" : `, ${detailConfidence}% confidence`}`);
+            button.setAttribute("aria-label", `Open detection detail for ${commonName}, ${verification.label}${detailConfidence === null ? "" : `, ${detailConfidence}% confidence`}`);
             button.addEventListener("click", () => openDetectionDetail(detection));
             row.appendChild(button);
             els.recentList.appendChild(row);
@@ -2428,11 +2456,12 @@
         function openDetectionDetail(detection) {
           const id = detectionId(detection);
           const commonName = detection.commonName || "Unknown bird";
+          const verification = verificationStatus(detection);
           els.detailName.textContent = commonName;
           els.detailScientific.textContent = detection.scientificName || "Species name unavailable";
           els.detailMeta.textContent = id === null
-            ? "This legacy detection has no numeric ID, so media is unavailable."
-            : `Heard ${formatTime(detection)}. Audio and spectrogram are read-only media for detection #${id}.`;
+            ? `${verification.label}. This legacy detection has no numeric ID, so media is unavailable.`
+            : `${verification.label}. Heard ${formatTime(detection)}. Audio and spectrogram are read-only media for detection #${id}.`;
           els.detailAudio.pause();
           els.detailAudio.removeAttribute("src");
           els.detailAudio.load();
@@ -2456,8 +2485,8 @@
           const metricPeriod = state.speciesPeriod === "today" ? "today" : periodTitle().toLowerCase();
           els.speciesCount.textContent = String(state.summary.length);
           els.callCount.textContent = String(count);
-          els.speciesMetricLabel.textContent = `species ${metricPeriod}`;
-          els.callMetricLabel.textContent = `calls ${metricPeriod}`;
+          els.speciesMetricLabel.textContent = `species detected ${metricPeriod}`;
+          els.callMetricLabel.textContent = `detections ${metricPeriod}`;
           renderAmbientSummary();
           if (state.lastUpdatedAt) {
             const updated = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" })
@@ -2470,13 +2499,13 @@
           }
           const detection = latestDetection();
           const heroKey = detection
-            ? JSON.stringify([detection.id, detection.timestamp, detection.time, detection.confidence, state.dataError])
+            ? JSON.stringify([detection.id, detection.timestamp, detection.time, detection.confidence, detection.verified, state.dataError])
             : JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length, state.audioLevelsActive]);
           const speciesKey = state.summary.length > 0
             ? JSON.stringify([state.dataError, state.summary.slice(0, MAX_SPECIES).map(item => [item.scientific_name, item.count, item.last_heard || item.latest_heard])])
             : JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length]);
           const recentKey = state.recent.length > 0
-            ? JSON.stringify([state.dataError, state.recent.slice(0, MAX_RECENT).map(item => [item.id, item.timestamp, item.time, item.confidence])])
+            ? JSON.stringify([state.dataError, state.recent.slice(0, MAX_RECENT).map(item => [item.id, item.timestamp, item.time, item.confidence, item.verified])])
             : JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length]);
 
           if (heroKey !== state.renderKeys.hero) {

@@ -34,5 +34,5 @@ notification:
             "message": "{{.Message}}",
             "timestamp": "{{.timestamp}}"
           }
-    min_confidence_threshold: 0
-    species_cooldown_minutes: 0
+    min_confidence_threshold: 0.95
+    species_cooldown_minutes: 15
