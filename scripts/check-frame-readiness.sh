@@ -89,6 +89,64 @@ frame_input_accessibility_ready() {
   [[ "$bound_services" == *'Service[label=Key Mapper'* ]]
 }
 
+frameos_overlay_ready() {
+  local app_ops
+  app_ops="$(adb -s "$adb_serial" shell appops get com.wyattfleming.frameos SYSTEM_ALERT_WINDOW)" || return 1
+  printf '%s\n' "${app_ops//$'\r'/}" | awk '
+    /^[[:space:]]*SYSTEM_ALERT_WINDOW:[[:space:]]*/ {
+      records += 1
+      if ($0 ~ /^[[:space:]]*SYSTEM_ALERT_WINDOW:[[:space:]]*allow([;[:space:]]|$)/) {
+        allowed += 1
+      } else {
+        invalid += 1
+      }
+    }
+    END { exit !(records == 1 && allowed == 1 && invalid == 0) }
+  '
+}
+
+frameos_duraspeed_ready() {
+  local raw_status status config
+  raw_status="$(adb -s "$adb_serial" shell dumpsys duraspeed status)" || return 1
+  status="$(printf '%s\n' "${raw_status//$'\r'/}" | awk '
+    NF {
+      records += 1
+      value = $0
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+    }
+    END { if (records == 1) print value }
+  ')"
+
+  # With DuraSpeed disabled globally there is no per-app suppression to exempt.
+  [[ "$status" == false ]] && return 0
+  [[ "$status" == true ]] || return 1
+
+  config="$(adb -s "$adb_serial" shell dumpsys duraspeed config)" || return 1
+  printf '%s\n' "${config//$'\r'/}" | awk '
+    /^[[:space:]]*AppWhitelist:[[:space:]]*/ {
+      records += 1
+      list = $0
+      sub(/^[[:space:]]*AppWhitelist:[[:space:]]*/, "", list)
+      sub(/[[:space:]]+$/, "", list)
+      if (list !~ /^\[.*\]$/) {
+        invalid += 1
+        next
+      }
+      sub(/^\[/, "", list)
+      sub(/\]$/, "", list)
+      count = split(list, entries, ",")
+      for (item_index = 1; item_index <= count; item_index += 1) {
+        entry = entries[item_index]
+        sub(/^[[:space:]]+/, "", entry)
+        sub(/[[:space:]]+$/, "", entry)
+        if (entry == "com.wyattfleming.frameos") found = 1
+      }
+    }
+    END { exit !(records == 1 && found == 1 && invalid == 0) }
+  '
+}
+
 compose=(docker compose -f "$compose_file")
 check 'Kiosk liveness (/livez)' "${compose[@]}" exec -T immich-kiosk /kiosk --livecheck
 check 'Kiosk dependency readiness (/readyz)' "${compose[@]}" exec -T immich-kiosk /kiosk --readycheck
@@ -106,6 +164,8 @@ fi
 if [[ -n "$adb_serial" ]]; then
   check 'Frame ADB transport' adb -s "$adb_serial" get-state
   check 'FrameOS package' adb -s "$adb_serial" shell pidof com.wyattfleming.frameos
+  check 'FrameOS display-over-other-apps permission' frameos_overlay_ready
+  check 'FrameOS DuraSpeed policy' frameos_duraspeed_ready
   check 'FrameOS default HOME component' frameos_default_home
   check 'FrameOS resumed activity' frameos_resumed
   check 'Frame input accessibility' frame_input_accessibility_ready
