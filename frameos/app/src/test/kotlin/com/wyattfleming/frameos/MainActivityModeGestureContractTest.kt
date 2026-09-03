@@ -42,6 +42,33 @@ class MainActivityModeGestureContractTest {
     }
 
     @Test
+    fun `translated gesture keys are intercepted before focused web content`() {
+        val dispatchKeyEvent = methodBody("override fun dispatchKeyEvent(")
+        val handleTranslatedGestureKeyEvent = methodBody("private fun handleTranslatedGestureKeyEvent(")
+
+        assertContainsInOrder(
+            dispatchKeyEvent,
+            listOf(
+                "if (handleTranslatedGestureKeyEvent(event)) return true",
+                "contextualInputMapper.map(state.mode, event.keyCode, event.isShiftPressed)",
+            ),
+        )
+        assertContainsInOrder(
+            handleTranslatedGestureKeyEvent,
+            listOf(
+                "event.keyCode != KeyEvent.KEYCODE_DPAD_LEFT",
+                "event.keyCode != KeyEvent.KEYCODE_DPAD_RIGHT",
+                "val physicalIntent = inputMapper.mapKeyDown",
+                "event.action == KeyEvent.ACTION_DOWN",
+                "queueModeGesture(",
+                "eventTimeMillis = event.eventTime",
+                "repeatCount = event.repeatCount",
+                "return true",
+            ),
+        )
+    }
+
+    @Test
     fun `pending gestures update the HUD and render only their final destination`() {
         val queue = methodBody("private fun queueModeGesture(")
         val dispatch = methodBody("private fun dispatch(")

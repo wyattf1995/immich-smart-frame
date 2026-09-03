@@ -15,6 +15,18 @@ class PhysicalInputMapperTest {
     }
 
     @Test
+    fun `local dpad bridge navigates when firmware reserves gesture key codes`() {
+        assertEquals(
+            FrameIntent.NextMode,
+            mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_DPAD_RIGHT, scanCode = 0),
+        )
+        assertEquals(
+            FrameIntent.PreviousMode,
+            mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_DPAD_LEFT, scanCode = 0),
+        )
+    }
+
+    @Test
     fun `star is contextual and long star goes directly home`() {
         assertEquals(
             FrameIntent.PrimaryAction,
