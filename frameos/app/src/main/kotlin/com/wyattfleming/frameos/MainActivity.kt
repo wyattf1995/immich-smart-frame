@@ -268,6 +268,8 @@ class MainActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (handleTranslatedGestureKeyEvent(event)) return true
+
         return when (val action = contextualInputMapper.map(state.mode, event.keyCode, event.isShiftPressed)) {
             is ContextualFrameAction.PhotoStep -> {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
@@ -314,6 +316,30 @@ class MainActivity : Activity() {
             }
             null -> super.dispatchKeyEvent(event)
         }
+    }
+
+    private fun handleTranslatedGestureKeyEvent(event: KeyEvent): Boolean {
+        if (
+            event.keyCode != KeyEvent.KEYCODE_DPAD_LEFT &&
+            event.keyCode != KeyEvent.KEYCODE_DPAD_RIGHT
+        ) {
+            return false
+        }
+
+        val physicalIntent = inputMapper.mapKeyDown(keyCode = event.keyCode, scanCode = event.scanCode)
+        if (physicalIntent != FrameIntent.NextMode && physicalIntent != FrameIntent.PreviousMode) return false
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            queueModeGesture(
+                direction = if (physicalIntent == FrameIntent.NextMode) {
+                    ModeGestureDirection.NEXT
+                } else {
+                    ModeGestureDirection.PREVIOUS
+                },
+                eventTimeMillis = event.eventTime,
+                repeatCount = event.repeatCount,
+            )
+        }
+        return true
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean =
