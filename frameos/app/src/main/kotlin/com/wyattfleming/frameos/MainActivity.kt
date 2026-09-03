@@ -110,6 +110,7 @@ class MainActivity : Activity() {
     private var starLongPressed = false
     private var volumeUpPressed = false
     private var volumeDownPressed = false
+    private var volumeChordActive = false
     private lateinit var configurationStore: FrameConfigurationStore
     private lateinit var controlStore: FrameControlStore
     private var configuration: FrameConfiguration? = null
@@ -268,7 +269,9 @@ class MainActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (handleLenovoGestureKeyEvent(event)) return true
         if (handleTranslatedGestureKeyEvent(event)) return true
+        if (handleContextualVolumeKeyEvent(event)) return true
 
         return when (val action = contextualInputMapper.map(state.mode, event.keyCode, event.isShiftPressed)) {
             is ContextualFrameAction.PhotoStep -> {
@@ -318,6 +321,26 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun handleLenovoGestureKeyEvent(event: KeyEvent): Boolean {
+        val physicalIntent = inputMapper.mapLenovoGesture(
+            keyCode = event.keyCode,
+            scanCode = event.scanCode,
+        )
+        if (physicalIntent == null) return false
+        if (event.action == KeyEvent.ACTION_UP) {
+            queueModeGesture(
+                direction = if (physicalIntent == FrameIntent.NextMode) {
+                    ModeGestureDirection.NEXT
+                } else {
+                    ModeGestureDirection.PREVIOUS
+                },
+                eventTimeMillis = event.eventTime,
+                repeatCount = event.repeatCount,
+            )
+        }
+        return true
+    }
+
     private fun handleTranslatedGestureKeyEvent(event: KeyEvent): Boolean {
         if (
             event.keyCode != KeyEvent.KEYCODE_DPAD_LEFT &&
@@ -342,6 +365,43 @@ class MainActivity : Activity() {
         return true
     }
 
+    private fun handleContextualVolumeKeyEvent(event: KeyEvent): Boolean {
+        val forward = when (event.keyCode) {
+            KeyEvent.KEYCODE_VOLUME_DOWN -> true
+            KeyEvent.KEYCODE_VOLUME_UP -> false
+            else -> return false
+        }
+
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) volumeUpPressed = true
+            if (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) volumeDownPressed = true
+            if (volumeUpPressed && volumeDownPressed) {
+                if (!volumeChordActive) dispatch(FrameIntent.RestoreAutoBrightness)
+                volumeChordActive = true
+            }
+        }
+
+        if (event.action == KeyEvent.ACTION_UP) {
+            val chordWasActive = volumeChordActive
+            if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) volumeUpPressed = false
+            if (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) volumeDownPressed = false
+            if (!volumeUpPressed && !volumeDownPressed) volumeChordActive = false
+            if (!chordWasActive && event.repeatCount == 0) {
+                dispatchContextualTabClick(forward, event.eventTime)
+            }
+        }
+        return true
+    }
+
+    private fun dispatchContextualTabClick(forward: Boolean, eventTimeMillis: Long) {
+        val keyCode = KeyEvent.KEYCODE_TAB
+        val metaState = if (forward) 0 else KeyEvent.META_SHIFT_ON
+        val down = KeyEvent(eventTimeMillis, eventTimeMillis, KeyEvent.ACTION_DOWN, keyCode, 0, metaState)
+        val up = KeyEvent(eventTimeMillis, eventTimeMillis, KeyEvent.ACTION_UP, keyCode, 0, metaState)
+        dispatchKeyEvent(down)
+        dispatchKeyEvent(up)
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean =
         gestureDetector.onTouchEvent(event) || super.onTouchEvent(event)
 
@@ -351,13 +411,6 @@ class MainActivity : Activity() {
                 starLongPressed = false
                 event.startTracking()
             }
-            return true
-        }
-
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) volumeUpPressed = true
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) volumeDownPressed = true
-        if (volumeUpPressed && volumeDownPressed) {
-            dispatch(FrameIntent.RestoreAutoBrightness)
             return true
         }
 
@@ -398,8 +451,6 @@ class MainActivity : Activity() {
                 starLongPressed = false
                 return true
             }
-            KeyEvent.KEYCODE_VOLUME_UP -> volumeUpPressed = false
-            KeyEvent.KEYCODE_VOLUME_DOWN -> volumeDownPressed = false
         }
         return super.onKeyUp(keyCode, event)
     }
