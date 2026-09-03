@@ -37,6 +37,9 @@ import com.wyattfleming.frameos.navigation.FrameStartupPolicy
 import com.wyattfleming.frameos.navigation.ModeGestureBurst
 import com.wyattfleming.frameos.navigation.ModeGestureDirection
 import com.wyattfleming.frameos.navigation.PhysicalInputMapper
+import com.wyattfleming.frameos.navigation.VolumeButton
+import com.wyattfleming.frameos.navigation.VolumeInputEffect
+import com.wyattfleming.frameos.navigation.VolumeInputState
 import com.wyattfleming.frameos.auth.AndroidKeystoreOAuthSessionStore
 import com.wyattfleming.frameos.auth.HomeAssistantOAuthClient
 import com.wyattfleming.frameos.auth.HomeAssistantOAuthEndpoint
@@ -108,9 +111,7 @@ class MainActivity : Activity() {
 
     private var state = FrameStartupPolicy.initialState()
     private var starLongPressed = false
-    private var volumeUpPressed = false
-    private var volumeDownPressed = false
-    private var volumeChordActive = false
+    private val volumeInput = VolumeInputState()
     private lateinit var configurationStore: FrameConfigurationStore
     private lateinit var controlStore: FrameControlStore
     private var configuration: FrameConfiguration? = null
@@ -241,11 +242,17 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         activityResumed = false
+        volumeInput.reset()
         cancelModeGesture()
         handler.removeCallbacks(refreshVisibleWeather)
         handler.removeCallbacks(preloadCalendar)
         webSurface?.suspendAllContent()
         super.onPause()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) volumeInput.reset()
     }
 
     override fun onStop() {
@@ -366,29 +373,21 @@ class MainActivity : Activity() {
     }
 
     private fun handleContextualVolumeKeyEvent(event: KeyEvent): Boolean {
-        val forward = when (event.keyCode) {
-            KeyEvent.KEYCODE_VOLUME_UP -> true
-            KeyEvent.KEYCODE_VOLUME_DOWN -> false
+        val button = when (event.keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP -> VolumeButton.UP
+            KeyEvent.KEYCODE_VOLUME_DOWN -> VolumeButton.DOWN
             else -> return false
         }
 
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) volumeUpPressed = true
-            if (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) volumeDownPressed = true
-            if (volumeUpPressed && volumeDownPressed) {
-                if (!volumeChordActive) dispatch(FrameIntent.RestoreAutoBrightness)
-                volumeChordActive = true
-            }
+        val effect = when (event.action) {
+            KeyEvent.ACTION_DOWN -> volumeInput.onDown(button, event.repeatCount)
+            KeyEvent.ACTION_UP -> volumeInput.onUp(button)
+            else -> null
         }
-
-        if (event.action == KeyEvent.ACTION_UP) {
-            val chordWasActive = volumeChordActive
-            if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) volumeUpPressed = false
-            if (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) volumeDownPressed = false
-            if (!volumeUpPressed && !volumeDownPressed) volumeChordActive = false
-            if (!chordWasActive && event.repeatCount == 0) {
-                dispatchContextualTabClick(forward, event.eventTime)
-            }
+        when (effect) {
+            is VolumeInputEffect.Step -> dispatchContextualTabClick(effect.forward, event.eventTime)
+            VolumeInputEffect.RestoreAutoBrightness -> dispatch(FrameIntent.RestoreAutoBrightness)
+            null -> Unit
         }
         return true
     }
