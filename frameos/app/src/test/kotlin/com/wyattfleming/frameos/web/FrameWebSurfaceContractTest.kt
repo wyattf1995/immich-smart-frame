@@ -64,8 +64,9 @@ class FrameWebSurfaceContractTest {
         assertContainsInOrder(
             paintStatusReset,
             listOf(
-                "renderedState.recordPaintStatusReset()",
+                "val invalidatedRenderedContent = renderedState.recordPaintStatusReset()",
                 "listener.onPageRenderInvalidated(label)",
+                "if (invalidatedRenderedContent) armPageLoadWatchdog(session)",
             ),
         )
         assertContainsInOrder(
