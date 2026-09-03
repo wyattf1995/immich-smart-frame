@@ -114,8 +114,10 @@ grep -Eiq 'fresh|stale|audio.*(age|last)|last.*audio' "$WATCHDOG_FILE" || \
   fail 'BirdNET watchdog must evaluate real audio freshness, not only process liveness'
 grep -Eiq 'docker[[:space:]]+inspect.*(RestartCount|restart)|RestartCount' "$WATCHDOG_FILE" || \
   fail 'BirdNET watchdog must report container restart counts'
+# shellcheck disable=SC2016
 grep -Eq 'command -v "\$1"[[:space:]]*>/dev/null' "$WATCHDOG_FILE" || \
   fail 'successful watchdog dependency checks must stay silent'
+# shellcheck disable=SC2016
 grep -Fq '"$container" >/dev/null' "$WATCHDOG_FILE" || \
   fail 'successful watchdog container-existence probes must stay silent'
 grep -Fq 'sources_are_healthy >/dev/null' "$WATCHDOG_FILE" || \
