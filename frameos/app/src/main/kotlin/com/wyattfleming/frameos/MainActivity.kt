@@ -367,8 +367,8 @@ class MainActivity : Activity() {
 
     private fun handleContextualVolumeKeyEvent(event: KeyEvent): Boolean {
         val forward = when (event.keyCode) {
-            KeyEvent.KEYCODE_VOLUME_DOWN -> true
-            KeyEvent.KEYCODE_VOLUME_UP -> false
+            KeyEvent.KEYCODE_VOLUME_UP -> true
+            KeyEvent.KEYCODE_VOLUME_DOWN -> false
             else -> return false
         }
 
