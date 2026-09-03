@@ -15,8 +15,8 @@ class PhysicalInputMapper {
             KeyEvent.KEYCODE_STAR -> if (isLongPress) FrameIntent.GoHome else FrameIntent.PrimaryAction
             KeyEvent.KEYCODE_MOVE_HOME -> FrameIntent.GoHome
             KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DPAD_CENTER -> FrameIntent.PrimaryAction
-            KeyEvent.KEYCODE_VOLUME_UP -> FrameIntent.BrightnessUp
-            KeyEvent.KEYCODE_VOLUME_DOWN -> FrameIntent.BrightnessDown
+            KeyEvent.KEYCODE_VOLUME_UP -> FrameIntent.NextMode
+            KeyEvent.KEYCODE_VOLUME_DOWN -> FrameIntent.PreviousMode
             else -> null
         }
     }
