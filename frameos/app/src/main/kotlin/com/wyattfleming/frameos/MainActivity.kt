@@ -18,6 +18,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.animation.DecelerateInterpolator
@@ -137,6 +138,9 @@ class MainActivity : Activity() {
     private var surfaceRouter: FrameSurfaceRouter? = null
     private var webSurface: FrameWebSurface? = null
     private val slowPageLoads = mutableMapOf<String, Runnable>()
+    private var bootRecoveryConfirmed = false
+    private var pendingBootRecoveryDraw: ViewTreeObserver.OnDrawListener? = null
+    private var pendingBootRecoveryObserver: ViewTreeObserver? = null
 
     private val commitModeGesture = Runnable {
         modeGestureBurst.consumeTarget()?.let { target ->
@@ -224,10 +228,10 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        FrameBootRecoveryScheduler.cancelRetries(this)
         activityResumed = true
         enterImmersiveMode()
         render(state, announce = false)
+        if (configuration == null) confirmBootRecoveryAfterNextDraw()
         if (pendingAuthorizationCode != null && !weatherAuthorizationInProgress) {
             startAuthorizationExchange()
         } else if (
@@ -242,6 +246,7 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         activityResumed = false
+        cancelPendingBootRecoveryConfirmation()
         volumeInput.reset()
         cancelModeGesture()
         handler.removeCallbacks(refreshVisibleWeather)
@@ -508,6 +513,18 @@ class MainActivity : Activity() {
                         if (isWebLabelActive(label)) hideWebRecovery()
                     }
                 }
+
+                override fun onPageRendered(label: String) {
+                    runOnUiThread {
+                        if (
+                            activityResumed &&
+                            isWebLabelActive(label) &&
+                            webSurface?.isDisplayingRenderedLabel(label) == true
+                        ) {
+                            confirmBootRecoveryAfterNextDraw()
+                        }
+                    }
+                }
             }
             surfaceRouter = FrameSurfaceRouter(activeConfiguration)
             webSurface = FrameWebSurface(
@@ -749,6 +766,7 @@ class MainActivity : Activity() {
                 webSurface?.hide()
                 weatherContent.visibility = View.VISIBLE
                 root.requestFocus()
+                if (activityResumed) confirmBootRecoveryAfterNextDraw()
                 if (announce) weatherContent.animate().alpha(0.82f).setDuration(70).withEndAction {
                     weatherContent.animate().alpha(1f).setDuration(180).start()
                 }.start()
@@ -756,6 +774,36 @@ class MainActivity : Activity() {
         }
         scheduleCalendarPreload()
         scheduleWeatherRefresh()
+    }
+
+    private fun confirmBootRecoveryAfterNextDraw() {
+        if (bootRecoveryConfirmed || !activityResumed || pendingBootRecoveryDraw != null) return
+        lateinit var drawListener: ViewTreeObserver.OnDrawListener
+        drawListener = ViewTreeObserver.OnDrawListener {
+            completeBootRecoveryAfterDraw(drawListener)
+        }
+        pendingBootRecoveryDraw = drawListener
+        pendingBootRecoveryObserver = root.viewTreeObserver
+        root.viewTreeObserver.addOnDrawListener(drawListener)
+        root.invalidate()
+    }
+
+    private fun completeBootRecoveryAfterDraw(drawListener: ViewTreeObserver.OnDrawListener) {
+        root.post {
+            if (pendingBootRecoveryDraw !== drawListener) return@post
+            cancelPendingBootRecoveryConfirmation()
+            if (!activityResumed || bootRecoveryConfirmed) return@post
+            FrameBootRecoveryScheduler.cancelRetries(this)
+            bootRecoveryConfirmed = true
+        }
+    }
+
+    private fun cancelPendingBootRecoveryConfirmation() {
+        val observer = pendingBootRecoveryObserver
+        val listener = pendingBootRecoveryDraw
+        if (observer?.isAlive == true && listener != null) observer.removeOnDrawListener(listener)
+        pendingBootRecoveryObserver = null
+        pendingBootRecoveryDraw = null
     }
 
     private fun scheduleCalendarPreload() {

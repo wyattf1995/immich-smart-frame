@@ -40,6 +40,7 @@ class FrameWebSurface(
         fun onPageUnavailable(label: String)
         fun onPageRecovery(label: String, attempt: Int, retryInMillis: Long)
         fun onPageRecovered(label: String)
+        fun onPageRendered(label: String)
     }
 
     private val frameRuntime = runtime
@@ -55,6 +56,7 @@ class FrameWebSurface(
         lateinit var session: GeckoSession
             private set
         val loadState = FrameWebSessionState()
+        val renderedState = FrameWebRenderedState()
         val crashRecovery = FrameWebCrashRecoveryState()
         var recoveryAttempts = 0
         var retryPending = false
@@ -102,15 +104,23 @@ class FrameWebSurface(
                     val pageLoad = disarmPageLoadWatchdog()
                     listener.onPageLoading(label, false)
                     if (!success) {
+                        renderedState.recordFailure()
                         if (!pageLoad.timedOut) reportUnavailable(this@ManagedSession)
                     } else {
                         loadState.recordSuccess()
                         resetRecovery(this@ManagedSession)
                         listener.onPageRecovered(label)
+                        val newlyRendered = renderedState.recordPageStop(success = true)
+                        maybeReportRendered(newlyRendered)
                     }
                 }
             }
             session.contentDelegate = object : GeckoSession.ContentDelegate {
+                override fun onFirstContentfulPaint(session: GeckoSession) {
+                    val newlyRendered = renderedState.recordFirstContentfulPaint()
+                    maybeReportRendered(newlyRendered)
+                }
+
                 override fun onCrash(session: GeckoSession) {
                     disarmPageLoadWatchdog()
                     crashRecovery.markClosedByContentProcess()
@@ -132,6 +142,7 @@ class FrameWebSurface(
             require(urlPolicy.isAllowedTopLevelNavigation(configuredUrls, url)) { "Unsafe $label navigation" }
             lifecycleSuspended = false
             loadState.recordRequest(url)
+            renderedState.recordRequest()
             try {
                 if (crashRecovery.reopenIfRequired { session.open(frameRuntime) }) {
                     // Recovery retries run only for an attached, visible session.
@@ -144,6 +155,11 @@ class FrameWebSurface(
                 reportUnavailable(this)
                 return false
             }
+        }
+
+        private fun maybeReportRendered(newlyRendered: Boolean) {
+            if (!newlyRendered) return
+            this@FrameWebSurface.reportRenderedIfDisplayed(this)
         }
 
         fun setActive(active: Boolean) = runWhenSessionUsable {
@@ -320,6 +336,7 @@ class FrameWebSurface(
         if (takeFocus) displayedView.requestFocus()
         displayedView.contentDescription = managed.label
         if (slot != FrameWebSlot.HOME_ASSISTANT) scheduleHiddenHomeEviction()
+        reportRenderedIfDisplayed(managed)
     }
 
     fun hide() {
@@ -351,6 +368,11 @@ class FrameWebSurface(
             if (active) managed.lifecycleSuspended = false
             managed.setActive(active)
         }
+    }
+
+    fun isDisplayingRenderedLabel(label: String): Boolean {
+        val managed = displayedManagedSession() ?: return false
+        return managed.label == label && managed.renderedState.rendered && displayedSurfaceVisible()
     }
 
     fun suspendAllContent() {
@@ -525,6 +547,7 @@ class FrameWebSurface(
     }
 
     private fun reportUnavailable(managed: ManagedSession) {
+        managed.renderedState.recordFailure()
         managed.loadState.recordFailure()
         if (managed.lifecycleSuspended) {
             cancelRecovery(managed)
@@ -577,6 +600,16 @@ class FrameWebSurface(
     }
 
     private fun displayedManagedSession(): ManagedSession? = displayedSlot?.let(::sessionFor)
+
+    private fun reportRenderedIfDisplayed(managed: ManagedSession) {
+        if (
+            managed.renderedState.rendered &&
+            managed === displayedManagedSession() &&
+            displayedSurfaceVisible()
+        ) {
+            listener.onPageRendered(managed.label)
+        }
+    }
 
     private fun displayedSurfaceVisible(): Boolean = when (displayedSlot) {
         FrameWebSlot.HOME_ASSISTANT -> warmHomeAssistantView.visibility == View.VISIBLE
