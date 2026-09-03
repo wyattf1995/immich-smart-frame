@@ -27,13 +27,13 @@ class PhysicalInputMapperTest {
     }
 
     @Test
-    fun `volume buttons control display brightness rather than navigation`() {
+    fun `volume buttons provide direct mode navigation without a shell bridge`() {
         assertEquals(
-            FrameIntent.BrightnessUp,
+            FrameIntent.NextMode,
             mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_VOLUME_UP, scanCode = 115),
         )
         assertEquals(
-            FrameIntent.BrightnessDown,
+            FrameIntent.PreviousMode,
             mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_VOLUME_DOWN, scanCode = 114),
         )
     }
