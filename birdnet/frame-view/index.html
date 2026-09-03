@@ -1675,7 +1675,7 @@
               <h2 class="hero-name" id="heroName">Checking for bird sounds…</h2>
               <p class="hero-scientific" id="heroScientific">Recent detections will appear here</p>
               <p class="hero-meta" id="heroMeta"></p>
-              <p class="hero-credit" id="heroCredit">Bird images and identifications via BirdNET-Go</p>
+              <p class="hero-credit" id="heroCredit">Bird reference images and model classifications via BirdNET-Go</p>
               <p class="detection-alert" id="detectionAlert" hidden aria-live="polite"></p>
               <div class="ambient-context">
                 <div>
@@ -1716,7 +1716,7 @@
 
           <section class="card section-card" aria-labelledby="recentTitle">
             <div class="section-header">
-              <h2 class="section-title" id="recentTitle">Recent candidates</h2>
+              <h2 class="section-title" id="recentTitle">Recent model results</h2>
               <span class="section-note" id="recentNote">Waiting for detections</span>
             </div>
             <div class="recent-list" id="recentList"></div>
@@ -1726,7 +1726,7 @@
 
       <footer class="footer">
         <span id="updatedLabel">Live data from BirdNET-Go</span>
-        <span>Model candidates · review audio to confirm · clips retained for 30 days.</span>
+        <span>Model results · review audio before trusting · clips retained for 30 days.</span>
       </footer>
     </div>
 
@@ -1967,10 +1967,10 @@
             ? detection.verified.trim().toLowerCase()
             : "";
           if (value === "correct") {
-            return { key: "confirmed", label: "Confirmed by review", shortLabel: "Confirmed" };
+            return { key: "confirmed", label: "Marked correct", shortLabel: "Marked correct" };
           }
           if (value === "false_positive") {
-            return { key: "rejected", label: "Rejected after review", shortLabel: "Rejected" };
+            return { key: "rejected", label: "Marked false positive", shortLabel: "False positive" };
           }
           return { key: "candidate", label: "Model candidate · needs review", shortLabel: "Candidate" };
         }
@@ -2226,7 +2226,7 @@
           const confidence = confidencePercent(detection.confidence);
           const source = detection.source && sourceName(detection.source);
           const verification = verificationStatus(detection);
-          const heroKind = verification.key === "confirmed" ? "confirmed identification" : "model candidate";
+          const heroKind = verification.key === "confirmed" ? "marked-correct result" : "model candidate";
           els.heroBadge.textContent = state.dataError ? `Last known ${heroKind}` : `Latest ${heroKind}`;
           els.heroKicker.textContent = `Heard ${formatTime(detection)}`;
           els.heroName.textContent = commonName;

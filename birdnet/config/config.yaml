@@ -8,16 +8,35 @@
 birdnet:
   latitude: 0
   longitude: 0
+  # The tracked file cannot publish a household location. Set real coordinates
+  # and flip this flag in the private appdata copy before trusting range filters.
+  locationconfigured: false
   modelregion: global
   sensitivity: 1.0
   threshold: 0.8
-  overlap: 1.5
+  # Balanced filtering requires 2.4 seconds of overlap in pinned 20260823.
+  overlap: 2.4
   threads: 0
   usexnnpack: true
 
 realtime:
   interval: 15
   processingtime: false
+  # Require five matching analysis windows in the six-second evidence window.
+  # This reduces isolated noises without raising the raw confidence threshold.
+  falsepositivefilter:
+    level: 3
+  dogbarkfilter:
+    enabled: true
+    debug: false
+    confidence: 0.1
+    # Pinned 20260823 interprets this value as minutes.
+    remember: 5
+    # Pinned 20260823 lowercases detections before exact comparison, so values
+    # in this list must remain lowercase. Add other observed bark confusions.
+    species:
+      - american crow
+      - corvus brachyrhynchos
   audio:
     # RTSP is configured below, so no host sound card is required.
     sources: []
@@ -91,4 +110,8 @@ security:
   autoTls: false
   redirecttohttps: false
   basicauth:
+    # Set a unique client ID and password only in the private appdata copy,
+    # then enable this before relying on operator review marks.
     enabled: false
+    clientid: ""
+    password: ""

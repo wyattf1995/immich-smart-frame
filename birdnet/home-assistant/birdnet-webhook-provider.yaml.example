@@ -2,6 +2,10 @@
 # host and webhook ID locally; never commit the resulting endpoint. Home
 # Assistant webhooks use the random ID itself as the credential, so no separate
 # HA API credential or request-authentication header belongs here.
+#
+# When BirdNET-Go's alert engine is active, its alert rules own confidence and
+# cooldown decisions. This provider is transport and payload filtering only;
+# configure the single phone-notification gate in the private alert rule.
 notification:
   push:
     enabled: true
@@ -34,5 +38,3 @@ notification:
             "message": "{{.Message}}",
             "timestamp": "{{.timestamp}}"
           }
-    min_confidence_threshold: 0.95
-    species_cooldown_minutes: 15
