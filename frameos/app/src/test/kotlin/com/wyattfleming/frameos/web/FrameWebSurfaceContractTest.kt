@@ -8,6 +8,77 @@ import java.nio.file.Paths
 
 class FrameWebSurfaceContractTest {
     @Test
+    fun `render readiness requires both a successful stop and contentful paint`() {
+        val source = source()
+        val pageStop = methodBody(source, "override fun onPageStop(")
+        val firstContentfulPaint = methodBody(source, "override fun onFirstContentfulPaint(")
+        val request = methodBody(source, "fun request(url: String)")
+        val maybeReportRendered = methodBody(source, "private fun maybeReportRendered(")
+
+        assertTrue(
+            "listeners need a distinct paint-qualified readiness callback",
+            source.contains("fun onPageRendered(label: String)"),
+        )
+        assertContainsInOrder(
+            request,
+            listOf(
+                "loadState.recordRequest(url)",
+                "renderedState.recordRequest()",
+                "session.loadUri(url)",
+            ),
+        )
+        assertContainsInOrder(
+            pageStop,
+            listOf(
+                "if (!success)",
+                "renderedState.recordFailure()",
+                "renderedState.recordPageStop(success = true)",
+                "maybeReportRendered(",
+            ),
+        )
+        assertContainsInOrder(
+            firstContentfulPaint,
+            listOf(
+                "renderedState.recordFirstContentfulPaint()",
+                "maybeReportRendered(",
+            ),
+        )
+        assertContainsInOrder(
+            maybeReportRendered,
+            listOf(
+                "if (!newlyRendered) return",
+                "reportRenderedIfDisplayed(this)",
+            ),
+        )
+    }
+
+    @Test
+    fun `only the displayed rendered session can report boot readiness`() {
+        val source = source()
+        val show = methodBody(source, "fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean)")
+        val reportRendered = methodBody(source, "private fun reportRenderedIfDisplayed(")
+
+        assertContainsInOrder(
+            show,
+            listOf(
+                "displayedSlot = slot",
+                "managed.setActive(true)",
+                "managed.setFocused(takeFocus)",
+                "reportRenderedIfDisplayed(managed)",
+            ),
+        )
+        assertContainsInOrder(
+            reportRendered,
+            listOf(
+                "managed.renderedState.rendered",
+                "managed === displayedManagedSession()",
+                "displayedSurfaceVisible()",
+                "listener.onPageRendered(managed.label)",
+            ),
+        )
+    }
+
+    @Test
     fun `page load timeout stops Gecko and logs a redacted timeout event`() {
         val source = source()
         val armPageLoadWatchdog = methodBody(source, "private fun armPageLoadWatchdog(observedSession: GeckoSession)")

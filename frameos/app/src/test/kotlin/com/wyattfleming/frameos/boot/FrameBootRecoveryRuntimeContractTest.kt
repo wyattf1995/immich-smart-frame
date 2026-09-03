@@ -1,5 +1,6 @@
 package com.wyattfleming.frameos.boot
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Files
@@ -35,11 +36,13 @@ class FrameBootRecoveryRuntimeContractTest {
     }
 
     @Test
-    fun `recovery launch is explicit permission gated and cancelled once FrameOS resumes`() {
+    fun `recovery launch is explicit permission gated and cancelled only after rendered content draws`() {
         val receiver = source("app/src/main/kotlin/com/wyattfleming/frameos/boot/FrameBootRecoveryReceiver.kt")
         val activity = source("app/src/main/kotlin/com/wyattfleming/frameos/MainActivity.kt")
         val launch = methodBody(receiver, "fun launch(")
         val onResume = methodBody(activity, "override fun onResume()")
+        val confirmAfterDraw = methodBody(activity, "private fun confirmBootRecoveryAfterNextDraw(")
+        val onPause = methodBody(activity, "override fun onPause()")
 
         assertContainsInOrder(
             launch,
@@ -50,9 +53,54 @@ class FrameBootRecoveryRuntimeContractTest {
                 "context.startActivity(launchIntent)",
             ),
         )
-        assertTrue(
-            "successful resume must cancel remaining recovery alarms",
+        assertFalse(
+            "resume alone does not prove the frame rendered usable content",
             onResume.contains("FrameBootRecoveryScheduler.cancelRetries(this)"),
+        )
+        assertContainsInOrder(
+            confirmAfterDraw,
+            listOf(
+                "if (bootRecoveryConfirmed || !activityResumed",
+                "root.viewTreeObserver.addOnDrawListener",
+                "root.invalidate()",
+                "root.post",
+                "if (!activityResumed || bootRecoveryConfirmed)",
+                "FrameBootRecoveryScheduler.cancelRetries(this)",
+                "bootRecoveryConfirmed = true",
+            ),
+        )
+        assertTrue(
+            "pausing before the confirming draw must preserve the pending retry budget",
+            onPause.contains("cancelPendingBootRecoveryConfirmation()"),
+        )
+    }
+
+    @Test
+    fun `web native weather and configuration surfaces all have paint qualified recovery paths`() {
+        val activity = source("app/src/main/kotlin/com/wyattfleming/frameos/MainActivity.kt")
+        val onResume = methodBody(activity, "override fun onResume()")
+        val render = methodBody(activity, "private fun render(next: FrameState, announce: Boolean)")
+
+        assertContainsInOrder(
+            activity,
+            listOf(
+                "override fun onPageRendered(label: String)",
+                "isWebLabelActive(label)",
+                "webSurface?.isDisplayingRenderedLabel(label) == true",
+                "confirmBootRecoveryAfterNextDraw()",
+            ),
+        )
+        assertContainsInOrder(
+            render,
+            listOf(
+                "FrameSurfaceTarget.NativeWeather",
+                "weatherContent.visibility = View.VISIBLE",
+                "confirmBootRecoveryAfterNextDraw()",
+            ),
+        )
+        assertTrue(
+            "the native configuration view must confirm after its own draw",
+            onResume.contains("if (configuration == null) confirmBootRecoveryAfterNextDraw()"),
         )
     }
 
