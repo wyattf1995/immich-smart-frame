@@ -65,6 +65,7 @@ import com.wyattfleming.frameos.control.FrameCompanionCommandDecoder
 import com.wyattfleming.frameos.control.FrameRemoteCommand
 import com.wyattfleming.frameos.control.FrameCompanionCommandStore
 import com.wyattfleming.frameos.control.FrameCompanionSettingsDecoder
+import com.wyattfleming.frameos.control.FrameCompanionResponseDecoder
 import com.wyattfleming.frameos.control.FramePhotosProfileUrl
 import com.wyattfleming.frameos.control.FrameRemoteSettings
 import com.wyattfleming.frameos.security.FrameExternalControlPolicy
@@ -106,6 +107,7 @@ class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val modeGestureBurst = ModeGestureBurst()
     private val weatherWorkerExecutor: ExecutorService = Executors.newFixedThreadPool(2)
+    private val companionWorkerExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val weatherRequestExecutor: ExecutorService = Executors.newFixedThreadPool(3)
     private val authorizationExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val secureRandom = SecureRandom()
@@ -304,6 +306,7 @@ class MainActivity : Activity() {
         invalidateCompanionPoll()
         cancelHomeAssistantWork(stage = "activity_destroy", clearPendingAuthorizationCode = true)
         weatherWorkerExecutor.shutdownNow()
+        companionWorkerExecutor.shutdownNow()
         weatherRequestExecutor.shutdownNow()
         authorizationExecutor.shutdownNow()
         handler.removeCallbacksAndMessages(null)
@@ -609,19 +612,6 @@ class MainActivity : Activity() {
         )
         webRecovery = buildWebRecoveryView()
         root.addView(webRecovery, fullScreenLayout)
-        if (experienceSettings.eventOverlays.isNotEmpty()) {
-            root.addView(
-                textView(experienceSettings.eventOverlays.joinToString("\n"), 16f, getColor(R.color.frame_ink), medium = true).apply {
-                    background = roundedBackground(getColor(R.color.frame_dark), getColor(R.color.frame_cobalt))
-                    setPadding(dp(16), dp(10), dp(16), dp(10))
-                    contentDescription = "Upcoming events: ${experienceSettings.eventOverlays.joinToString()}."
-                },
-                FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply {
-                    leftMargin = resources.getDimensionPixelSize(R.dimen.frame_safe_inset)
-                    bottomMargin = resources.getDimensionPixelSize(R.dimen.frame_safe_inset)
-                },
-            )
-        }
         setContentView(root)
         root.requestFocus()
     }
@@ -1110,7 +1100,7 @@ class MainActivity : Activity() {
             offline = false,
             appVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown",
         )
-        weatherWorkerExecutor.submit {
+        companionWorkerExecutor.submit {
             val pendingAcks = FrameCompanionCommandStore(this).consumeAcks()
             val result = FrameCompanionClient(credentials.endpoint, credentials.token).poll(
                 credentials.deviceId,
@@ -1129,13 +1119,16 @@ class MainActivity : Activity() {
                     scheduleCompanionPoll()
                     return@post
                 }
-                if (result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success) {
+                if (
+                    result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success &&
+                    FrameCompanionResponseDecoder.isForDevice(result.body, credentials.deviceId)
+                ) {
                     FrameCompanionCommandStore(this).clearAcks(pendingAcks)
                     FrameCompanionSettingsDecoder.decode(result.body)?.let(::applyCompanionSettings)
                     FrameCompanionCommandDecoder.decode(result.body, System.currentTimeMillis())?.let { command ->
                         val store = FrameCompanionCommandStore(this)
                         if (store.claim(command.id)) {
-                            store.ack(command.id, if (applyCompanionCommand(command)) "applied" else "ignored")
+                            store.ack(command.id, applyCompanionCommand(command))
                         }
                     }
                 }
@@ -1148,37 +1141,42 @@ class MainActivity : Activity() {
         companionPollGeneration += 1
     }
 
-    private fun applyCompanionCommand(command: FrameRemoteCommand): Boolean = when (command) {
-        is FrameRemoteCommand.ShowMode -> { showMode(command.mode); true }
-        is FrameRemoteCommand.PhotoStep -> if (state.mode == FrameMode.PHOTOS && !state.photosPaused) webSurface?.movePhoto(command.forward) == true else false
+    private fun applyCompanionCommand(command: FrameRemoteCommand): String = when (command) {
+        is FrameRemoteCommand.ShowMode -> { showMode(command.mode); "applied" }
+        is FrameRemoteCommand.PhotoStep -> if (state.mode == FrameMode.PHOTOS) {
+            if (state.photosPaused) webSurface?.setContentActive(true)
+            val moved = webSurface?.movePhoto(command.forward) == true
+            if (state.photosPaused) webSurface?.setContentActive(false)
+            if (moved) "dispatched" else "rejected"
+        } else "rejected"
         is FrameRemoteCommand.PhotoPause -> if (state.mode == FrameMode.PHOTOS) {
             if (state.photosPaused != command.paused) dispatch(FrameIntent.PrimaryAction)
-            true
-        } else false
+            "applied"
+        } else "rejected"
         is FrameRemoteCommand.PhotoHold -> if (state.mode == FrameMode.PHOTOS) {
             if (!state.photosPaused) dispatch(FrameIntent.PrimaryAction)
             handler.removeCallbacks(resumePhotosAfterHold)
             handler.postDelayed(resumePhotosAfterHold, command.durationSeconds * 1_000L)
-            true
-        } else false
-        is FrameRemoteCommand.SetProfile -> setPhotosProfile(command.profile)
+            "applied"
+        } else "rejected"
+        is FrameRemoteCommand.SetProfile -> if (setPhotosProfile(command.profile)) "applied" else "failed"
     }
 
     private fun applyCompanionSettings(settings: FrameRemoteSettings) {
         if (settings.revision <= experienceSettings.settingsRevision) return
         val updated = runCatching {
             experienceSettings.copy(
-                orderedEnabledModes = settings.modeOrder ?: experienceSettings.orderedEnabledModes,
-                quietHours = settings.quietHours ?: experienceSettings.quietHours,
-                deactivateHiddenHomeAssistant = settings.hiddenHomeSuspend ?: experienceSettings.deactivateHiddenHomeAssistant,
-                idleReturnSeconds = settings.idleReturnSeconds ?: experienceSettings.idleReturnSeconds,
-                eventOverlays = settings.eventOverlays ?: experienceSettings.eventOverlays,
+                orderedEnabledModes = settings.modeOrder,
+                quietHours = settings.quietHours,
+                deactivateHiddenHomeAssistant = settings.hiddenHomeSuspend,
+                idleReturnSeconds = settings.idleReturnSeconds,
+                eventOverlaysEnabled = settings.eventOverlaysEnabled,
                 settingsRevision = settings.revision,
             )
         }.getOrNull() ?: return
         experienceSettings = updated
         experienceStore.write(updated)
-        settings.profile?.let(::updatePhotosProfile)
+        updatePhotosProfile(settings.profile)
         rebuildExperienceUi()
     }
 

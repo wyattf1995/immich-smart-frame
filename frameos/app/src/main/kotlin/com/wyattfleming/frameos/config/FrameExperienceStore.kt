@@ -21,10 +21,7 @@ class FrameExperienceStore(context: Context) {
             quietHours = if (start != null && end != null && brightness in 10..100) QuietHours(start, end, brightness) else null,
             deactivateHiddenHomeAssistant = preferences.getBoolean(DEACTIVATE_HIDDEN_HOME, false),
             idleReturnSeconds = preferences.getInt(IDLE_RETURN_SECONDS, FrameExperienceSettings.DEFAULT_IDLE_RETURN_SECONDS),
-            eventOverlays = preferences.getString(EVENT_OVERLAYS, "")
-                .orEmpty()
-                .split(EVENT_SEPARATOR)
-                .filter { it.isNotBlank() },
+            eventOverlaysEnabled = preferences.getBoolean(EVENT_OVERLAYS_ENABLED, false),
             settingsRevision = preferences.getLong(SETTINGS_REVISION, FrameExperienceSettings.NO_SETTINGS_REVISION),
         )
     }.getOrDefault(FrameExperienceSettings())
@@ -37,7 +34,7 @@ class FrameExperienceStore(context: Context) {
             .putInt(QUIET_BRIGHTNESS, settings.quietHours?.brightnessPercent ?: -1)
             .putBoolean(DEACTIVATE_HIDDEN_HOME, settings.deactivateHiddenHomeAssistant)
             .putInt(IDLE_RETURN_SECONDS, settings.idleReturnSeconds)
-            .putString(EVENT_OVERLAYS, settings.eventOverlays.joinToString(EVENT_SEPARATOR))
+            .putBoolean(EVENT_OVERLAYS_ENABLED, settings.eventOverlaysEnabled)
             .putLong(SETTINGS_REVISION, settings.settingsRevision)
             .apply()
     }
@@ -50,8 +47,7 @@ class FrameExperienceStore(context: Context) {
         const val QUIET_BRIGHTNESS = "quiet_brightness"
         const val DEACTIVATE_HIDDEN_HOME = "deactivate_hidden_home"
         const val IDLE_RETURN_SECONDS = "idle_return_seconds"
-        const val EVENT_OVERLAYS = "event_overlays"
+        const val EVENT_OVERLAYS_ENABLED = "event_overlays_enabled"
         const val SETTINGS_REVISION = "settings_revision"
-        const val EVENT_SEPARATOR = "\u001f"
     }
 }

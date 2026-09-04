@@ -30,7 +30,7 @@ class FrameCompanionCredentialsStore(context: Context) {
         require(token.isNotBlank() && FrameRemoteControlPolicy.acceptsDeviceId(deviceId))
         val cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE, key())
         cipher.updateAAD(endpoint.pollUrl.toByteArray(StandardCharsets.UTF_8))
-        prefs.edit().putString("value", JSONObject().put("endpoint", endpoint.pollUrl).put("device", deviceId).put("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP)).put("token", Base64.encodeToString(cipher.doFinal(token.toByteArray()), Base64.NO_WRAP)).toString()).commit(); true
+        prefs.edit().putString("value", JSONObject().put("endpoint", endpoint.pollUrl).put("device", deviceId).put("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP)).put("token", Base64.encodeToString(cipher.doFinal(token.toByteArray()), Base64.NO_WRAP)).toString()).apply(); true
     }.getOrDefault(false)
     private fun key(): javax.crypto.SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

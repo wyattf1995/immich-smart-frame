@@ -8,7 +8,7 @@ object FrameCompanionCommandDecoder {
         val root = JSONObject(payload)
         val json = root.optJSONArray("commands")?.takeIf { it.length() == 1 }?.getJSONObject(0) ?: root
         val id = json.getString("id")
-        require(id.matches(Regex("[A-Za-z0-9_-]{1,80}")))
+        require(FrameRemoteControlPolicy.acceptsCommandId(id))
         val issued = json.getLong("issuedAt"); val expires = json.getLong("expiresAt")
         require(FrameRemoteControlPolicy.acceptsCommand(issued, expires, nowMillis))
         when (json.getString("type")) {
