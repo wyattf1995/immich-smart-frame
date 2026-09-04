@@ -1,0 +1,32 @@
+diff --git a/internal/routes/routes_preferences.go b/internal/routes/routes_preferences.go
+index e3e47b5..9d398cd 100644
+--- a/internal/routes/routes_preferences.go
++++ b/internal/routes/routes_preferences.go
+@@ -201,8 +201,8 @@ var frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset
+ func (r *recentFrameAssets) suppresses(deviceID string, asset *immich.Asset, burst time.Duration, crossFrame bool) bool {
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
+-	for _, prior := range r.devices[deviceID] {
+-		if prior.id == asset.ID || (burst > 0 && !asset.LocalDateTime.IsZero() && !prior.capturedAt.IsZero() && asset.LocalDateTime.Sub(prior.capturedAt).Abs() < burst) {
++	for index, prior := range r.devices[deviceID] {
++		if prior.id == asset.ID || (index == 0 && burst > 0 && !asset.LocalDateTime.IsZero() && !prior.capturedAt.IsZero() && asset.LocalDateTime.Sub(prior.capturedAt).Abs() < burst) {
+ 			return true
+ 		}
+ 	}
+@@ -223,7 +223,7 @@ func (r *recentFrameAssets) remember(deviceID string, asset *immich.Asset, cross
+ 	if len(items) > frameRecentAssetLimit {
+ 		items = items[:frameRecentAssetLimit]
+ 	}
+-	if len(r.devices) >= frameRecentDeviceLimit {
++	if _, known := r.devices[deviceID]; !known && len(r.devices) >= frameRecentDeviceLimit {
+ 		for key := range r.devices {
+ 			if key != deviceID {
+ 				delete(r.devices, key)
+@@ -259,6 +259,7 @@ func frameCaptureBurstWindow() time.Duration {
+ 	if err != nil || seconds < 0 {
+ 		return 5 * time.Minute
+ 	}
++	seconds = min(seconds, 24*60*60)
+ 	return time.Duration(seconds) * time.Second
+ }
+ 

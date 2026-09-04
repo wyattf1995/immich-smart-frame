@@ -1,0 +1,38 @@
+diff --git a/internal/routes/routes_preferences_test.go b/internal/routes/routes_preferences_test.go
+index 3a11cd7..fce6cb6 100644
+--- a/internal/routes/routes_preferences_test.go
++++ b/internal/routes/routes_preferences_test.go
+@@ -118,3 +118,33 @@ func TestFrameSelectionCanSuppressRecentIDsAcrossFramesWithinBounds(t *testing.T
+ 	require.LessOrEqual(t, len(frameRecentAssets.devices), frameRecentDeviceLimit)
+ 	require.LessOrEqual(t, len(frameRecentAssets.global), frameRecentAssetLimit)
+ }
++
++func TestFrameCaptureBurstChecksOnlyTheMostRecentlyAcceptedAsset(t *testing.T) {
++	previous := frameRecentAssets
++	frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset{}}
++	t.Cleanup(func() { frameRecentAssets = previous })
++	t.Setenv("FRAME_CAPTURE_BURST_SECONDS", "")
++
++	base := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
++	frameRecentAssets.remember("frame-a", &immich.Asset{ID: "older", LocalDateTime: base}, false)
++	frameRecentAssets.remember("frame-a", &immich.Asset{ID: "newest", LocalDateTime: base.Add(time.Hour)}, false)
++	require.True(t, frameSelectionAllowed("frame-a", &immich.Asset{ID: "candidate", LocalDateTime: base.Add(4 * time.Minute)}, 0), "capture-burst suppression compares only with the latest accepted asset")
++}
++
++func TestFrameCaptureBurstDurationIsBoundedAndPreservesZero(t *testing.T) {
++	t.Setenv("FRAME_CAPTURE_BURST_SECONDS", "99999999")
++	require.Equal(t, 24*time.Hour, frameCaptureBurstWindow())
++	t.Setenv("FRAME_CAPTURE_BURST_SECONDS", "0")
++	require.Zero(t, frameCaptureBurstWindow())
++}
++
++func TestFrameRecentDeviceLimitDoesNotEvictAnExistingDevice(t *testing.T) {
++	previous := frameRecentAssets
++	frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset{}}
++	t.Cleanup(func() { frameRecentAssets = previous })
++	for index := 0; index < frameRecentDeviceLimit; index++ {
++		frameRecentAssets.devices[fmt.Sprintf("frame-%d", index)] = nil
++	}
++	frameRecentAssets.remember("frame-0", &immich.Asset{ID: "replacement"}, false)
++	require.Len(t, frameRecentAssets.devices, frameRecentDeviceLimit)
++}
