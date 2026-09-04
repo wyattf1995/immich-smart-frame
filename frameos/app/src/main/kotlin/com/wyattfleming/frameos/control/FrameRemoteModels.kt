@@ -13,6 +13,9 @@ data class FrameRemoteStatus(
     val appVersion: String,
     val currentAssetId: String? = null,
     val lastPhotoAt: Long? = null,
+    val profile: String? = null,
+    val offlineAssets: Int = 0,
+    val offlineBytes: Long = 0,
 )
 
 data class FrameRemoteAck(val id: String, val status: String, val message: String? = null)

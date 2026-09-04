@@ -66,6 +66,8 @@ import com.wyattfleming.frameos.control.FrameRemoteCommand
 import com.wyattfleming.frameos.control.FrameCompanionCommandStore
 import com.wyattfleming.frameos.control.FrameCompanionSettingsDecoder
 import com.wyattfleming.frameos.control.FrameCompanionResponseDecoder
+import com.wyattfleming.frameos.control.FrameCompanionEventDecoder
+import com.wyattfleming.frameos.control.FrameCompanionEventStore
 import com.wyattfleming.frameos.control.FramePhotosProfileUrl
 import com.wyattfleming.frameos.control.FrameRemoteSettings
 import com.wyattfleming.frameos.security.FrameExternalControlPolicy
@@ -157,6 +159,10 @@ class MainActivity : Activity() {
     private var pendingAuthorizationPreviousAuthEpoch: String? = null
     private var surfaceRouter: FrameSurfaceRouter? = null
     private var webSurface: FrameWebSurface? = null
+    private lateinit var photoReserve: com.wyattfleming.frameos.photos.FrameOfflineReserve
+    private lateinit var photoBridge: com.wyattfleming.frameos.photos.FramePhotoBridge
+    private var currentPhotoAssetId: String? = null
+    private var lastPhotoAt: Long? = null
     private val slowPageLoads = mutableMapOf<String, Runnable>()
     private var bootRecoveryConfirmed = false
     private var companionPollInFlight = false
@@ -229,6 +235,10 @@ class MainActivity : Activity() {
         configurationStore = FrameConfigurationStore(this)
         experienceStore = FrameExperienceStore(this)
         diagnosticStore = FrameDiagnosticStore(this)
+        photoReserve = com.wyattfleming.frameos.photos.FrameOfflineReserve(java.io.File(filesDir, "frame-offline-reserve"))
+        photoBridge = com.wyattfleming.frameos.photos.FramePhotoBridge(photoReserve) { photo ->
+            handler.post { currentPhotoAssetId = photo.assetId; lastPhotoAt = photo.capturedAt }
+        }
         experienceSettings = experienceStore.read()
         controlStore = FrameControlStore(this)
         val savedConfiguration = configurationStore.read()
@@ -317,6 +327,7 @@ class MainActivity : Activity() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         webSurface?.trimMemory(level)
+        if (level >= TRIM_MEMORY_RUNNING_LOW) photoReserve.clearForLowMemory()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -584,6 +595,8 @@ class MainActivity : Activity() {
                 warmHomeAssistantView = warmHomeAssistantView,
                 listener = webListener,
                 operationLogger = operationLogger,
+                photoBridge = photoBridge,
+                photosProfile = FramePhotosProfileUrl.profile(activeConfiguration.photosUrl) ?: "balanced",
                 deactivateHiddenHomeAssistant = experienceSettings.deactivateHiddenHomeAssistant,
             )
             root.addView(warmHomeAssistantView, fullScreenLayout)
@@ -1090,6 +1103,7 @@ class MainActivity : Activity() {
         companionPollInFlight = true
         val generation = companionPollGeneration
         val snapshot = diagnosticStore.snapshot()
+        val reserveStatus = photoReserve.status()
         val status = FrameRemoteStatus(
             mode = state.mode,
             photosPaused = state.photosPaused,
@@ -1099,6 +1113,11 @@ class MainActivity : Activity() {
             lastError = snapshot.lastError,
             offline = false,
             appVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown",
+            currentAssetId = currentPhotoAssetId,
+            lastPhotoAt = lastPhotoAt,
+            profile = configuration?.photosUrl?.let(FramePhotosProfileUrl::profile),
+            offlineAssets = reserveStatus.offlineAssets,
+            offlineBytes = reserveStatus.offlineBytes,
         )
         companionWorkerExecutor.submit {
             val pendingAcks = FrameCompanionCommandStore(this).consumeAcks()
@@ -1125,6 +1144,7 @@ class MainActivity : Activity() {
                 ) {
                     FrameCompanionCommandStore(this).clearAcks(pendingAcks)
                     FrameCompanionSettingsDecoder.decode(result.body)?.let(::applyCompanionSettings)
+                    maybeShowCompanionEvent(result.body)
                     FrameCompanionCommandDecoder.decode(result.body, System.currentTimeMillis())?.let { command ->
                         val store = FrameCompanionCommandStore(this)
                         if (store.claim(command.id)) {
@@ -1139,6 +1159,17 @@ class MainActivity : Activity() {
 
     private fun invalidateCompanionPoll() {
         companionPollGeneration += 1
+    }
+
+    private fun maybeShowCompanionEvent(payload: String) {
+        if (!experienceSettings.eventOverlaysEnabled || state.mode != FrameMode.PHOTOS || state.photosPaused) return
+        if (experienceSettings.quietHours?.isActiveAt(LocalTime.now()) == true) return
+        val now = System.currentTimeMillis()
+        val event = FrameCompanionEventDecoder.decode(payload, now) ?: return
+        if (!FrameCompanionEventStore(this).claim(event.id, now)) return
+        showHud(event.text)
+        handler.removeCallbacks(hideHud)
+        handler.postDelayed(hideHud, EVENT_OVERLAY_VISIBLE_MILLIS)
     }
 
     private fun applyCompanionCommand(command: FrameRemoteCommand): String = when (command) {
@@ -1475,6 +1506,7 @@ class MainActivity : Activity() {
         const val HUD_FADE_IN_MILLIS = 160L
         const val HUD_FADE_OUT_MILLIS = 220L
         const val HUD_VISIBLE_MILLIS = 1_500L
+        const val EVENT_OVERLAY_VISIBLE_MILLIS = 9_000L
         const val WEATHER_CACHE_FRESH_MILLIS = 5 * 60 * 1_000L
         const val OAUTH_EXCHANGE_TIMEOUT_MILLIS = 10_000L
         const val OAUTH_STATE_BYTES = 32

@@ -100,7 +100,7 @@ class FrameOfflineReserve(
     private val maxBytes: Long = DEFAULT_MAX_BYTES,
 ) {
     data class Entry(val assetId: String, val capturedAt: Long, val file: File)
-    data class Status(val offlineAssets: Int, val latest: Entry?)
+    data class Status(val offlineAssets: Int, val offlineBytes: Long, val latest: Entry?)
 
     private var scope: FramePhotoScope? = null
     private var entries = emptyList<Entry>()
@@ -146,7 +146,7 @@ class FrameOfflineReserve(
     @Synchronized
     fun status(): Status {
         val valid = entries()
-        return Status(offlineAssets = valid.size, latest = valid.firstOrNull())
+        return Status(offlineAssets = valid.size, offlineBytes = valid.sumOf { it.file.length() }, latest = valid.firstOrNull())
     }
 
     /** Drops persisted JPEGs when the process receives a low-memory signal. */

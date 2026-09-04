@@ -32,7 +32,8 @@ class FrameCompanionClient(private val endpoint: FrameRemoteEndpoint, private va
             .put("lastPaintAt", status.lastPaintAt).put("lastWeatherAt", status.lastWeatherAt)
             .put("recoveryCount", status.recoveryCount).put("lastError", status.lastError)
             .put("offline", status.offline).put("appVersion", status.appVersion)
-            .put("currentAssetId", status.currentAssetId).put("lastPhotoAt", status.lastPhotoAt))
+            .put("currentAssetId", status.currentAssetId).put("lastPhotoAt", status.lastPhotoAt)
+            .put("profile", status.profile).put("offlineAssets", status.offlineAssets).put("offlineBytes", status.offlineBytes))
         .put("acks", JSONArray().apply { acks.forEach { put(JSONObject().put("id", it.id).put("status", it.status).put("message", it.message)) } })
         .toString()
 }
