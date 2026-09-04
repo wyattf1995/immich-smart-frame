@@ -239,6 +239,21 @@ backend outage. Species images can return 503 while BirdNET-Go resolves a cold
 provider result; the page preserves its fallback and retries later instead of
 blocking the layout.
 
+The frame calls a station **Listening now** only after it receives a current
+audio-level event. A source marked `running` without recent audio is **Audio
+delayed**, then **Microphone offline** after the configured freshness window.
+Those states are display evidence, not a substitute for the host watchdog. The
+dashboard refreshes source and recent-result state on a short cadence and uses
+the detection stream for prompt updates; its species aggregates, weather, and
+insights refresh on a slower five-minute cadence. This keeps the LAN kiosk
+responsive without turning every displayed metric into a 15-second request.
+
+Recent results can be filtered into **Needs review** and **Reviewed**. Both
+counts describe only the current recent-result window; they are not a life list
+or a count of confirmed birds. Selecting a row opens the existing read-only
+audio and spectrogram detail. The contextual hint uses the already documented
+FrameOS controls: Volume +/- moves focus and Star opens the focused detail.
+
 The sidecar only proxies the public read endpoints its page uses. It does not
 forward arbitrary API routes, mutations, credentials, or CSRF tokens. The
 BirdNET-Go administration dashboard must remain LAN-only. Publishing the
