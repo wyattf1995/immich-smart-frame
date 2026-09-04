@@ -36,6 +36,13 @@ class FrameControlReceiver : BroadcastReceiver() {
                 birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
             )?.let(configurationStore::write)
         }
+        if (intent.hasExtra(FrameControlContract.EXTRA_COMPANION_URL)) {
+            FrameCompanionCredentialsStore(context).write(
+                intent.getStringExtra(FrameControlContract.EXTRA_COMPANION_URL).orEmpty(),
+                intent.getStringExtra(FrameControlContract.EXTRA_COMPANION_TOKEN).orEmpty(),
+                intent.getStringExtra(FrameControlContract.EXTRA_COMPANION_DEVICE_ID).orEmpty(),
+            )
+        }
 
         val command = FrameControlCommandCodec().decode(
             command = intent.getStringExtra(FrameControlContract.EXTRA_COMMAND),

@@ -58,6 +58,9 @@ import com.wyattfleming.frameos.config.QuietHoursBrightnessPolicy
 import com.wyattfleming.frameos.control.FrameControlCommand
 import com.wyattfleming.frameos.control.FrameControlContract
 import com.wyattfleming.frameos.control.FrameControlStore
+import com.wyattfleming.frameos.control.FrameCompanionClient
+import com.wyattfleming.frameos.control.FrameCompanionCredentialsStore
+import com.wyattfleming.frameos.control.FrameRemoteStatus
 import com.wyattfleming.frameos.security.FrameExternalControlPolicy
 import com.wyattfleming.frameos.diagnostics.FrameDiagnosticStore
 import com.wyattfleming.frameos.ui.WeatherContentView
@@ -148,6 +151,8 @@ class MainActivity : Activity() {
     private var webSurface: FrameWebSurface? = null
     private val slowPageLoads = mutableMapOf<String, Runnable>()
     private var bootRecoveryConfirmed = false
+    private var companionPollInFlight = false
+    private val pollCompanion = Runnable { pollCompanion() }
     private var pendingBootRecoveryDraw: ViewTreeObserver.OnDrawListener? = null
     private var pendingBootRecoveryObserver: ViewTreeObserver? = null
     private var pendingBootRecoveryWebLabel: String? = null
@@ -227,6 +232,7 @@ class MainActivity : Activity() {
         handleOAuthCallback(intent)
         handleFrameCommand(intent)
         handlePendingControl()
+        scheduleCompanionPoll()
         showStartupTransition()
         scheduleIdleReset()
     }
@@ -248,6 +254,7 @@ class MainActivity : Activity() {
         enterImmersiveMode()
         render(state, announce = false)
         if (configuration == null) confirmBootRecoveryAfterNextDraw()
+        scheduleCompanionPoll()
         if (pendingAuthorizationCode != null && !weatherAuthorizationInProgress) {
             startAuthorizationExchange()
         } else if (
@@ -267,6 +274,7 @@ class MainActivity : Activity() {
         cancelModeGesture()
         handler.removeCallbacks(refreshVisibleWeather)
         handler.removeCallbacks(preloadCalendar)
+        handler.removeCallbacks(pollCompanion)
         webSurface?.suspendAllContent()
         super.onPause()
     }
@@ -1052,6 +1060,29 @@ class MainActivity : Activity() {
             authenticationRequired = weatherNeedsAuthentication,
             authorizationInProgress = weatherAuthorizationInProgress || weatherRefreshInProgress || pendingAuthorizationCode != null,
         )?.let { delay -> handler.postDelayed(refreshVisibleWeather, delay) }
+    }
+
+    private fun scheduleCompanionPoll(delayMillis: Long = 5_000L) {
+        handler.removeCallbacks(pollCompanion)
+        if (activityResumed && !companionPollInFlight) handler.postDelayed(pollCompanion, delayMillis)
+    }
+
+    private fun pollCompanion() {
+        if (!activityResumed || companionPollInFlight) return
+        val credentials = FrameCompanionCredentialsStore(this).read() ?: return
+        companionPollInFlight = true
+        val snapshot = diagnosticStore.snapshot()
+        weatherWorkerExecutor.submit {
+            val result = FrameCompanionClient(credentials.endpoint, credentials.token).poll(
+                credentials.deviceId,
+                FrameRemoteStatus(state.mode, state.photosPaused, snapshot.lastPaintEpochMillis.takeIf { it > 0 }, snapshot.lastWeatherSuccessEpochMillis.takeIf { it > 0 }, snapshot.recoveryCount, snapshot.lastError, false, packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"),
+                emptyList(),
+            )
+            handler.post {
+                companionPollInFlight = false
+                scheduleCompanionPoll(if (result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success) 5_000L else 10_000L)
+            }
+        }
     }
 
     private fun beginWeatherAuthorization() {
