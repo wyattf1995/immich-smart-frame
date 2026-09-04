@@ -59,6 +59,18 @@ signals. Missing values mean unknown, not healthy. The remote also shows the app
 version, recovery count, offline asset count, command acknowledgements, and settings
 revision. A configured parents preset does not mean a physical frame is provisioned.
 
+## Optional event notes
+
+When a frame has `eventOverlays: true`, an operator may POST `/api/event` with
+`{"deviceId":"main","event":{"type":"calendar","text":"An event starts soon","expiresInSeconds":120}}`.
+The only types are `calendar` and `reviewed_bird`; do not label an unreviewed
+model result as a reviewed bird. Text is limited to 100 characters, expiry to
+30–300 seconds, and delivery to one event per frame every 15 minutes. Events
+are returned in the next poll and expire without replay. The device shows notes
+only in active Photos, outside quiet hours and a manual pause.
+
+Home Assistant configuration and controls are in [home-assistant/](home-assistant/).
+
 ## Verification and rollback
 
 Run `python3 -m unittest discover -s companion/tests -v` from the repository root.
