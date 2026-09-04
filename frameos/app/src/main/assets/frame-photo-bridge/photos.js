@@ -29,7 +29,9 @@ function isVisible(element) {
 function currentFrame() {
   const container = document.querySelector("#kiosk-container");
   if (!(container instanceof HTMLElement)) return null;
-  const frames = Array.from(container.querySelectorAll(":scope > .frame"));
+  const kiosk = container.querySelector(":scope > #kiosk");
+  if (!(kiosk instanceof HTMLElement)) return null;
+  const frames = Array.from(kiosk.querySelectorAll(":scope > .frame"));
   if (!frames.length) return null;
   return container.classList.contains("transition-push") ? frames[0] : frames[frames.length - 1];
 }
@@ -163,6 +165,8 @@ new MutationObserver(() => {
 }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
 
 document.addEventListener("load", scheduleCapture, true);
-new MutationObserver(scheduleCapture).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value"] });
+document.addEventListener("transitionend", scheduleCapture, true);
+document.addEventListener("animationend", scheduleCapture, true);
+new MutationObserver(scheduleCapture).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
 scheduleCapture();
 connectPlaybackPort();
