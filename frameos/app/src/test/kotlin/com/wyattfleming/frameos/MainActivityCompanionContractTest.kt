@@ -14,11 +14,17 @@ class MainActivityCompanionContractTest {
         assertTrue(source.contains("FrameCompanionCredentialsStore(this).read() != credentials"))
     }
 
+    @Test fun `pause keeps the visible Gecko surface active and controls the slideshow separately`() {
+        assertTrue(source.contains("webSurface?.setContentActive(activityResumed)"))
+        assertTrue(source.contains("webSurface?.setPhotosPaused(next.photosPaused)"))
+        org.junit.Assert.assertFalse(source.contains("setContentActive(activityResumed && !next.photosPaused)"))
+    }
+
     @Test fun `photo commands dispatch while paused and bounded holds resume after their duration`() {
         assertTrue(source.contains("manualPhotoStepPending = true"))
-        assertTrue(source.contains("webSurface?.setContentActive(true)"))
+        assertTrue(source.contains("photoBridge.setCaptureEnabled(activityResumed, false)"))
         assertTrue(source.contains("if (moved) handler.postDelayed(finishManualPhotoStep, 8_000L) else finishManualPhotoStep.run()"))
-        assertTrue(source.contains("if (state.mode == FrameMode.PHOTOS && state.photosPaused) webSurface?.setContentActive(false)"))
+        assertTrue(source.contains("photoBridge.setCaptureEnabled(activityResumed && state.mode == FrameMode.PHOTOS, state.photosPaused)"))
         assertTrue(source.contains("if (moved) \"dispatched\" else \"rejected\""))
         assertTrue(source.contains("handler.postDelayed(resumePhotosAfterHold, command.durationSeconds * 1_000L)"))
         assertTrue(source.contains("private val resumePhotosAfterHold"))
