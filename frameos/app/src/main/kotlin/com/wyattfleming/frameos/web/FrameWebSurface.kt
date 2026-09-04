@@ -436,6 +436,8 @@ class FrameWebSurface(
         return managed.request(url)
     }
 
+    fun refreshPhotos(): Boolean = photosSession.request(photosSession.configuredUrls.first())
+
     fun suspendAllContent() {
         if (displayedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
         if (displayedSlot == FrameWebSlot.BIRDS) disposeBirdsSession()
