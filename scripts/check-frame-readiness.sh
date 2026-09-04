@@ -126,6 +126,11 @@ frameos_duraspeed_ready() {
   printf '%s\n' "${config//$'\r'/}" | awk '
     /^[[:space:]]*(PlatformWhitelist|AppWhitelist):[[:space:]]*/ {
       records += 1
+      if ($0 ~ /^[[:space:]]*PlatformWhitelist:/) {
+        platform_records += 1
+      } else {
+        app_records += 1
+      }
       list = $0
       sub(/^[[:space:]]*(PlatformWhitelist|AppWhitelist):[[:space:]]*/, "", list)
       sub(/[[:space:]]+$/, "", list)
@@ -143,7 +148,10 @@ frameos_duraspeed_ready() {
         if (entry == "com.wyattfleming.frameos") found = 1
       }
     }
-    END { exit !(records >= 1 && found == 1 && invalid == 0) }
+    END {
+      safe = records >= 1 && platform_records <= 1 && app_records <= 1 && found == 1 && invalid == 0
+      exit !safe
+    }
   '
 }
 
