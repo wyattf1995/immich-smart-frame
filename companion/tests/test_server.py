@@ -56,6 +56,13 @@ class CompanionTests(unittest.TestCase):
             self.assertEqual(self.store.state()['devices'][0]['settings'],before)
         self.store.settings('main',{'modeOrder':['photos','weather'],'quietHours':{'enabled':True,'start':'22:00','end':'07:00','brightness':10}})
         result=self.poll();self.assertEqual(result['settings']['modeOrder'],['photos','weather']);self.assertEqual(result['settingsRevision'],2)
+
+    def test_quiet_brightness_preserves_the_device_minimum_wake_level(self):
+        for brightness in (1,5,9,31):
+            with self.assertRaises(module.FrameError):
+                self.store.settings('main',{'quietHours':{'enabled':True,'start':'22:00','end':'07:00','brightness':brightness}})
+        self.store.settings('main',{'quietHours':{'enabled':True,'start':'22:00','end':'07:00','brightness':10}})
+        self.assertEqual(self.poll()['settings']['quietHours']['brightness'],10)
     def test_command_allowlist_and_queue_limit(self):
         self.poll()
         for payload in [{'type':'shell','command':'reboot'},{'type':'show_mode','mode':'settings'},{'type':'photo_hold','durationSeconds':99999},{'type':'set_profile','profile':'unknown'},{'type':'photo_next','url':'https://evil'}]:
