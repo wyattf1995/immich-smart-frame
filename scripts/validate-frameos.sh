@@ -25,6 +25,8 @@ if [[ "$java_version" != "17" ]]; then
   exit 1
 fi
 
+node --test "$frameos_root/app/src/test/js/photos-playback.test.js"
+
 (
   cd "$frameos_root"
   ./gradlew --no-daemon --stacktrace \
