@@ -1,0 +1,95 @@
+# Include this file as a Home Assistant package. URLs and credentials stay in secrets.yaml.
+rest:
+  - resource: !secret frame_companion_state_url
+    method: GET
+    headers:
+      Authorization: !secret frame_companion_authorization
+    timeout: 8
+    scan_interval: 30
+    sensor:
+      - name: Frame Companion
+        unique_id: frame_companion_state
+        value_template: "{{ 'online' if value_json.app_online | default(false) else 'offline' }}"
+        json_attributes:
+          - last_photo_at
+          - weather_age_seconds
+          - reserve_count
+          - version
+          - command_ack
+
+template:
+  - sensor:
+      - name: Frame Last Photo
+        state: "{{ state_attr('sensor.frame_companion', 'last_photo_at') | default('unknown', true) }}"
+      - name: Frame Weather Age
+        unit_of_measurement: s
+        state: "{{ state_attr('sensor.frame_companion', 'weather_age_seconds') | default(0, true) | int }}"
+      - name: Frame Reserve Count
+        state: "{{ state_attr('sensor.frame_companion', 'reserve_count') | default(0, true) | int }}"
+      - name: Frame Version
+        state: "{{ state_attr('sensor.frame_companion', 'version') | default('unknown', true) }}"
+      - name: Frame Command Acknowledgement
+        state: "{{ state_attr('sensor.frame_companion', 'command_ack') | default('none', true) }}"
+
+rest_command:
+  postframecommand:
+    url: !secret frame_companion_command_url
+    method: POST
+    headers:
+      Authorization: !secret frame_companion_authorization
+    content_type: application/json
+    timeout: 8
+    payload: '{"command":"{{ command }}"}'
+  postframeevent:
+    url: !secret frame_companion_event_url
+    method: POST
+    headers:
+      Authorization: !secret frame_companion_authorization
+    content_type: application/json
+    timeout: 8
+    payload: '{"type":"{{ event_type }}","expires_seconds":120}'
+
+script:
+  frame_next:
+    alias: Frame next photo
+    sequence: [{action: rest_command.postframecommand, data: {command: next}}]
+  frame_previous:
+    alias: Frame previous photo
+    sequence: [{action: rest_command.postframecommand, data: {command: previous}}]
+  frame_pause:
+    alias: Frame pause
+    sequence: [{action: rest_command.postframecommand, data: {command: pause}}]
+  frame_resume:
+    alias: Frame resume
+    sequence: [{action: rest_command.postframecommand, data: {command: resume}}]
+  frame_hold_600:
+    alias: Frame hold for ten minutes
+    sequence: [{action: rest_command.postframecommand, data: {command: hold_600}}]
+  frame_show_mode:
+    alias: Frame show mode
+    fields:
+      mode:
+        required: true
+        selector: {select: {options: [photos, home, weather, birds, cameras, calendar]}}
+    sequence:
+      - condition: template
+        value_template: "{{ mode in ['photos', 'home', 'weather', 'birds', 'cameras', 'calendar'] }}"
+      - action: rest_command.postframecommand
+        data: {command: "show_{{ mode }}"}
+  frame_select_profile:
+    alias: Frame select photo profile
+    fields:
+      profile:
+        required: true
+        selector: {select: {options: [balanced, family, photography]}}
+    sequence:
+      - condition: template
+        value_template: "{{ profile in ['balanced', 'family', 'photography'] }}"
+      - action: rest_command.postframecommand
+        data: {command: "profile_{{ profile }}"}
+  frame_event_calendar:
+    alias: Frame calendar event
+    sequence: [{action: rest_command.postframeevent, data: {event_type: calendar}}]
+  frame_event_reviewed_bird:
+    alias: Frame reviewed bird event
+    sequence: [{action: rest_command.postframeevent, data: {event_type: reviewed_bird}}]
