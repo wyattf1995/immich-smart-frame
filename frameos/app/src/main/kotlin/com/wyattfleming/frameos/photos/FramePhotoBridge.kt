@@ -5,8 +5,8 @@ import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.WebExtension
-import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -25,17 +25,17 @@ class FramePhotoBridge(
     data class Sender(val session: Any, val url: String, val topLevel: Boolean, val contentScript: Boolean)
     data class PhotoObserved(val assetId: String, val capturedAt: Long, val jpegFile: java.io.File)
 
-    private var configuredSession: Any? = null
-    private var configuredScope: FramePhotoScope? = null
+    @Volatile private var configuredSession: Any? = null
+    @Volatile private var configuredScope: FramePhotoScope? = null
     private var extension: WebExtension? = null
-    private var captureEnabled = false
-    private var generation = 0L
+    @Volatile private var captureEnabled = false
+    @Volatile private var generation = 0L
     private val decodeWorker = ThreadPoolExecutor(
         1,
         1,
         0L,
         TimeUnit.MILLISECONDS,
-        ArrayBlockingQueue(1),
+        SynchronousQueue(),
         ThreadFactory { runnable -> Thread(runnable, "frame-photo-decode").apply { isDaemon = true } },
         ThreadPoolExecutor.AbortPolicy(),
     )
@@ -55,7 +55,6 @@ class FramePhotoBridge(
         val requested = FramePhotoScope.create(photosUrl, profile) ?: return false
         if (!reserve.activateScope(photosUrl, profile)) return false
         generation += 1
-        decodeWorker.queue.clear()
         configuredSession = session
         configuredScope = requested
         captureEnabled = false
@@ -65,7 +64,9 @@ class FramePhotoBridge(
     /** MainActivity must call this from Photos visibility and pause state; false is the safe default. */
     @Synchronized
     fun setCaptureEnabled(photosVisible: Boolean, photosPaused: Boolean) {
-        captureEnabled = photosVisible && !photosPaused
+        val enabled = photosVisible && !photosPaused
+        if (captureEnabled && !enabled) generation += 1
+        captureEnabled = enabled
     }
 
     /** Installs the APK-bundled extension and attaches its message delegate to this Photos session. */
@@ -89,7 +90,6 @@ class FramePhotoBridge(
         configuredScope = null
         captureEnabled = false
         generation += 1
-        decodeWorker.queue.clear()
     }
 
     /** Final lifecycle cleanup; [detach] remains reusable for Photos-session rebuilds. */
@@ -97,14 +97,13 @@ class FramePhotoBridge(
     fun close() {
         generation += 1
         captureEnabled = false
-        decodeWorker.queue.clear()
         decodeWorker.shutdownNow()
     }
 
     /** Testable validation path; every input received from a WebExtension is untrusted. */
     fun accept(message: Any, sender: Sender): Boolean {
         val capture = captureFrom(message, sender) ?: return false
-        if (!reserve.persist(capture.assetId, capture.image, capture.capturedAt, capture.scope.key)) return false
+        if (!reserve.persist(capture.assetId, capture.image, capture.capturedAt, capture.scope.key) { canCommit(capture) }) return false
         return reportIfCurrent(capture)
     }
 
@@ -129,6 +128,9 @@ class FramePhotoBridge(
     private fun isCurrent(capture: Capture): Boolean =
         generation == capture.generation && captureEnabled && configuredSession === capture.session && configuredScope?.key == capture.scope.key
 
+    /** This intentionally avoids the bridge monitor: Reserve invokes it under its own monitor. */
+    private fun canCommit(capture: Capture): Boolean = isCurrent(capture)
+
     @Synchronized
     private fun isCurrentSession(session: Any): Boolean = configuredSession === session
 
@@ -149,7 +151,7 @@ class FramePhotoBridge(
             val result = GeckoResult<Any>()
             try {
                 decodeWorker.execute {
-                    val accepted = reserve.persist(capture.assetId, capture.image, capture.capturedAt, capture.scope.key) && reportIfCurrent(capture)
+                    val accepted = reserve.persist(capture.assetId, capture.image, capture.capturedAt, capture.scope.key) { canCommit(capture) } && reportIfCurrent(capture)
                     result.complete(JSONObject().put("accepted", accepted))
                 }
             } catch (_: RejectedExecutionException) {
