@@ -1921,6 +1921,7 @@
           els.todayLabel.textContent = `${date} · ${time}`;
           applyNightMode();
           renderAudioHealth();
+          render();
         }
 
         function isoDate(daysAgo = 0) {
@@ -1987,6 +1988,14 @@
           const age = state.audioLastAt ? Math.max(0, Math.round((Date.now() - state.audioLastAt.getTime()) / 1000)) : null;
           els.audioMeterLevel.style.width = `${Math.round(Math.max(0, Math.min(1, state.audioLevel)) * 100)}%`;
           els.audioFreshness.textContent = age === null ? "Audio freshness checking" : age <= 5 ? "Audio fresh now" : `Audio last heard ${age}s ago`;
+        }
+
+        function validAudioLevels(payload) {
+          const raw = payload && payload.levels && typeof payload.levels === "object"
+            ? Object.values(payload.levels) : [payload && payload.level];
+          return raw.map(entry => typeof entry === "object" && entry ? entry.level : entry)
+            .filter(value => (typeof value === "number" || typeof value === "string") && value !== "" && String(value).trim() !== "")
+            .map(Number).filter(Number.isFinite).map(level => Math.max(0, Math.min(100, level)));
         }
 
         function audioFreshnessState() {
@@ -2335,7 +2344,7 @@
               els.heroScientific.textContent = "Connect an audio source to start identifying birds";
             } else if (audioFreshnessState() === "delayed" || audioFreshnessState() === "offline") {
               els.heroKicker.textContent = "Audio needs attention";
-              els.heroName.textContent = "Microphone offline";
+              els.heroName.textContent = audioFreshnessState() === "delayed" ? "Audio delayed" : "Microphone offline";
               els.heroScientific.textContent = "Waiting for recent audio before identifying birds";
             } else {
               els.heroKicker.textContent = "Listening now";
@@ -2634,7 +2643,7 @@
           const detection = latestDetection();
           const heroKey = detection
             ? JSON.stringify([detection.id, detection.timestamp, detection.time, detection.confidence, detection.verified, state.dataError])
-            : JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length, state.audioLevelsActive]);
+            : JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length, state.audioLevelsActive, audioFreshnessState()]);
           const speciesKey = state.summary.length > 0
             ? JSON.stringify([state.dataError, state.summary.slice(0, MAX_SPECIES).map(item => [item.scientific_name, item.count, item.last_heard || item.latest_heard])])
             : JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length]);
@@ -2819,16 +2828,10 @@
           const handleAudioLevel = event => {
             try {
               const payload = JSON.parse(event.data);
-              const rawLevels = payload && payload.levels && typeof payload.levels === "object"
-                ? Object.values(payload.levels)
-                : [payload && payload.level];
-              const levelValues = rawLevels
-                .map(entry => Number(typeof entry === "number" ? entry : entry && entry.level))
-                .filter(Number.isFinite)
-                .map(level => Math.max(0, Math.min(100, level)));
+              const levelValues = validAudioLevels(payload);
               state.audioLevelsActive = levelValues.some(level => level > 0);
-              state.audioLastAt = new Date();
               if (levelValues.length > 0) {
+                state.audioLastAt = new Date();
                 state.audioSamples.push(...levelValues);
                 state.audioSamples = state.audioSamples.slice(-12);
                 state.audioLevel = state.audioSamples.reduce((sum, level) => sum + level, 0) / state.audioSamples.length / 100;
@@ -2842,7 +2845,7 @@
               }
               render();
             } catch (_error) {
-              // The periodic public source-state request remains authoritative.
+              // Invalid stream events are not evidence that audio is arriving.
             }
           };
           audioStream.onmessage = handleAudioLevel;
