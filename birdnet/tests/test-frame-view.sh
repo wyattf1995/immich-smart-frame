@@ -250,8 +250,8 @@ for verification_copy in 'Model candidate · needs review' 'Marked correct' 'Mar
 done
 grep -Fq 'latestDisplayDetection(state.recent)' "$VIEW_FILE" || \
   fail 'hero must select a non-rejected display detection'
-grep -Fq 'state.recent.slice(0, MAX_RECENT)' "$VIEW_FILE" || \
-  fail 'recent panel must retain raw candidates and rejected evidence'
+grep -Fq 'return state.recent;' "$VIEW_FILE" || \
+  fail 'all-results review filter must retain raw candidates and rejected evidence'
 grep -Fq 'detection.verified' "$VIEW_FILE" || fail 'hero render key must react to review changes'
 grep -Fq 'item.verified' "$VIEW_FILE" || fail 'recent render key must react to review changes'
 ! grep -Fq 'High-confidence visitor' "$VIEW_FILE" || \
@@ -322,5 +322,52 @@ grep -Eiq "credentials[[:space:]]*:[[:space:]]*['\"]same-origin" "$VIEW_FILE" ||
   fail 'frame view must send cached Basic Auth only to its same-origin API'
 ! grep -Eiq "credentials[[:space:]]*:[[:space:]]*['\"]include|Notification[.]requestPermission" "$VIEW_FILE" || \
   fail 'frame view must not send browser credentials cross-origin or request notification permission'
+
+# Audio source state alone is not proof that live audio is arriving. The kiosk
+# must make the latest audio evidence authoritative: a source that remains
+# "running" after its meter goes stale must not retain the green Listening
+# state. Keep the slow host watchdog separate; this is the local display truth.
+grep -Fq 'function audioFreshnessState()' "$VIEW_FILE" || \
+  fail 'frame view must derive an explicit audio freshness state'
+for freshness_copy in 'Listening now' 'Audio delayed' 'Microphone offline'; do
+  grep -Fq "$freshness_copy" "$VIEW_FILE" || fail "missing authoritative audio state: ${freshness_copy}"
+done
+grep -Fq 'AUDIO_DELAYED_AFTER_MS' "$VIEW_FILE" || \
+  fail 'frame view must bound delayed-audio status by a named freshness threshold'
+audio_status_fn=$(sed -n '/^[[:space:]]*function statusFromState(/,/^[[:space:]]*function /p' "$VIEW_FILE")
+grep -Fq 'audioFreshnessState()' <<<"$audio_status_fn" || \
+  fail 'main status must use freshness rather than source state alone'
+
+# Keep detection freshness prompt without re-running slow analytics every 15
+# seconds. Fast source/recent state has its own cadence; aggregates have an
+# explicit longer cache interval and live detection events only invalidate the
+# data that can actually have changed.
+for poll_contract in 'FAST_POLL_INTERVAL_MS' 'ANALYTICS_REFRESH_INTERVAL_MS' 'refreshFast' 'refreshAnalytics' 'invalidateDetectionData'; do
+  grep -Fq "$poll_contract" "$VIEW_FILE" || fail "missing adaptive refresh contract: ${poll_contract}"
+done
+grep -Fq 'fetchJson("/api/v2/detections/recent?limit=10")' "$VIEW_FILE" || \
+  fail 'fast refresh must retain recent-detection updates'
+grep -Fq 'fetchJson("/api/v2/weather/latest")' "$VIEW_FILE" || \
+  fail 'slow analytics refresh must retain weather-driven night mode'
+! grep -Eq '(^|[^A-Z_])POLL_INTERVAL_MS([^A-Z_]|$)' "$VIEW_FILE" || \
+  fail 'one uniform 15-second polling interval must not return'
+
+# Review is an intentional read-only flow. Counts must distinguish candidates
+# from records marked correct without turning historic candidate data into a
+# life list. The filter may only lead into the existing on-demand detail dialog;
+# it must not add a public review/mutation route to the NGINX facade.
+for review_contract in 'Needs review' 'Marked correct' 'reviewFilter' 'candidateDetections' 'reviewedDetections' 'Review model results'; do
+  grep -Fq "$review_contract" "$VIEW_FILE" || fail "missing review-queue contract: ${review_contract}"
+done
+grep -Fq 'openDetectionDetail(detection)' "$VIEW_FILE" || \
+  fail 'review queue must use the existing on-demand read-only detail flow'
+! grep -Eiq 'location[^#]*(/review|/verify|/admin|/settings)' "$NGINX_FILE" || \
+  fail 'review queue must not widen the public proxy to review or admin routes'
+
+# The no-touch frame maps volume keys to Tab/Shift+Tab and Star to Enter. A
+# compact, visible cue makes these existing controls discoverable without
+# creating a competing navigation path.
+grep -Fq 'Volume +/− selects · Star opens details' "$VIEW_FILE" || \
+  fail 'Birds view must expose the contextual physical-control hint'
 
 printf 'PASS: BirdNET frame-view contract\n'
