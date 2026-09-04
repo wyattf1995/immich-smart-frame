@@ -75,8 +75,13 @@ case "$1" in
         ;;
       'dumpsys duraspeed config')
         if [[ "${FRAME_READINESS_DURASPEED_STATE:-enabled}" == missing-frameos ]]; then
+          printf 'PlatformWhitelist: []\n'
+          printf 'AppWhitelist: [org.mozilla.firefox, io.github.sds100.keymapper]\n'
+        elif [[ "${FRAME_READINESS_DURASPEED_STATE:-enabled}" == platform-frameos ]]; then
+          printf 'PlatformWhitelist: [com.wyattfleming.frameos]\n'
           printf 'AppWhitelist: [org.mozilla.firefox, io.github.sds100.keymapper]\n'
         else
+          printf 'PlatformWhitelist: []\n'
           printf 'AppWhitelist: [org.mozilla.firefox, io.github.sds100.keymapper, com.wyattfleming.frameos]\r\n'
         fi
         ;;
@@ -149,6 +154,16 @@ set -e
 [[ "$duraspeed_result" != 0 ]] || fail 'enabled DuraSpeed without FrameOS in its whitelist must fail readiness'
 grep -Fqx 'not ready: FrameOS DuraSpeed policy' "$tmp_dir/duraspeed-stderr" || \
   fail 'missing DuraSpeed exemption must identify the failed frame policy check'
+
+FRAME_READINESS_DURASPEED_STATE=platform-frameos FRAME_READINESS_LOG="$command_log" PATH="$fake_bin:$PATH" "$readiness_script" \
+  --adb FRAME-TEST \
+  --array-check-command 'exit 0' \
+  --ha-check-command 'exit 0' > "$tmp_dir/duraspeed-platform-stdout" 2> "$tmp_dir/duraspeed-platform-stderr" || {
+    cat "$tmp_dir/duraspeed-platform-stdout" "$tmp_dir/duraspeed-platform-stderr" >&2
+    fail 'the firmware-supported platform whitelist must satisfy the FrameOS exemption'
+  }
+grep -Fqx 'ready: FrameOS DuraSpeed policy' "$tmp_dir/duraspeed-platform-stdout" || \
+  fail 'a platform-whitelisted FrameOS package must report a ready policy'
 
 FRAME_READINESS_DURASPEED_STATE=disabled FRAME_READINESS_LOG="$command_log" PATH="$fake_bin:$PATH" "$readiness_script" \
   --adb FRAME-TEST \
