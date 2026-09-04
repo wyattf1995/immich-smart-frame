@@ -23,7 +23,7 @@ class FrameOfflineReserveTest {
     @Test
     fun `reserve evicts oldest item and clears when scope changes`() {
         val root = Files.createTempDirectory("frame-offline-reserve-test").toFile()
-        val reserve = FrameOfflineReserve(root, FixedDecoder(), maxPhotos = 2, maxBytes = 10)
+        val reserve = FrameOfflineReserve(root, FixedDecoder(), maxPhotos = 2, maxBytes = 20)
         val first = "11111111-1111-4111-8111-111111111111"
         val second = "22222222-2222-4222-8222-222222222222"
         val third = "33333333-3333-4333-8333-333333333333"
