@@ -30,7 +30,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
   kioskContainer.classList = { contains: (name) => push && name === "transition-push" };
   const kiosk = makeElement();
   kiosk.parentElement = kioskContainer;
-  const frameList = (frames || []).map(({ images, visible = true }) => {
+  const frameList = (frames || []).map(({ images, visible = true, animations = [] }) => {
     const frame = makeElement(visible);
     frame.parentElement = kiosk;
     frame.images = images.map((source) => Object.assign(new HTMLImageElement(), {
@@ -43,6 +43,23 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
       getBoundingClientRect() { return { width: 100, height: 100 }; },
     }));
     frame.querySelectorAll = (selector) => selector === "img[alt='Main image']" ? frame.images : [];
+    frame.animations = animations.map(({ target = "frame", iterations = 1 }) => {
+      const animation = {
+        playState: "paused",
+        finishCalls: 0,
+        effect: {
+          target: target === "frame" ? frame : makeElement(),
+          getTiming() { return { iterations }; },
+        },
+        finish() {
+          this.finishCalls += 1;
+          this.playState = "finished";
+          if (target === "frame") frame.visible = true;
+        },
+      };
+      return animation;
+    });
+    frame.getAnimations = () => frame.animations;
     return frame;
   });
   kioskContainer.querySelector = (selector) => selector === ":scope > #kiosk" ? kiosk : null;
@@ -93,6 +110,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
     body, events, next, previous, port, timers, observers, listeners, classes, nativeMessages,
     runMicrotasks() { while (microtasks.length) microtasks.shift()(); },
     setFrameVisible(index, visible) { frameList[index].visible = visible; },
+    frameAnimations(index) { return frameList[index].animations; },
     fireEvent(type) { listeners.filter(([eventType]) => eventType === type).forEach(([, listener]) => listener({ type })); },
   };
 }
@@ -211,4 +229,24 @@ test("capture retries when the current frame becomes visible after its transitio
   runtime.fireEvent("transitionend");
   runtime.runMicrotasks();
   assert.equal(runtime.nativeMessages[0].assetId, "22222222-2222-4222-8222-222222222222");
+});
+
+test("paused capture finishes only the current frame's finite entrance animation", () => {
+  const runtime = loadScript({
+    historyValues: ["*22222222-2222-4222-8222-222222222222:current"],
+    frames: [{
+      images: ["data:image/jpeg;base64,current"],
+      visible: false,
+      animations: [{ target: "frame" }, { target: "descendant" }],
+    }],
+  });
+  runtime.port.listener({ type: "pause", paused: true });
+  runtime.runMicrotasks();
+  const [entrance, descendant] = runtime.frameAnimations(0);
+  assert.equal(entrance.finishCalls, 1);
+  assert.equal(descendant.finishCalls, 0);
+  assert.equal(runtime.nativeMessages[0].assetId, "22222222-2222-4222-8222-222222222222");
+  runtime.fireEvent("animationend");
+  runtime.runMicrotasks();
+  assert.equal(entrance.finishCalls, 1);
 });
