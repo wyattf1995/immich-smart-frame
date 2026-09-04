@@ -110,8 +110,9 @@ security:
   autoTls: false
   redirecttohttps: false
   basicauth:
-    # Set a unique client ID and password only in the private appdata copy,
-    # then enable this before relying on operator review marks.
+    # Set a unique password in the private appdata copy, then enable this
+    # before relying on operator review marks. Pinned 20260823 LoginModal sends
+    # birdnet-client as its username; changing it breaks the built-in login UI.
     enabled: false
-    clientid: ""
+    clientid: "birdnet-client"
     password: ""

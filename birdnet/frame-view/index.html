@@ -2552,7 +2552,8 @@
                 : state.audioKnown && state.configuredSources.length === 0
               ? "Waiting for a microphone before detection can begin."
               : "The latest four calls will appear here.";
-            const title = state.reviewFilter === "all" ? "No birds heard yet" : "Review queue is clear";
+            const title = state.reviewFilter === "all" ? "No birds heard yet"
+              : state.reviewFilter === "reviewed" ? "No reviewed results" : "No candidates waiting";
             els.recentList.appendChild(emptyPanel(title, copy));
             return;
           }
