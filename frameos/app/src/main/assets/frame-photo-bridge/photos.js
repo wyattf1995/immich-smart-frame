@@ -19,18 +19,24 @@ let portRetryTimer = 0;
 
 function capture() {
   queued = false;
-  const image = document.querySelector("img[alt='Main image']");
-  const history = document.querySelector("#kiosk-history input[name='history']");
-  if (!(image instanceof HTMLImageElement) || !history) return;
-  if (!image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
-  const current = history.value.match(/^\*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}):[^:]*$/i);
+  const histories = Array.from(document.querySelectorAll("#kiosk-history input[name='history']"))
+    .filter((history) => typeof history.value === "string" && history.value.startsWith("*"));
+  if (histories.length !== 1) return;
+  const images = Array.from(document.querySelectorAll("img[alt='Main image']"))
+    .filter((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0 && image.naturalHeight > 0)
+    .filter((image) => {
+      const box = image.getBoundingClientRect();
+      const style = getComputedStyle(image);
+      return box.width > 0 && box.height > 0 && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+    });
+  if (images.length !== 1) return;
+  const image = images[0];
+  const current = histories[0].value.match(/^\*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}):[^:]*$/i);
   if (!current) return;
   const assetId = current[1];
   const source = image.currentSrc || image.src;
   const prefix = "data:image/jpeg;base64,";
-  const box = image.getBoundingClientRect();
-  const style = getComputedStyle(image);
-  if (!ASSET_ID.test(assetId) || !source.startsWith(prefix) || box.width <= 0 || box.height <= 0 || style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return;
+  if (!ASSET_ID.test(assetId) || !source.startsWith(prefix)) return;
   const base64 = source.slice(prefix.length);
   if (!base64 || base64.length > MAX_BASE64_CHARS) return;
   const fingerprint = `${assetId}:${base64.length}:${base64.slice(0, 24)}`;
