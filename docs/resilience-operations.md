@@ -229,10 +229,11 @@ The tested Lenovo firmware also declares its privileged stock launcher at HOME
 intent priority 1. Android caps positive activity priorities from
 non-privileged applications to 0, so the OEM launcher resolves first even when
 FrameOS is both the saved preferred activity and the current HOME role holder.
-The readiness sampler intentionally keeps reporting that mismatch instead of
-turning it into a false pass. The protected router can still launch and recover
-FrameOS explicitly, but automatic boot into FrameOS is not guaranteed on stock
-firmware. Do not disable the complete OEM package merely to satisfy this check:
-that package also owns frame-specific services whose removal has not been
-validated. See Android's
+The readiness sampler therefore accepts either an exact FrameOS resolver result
+or exact FrameOS ownership of Android's authoritative HOME role, and separately
+requires FrameOS to be resumed. That sample describes current state; it does not
+prove the boot receiver will win after a future restart. Keep automatic boot
+**unverified** until a controlled physical reboot succeeds. Do not disable the
+complete OEM package merely to change resolver output: that package also owns
+frame-specific services whose removal has not been validated. See Android's
 [`<intent-filter>` priority rules](https://developer.android.com/guide/topics/manifest/intent-filter-element#priority).
