@@ -152,6 +152,9 @@ class FrameStore:
             if row['seen'] is None or self.clock()-row['seen']>90000: raise FrameError('Frame is offline; commands are not queued for later',409)
             count = db.execute("SELECT COUNT(*) FROM commands WHERE device=? AND status='queued'", (device,)).fetchone()[0]
             if count>=16: raise FrameError('Frame command queue is full',429)
+            if kind=='set_profile':
+                updated=settings_patch(json.loads(row['settings']),{'profile':payload['profile']},self.profiles)
+                db.execute('UPDATE devices SET settings=?,revision=revision+1 WHERE id=?',(json.dumps(updated),device))
             command = dict(payload, id=str(uuid.uuid4()),issuedAt=self.clock(),expiresAt=self.clock()+60000)
             db.execute('INSERT INTO commands(id,device,payload,issued,expires) VALUES(?,?,?,?,?)', (command['id'],device,json.dumps(command),command['issuedAt'],command['expiresAt']))
             return command
