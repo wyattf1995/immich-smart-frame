@@ -1,0 +1,35 @@
+services:
+  frame-companion:
+    build: .
+    image: local/frame-companion:0.1.0
+    container_name: frame-companion
+    restart: unless-stopped
+    user: "10001:10001"
+    ports:
+      - "127.0.0.1:8092:8092"
+    environment:
+      FRAME_CONFIG_FILE: /run/secrets/frame_config
+      FRAME_STATE_DIR: /data
+    volumes:
+      - ./data:/data
+    secrets:
+      - frame_config
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/healthz', timeout=2).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+secrets:
+  frame_config:
+    file: ./config.json
