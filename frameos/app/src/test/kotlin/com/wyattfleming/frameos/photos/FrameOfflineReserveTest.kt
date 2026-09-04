@@ -42,6 +42,43 @@ class FrameOfflineReserveTest {
     }
 
     @Test
+    fun `hidden asset snapshot purges reserve survives restart and permits undo recapture`() {
+        val root = Files.createTempDirectory("frame-offline-reserve-hidden-test").toFile()
+        val hidden = "11111111-1111-4111-8111-111111111111"
+        val visible = "22222222-2222-4222-8222-222222222222"
+        val reserve = FrameOfflineReserve(root, FixedDecoder())
+        assertTrue(reserve.activateScope("https://photos.example/kiosk?frame_id=one", "family"))
+        assertTrue(reserve.persist(hidden, "hidden"))
+        assertTrue(reserve.persist(visible, "visible"))
+
+        assertTrue(reserve.applyHiddenAssets(setOf(hidden)))
+        assertEquals(listOf(visible), reserve.entries().map { it.assetId })
+        assertFalse(reserve.persist(hidden, "hidden-again"))
+
+        val restarted = FrameOfflineReserve(root, FixedDecoder())
+        assertTrue(restarted.activateScope("https://photos.example/kiosk?frame_id=one", "family"))
+        assertEquals(listOf(visible), restarted.entries().map { it.assetId })
+        assertFalse(restarted.persist(hidden, "still-hidden"))
+        assertTrue(restarted.applyHiddenAssets(emptySet()))
+        assertTrue(restarted.persist(hidden, "allowed-after-undo"))
+    }
+
+    @Test
+    fun `hidden snapshots reject invalid or oversized input and reset on exact scope change`() {
+        val root = Files.createTempDirectory("frame-offline-reserve-hidden-scope-test").toFile()
+        val asset = "11111111-1111-4111-8111-111111111111"
+        val reserve = FrameOfflineReserve(root, FixedDecoder())
+        assertTrue(reserve.activateScope("https://photos.example/kiosk", "family"))
+        assertFalse(reserve.applyHiddenAssets(setOf("not-a-uuid")))
+        assertFalse(reserve.applyHiddenAssets((0..1000).map { "%08d-1111-4111-8111-111111111111".format(it) }.toSet()))
+        assertTrue(reserve.applyHiddenAssets(setOf(asset)))
+        assertFalse(reserve.persist(asset, "hidden"))
+
+        assertTrue(reserve.activateScope("https://photos.example/kiosk", "balanced"))
+        assertTrue(reserve.persist(asset, "new-scope"))
+    }
+
+    @Test
     fun `bridge persists only exact configured top level photos session and reports health`() {
         val root = Files.createTempDirectory("frame-photo-bridge-test").toFile()
         val reserve = FrameOfflineReserve(root, FixedDecoder())
