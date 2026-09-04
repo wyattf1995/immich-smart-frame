@@ -13,4 +13,8 @@ object FrameRemoteControlPolicy {
             nowMillis <= expiresAtMillis
 
     fun acceptsProfile(profile: String): Boolean = profilePattern.matches(profile)
+
+    fun acceptsDeviceId(deviceId: String): Boolean = deviceId.matches(DEVICE_ID_PATTERN)
+
+    private val DEVICE_ID_PATTERN = Regex("[A-Za-z0-9_-]{1,80}")
 }

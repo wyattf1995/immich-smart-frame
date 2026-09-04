@@ -21,11 +21,13 @@ class FrameCompanionCredentialsStore(context: Context) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(root.getString("iv"), Base64.NO_WRAP)))
         cipher.updateAAD(endpoint.pollUrl.toByteArray(StandardCharsets.UTF_8))
-        FrameCompanionCredentials(endpoint, String(cipher.doFinal(Base64.decode(root.getString("token"), Base64.NO_WRAP)), StandardCharsets.UTF_8), root.getString("device"))
+        val deviceId = root.getString("device")
+        require(FrameRemoteControlPolicy.acceptsDeviceId(deviceId))
+        FrameCompanionCredentials(endpoint, String(cipher.doFinal(Base64.decode(root.getString("token"), Base64.NO_WRAP)), StandardCharsets.UTF_8), deviceId)
     }.getOrNull()
     fun write(endpointValue: String, token: String, deviceId: String): Boolean = runCatching {
         val endpoint = FrameRemoteEndpoint.from(endpointValue) ?: return false
-        require(token.isNotBlank() && deviceId.matches(Regex("[A-Za-z0-9_-]{1,80}")))
+        require(token.isNotBlank() && FrameRemoteControlPolicy.acceptsDeviceId(deviceId))
         val cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE, key())
         cipher.updateAAD(endpoint.pollUrl.toByteArray(StandardCharsets.UTF_8))
         prefs.edit().putString("value", JSONObject().put("endpoint", endpoint.pollUrl).put("device", deviceId).put("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP)).put("token", Base64.encodeToString(cipher.doFinal(token.toByteArray()), Base64.NO_WRAP)).toString()).commit(); true

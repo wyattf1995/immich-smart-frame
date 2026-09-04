@@ -11,6 +11,7 @@ class FrameCompanionClient(private val endpoint: FrameRemoteEndpoint, private va
     init { require(bearerToken.isNotBlank()) }
 
     fun poll(deviceId: String, status: FrameRemoteStatus, acknowledgements: List<FrameRemoteAck>): FrameCompanionPollResult {
+        require(FrameRemoteControlPolicy.acceptsDeviceId(deviceId))
         val connection = URI(endpoint.pollUrl).toURL().openConnection() as HttpURLConnection
         return try {
             connection.requestMethod = "POST"

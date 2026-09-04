@@ -158,6 +158,7 @@ class MainActivity : Activity() {
     private val slowPageLoads = mutableMapOf<String, Runnable>()
     private var bootRecoveryConfirmed = false
     private var companionPollInFlight = false
+    private var companionPollGeneration = 0L
     private val pollCompanion = Runnable { pollCompanion() }
     private var pendingBootRecoveryDraw: ViewTreeObserver.OnDrawListener? = null
     private var pendingBootRecoveryObserver: ViewTreeObserver? = null
@@ -177,6 +178,9 @@ class MainActivity : Activity() {
             .start()
     }
     private val expireIdle = Runnable { dispatch(FrameIntent.IdleExpired) }
+    private val resumePhotosAfterHold = Runnable {
+        if (state.mode == FrameMode.PHOTOS && state.photosPaused) dispatch(FrameIntent.PrimaryAction)
+    }
     private val refreshVisibleWeather = Runnable { refreshWeather() }
     private val preloadCalendar = Runnable {
         if (!FrameWebCompositionPolicy.forMode(state.mode).warmCalendarInBackground || !activityResumed) {
@@ -275,6 +279,7 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         activityResumed = false
+        invalidateCompanionPoll()
         cancelPendingBootRecoveryConfirmation()
         volumeInput.reset()
         cancelModeGesture()
@@ -296,6 +301,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        invalidateCompanionPoll()
         cancelHomeAssistantWork(stage = "activity_destroy", clearPendingAuthorizationCode = true)
         weatherWorkerExecutor.shutdownNow()
         weatherRequestExecutor.shutdownNow()
@@ -1083,29 +1089,54 @@ class MainActivity : Activity() {
 
     private fun scheduleCompanionPoll(delayMillis: Long = 5_000L) {
         handler.removeCallbacks(pollCompanion)
-        if (activityResumed && !companionPollInFlight) handler.postDelayed(pollCompanion, delayMillis)
+        if (activityResumed && !isFinishing && !isDestroyed && !companionPollInFlight) {
+            handler.postDelayed(pollCompanion, delayMillis)
+        }
     }
 
     private fun pollCompanion() {
         if (!activityResumed || companionPollInFlight) return
         val credentials = FrameCompanionCredentialsStore(this).read() ?: return
         companionPollInFlight = true
+        val generation = companionPollGeneration
         val snapshot = diagnosticStore.snapshot()
+        val status = FrameRemoteStatus(
+            mode = state.mode,
+            photosPaused = state.photosPaused,
+            lastPaintAt = snapshot.lastPaintEpochMillis.takeIf { it > 0 },
+            lastWeatherAt = snapshot.lastWeatherSuccessEpochMillis.takeIf { it > 0 },
+            recoveryCount = snapshot.recoveryCount,
+            lastError = snapshot.lastError,
+            offline = false,
+            appVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown",
+        )
         weatherWorkerExecutor.submit {
             val pendingAcks = FrameCompanionCommandStore(this).consumeAcks()
             val result = FrameCompanionClient(credentials.endpoint, credentials.token).poll(
                 credentials.deviceId,
-                FrameRemoteStatus(state.mode, state.photosPaused, snapshot.lastPaintEpochMillis.takeIf { it > 0 }, snapshot.lastWeatherSuccessEpochMillis.takeIf { it > 0 }, snapshot.recoveryCount, snapshot.lastError, false, packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"),
+                status,
                 pendingAcks,
             )
             handler.post {
                 companionPollInFlight = false
+                if (
+                    generation != companionPollGeneration ||
+                    !activityResumed ||
+                    isFinishing ||
+                    isDestroyed ||
+                    FrameCompanionCredentialsStore(this).read() != credentials
+                ) {
+                    scheduleCompanionPoll()
+                    return@post
+                }
                 if (result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success) {
                     FrameCompanionCommandStore(this).clearAcks(pendingAcks)
                     FrameCompanionSettingsDecoder.decode(result.body)?.let(::applyCompanionSettings)
                     FrameCompanionCommandDecoder.decode(result.body, System.currentTimeMillis())?.let { command ->
                         val store = FrameCompanionCommandStore(this)
-                        if (store.claim(command.id)) { applyCompanionCommand(command); store.ack(command.id, "applied") }
+                        if (store.claim(command.id)) {
+                            store.ack(command.id, if (applyCompanionCommand(command)) "applied" else "ignored")
+                        }
                     }
                 }
                 scheduleCompanionPoll(if (result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success) 5_000L else 10_000L)
@@ -1113,11 +1144,23 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun applyCompanionCommand(command: FrameRemoteCommand) = when (command) {
-        is FrameRemoteCommand.ShowMode -> showMode(command.mode)
-        is FrameRemoteCommand.PhotoStep -> { if (state.mode == FrameMode.PHOTOS) webSurface?.movePhoto(command.forward); Unit }
-        is FrameRemoteCommand.PhotoPause -> { if (state.mode == FrameMode.PHOTOS && state.photosPaused != command.paused) dispatch(FrameIntent.PrimaryAction); Unit }
-        is FrameRemoteCommand.PhotoHold -> { if (state.mode == FrameMode.PHOTOS && !state.photosPaused) dispatch(FrameIntent.PrimaryAction); Unit }
+    private fun invalidateCompanionPoll() {
+        companionPollGeneration += 1
+    }
+
+    private fun applyCompanionCommand(command: FrameRemoteCommand): Boolean = when (command) {
+        is FrameRemoteCommand.ShowMode -> { showMode(command.mode); true }
+        is FrameRemoteCommand.PhotoStep -> if (state.mode == FrameMode.PHOTOS && !state.photosPaused) webSurface?.movePhoto(command.forward) == true else false
+        is FrameRemoteCommand.PhotoPause -> if (state.mode == FrameMode.PHOTOS) {
+            if (state.photosPaused != command.paused) dispatch(FrameIntent.PrimaryAction)
+            true
+        } else false
+        is FrameRemoteCommand.PhotoHold -> if (state.mode == FrameMode.PHOTOS) {
+            if (!state.photosPaused) dispatch(FrameIntent.PrimaryAction)
+            handler.removeCallbacks(resumePhotosAfterHold)
+            handler.postDelayed(resumePhotosAfterHold, command.durationSeconds * 1_000L)
+            true
+        } else false
         is FrameRemoteCommand.SetProfile -> setPhotosProfile(command.profile)
     }
 
@@ -1139,8 +1182,10 @@ class MainActivity : Activity() {
         rebuildExperienceUi()
     }
 
-    private fun setPhotosProfile(profile: String) {
-        if (updatePhotosProfile(profile)) refreshPhotos()
+    private fun setPhotosProfile(profile: String): Boolean {
+        if (!updatePhotosProfile(profile)) return false
+        refreshPhotos()
+        return true
     }
 
     private fun updatePhotosProfile(profile: String): Boolean {
