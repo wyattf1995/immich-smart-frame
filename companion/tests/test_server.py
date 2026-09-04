@@ -56,14 +56,31 @@ class CompanionTests(unittest.TestCase):
         self.assertEqual(auth.role('Bearer '+'d'*48),('device','main'))
         self.assertEqual(auth.role('Bearer '+'o'*48),('operator',None))
         self.assertIsNone(auth.role('Bearer '+'d'*47+'x'))
+    def test_device_cannot_ack_another_frame(self):
+        self.store=module.FrameStore(Path(self.tmp.name)/'state.db',{'parents':{}},['balanced','family'],clock=lambda:self.clock)
+        self.poll();c=self.store.command('main',{'type':'photo_next'})
+        self.store.poll('parents',{'status':{},'acks':[{'id':c['id'],'status':'applied'}]})
+        self.assertEqual(self.poll()['commands'][0]['id'],c['id'])
+    def test_preference_export_preserves_all_scopes(self):
+        export=Path(self.tmp.name)/'export'/'preferences.json'
+        self.store=module.FrameStore(Path(self.tmp.name)/'state.db',{'parents':{}},['balanced','family'],clock=lambda:self.clock,preferences_export=export)
+        asset='11111111-1111-4111-8111-111111111111'
+        self.store.feedback('main',{'assetId':asset,'preference':'hide'})
+        data=json.loads(export.read_text());self.assertEqual(data['devices']['main']['assets'][asset],'hide');self.assertEqual(data['devices']['parents']['assets'],{})
+        self.store.feedback('main',{'assetId':asset,'preference':'clear'})
+        self.assertEqual(json.loads(export.read_text())['devices']['main']['assets'],{})
+    def test_auth_invalid_unicode_and_role_token_reuse(self):
+        config={'operatorUsername':'frame','operatorPassword':'p'*32,'operatorToken':'o'*48,'devices':{'main':{'token':'d'*48}}}
+        auth=module.FrameAuth(config)
+        self.assertIsNone(auth.role('Bearer ☃'))
+        config['devices']['main']['token']=config['operatorToken']
+        with self.assertRaises(module.FrameError):module.FrameAuth(config)
     def test_feedback_is_separate_reversible_and_scoped(self):
         self.store.feedback('main',{'assetId':'11111111-1111-4111-8111-111111111111','preference':'less'})
         self.assertEqual(self.store.preferences('main')[0]['preference'],'less')
         self.store.feedback('main',{'assetId':'11111111-1111-4111-8111-111111111111','preference':'clear'})
         self.assertEqual(self.store.preferences('main'),[])
         with self.assertRaises(module.FrameError):self.store.feedback('main',{'assetId':'../../etc','preference':'hide'})
-
-if __name__=='__main__': unittest.main()
 
 class HttpBoundaryTests(unittest.TestCase):
     def setUp(self):
@@ -101,3 +118,14 @@ class HttpBoundaryTests(unittest.TestCase):
         self.assertEqual(self.request('GET','/../../etc/passwd','Bearer '+'o'*48)[0],404)
         self.assertEqual(self.request('POST','/api/reboot','Bearer '+'o'*48,{})[0],404)
         self.assertEqual(self.request('DELETE','/api/state','Bearer '+'o'*48)[0],405)
+
+    def test_authenticated_ui_and_preferences_are_no_store(self):
+        status,headers,body=self.request('GET','/','Bearer '+'o'*48)
+        self.assertEqual(status,200);self.assertEqual(headers['Cache-Control'],'no-store');self.assertIn(b'Frame remote',body)
+        self.assertEqual(self.request('GET','/api/preferences?deviceId=main','Bearer '+'o'*48)[0],200)
+        self.assertEqual(self.request('GET','/api/preferences?deviceId=main','Bearer '+'d'*48)[0],403)
+    def test_non_object_and_oversize_posts_rejected(self):
+        self.assertEqual(self.request('POST','/device/poll','Bearer '+'d'*48,[])[0],400)
+        self.assertEqual(self.request('POST','/device/poll','Bearer '+'d'*48,{'x':'x'*40000})[0],413)
+
+if __name__=='__main__': unittest.main()
