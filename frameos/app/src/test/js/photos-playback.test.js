@@ -49,7 +49,7 @@ function loadScript({ connectNative } = {}) {
     },
     getComputedStyle() { return {}; },
     queueMicrotask() {},
-    setTimeout(callback) { timers.push(callback); return timers.length; },
+    setTimeout(callback, delay) { timers.push({ callback, delay }); return timers.length; },
     clearTimeout() {},
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../../main/assets/frame-photo-bridge/photos.js"), "utf8"), context);
@@ -87,11 +87,17 @@ test("step falls back to the exact body ArrowLeft HTMX contract", () => {
   assert.equal(runtime.events[0].bubbles, true);
 });
 
-test("failed native port connection retries a bounded number of times and leaves capture observers installed", () => {
+test("failed native port connection backs off without exhausting and leaves capture observers installed", () => {
   let attempts = 0;
   const runtime = loadScript({ connectNative() { attempts += 1; throw new Error("native unavailable"); } });
-  while (runtime.timers.length) runtime.timers.shift()();
-  assert.equal(attempts, 4);
+  const delays = [];
+  for (let index = 0; index < 5; index += 1) {
+    const timer = runtime.timers.shift();
+    delays.push(timer.delay);
+    timer.callback();
+  }
+  assert.equal(attempts, 6);
+  assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000]);
   assert.equal(runtime.listeners.length, 1);
   assert.equal(runtime.observers.length, 2);
 });
