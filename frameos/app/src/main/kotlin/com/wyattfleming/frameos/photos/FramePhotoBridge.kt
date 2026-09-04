@@ -22,9 +22,16 @@ import java.util.concurrent.TimeUnit
 class FramePhotoBridge(
     private val reserve: FrameOfflineReserve,
     private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val uiPost: ((() -> Unit) -> Unit) = { action -> Handler(Looper.getMainLooper()).post(action) },
     private val onPhotoObserved: (PhotoObserved) -> Unit = {},
 ) {
     data class Sender(val session: Any, val url: String, val topLevel: Boolean, val contentScript: Boolean)
+    /** A session-bound content-script port used only for the Photos playback controls. */
+    interface PlaybackPort {
+        val sender: Sender
+        fun post(command: JSONObject)
+        fun disconnect()
+    }
     data class PhotoObserved(
         val assetId: String,
         val capturedAt: Long,
@@ -38,6 +45,8 @@ class FramePhotoBridge(
     private var extension: WebExtension? = null
     @Volatile private var captureEnabled = false
     @Volatile private var generation = 0L
+    private var playbackPort: PlaybackPort? = null
+    private var desiredPlaybackPaused = false
     private val decodeWorker = ThreadPoolExecutor(
         1,
         1,
@@ -63,6 +72,7 @@ class FramePhotoBridge(
         val requested = FramePhotoScope.create(photosUrl, profile) ?: return false
         if (!reserve.activateScope(photosUrl, profile)) return false
         generation += 1
+        clearPlaybackPort()
         configuredSession = session
         configuredScope = requested
         captureEnabled = false
@@ -100,6 +110,7 @@ class FramePhotoBridge(
         configuredScope = null
         captureEnabled = false
         generation += 1
+        clearPlaybackPort()
     }
 
     /** Final lifecycle cleanup; [detach] remains reusable for Photos-session rebuilds. */
@@ -107,7 +118,59 @@ class FramePhotoBridge(
     fun close() {
         generation += 1
         captureEnabled = false
+        clearPlaybackPort()
+        desiredPlaybackPaused = false
         decodeWorker.shutdownNow()
+    }
+
+    /** Records desired state even while the page reconnects; true means a current port accepted the dispatch. */
+    @Synchronized
+    fun setPlaybackPaused(paused: Boolean): Boolean {
+        desiredPlaybackPaused = paused
+        return playbackPort?.let { dispatchPlayback(it, JSONObject().put("type", "pause").put("paused", paused)) } ?: false
+    }
+
+    /** Sends one trusted next/previous request; it never falls back to synthetic surface input. */
+    @Synchronized
+    fun movePhoto(forward: Boolean): Boolean =
+        playbackPort?.let { dispatchPlayback(it, JSONObject().put("type", "step").put("forward", forward)) } ?: false
+
+    /** Testable strict port gate; the real delegate adapts Gecko's port into this narrow interface. */
+    @Synchronized
+    internal fun connectPlaybackPort(port: PlaybackPort): Boolean {
+        if (!isTrustedPlaybackPort(port)) {
+            port.disconnect()
+            return false
+        }
+        clearPlaybackPort()
+        playbackPort = port
+        dispatchPlayback(port, JSONObject().put("type", "pause").put("paused", desiredPlaybackPaused))
+        return true
+    }
+
+    @Synchronized
+    private fun clearPlaybackPort() {
+        playbackPort?.disconnect()
+        playbackPort = null
+    }
+
+    private fun isTrustedPlaybackPort(port: PlaybackPort): Boolean {
+        val scope = configuredScope ?: return false
+        val sender = port.sender
+        return sender.session === configuredSession && sender.topLevel && sender.contentScript && sender.url == scope.photosUrl
+    }
+
+    private fun dispatchPlayback(port: PlaybackPort, command: JSONObject): Boolean {
+        if (playbackPort !== port || !isTrustedPlaybackPort(port)) return false
+        uiPost {
+            synchronized(this) {
+                if (playbackPort !== port || !isTrustedPlaybackPort(port)) return@synchronized
+                runCatching { port.post(command) }.onFailure {
+                    if (playbackPort === port) playbackPort = null
+                }
+            }
+        }
+        return true
     }
 
     /** Testable validation path; every input received from a WebExtension is untrusted. */
@@ -149,7 +212,36 @@ class FramePhotoBridge(
     @Synchronized
     private fun isCurrentSession(session: Any): Boolean = configuredSession === session
 
+    private inner class GeckoPlaybackPort(private val port: WebExtension.Port) : PlaybackPort {
+        override val sender = port.sender.let {
+            Sender(
+                session = it.session ?: Any(),
+                url = it.url,
+                topLevel = it.isTopLevel,
+                contentScript = it.environmentType == WebExtension.MessageSender.ENV_TYPE_CONTENT_SCRIPT,
+            )
+        }
+
+        override fun post(command: JSONObject) = port.postMessage(command)
+        override fun disconnect() = port.disconnect()
+        fun bind() {
+            port.setDelegate(object : WebExtension.PortDelegate {
+                override fun onDisconnect(port: WebExtension.Port) {
+                    synchronized(this@FramePhotoBridge) {
+                        if (playbackPort === this@GeckoPlaybackPort) playbackPort = null
+                    }
+                }
+            })
+        }
+    }
+
     private val delegate = object : WebExtension.MessageDelegate {
+        override fun onConnect(port: WebExtension.Port) {
+            val playback = GeckoPlaybackPort(port)
+            playback.bind()
+            connectPlaybackPort(playback)
+        }
+
         override fun onMessage(nativeApp: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
             val senderSession = sender.session
             if (nativeApp != NATIVE_APP || senderSession == null) return GeckoResult.fromValue(JSONObject().put("accepted", false))

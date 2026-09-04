@@ -10,6 +10,7 @@ let rejectedFingerprint = "";
 let rejectedRetries = 0;
 let queued = false;
 let retryTimer = 0;
+let desiredPlaybackPaused = null;
 
 function capture() {
   queued = false;
@@ -67,6 +68,43 @@ function scheduleCapture() {
   queued = true;
   queueMicrotask(capture);
 }
+
+function setPollingPaused(paused) {
+  if (document.body.classList.contains("polling-paused") === paused) return;
+  document.body.dispatchEvent(new KeyboardEvent("keydown", {
+    code: "KeyP",
+    key: "p",
+    shiftKey: !paused,
+    bubbles: true,
+  }));
+}
+
+function stepPhoto(forward) {
+  const selector = forward ? ".navigation--next-asset" : ".navigation--prev-asset";
+  const control = document.querySelector(selector);
+  if (control instanceof HTMLElement) {
+    control.click();
+  } else {
+    document.body.dispatchEvent(new KeyboardEvent("keyup", {
+      key: forward ? "ArrowRight" : "ArrowLeft",
+      bubbles: true,
+    }));
+  }
+  if (desiredPlaybackPaused) {
+    setTimeout(() => setPollingPaused(true), 250);
+  }
+}
+
+const playbackPort = browser.runtime.connectNative("frame_photo_bridge");
+playbackPort.onMessage.addListener((command) => {
+  if (!command || typeof command.type !== "string") return;
+  if (command.type === "pause" && typeof command.paused === "boolean") {
+    desiredPlaybackPaused = command.paused;
+    setPollingPaused(command.paused);
+  } else if (command.type === "step" && typeof command.forward === "boolean") {
+    stepPhoto(command.forward);
+  }
+});
 
 document.addEventListener("load", scheduleCapture, true);
 new MutationObserver(scheduleCapture).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value"] });
