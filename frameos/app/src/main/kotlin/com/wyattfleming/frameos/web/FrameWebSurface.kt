@@ -55,6 +55,7 @@ class FrameWebSurface(
     private val requiresFullAccessibilityTree = context.getSystemService(AccessibilityManager::class.java)
         ?.isTouchExplorationEnabled == true
     private val recoveryPolicy = FrameWebRecoveryPolicy()
+    private var photosContentActive = false
 
     private inner class ManagedSession(
         val configuredUrls: List<String>,
@@ -167,9 +168,14 @@ class FrameWebSurface(
             renderedState.recordRequest()
             try {
                 if (crashRecovery.reopenIfRequired { session.open(frameRuntime) }) {
-                    if (label == "Photos") photoBridge?.attach(frameRuntime, session, configuredUrls.first(), photosProfile)
-                    // Recovery retries run only for an attached, visible session.
-                    session.setActive(true)
+                    val active = label != "Photos" ||
+                        (photosContentActive && this === displayedManagedSession() && displayedSurfaceVisible())
+                    if (label == "Photos") {
+                        photoBridge?.attach(frameRuntime, session, configuredUrls.first(), photosProfile)
+                        photoBridge?.setCaptureEnabled(active, !active)
+                    }
+                    // Preserve Photos pause/lifecycle ownership when reopening a crashed session.
+                    session.setActive(active)
                     session.setFocused(false)
                 }
                 session.loadUri(url)
@@ -337,6 +343,7 @@ class FrameWebSurface(
     }
 
     fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean) {
+        if (slot != FrameWebSlot.PHOTOS) photosContentActive = false
         if (displayedSlot != null && displayedSlot != slot) {
             displayedManagedSession()?.stopWatchingDisplayedContent()
         }
@@ -390,6 +397,8 @@ class FrameWebSurface(
     }
 
     fun hide() {
+        photosContentActive = false
+        photoBridge?.setCaptureEnabled(false, true)
         displayedManagedSession()?.stopWatchingDisplayedContent()
         visibility = View.GONE
         if (displayedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
@@ -407,7 +416,10 @@ class FrameWebSurface(
     }
 
     fun setContentActive(active: Boolean) {
-        if (displayedSlot == FrameWebSlot.PHOTOS) photoBridge?.setCaptureEnabled(active, !active)
+        if (displayedSlot == FrameWebSlot.PHOTOS) {
+            photosContentActive = active
+            photoBridge?.setCaptureEnabled(active, !active)
+        }
         if (!active && displayedSlot == FrameWebSlot.CAMERAS) {
             disposeCameraSession()
             return
@@ -439,6 +451,8 @@ class FrameWebSurface(
     fun refreshPhotos(): Boolean = photosSession.request(photosSession.configuredUrls.first())
 
     fun suspendAllContent() {
+        photosContentActive = false
+        photoBridge?.setCaptureEnabled(false, true)
         if (displayedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
         if (displayedSlot == FrameWebSlot.BIRDS) disposeBirdsSession()
         allSessions().forEach {

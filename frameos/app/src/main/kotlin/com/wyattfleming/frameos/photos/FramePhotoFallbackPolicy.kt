@@ -17,6 +17,8 @@ class FramePhotoFallbackPolicy {
     fun recordReachable() { failures = 0 }
     fun recordFreshPhoto() { failures = 0; isShowing = false; lastRecoveryAt = null; recoveryDelayMillis = 60_000L }
     fun hide() { isShowing = false }
+    fun canDismiss(capturedAt: Long, healthyProbeAt: Long?): Boolean =
+        !isShowing || (healthyProbeAt != null && capturedAt >= healthyProbeAt)
 
     fun shouldRecover(lastPhotoAt: Long?, visibleSince: Long, now: Long, visible: Boolean, paused: Boolean): Boolean {
         if (!visible || paused) return false

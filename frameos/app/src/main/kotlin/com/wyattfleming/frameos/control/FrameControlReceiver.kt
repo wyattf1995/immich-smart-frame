@@ -43,7 +43,9 @@ class FrameControlReceiver : BroadcastReceiver() {
                 intent.getStringExtra(FrameControlContract.EXTRA_COMPANION_DEVICE_ID).orEmpty(),
             )
             if (credentialsWritten) {
-                existingConfiguration?.let { existing ->
+                val experience = com.wyattfleming.frameos.config.FrameExperienceStore(context)
+                experience.write(experience.read().copy(settingsRevision = 0L))
+                configurationStore.read()?.let { existing ->
                     FramePhotosProfileUrl.withFrameId(existing.photosUrl, intent.getStringExtra(FrameControlContract.EXTRA_COMPANION_DEVICE_ID).orEmpty())
                         ?.let { photosUrl -> configurationStore.write(existing.copy(photosUrl = photosUrl)) }
                 }

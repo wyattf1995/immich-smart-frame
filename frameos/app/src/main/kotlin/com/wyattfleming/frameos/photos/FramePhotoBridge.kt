@@ -1,5 +1,7 @@
 package com.wyattfleming.frameos.photos
 
+import android.os.Handler
+import android.os.Looper
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
@@ -23,7 +25,13 @@ class FramePhotoBridge(
     private val onPhotoObserved: (PhotoObserved) -> Unit = {},
 ) {
     data class Sender(val session: Any, val url: String, val topLevel: Boolean, val contentScript: Boolean)
-    data class PhotoObserved(val assetId: String, val capturedAt: Long, val jpegFile: java.io.File)
+    data class PhotoObserved(
+        val assetId: String,
+        val capturedAt: Long,
+        val jpegFile: java.io.File,
+        internal val generation: Long,
+        internal val scopeKey: String,
+    )
 
     @Volatile private var configuredSession: Any? = null
     @Volatile private var configuredScope: FramePhotoScope? = null
@@ -73,9 +81,11 @@ class FramePhotoBridge(
     fun attach(runtime: GeckoRuntime, session: GeckoSession, photosUrl: String, profile: String): Boolean {
         if (!configure(session, photosUrl, profile)) return false
         runtime.webExtensionController.ensureBuiltIn(EXTENSION_LOCATION, EXTENSION_ID).accept({ installed ->
-            if (isCurrentSession(session) && installed != null) {
-                extension = installed
-                session.webExtensionController.setMessageDelegate(installed, delegate, NATIVE_APP)
+            Handler(Looper.getMainLooper()).post {
+                if (isCurrentSession(session) && installed != null) {
+                    extension = installed
+                    session.webExtensionController.setMessageDelegate(installed, delegate, NATIVE_APP)
+                }
             }
         }, { _ -> })
         return true
@@ -121,9 +131,14 @@ class FramePhotoBridge(
     private fun reportIfCurrent(capture: Capture): Boolean = synchronized(this) {
         if (!isCurrent(capture)) return@synchronized false
         val file = reserve.latest()?.file ?: return@synchronized false
-        onPhotoObserved(PhotoObserved(capture.assetId, capture.capturedAt, file))
+        onPhotoObserved(PhotoObserved(capture.assetId, capture.capturedAt, file, capture.generation, capture.scope.key))
         true
     }
+
+    /** Recheck when consuming a callback posted asynchronously by the host activity. */
+    @Synchronized
+    fun isCurrentObservation(photo: PhotoObserved): Boolean =
+        captureEnabled && generation == photo.generation && configuredScope?.key == photo.scopeKey
 
     private fun isCurrent(capture: Capture): Boolean =
         generation == capture.generation && captureEnabled && configuredSession === capture.session && configuredScope?.key == capture.scope.key
