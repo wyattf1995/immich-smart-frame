@@ -29,6 +29,7 @@ services:
       # optimized slide; Go begins collecting before the 1 GiB hard limit.
       GOMEMLIMIT: ${KIOSK_GOMEMLIMIT:-800MiB}
       FRAME_PREFERENCES_FILE: /frame-preferences/preferences.json
+      KIOSK_METRICS_TOKEN_FILE: /run/secrets/kiosk_metrics_token
     ports:
       - "${KIOSK_PORT:-3000}:3000"
     volumes:
@@ -40,6 +41,7 @@ services:
       - "${FRAME_PREFERENCES_GID:-10001}"
     secrets:
       - immich_api_key
+      - kiosk_metrics_token
     cap_drop:
       - ALL
     read_only: true
@@ -64,3 +66,6 @@ services:
 secrets:
   immich_api_key:
     file: ${KIOSK_API_KEY_FILE:-./secrets/immich_api_key}
+
+  kiosk_metrics_token:
+    file: ${KIOSK_METRICS_TOKEN_FILE:-./secrets/kiosk_metrics_token}
