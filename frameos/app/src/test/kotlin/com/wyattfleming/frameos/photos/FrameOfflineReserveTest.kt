@@ -33,6 +33,7 @@ class FrameOfflineReserveTest {
         assertTrue(reserve.persist(second, "b"))
         assertTrue(reserve.persist(third, "c"))
         assertEquals(listOf(third, second), reserve.entries().map { it.assetId })
+        assertEquals(2, reserve.status().offlineAssets)
         assertFalse(reserve.persist("not-a-uuid", "d"))
 
         assertTrue(reserve.activateScope("https://photos.example/kiosk", "balanced"))
@@ -48,6 +49,7 @@ class FrameOfflineReserveTest {
         val reports = mutableListOf<FramePhotoBridge.PhotoObserved>()
         val bridge = FramePhotoBridge(reserve, nowMillis = { 1234L }, onPhotoObserved = reports::add)
         assertTrue(bridge.configure(session, "https://photos.example/kiosk", "family"))
+        bridge.setCaptureEnabled(photosVisible = true, photosPaused = false)
         val asset = "11111111-1111-4111-8111-111111111111"
         val message = JSONObject().put("type", "loaded-photo").put("assetId", asset).put("image", "a")
 
@@ -56,7 +58,9 @@ class FrameOfflineReserveTest {
         assertFalse(bridge.accept(message, FramePhotoBridge.Sender(session, "https://photos.example/kiosk", false, true)))
         assertTrue(bridge.accept(message, FramePhotoBridge.Sender(session, "https://photos.example/kiosk", true, true)))
         assertEquals(asset, reserve.latest()?.assetId)
-        assertEquals(listOf(FramePhotoBridge.PhotoObserved(asset, 1234L)), reports)
+        assertEquals(listOf(asset), reports.map { it.assetId })
+        assertEquals(1234L, reports.single().capturedAt)
+        assertTrue(reports.single().jpegFile.isFile)
     }
 
     @Test
@@ -66,12 +70,15 @@ class FrameOfflineReserveTest {
         val session = Any()
         val bridge = FramePhotoBridge(reserve)
         assertTrue(bridge.configure(session, "https://photos.example/kiosk", "family"))
+        bridge.setCaptureEnabled(photosVisible = true, photosPaused = false)
         val sender = FramePhotoBridge.Sender(session, "https://photos.example/kiosk", true, true)
         val asset = "11111111-1111-4111-8111-111111111111"
 
         assertFalse(bridge.accept(JSONObject().put("type", "loaded-photo").put("assetId", asset).put("image", "data:image/png;base64,a"), sender))
         assertFalse(bridge.accept(JSONObject().put("type", "loaded-photo").put("assetId", "bad").put("image", "a"), sender))
         assertFalse(bridge.accept(JSONObject().put("type", "loaded-photo").put("assetId", asset).put("image", "a".repeat(FramePhotoBridge.MAX_BASE64_CHARS + 1)), sender))
+        bridge.setCaptureEnabled(photosVisible = false, photosPaused = false)
+        assertFalse(bridge.accept(JSONObject().put("type", "loaded-photo").put("assetId", asset).put("image", "a"), sender))
     }
 
     private class FixedDecoder : FramePhotoDecoder {
