@@ -34,10 +34,10 @@ def integer(value, minimum, maximum):
 
 def canonical_origin(value):
     """Return the browser Origin form for a credential-free HTTPS origin."""
-    if not isinstance(value, str) or value != value.strip(): return None
+    if not isinstance(value, str) or any(ord(char) <= 0x20 or ord(char) == 0x7f for char in value): return None
     try:
         origin = urlsplit(value)
-        if origin.scheme.lower() != 'https' or not origin.hostname or origin.username or origin.password or origin.path not in ('','/') or origin.query or origin.fragment: return None
+        if origin.scheme.lower() != 'https' or not origin.hostname or origin.username is not None or origin.password is not None or origin.path not in ('','/') or origin.query or origin.fragment: return None
         host = origin.hostname.lower()
         port = origin.port
     except ValueError:
@@ -306,8 +306,9 @@ def make_server(config,store,host='127.0.0.1',port=8092):
                 if device_route and role[0]!='device' or not device_route and role[0]!='operator':raise FrameError('Credential is not authorized for this route',403)
                 if self.command=='POST':
                     if path not in ('/device/poll','/api/command','/api/settings','/api/feedback','/api/event'):raise FrameError('Not found',404)
-                    request_origin=canonical_origin(self.headers.get('Origin')) if self.headers.get('Origin') else None
-                    if request_origin and request_origin!=origin:raise FrameError('Origin rejected',403)
+                    raw_origin=self.headers.get('Origin')
+                    request_origin=canonical_origin(raw_origin) if raw_origin is not None else None
+                    if raw_origin is not None and (request_origin is None or request_origin!=origin):raise FrameError('Origin rejected',403)
                     if role[0]=='operator' and self.headers.get('Authorization','').startswith('Basic '):
                         if request_origin!=origin or not hmac.compare_digest(self.headers.get('X-Frame-CSRF',''),csrf):raise FrameError('CSRF check failed',403)
                     if self.headers.get('Transfer-Encoding'):raise FrameError('Chunked requests are not supported')
