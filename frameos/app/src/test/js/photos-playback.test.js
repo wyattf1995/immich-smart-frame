@@ -22,14 +22,17 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
   Object.setPrototypeOf(previous, HTMLElement.prototype);
   const history = historyValues.map((value) => ({ value }));
   const makeElement = (visible = true) => Object.assign(new HTMLElement(), {
+    visible,
     parentElement: null,
-    getBoundingClientRect() { return { width: visible ? 100 : 0, height: visible ? 100 : 0 }; },
+    getBoundingClientRect() { return { width: this.visible ? 100 : 0, height: this.visible ? 100 : 0 }; },
   });
   const kioskContainer = makeElement();
   kioskContainer.classList = { contains: (name) => push && name === "transition-push" };
+  const kiosk = makeElement();
+  kiosk.parentElement = kioskContainer;
   const frameList = (frames || []).map(({ images, visible = true }) => {
     const frame = makeElement(visible);
-    frame.parentElement = kioskContainer;
+    frame.parentElement = kiosk;
     frame.images = images.map((source) => Object.assign(new HTMLImageElement(), {
       parentElement: frame,
       complete: true,
@@ -42,7 +45,8 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
     frame.querySelectorAll = (selector) => selector === "img[alt='Main image']" ? frame.images : [];
     return frame;
   });
-  kioskContainer.querySelectorAll = (selector) => selector === ":scope > .frame" ? frameList : [];
+  kioskContainer.querySelector = (selector) => selector === ":scope > #kiosk" ? kiosk : null;
+  kiosk.querySelectorAll = (selector) => selector === ":scope > .frame" ? frameList : [];
   const body = {
     classList: { contains: (name) => classes.has(name) },
     dispatchEvent(event) {
@@ -79,7 +83,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
         return [];
       },
     },
-    getComputedStyle() { return { display: "block", visibility: "visible", opacity: "1" }; },
+    getComputedStyle(element) { return { display: "block", visibility: "visible", opacity: element.visible === false ? "0" : "1" }; },
     queueMicrotask(callback) { microtasks.push(callback); },
     setTimeout(callback, delay) { timers.push({ callback, delay }); return timers.length; },
     clearTimeout() {},
@@ -88,6 +92,8 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
   return {
     body, events, next, previous, port, timers, observers, listeners, classes, nativeMessages,
     runMicrotasks() { while (microtasks.length) microtasks.shift()(); },
+    setFrameVisible(index, visible) { frameList[index].visible = visible; },
+    fireEvent(type) { listeners.filter(([eventType]) => eventType === type).forEach(([, listener]) => listener({ type })); },
   };
 }
 
@@ -192,4 +198,17 @@ test("capture after a paused step uses the active frame rather than its retained
   pausedStep.port.listener({ type: "step", forward: true });
   pausedStep.runMicrotasks();
   assert.equal(pausedStep.nativeMessages[0].assetId, "22222222-2222-4222-8222-222222222222");
+});
+
+test("capture retries when the current frame becomes visible after its transition", () => {
+  const runtime = loadScript({
+    historyValues: ["*22222222-2222-4222-8222-222222222222:current"],
+    frames: [{ images: ["data:image/jpeg;base64,current"], visible: false }],
+  });
+  runtime.runMicrotasks();
+  assert.equal(runtime.nativeMessages.length, 0);
+  runtime.setFrameVisible(0, true);
+  runtime.fireEvent("transitionend");
+  runtime.runMicrotasks();
+  assert.equal(runtime.nativeMessages[0].assetId, "22222222-2222-4222-8222-222222222222");
 });
