@@ -31,6 +31,10 @@ class FramePhotoBridgeExtensionContractTest {
         assertTrue(source.contains("current[1]"))
         assertTrue(source.contains("data:image/jpeg;base64,"))
         assertTrue(source.contains("getBoundingClientRect"))
+        assertTrue(source.contains("image.complete"))
+        assertTrue(source.contains("image.naturalWidth"))
+        assertTrue(source.contains("response && response.accepted"))
+        assertTrue(source.contains("MAX_REJECTED_RETRIES"))
         assertFalse(source.contains("screenshot"))
         assertFalse(source.contains("fetch("))
     }

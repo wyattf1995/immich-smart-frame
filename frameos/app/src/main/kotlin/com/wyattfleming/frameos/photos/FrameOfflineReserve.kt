@@ -104,6 +104,8 @@ class FrameOfflineReserve(
 
     private var scope: FramePhotoScope? = null
     private var entries = emptyList<Entry>()
+    /** Device-private full snapshot supplied by the authenticated companion response. */
+    private var hiddenAssets = emptySet<String>()
 
     init {
         require(maxPhotos in 1..DEFAULT_MAX_PHOTOS)
@@ -114,20 +116,43 @@ class FrameOfflineReserve(
     fun activateScope(photosUrl: String, profile: String): Boolean {
         val requested = FramePhotoScope.create(photosUrl, profile) ?: return false
         root.mkdirs()
-        val storedKey = readScopeKey()
+        val stored = readScopeState()
+        val storedKey = stored?.key
         if (storedKey != requested.key) clearFiles()
         scope = requested
+        hiddenAssets = if (storedKey == requested.key) stored?.hiddenAssets.orEmpty() else emptySet()
         entries = if (storedKey == requested.key) readEntries(requested.key) else emptyList()
-        writeAtomically(scopeFile, JSONObject().put("scope", requested.key).toString().toByteArray())
-        if (storedKey != requested.key) writeIndex()
+        removeHiddenEntries()
+        writeScope()
+        writeIndex()
         return true
     }
 
-    @Synchronized
-    fun persist(assetId: String, base64Jpeg: String, capturedAt: Long = System.currentTimeMillis()): Boolean {
-        val activeScope = scope ?: return false
-        if (!FRAME_ASSET_ID.matches(assetId) || base64Jpeg.length > FramePhotoBridge.MAX_BASE64_CHARS) return false
+    fun persist(
+        assetId: String,
+        base64Jpeg: String,
+        capturedAt: Long = System.currentTimeMillis(),
+        expectedScopeKey: String? = null,
+    ): Boolean {
+        if (!canPersist(assetId, base64Jpeg, expectedScopeKey)) return false
         val jpeg = decoder.decodeAndResize(base64Jpeg) ?: return false
+        return commitPersist(assetId, jpeg, capturedAt, expectedScopeKey)
+    }
+
+    /** Validates before decoding without holding the reserve monitor during untrusted JPEG work. */
+    @Synchronized
+    private fun canPersist(assetId: String, base64Jpeg: String, expectedScopeKey: String?): Boolean {
+        val activeScope = scope ?: return false
+        return (expectedScopeKey == null || activeScope.key == expectedScopeKey) &&
+            FRAME_ASSET_ID.matches(assetId) && assetId.lowercase() !in hiddenAssets &&
+            base64Jpeg.length <= FramePhotoBridge.MAX_BASE64_CHARS
+    }
+
+    /** Re-checks scope and hidden policy at the atomic disk-commit boundary. */
+    @Synchronized
+    private fun commitPersist(assetId: String, jpeg: ByteArray, capturedAt: Long, expectedScopeKey: String?): Boolean {
+        val activeScope = scope ?: return false
+        if (expectedScopeKey != null && activeScope.key != expectedScopeKey || assetId.lowercase() in hiddenAssets) return false
         if (jpeg.isEmpty() || jpeg.size.toLong() > maxBytes) return false
         val target = photoFile(assetId)
         if (!writeAtomically(target, jpeg)) return false
@@ -135,6 +160,17 @@ class FrameOfflineReserve(
         evict(activeScope.key)
         writeIndex()
         return entries.any { it.assetId.equals(assetId, true) }
+    }
+
+    /** Replaces the current scoped snapshot and removes any now-hidden persisted photos. */
+    @Synchronized
+    fun applyHiddenAssets(assetIds: Set<String>): Boolean {
+        if (scope == null || assetIds.size > MAX_HIDDEN_ASSETS || assetIds.any { !FRAME_ASSET_ID.matches(it) }) return false
+        hiddenAssets = assetIds.mapTo(linkedSetOf()) { it.lowercase() }
+        removeHiddenEntries()
+        writeScope()
+        writeIndex()
+        return true
     }
 
     @Synchronized
@@ -154,7 +190,10 @@ class FrameOfflineReserve(
     fun clearForLowMemory() {
         clearFiles()
         entries = emptyList()
-        if (scope != null) writeIndex()
+        if (scope != null) {
+            writeScope()
+            writeIndex()
+        }
     }
 
     @Synchronized
@@ -162,6 +201,7 @@ class FrameOfflineReserve(
         clearFiles()
         entries = emptyList()
         scope = null
+        hiddenAssets = emptySet()
     }
 
     private fun evict(scopeKey: String) {
@@ -174,8 +214,23 @@ class FrameOfflineReserve(
         if (scopeKey != scope?.key) entries = emptyList()
     }
 
-    private fun readScopeKey(): String? = runCatching {
-        JSONObject(scopeFile.readText()).optString("scope").takeIf { it.matches(Regex("[a-f0-9]{64}")) }
+    private data class StoredScope(val key: String, val hiddenAssets: Set<String>)
+
+    private fun readScopeState(): StoredScope? = runCatching {
+        val data = JSONObject(scopeFile.readText())
+        val key = data.optString("scope").takeIf { it.matches(Regex("[a-f0-9]{64}")) } ?: return null
+        val values = data.optJSONArray("hiddenAssets")
+        val hidden = buildSet {
+            if (values != null) {
+                if (values.length() > MAX_HIDDEN_ASSETS) return null
+                for (index in 0 until values.length()) {
+                    val asset = values.optString(index)
+                    if (!FRAME_ASSET_ID.matches(asset)) return null
+                    add(asset.lowercase())
+                }
+            }
+        }
+        StoredScope(key, hidden)
     }.getOrNull()
 
     private fun readEntries(expectedScope: String): List<Entry> = runCatching {
@@ -189,7 +244,7 @@ class FrameOfflineReserve(
                 val capturedAt = item.optLong("capturedAt", -1)
                 if (FRAME_ASSET_ID.matches(asset) && capturedAt >= 0) {
                     val file = photoFile(asset)
-                    if (file.isFile) add(Entry(asset, capturedAt, file))
+                    if (file.isFile && asset.lowercase() !in hiddenAssets) add(Entry(asset, capturedAt, file))
                 }
             }
         }.take(maxPhotos)
@@ -200,6 +255,19 @@ class FrameOfflineReserve(
         val values = JSONArray()
         entries.forEach { values.put(JSONObject().put("assetId", it.assetId).put("capturedAt", it.capturedAt)) }
         writeAtomically(indexFile, JSONObject().put("scope", active.key).put("entries", values).toString().toByteArray())
+    }
+
+    private fun writeScope() {
+        val active = scope ?: return
+        val hidden = JSONArray()
+        hiddenAssets.sorted().forEach(hidden::put)
+        writeAtomically(scopeFile, JSONObject().put("scope", active.key).put("hiddenAssets", hidden).toString().toByteArray())
+    }
+
+    private fun removeHiddenEntries() {
+        if (hiddenAssets.isEmpty()) return
+        entries.filter { it.assetId.lowercase() in hiddenAssets }.forEach { it.file.delete() }
+        entries = entries.filterNot { it.assetId.lowercase() in hiddenAssets }
     }
 
     private fun clearFiles() {
@@ -221,5 +289,6 @@ class FrameOfflineReserve(
     private companion object {
         const val DEFAULT_MAX_PHOTOS = 12
         const val DEFAULT_MAX_BYTES = 24L * 1024L * 1024L
+        const val MAX_HIDDEN_ASSETS = 1000
     }
 }
