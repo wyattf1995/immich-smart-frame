@@ -190,6 +190,27 @@ class FrameOfflineReserveTest {
         assertFalse(bridge.isCurrentObservation(beforeRebuild))
     }
 
+    @Test
+    fun `playback controls retain desired pause and only dispatch through the configured content port`() {
+        val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-photo-playback-port").toFile(), FixedDecoder())
+        val bridge = FramePhotoBridge(reserve, uiPost = { it() })
+        val session = Any()
+        val url = "https://photos.example/kiosk"
+        assertTrue(bridge.configure(session, url, "family"))
+
+        assertFalse(bridge.setPlaybackPaused(true))
+        val port = FakePlaybackPort(FramePhotoBridge.Sender(session, url, true, true))
+        assertTrue(bridge.connectPlaybackPort(port))
+        assertEquals("pause", port.commands.single().getString("type"))
+        assertTrue(bridge.movePhoto(forward = true))
+        assertEquals("step", port.commands.last().getString("type"))
+        assertTrue(port.commands.last().getBoolean("forward"))
+
+        assertFalse(bridge.connectPlaybackPort(FakePlaybackPort(FramePhotoBridge.Sender(Any(), url, true, true))))
+        assertTrue(bridge.configure(Any(), url, "family"))
+        assertFalse(bridge.movePhoto(forward = false))
+    }
+
     private fun loadedPhotoMessage() = JSONObject()
         .put("type", "loaded-photo")
         .put("assetId", "11111111-1111-4111-8111-111111111111")
@@ -208,5 +229,11 @@ class FrameOfflineReserveTest {
 
     private class FixedDecoder : FramePhotoDecoder {
         override fun decodeAndResize(base64Jpeg: String): ByteArray = "jpeg-$base64Jpeg".toByteArray()
+    }
+
+    private class FakePlaybackPort(override val sender: FramePhotoBridge.Sender) : FramePhotoBridge.PlaybackPort {
+        val commands = mutableListOf<JSONObject>()
+        override fun post(command: JSONObject) { commands += command }
+        override fun disconnect() = Unit
     }
 }
