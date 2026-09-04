@@ -190,6 +190,9 @@ class MainActivity : Activity() {
     private var companionPollInFlight = false
     private var companionPollGeneration = 0L
     private val pollCompanion = Runnable { pollCompanion() }
+    private val refreshQuietHours = Runnable {
+        if (activityResumed) applyBrightness(state.brightnessOverridePercent)
+    }
     private var pendingBootRecoveryDraw: ViewTreeObserver.OnDrawListener? = null
     private var pendingBootRecoveryObserver: ViewTreeObserver? = null
     private var pendingBootRecoveryWebLabel: String? = null
@@ -314,6 +317,7 @@ class MainActivity : Activity() {
         super.onResume()
         activityResumed = true
         refreshLocalProvisioning()
+        applyBrightness(state.brightnessOverridePercent)
         enterImmersiveMode()
         render(state, announce = false)
         if (configuration == null) confirmBootRecoveryAfterNextDraw()
@@ -339,6 +343,7 @@ class MainActivity : Activity() {
         handler.removeCallbacks(refreshVisibleWeather)
         handler.removeCallbacks(preloadCalendar)
         handler.removeCallbacks(pollCompanion)
+        handler.removeCallbacks(refreshQuietHours)
         cancelPhotoWork()
         hideOfflinePhoto()
         photoBridge.setCaptureEnabled(false, true)
@@ -1698,13 +1703,20 @@ class MainActivity : Activity() {
 
     private fun applyBrightness(percent: Int?) {
         val attributes = window.attributes
+        val now = LocalTime.now()
         val effectivePercent = QuietHoursBrightnessPolicy.effectivePercent(
             manualPercent = percent,
             quietHours = experienceSettings.quietHours,
-            now = LocalTime.now(),
+            now = now,
         )
         attributes.screenBrightness = effectivePercent?.div(100f) ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         window.attributes = attributes
+        handler.removeCallbacks(refreshQuietHours)
+        if (activityResumed) {
+            QuietHoursBrightnessPolicy.nextRefreshDelayMillis(experienceSettings.quietHours, now)?.let { delay ->
+                handler.postDelayed(refreshQuietHours, delay)
+            }
+        }
     }
 
     private fun debugKeyboardIntent(keyCode: Int): FrameIntent? {
