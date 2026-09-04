@@ -250,8 +250,8 @@ for verification_copy in 'Model candidate · needs review' 'Marked correct' 'Mar
 done
 grep -Fq 'latestDisplayDetection(state.recent)' "$VIEW_FILE" || \
   fail 'hero must select a non-rejected display detection'
-grep -Fq 'state.recent.slice(0, MAX_RECENT)' "$VIEW_FILE" || \
-  fail 'recent panel must retain raw candidates and rejected evidence'
+grep -Fq 'return state.recent;' "$VIEW_FILE" || \
+  fail 'all-results review filter must retain raw candidates and rejected evidence'
 grep -Fq 'detection.verified' "$VIEW_FILE" || fail 'hero render key must react to review changes'
 grep -Fq 'item.verified' "$VIEW_FILE" || fail 'recent render key must react to review changes'
 ! grep -Fq 'High-confidence visitor' "$VIEW_FILE" || \
