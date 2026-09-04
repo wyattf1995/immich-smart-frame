@@ -23,7 +23,7 @@ class FrameCompanionCommandStore(context: Context) {
                 interrupted.forEach { key ->
                     val id = key.removePrefix(COMMAND_PREFIX)
                     remove(key)
-                    putString(ackKey(id), "interrupted|")
+                    putString(ackKey(id), "failed|interrupted before acknowledgement")
                 }
             }.apply()
         }

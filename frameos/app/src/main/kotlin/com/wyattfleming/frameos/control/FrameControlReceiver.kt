@@ -37,11 +37,17 @@ class FrameControlReceiver : BroadcastReceiver() {
             )?.let(configurationStore::write)
         }
         if (intent.hasExtra(FrameControlContract.EXTRA_COMPANION_URL)) {
-            FrameCompanionCredentialsStore(context).write(
+            val credentialsWritten = FrameCompanionCredentialsStore(context).write(
                 intent.getStringExtra(FrameControlContract.EXTRA_COMPANION_URL).orEmpty(),
                 intent.getStringExtra(FrameControlContract.EXTRA_COMPANION_TOKEN).orEmpty(),
                 intent.getStringExtra(FrameControlContract.EXTRA_COMPANION_DEVICE_ID).orEmpty(),
             )
+            if (credentialsWritten) {
+                existingConfiguration?.let { existing ->
+                    FramePhotosProfileUrl.withFrameId(existing.photosUrl, intent.getStringExtra(FrameControlContract.EXTRA_COMPANION_DEVICE_ID).orEmpty())
+                        ?.let { photosUrl -> configurationStore.write(existing.copy(photosUrl = photosUrl)) }
+                }
+            }
         }
 
         val command = FrameControlCommandCodec().decode(

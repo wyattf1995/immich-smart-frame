@@ -18,6 +18,6 @@ object FrameRemoteControlPolicy {
 
     fun acceptsCommandId(commandId: String): Boolean = commandId.matches(COMMAND_ID_PATTERN)
 
-    private val DEVICE_ID_PATTERN = Regex("[A-Za-z0-9_-]{1,80}")
+    private val DEVICE_ID_PATTERN = Regex("[A-Za-z0-9_-]{1,48}")
     private val COMMAND_ID_PATTERN = Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 }
