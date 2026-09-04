@@ -1,0 +1,89 @@
+diff --git a/internal/routes/routes_preferences_test.go b/internal/routes/routes_preferences_test.go
+new file mode 100644
+index 0000000..eed22a6
+--- /dev/null
++++ b/internal/routes/routes_preferences_test.go
+@@ -0,0 +1,83 @@
++package routes
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/stretchr/testify/require"
++)
++
++func TestFramePreferencesAcceptsBoundedPerFrameAssetPolicies(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "preferences.json")
++	require.NoError(t, os.WriteFile(path, []byte(`{
++  "version": 1,
++  "updatedAt": 123,
++  "devices": {"main": {"assets": {
++    "11111111-1111-1111-1111-111111111111": "more",
++    "22222222-2222-2222-2222-222222222222": "hide"
++  }}}
++}`), 0o600))
++
++	prefs, err := loadFramePreferences(path, time.Now())
++	require.NoError(t, err)
++	require.Equal(t, preferenceMore, prefs.Devices["main"].Assets["11111111-1111-1111-1111-111111111111"])
++	require.Equal(t, preferenceHide, prefs.Devices["main"].Assets["22222222-2222-2222-2222-222222222222"])
++}
++
++func TestFramePreferencesRejectsUnsafeOrUnboundedInput(t *testing.T) {
++	for _, body := range []string{
++		`{"version":2,"updatedAt":1,"devices":{}}`,
++		`{"version":1,"updatedAt":1,"devices":{"../../bad":{"assets":{}}}}`,
++		`{"version":1,"updatedAt":1,"devices":{"main":{"assets":{"not-a-uuid":"hide"}}}}`,
++		`{"version":1,"updatedAt":1,"devices":{"main":{"assets":{"11111111-1111-1111-1111-111111111111":"erase"}}}}`,
++	} {
++		path := filepath.Join(t.TempDir(), "preferences.json")
++		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
++		_, err := loadFramePreferences(path, time.Now())
++		require.Error(t, err, body)
++	}
++}
++
++func TestSelectionPolicyHidesAndAvoidsRecentAssetsWithoutStarvation(t *testing.T) {
++	policy := framePreferencePolicy{Assets: map[string]assetPreference{
++		"00000000-0000-0000-0000-000000000000": preferenceMore,
++		"11111111-1111-1111-1111-111111111111": preferenceHide,
++		"22222222-2222-2222-2222-222222222222": preferenceLess,
++	}}
++	recent := map[string]struct{}{"33333333-3333-3333-3333-333333333333": {}}
++
++	require.False(t, policy.allows("11111111-1111-1111-1111-111111111111", recent, 0, func(int) int { return 0 }), "hide must always win")
++	require.False(t, policy.allows("33333333-3333-3333-3333-333333333333", recent, 0, func(int) int { return 0 }), "recent assets must be avoided while alternatives are being tried")
++	require.False(t, policy.allows("22222222-2222-2222-2222-222222222222", nil, 0, func(int) int { return 3 }), "less must reduce, not exclude, an early selection")
++	require.True(t, policy.allows("00000000-0000-0000-0000-000000000000", nil, 0, func(int) int { return 1 }), "more must have a stronger relative selection weight than neutral")
++	require.True(t, policy.allows("33333333-3333-3333-3333-333333333333", recent, finalSelectionAttempt, func(int) int { return 3 }), "last attempt must relax recency to prevent starvation")
++	require.True(t, policy.allows("22222222-2222-2222-2222-222222222222", nil, finalSelectionAttempt, func(int) int { return 3 }), "last attempt must not starve less-preferred assets")
++}
++
++func TestFrameViewDataRechecksHideAtServeTime(t *testing.T) {
++	preferencesStore.mu.Lock()
++	previousPath := preferencesStore.path
++	previousLoadedAt := preferencesStore.loadedAt
++	previousPrefs := preferencesStore.prefs
++	preferencesStore.prefs = framePreferences{Version: framePreferencesVersion, Devices: map[string]framePreferencePolicy{
++		"main": {Assets: map[string]assetPreference{"11111111-1111-1111-1111-111111111111": preferenceHide}},
++	}}
++	preferencesStore.loadedAt = time.Now()
++	preferencesStore.path = "test"
++	preferencesStore.mu.Unlock()
++	t.Cleanup(func() {
++		preferencesStore.mu.Lock()
++		preferencesStore.path = previousPath
++		preferencesStore.loadedAt = previousLoadedAt
++		preferencesStore.prefs = previousPrefs
++		preferencesStore.mu.Unlock()
++	})
++	t.Setenv(framePreferencesFileEnv, "test")
++
++	viewData := common.ViewData{Assets: []common.ViewImageData{{ImmichAsset: immich.Asset{ID: "11111111-1111-1111-1111-111111111111"}}}}
++	require.False(t, frameViewDataVisible("main", viewData), "cached and offline records must be filtered again when served")
++}
