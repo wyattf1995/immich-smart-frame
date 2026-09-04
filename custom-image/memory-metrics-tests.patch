@@ -1,0 +1,36 @@
+diff --git a/metrics_test.go b/metrics_test.go
+new file mode 100644
+index 0000000..9e804b1
+--- /dev/null
++++ b/metrics_test.go
+@@ -0,0 +1,30 @@
++package main
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/labstack/echo/v5"
++	"github.com/stretchr/testify/require"
++)
++
++func TestMetricsTokenAndBearerAuthorization(t *testing.T) {
++	file := filepath.Join(t.TempDir(), "metrics-token")
++	require.NoError(t, os.WriteFile(file, []byte("secret\n"), 0600))
++	token, err := metricsTokenFromFile(file)
++	require.NoError(t, err)
++	e := echo.New()
++	for _, tc := range []struct {
++		header string
++		want   int
++	}{{"", http.StatusUnauthorized}, {"Bearer wrong", http.StatusUnauthorized}, {"Bearer secret", http.StatusOK}} {
++		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
++		req.Header.Set("Authorization", tc.header)
++		res := httptest.NewRecorder()
++		require.NoError(t, metricsHandler(token)(e.NewContext(req, res)))
++		require.Equal(t, tc.want, res.Code)
++	}
++}
