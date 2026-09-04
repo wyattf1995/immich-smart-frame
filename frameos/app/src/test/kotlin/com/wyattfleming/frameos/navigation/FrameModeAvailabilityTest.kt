@@ -36,4 +36,15 @@ class FrameModeAvailabilityTest {
             availability.cycleModes,
         )
     }
+
+    @Test
+    fun `requested photo weather order supports parents preset`() {
+        val availability = FrameModeAvailability(
+            birdsUrl = null,
+            requestedModes = listOf(FrameMode.PHOTOS, FrameMode.WEATHER),
+        )
+
+        assertEquals(listOf(FrameMode.PHOTOS, FrameMode.WEATHER), availability.cycleModes)
+        assertEquals(FrameMode.PHOTOS, availability.resolve(FrameMode.HOME))
+    }
 }
