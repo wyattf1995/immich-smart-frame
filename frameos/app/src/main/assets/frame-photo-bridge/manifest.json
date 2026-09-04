@@ -1,0 +1,13 @@
+{
+  "manifest_version": 2,
+  "name": "Frame Photos reserve",
+  "version": "1.0.0",
+  "browser_specific_settings": { "gecko": { "id": "frame-photo-bridge@wyattfleming.com" } },
+  "permissions": ["nativeMessaging", "nativeMessagingFromContent", "geckoViewAddons", "http://*/*", "https://*/*"],
+  "content_scripts": [{
+    "matches": ["http://*/*", "https://*/*"],
+    "js": ["photos.js"],
+    "run_at": "document_idle",
+    "all_frames": false
+  }]
+}

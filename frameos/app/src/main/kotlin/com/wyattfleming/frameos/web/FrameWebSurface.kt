@@ -12,6 +12,7 @@ import com.wyattfleming.frameos.FrameOperationLogEntry
 import com.wyattfleming.frameos.FrameOperationLogger
 import com.wyattfleming.frameos.NoOpFrameOperationLogger
 import com.wyattfleming.frameos.security.FrameUrlPolicy
+import com.wyattfleming.frameos.photos.FramePhotoBridge
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
@@ -32,6 +33,11 @@ class FrameWebSurface(
     private val listener: Listener,
     private val urlPolicy: FrameUrlPolicy = FrameUrlPolicy(),
     private val operationLogger: FrameOperationLogger = NoOpFrameOperationLogger,
+    private val photoBridge: FramePhotoBridge? = null,
+    private val photosProfile: String = "balanced",
+    // Kept opt-in until device measurements prove an inactive attached GeckoView
+    // avoids background work without reintroducing the Lenovo blank-panel issue.
+    private val deactivateHiddenHomeAssistant: Boolean = false,
     private val elapsedRealtime: () -> Long = { SystemClock.uptimeMillis() },
     private val pageLoadWatchdogMillis: Long = PAGE_LOAD_WATCHDOG_MILLIS,
 ) : GeckoView(context) {
@@ -149,6 +155,7 @@ class FrameWebSurface(
                 }
             }
             session.open(frameRuntime)
+            if (label == "Photos") photoBridge?.attach(frameRuntime, session, configuredUrls.first(), photosProfile)
             session.setActive(false)
             session.setFocused(false)
         }
@@ -160,6 +167,7 @@ class FrameWebSurface(
             renderedState.recordRequest()
             try {
                 if (crashRecovery.reopenIfRequired { session.open(frameRuntime) }) {
+                    if (label == "Photos") photoBridge?.attach(frameRuntime, session, configuredUrls.first(), photosProfile)
                     // Recovery retries run only for an attached, visible session.
                     session.setActive(true)
                     session.setFocused(false)
@@ -207,6 +215,7 @@ class FrameWebSurface(
         }
 
         fun close() {
+            if (label == "Photos") photoBridge?.detach(session)
             prepareForDisposal()
             runCatching { session.close() }
                 .onFailure { crashRecovery.markClosedByContentProcess() }
@@ -351,6 +360,9 @@ class FrameWebSurface(
             it.setFocused(false)
         }
         homeAssistantSession?.setFocused(false)
+        if (deactivateHiddenHomeAssistant && slot != FrameWebSlot.HOME_ASSISTANT) {
+            homeAssistantSession?.setActive(false)
+        }
         if (slot == FrameWebSlot.HOME_ASSISTANT) {
             preloadDeactivation?.let(::removeCallbacks)
             preloadDeactivation = null
@@ -388,12 +400,14 @@ class FrameWebSurface(
             it.setActive(false)
         }
         homeAssistantSession?.setFocused(false)
+        if (deactivateHiddenHomeAssistant) homeAssistantSession?.setActive(false)
         warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         displayedSlot = null
         scheduleHiddenHomeEviction()
     }
 
     fun setContentActive(active: Boolean) {
+        if (displayedSlot == FrameWebSlot.PHOTOS) photoBridge?.setCaptureEnabled(active, !active)
         if (!active && displayedSlot == FrameWebSlot.CAMERAS) {
             disposeCameraSession()
             return
