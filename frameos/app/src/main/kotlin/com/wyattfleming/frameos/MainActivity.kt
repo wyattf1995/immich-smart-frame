@@ -28,6 +28,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import com.wyattfleming.frameos.navigation.ContextualFrameAction
 import com.wyattfleming.frameos.navigation.ContextualInputMapper
+import com.wyattfleming.frameos.navigation.FrameControlHints
 import com.wyattfleming.frameos.navigation.FrameEffect
 import com.wyattfleming.frameos.navigation.FrameIntent
 import com.wyattfleming.frameos.navigation.FrameMode
@@ -51,10 +52,14 @@ import com.wyattfleming.frameos.auth.SharedPreferencesPendingOAuthStateStore
 import com.wyattfleming.frameos.boot.FrameBootRecoveryScheduler
 import com.wyattfleming.frameos.config.FrameConfiguration
 import com.wyattfleming.frameos.config.FrameConfigurationStore
+import com.wyattfleming.frameos.config.FrameExperienceSettings
+import com.wyattfleming.frameos.config.FrameExperienceStore
+import com.wyattfleming.frameos.config.QuietHoursBrightnessPolicy
 import com.wyattfleming.frameos.control.FrameControlCommand
 import com.wyattfleming.frameos.control.FrameControlContract
 import com.wyattfleming.frameos.control.FrameControlStore
 import com.wyattfleming.frameos.security.FrameExternalControlPolicy
+import com.wyattfleming.frameos.diagnostics.FrameDiagnosticStore
 import com.wyattfleming.frameos.ui.WeatherContentView
 import com.wyattfleming.frameos.ui.dp
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherEndpoint
@@ -78,6 +83,7 @@ import org.mozilla.geckoview.GeckoView
 import java.net.URI
 import java.security.SecureRandom
 import java.time.ZoneId
+import java.time.LocalTime
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -85,7 +91,7 @@ import java.util.concurrent.Future
 import kotlin.math.abs
 
 class MainActivity : Activity() {
-    private val reducer = FrameReducer { FrameModeAvailability(configuration?.birdsUrl).cycleModes }
+    private val reducer = FrameReducer { availableModes() }
     private val inputMapper = PhysicalInputMapper()
     private val contextualInputMapper = ContextualInputMapper()
     private val handler = Handler(Looper.getMainLooper())
@@ -114,6 +120,9 @@ class MainActivity : Activity() {
     private var starLongPressed = false
     private val volumeInput = VolumeInputState()
     private lateinit var configurationStore: FrameConfigurationStore
+    private lateinit var experienceStore: FrameExperienceStore
+    private lateinit var diagnosticStore: FrameDiagnosticStore
+    private var experienceSettings = FrameExperienceSettings()
     private lateinit var controlStore: FrameControlStore
     private var configuration: FrameConfiguration? = null
     private var oauthClient: HomeAssistantOAuthClient? = null
@@ -201,6 +210,9 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         configurationStore = FrameConfigurationStore(this)
+        experienceStore = FrameExperienceStore(this)
+        diagnosticStore = FrameDiagnosticStore(this)
+        experienceSettings = experienceStore.read()
         controlStore = FrameControlStore(this)
         val savedConfiguration = configurationStore.read()
         configuration = if (externalControlPolicy.acceptsProvisioning(savedConfiguration != null)) {
@@ -499,6 +511,7 @@ class MainActivity : Activity() {
 
                 override fun onPageUnavailable(label: String) {
                     runOnUiThread {
+                        diagnosticStore.recordRecovery("$label unavailable")
                         updatePageLoading(label, false)
                         if (isWebLabelActive(label)) showWebRecovery("$label is temporarily unavailable")
                     }
@@ -526,6 +539,7 @@ class MainActivity : Activity() {
 
                 override fun onPageRendered(label: String) {
                     runOnUiThread {
+                        diagnosticStore.recordPaint(System.currentTimeMillis())
                         if (
                             activityResumed &&
                             isWebLabelActive(label) &&
@@ -547,6 +561,7 @@ class MainActivity : Activity() {
                 warmHomeAssistantView = warmHomeAssistantView,
                 listener = webListener,
                 operationLogger = operationLogger,
+                deactivateHiddenHomeAssistant = experienceSettings.deactivateHiddenHomeAssistant,
             )
             root.addView(warmHomeAssistantView, fullScreenLayout)
             root.addView(webSurface, fullScreenLayout)
@@ -715,7 +730,7 @@ class MainActivity : Activity() {
         }
         val transition = reducer.reduce(state, intent)
         val modeChanged = transition.state.mode != state.mode
-        state = transition.state
+        state = transition.state.let { next -> next.copy(mode = availability().resolve(next.mode)) }
         applyBrightness(state.brightnessOverridePercent)
         render(state, announce = modeChanged)
         if (modeChanged && state.mode == FrameMode.WEATHER) refreshWeather()
@@ -734,7 +749,7 @@ class MainActivity : Activity() {
             eventTimeMillis = eventTimeMillis,
             receivedAtMillis = SystemClock.uptimeMillis(),
             repeatCount = repeatCount,
-            availableModes = FrameModeAvailability(configuration?.birdsUrl).cycleModes,
+            availableModes = availableModes(),
         ) ?: return
 
         handler.removeCallbacks(commitModeGesture)
@@ -749,6 +764,7 @@ class MainActivity : Activity() {
     }
 
     private fun render(next: FrameState, announce: Boolean) {
+        if (::diagnosticStore.isInitialized) diagnosticStore.recordMode(next.mode)
         val router = surfaceRouter ?: return
         when (val target = router.target(next.mode)) {
             is FrameSurfaceTarget.Web -> when (target.slot) {
@@ -775,6 +791,7 @@ class MainActivity : Activity() {
                 hideWebRecovery()
                 webSurface?.hide()
                 weatherContent.visibility = View.VISIBLE
+                diagnosticStore.recordPaint(System.currentTimeMillis())
                 root.requestFocus()
                 if (activityResumed) confirmBootRecoveryAfterNextDraw()
                 if (announce) weatherContent.animate().alpha(0.82f).setDuration(70).withEndAction {
@@ -887,7 +904,7 @@ class MainActivity : Activity() {
 
     private fun showMode(mode: FrameMode, announceHud: Boolean = true) {
         cancelModeGesture()
-        val resolvedMode = FrameModeAvailability(configuration?.birdsUrl).resolve(mode)
+        val resolvedMode = availability().resolve(mode)
         val unavailableBirds = mode == FrameMode.BIRDS && resolvedMode != mode
         val changed = state.mode != resolvedMode
         state = state.copy(
@@ -903,6 +920,13 @@ class MainActivity : Activity() {
         }
         scheduleIdleReset()
     }
+
+    private fun availability(): FrameModeAvailability = FrameModeAvailability(
+        birdsUrl = configuration?.birdsUrl,
+        requestedModes = experienceSettings.orderedEnabledModes,
+    )
+
+    private fun availableModes(): List<FrameMode> = availability().cycleModes
 
     private fun persistProvisioning(intent: Intent): FrameConfiguration? {
         if (
@@ -1012,6 +1036,7 @@ class MainActivity : Activity() {
                 weatherRefreshStartedAtUptimeMillis = 0L
                 weatherRefreshInProgress = false
                 weatherContent.presentation = presentation
+                if (presentation.emptyMessage == null) diagnosticStore.recordWeatherSuccess(System.currentTimeMillis())
                 weatherNeedsAuthentication = presentation.authenticationRequired ||
                     presentation.emptyMessage == "Weather needs Home Assistant sign-in"
                 scheduleWeatherRefresh()
@@ -1196,13 +1221,14 @@ class MainActivity : Activity() {
     }
 
     private fun showHud(message: String, positionMode: FrameMode) {
-        val modes = FrameModeAvailability(configuration?.birdsUrl).cycleModes
+        val modes = availableModes()
         val position = modes.indexOf(positionMode).coerceAtLeast(0)
         handler.removeCallbacks(hideHud)
         hud.animate().cancel()
         hudLabel.text = message
-        hudPosition.text = modes.indices.joinToString("  ") { index -> if (index == position) "●" else "○" }
-        hud.contentDescription = "$message. ${position + 1} of ${modes.size}."
+        val hint = FrameControlHints.forMode(positionMode, state.photosPaused)
+        hudPosition.text = "${modes.indices.joinToString("  ") { index -> if (index == position) "●" else "○" }}\n$hint"
+        hud.contentDescription = "$message. ${position + 1} of ${modes.size}. $hint"
         hud.visibility = View.VISIBLE
         hud.alpha = 0f
         hud.translationY = -dp(8).toFloat()
@@ -1235,7 +1261,12 @@ class MainActivity : Activity() {
 
     private fun applyBrightness(percent: Int?) {
         val attributes = window.attributes
-        attributes.screenBrightness = percent?.div(100f) ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        val effectivePercent = QuietHoursBrightnessPolicy.effectivePercent(
+            manualPercent = percent,
+            quietHours = experienceSettings.quietHours,
+            now = LocalTime.now(),
+        )
+        attributes.screenBrightness = effectivePercent?.div(100f) ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         window.attributes = attributes
     }
 

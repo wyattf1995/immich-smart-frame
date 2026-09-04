@@ -32,6 +32,9 @@ class FrameWebSurface(
     private val listener: Listener,
     private val urlPolicy: FrameUrlPolicy = FrameUrlPolicy(),
     private val operationLogger: FrameOperationLogger = NoOpFrameOperationLogger,
+    // Kept opt-in until device measurements prove an inactive attached GeckoView
+    // avoids background work without reintroducing the Lenovo blank-panel issue.
+    private val deactivateHiddenHomeAssistant: Boolean = false,
     private val elapsedRealtime: () -> Long = { SystemClock.uptimeMillis() },
     private val pageLoadWatchdogMillis: Long = PAGE_LOAD_WATCHDOG_MILLIS,
 ) : GeckoView(context) {
@@ -351,6 +354,9 @@ class FrameWebSurface(
             it.setFocused(false)
         }
         homeAssistantSession?.setFocused(false)
+        if (deactivateHiddenHomeAssistant && slot != FrameWebSlot.HOME_ASSISTANT) {
+            homeAssistantSession?.setActive(false)
+        }
         if (slot == FrameWebSlot.HOME_ASSISTANT) {
             preloadDeactivation?.let(::removeCallbacks)
             preloadDeactivation = null
@@ -388,6 +394,7 @@ class FrameWebSurface(
             it.setActive(false)
         }
         homeAssistantSession?.setFocused(false)
+        if (deactivateHiddenHomeAssistant) homeAssistantSession?.setActive(false)
         warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         displayedSlot = null
         scheduleHiddenHomeEviction()
