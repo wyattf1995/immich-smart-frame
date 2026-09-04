@@ -54,7 +54,7 @@ def settings_patch(existing, patch, profiles):
         if key == 'modeOrder':
             valid = isinstance(value, list) and 1 <= len(value) <= len(MODES) and all(isinstance(x, str) and x in MODES for x in value) and len(set(value)) == len(value) and value[0] == 'photos'
         elif key == 'quietHours':
-            valid = isinstance(value, dict) and set(value) == {'enabled', 'start', 'end', 'brightness'} and isinstance(value['enabled'], bool) and all(isinstance(value[x], str) and CLOCK.fullmatch(value[x]) for x in ('start','end')) and integer(value['brightness'], 1, 30) and value['start'] != value['end']
+            valid = isinstance(value, dict) and set(value) == {'enabled', 'start', 'end', 'brightness'} and isinstance(value['enabled'], bool) and all(isinstance(value[x], str) and CLOCK.fullmatch(value[x]) for x in ('start','end')) and integer(value['brightness'], 10, 30) and value['start'] != value['end']
         elif key == 'idleReturnSeconds':
             valid = integer(value, 30, 3600)
         elif key == 'profile':
