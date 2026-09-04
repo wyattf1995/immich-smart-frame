@@ -74,16 +74,37 @@ case "$1" in
         fi
         ;;
       'dumpsys duraspeed config')
-        if [[ "${FRAME_READINESS_DURASPEED_STATE:-enabled}" == missing-frameos ]]; then
-          printf 'PlatformWhitelist: []\n'
-          printf 'AppWhitelist: [org.mozilla.firefox, io.github.sds100.keymapper]\n'
-        elif [[ "${FRAME_READINESS_DURASPEED_STATE:-enabled}" == platform-frameos ]]; then
-          printf 'PlatformWhitelist: [com.wyattfleming.frameos]\n'
-          printf 'AppWhitelist: [org.mozilla.firefox, io.github.sds100.keymapper]\n'
-        else
-          printf 'PlatformWhitelist: []\n'
-          printf 'AppWhitelist: [org.mozilla.firefox, io.github.sds100.keymapper, com.wyattfleming.frameos]\r\n'
-        fi
+        case "${FRAME_READINESS_DURASPEED_STATE:-enabled}" in
+          missing-frameos)
+            printf 'PlatformWhitelist: []\n'
+            printf 'AppWhitelist: [org.mozilla.firefox, io.github.sds100.keymapper]\n'
+            ;;
+          platform-frameos)
+            printf 'PlatformWhitelist: [com.wyattfleming.frameos]\n'
+            printf 'AppWhitelist: [org.mozilla.firefox, io.github.sds100.keymapper]\n'
+            ;;
+          both-frameos)
+            printf 'PlatformWhitelist: [com.wyattfleming.frameos]\n'
+            printf 'AppWhitelist: [com.wyattfleming.frameos]\n'
+            ;;
+          near-frameos)
+            printf 'PlatformWhitelist: [com.wyattfleming.frameos.evil]\n'
+            printf 'AppWhitelist: []\n'
+            ;;
+          duplicate-platform)
+            printf 'PlatformWhitelist: [com.wyattfleming.frameos]\n'
+            printf 'PlatformWhitelist: []\n'
+            printf 'AppWhitelist: []\n'
+            ;;
+          malformed-platform)
+            printf 'PlatformWhitelist: com.wyattfleming.frameos\n'
+            printf 'AppWhitelist: []\n'
+            ;;
+          *)
+            printf 'PlatformWhitelist: []\n'
+            printf 'AppWhitelist: [org.mozilla.firefox, io.github.sds100.keymapper, com.wyattfleming.frameos]\r\n'
+            ;;
+        esac
         ;;
       *) exit 2 ;;
     esac
@@ -164,6 +185,27 @@ FRAME_READINESS_DURASPEED_STATE=platform-frameos FRAME_READINESS_LOG="$command_l
   }
 grep -Fqx 'ready: FrameOS DuraSpeed policy' "$tmp_dir/duraspeed-platform-stdout" || \
   fail 'a platform-whitelisted FrameOS package must report a ready policy'
+
+FRAME_READINESS_DURASPEED_STATE=both-frameos FRAME_READINESS_LOG="$command_log" PATH="$fake_bin:$PATH" "$readiness_script" \
+  --adb FRAME-TEST \
+  --array-check-command 'exit 0' \
+  --ha-check-command 'exit 0' > "$tmp_dir/duraspeed-both-stdout" 2> "$tmp_dir/duraspeed-both-stderr" || {
+    cat "$tmp_dir/duraspeed-both-stdout" "$tmp_dir/duraspeed-both-stderr" >&2
+    fail 'FrameOS present once in both firmware whitelist types must be accepted'
+  }
+
+for unsafe_state in near-frameos duplicate-platform malformed-platform; do
+  set +e
+  FRAME_READINESS_DURASPEED_STATE="$unsafe_state" FRAME_READINESS_LOG="$command_log" PATH="$fake_bin:$PATH" "$readiness_script" \
+    --adb FRAME-TEST \
+    --array-check-command 'exit 0' \
+    --ha-check-command 'exit 0' > "$tmp_dir/duraspeed-$unsafe_state-stdout" 2> "$tmp_dir/duraspeed-$unsafe_state-stderr"
+  unsafe_result=$?
+  set -e
+  [[ "$unsafe_result" != 0 ]] || fail "unsafe DuraSpeed configuration was accepted: $unsafe_state"
+  grep -Fqx 'not ready: FrameOS DuraSpeed policy' "$tmp_dir/duraspeed-$unsafe_state-stderr" || \
+    fail "unsafe DuraSpeed configuration did not identify the policy failure: $unsafe_state"
+done
 
 FRAME_READINESS_DURASPEED_STATE=disabled FRAME_READINESS_LOG="$command_log" PATH="$fake_bin:$PATH" "$readiness_script" \
   --adb FRAME-TEST \
