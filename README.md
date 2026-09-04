@@ -71,6 +71,20 @@ read-only API key and keep it in the Compose secret described below.
 Other Android displays may work, especially when their browser reports a CSS
 viewport smaller than the physical panel, but they have not been verified.
 
+## Is this for my display?
+
+| Your setup | Fit and next step |
+| --- | --- |
+| Lenovo CD-3L501F on stock Android 10, with a working Immich server and Docker host | This is the tested setup. Start with the browser slideshow below, then follow [Device setup](docs/device-setup.md). |
+| Another Android display that can open a LAN web page | The browser slideshow may work, but hardware compatibility is unverified. Check image size, browser memory use, and reconnect behavior before leaving it unattended. |
+| A Lenovo frame with no touchscreen or authorized USB debugging | Provisioning needs a USB-C OTG mouse and the steps in [Device setup](docs/device-setup.md). The slideshow does not require persistent wireless ADB. |
+| Immich plus Home Assistant on the same display | Start with Photos, then consider the optional [FrameOS companion](#optional-frameos-and-home-assistant-companion). Home Assistant is not required for photos. |
+| No Immich server or Docker host, or a plug-and-play cloud photo frame | This project does not provide those services. It requires a self-hosted setup and ongoing maintenance. |
+
+The first milestone is a working slideshow in a browser on your LAN. Device
+provisioning, custom curation, and the optional Home Assistant companion are
+separate steps; setup time depends on the hardware and services you already have.
+
 ## Quick start
 
 Prerequisites:
@@ -116,6 +130,19 @@ http://docker-host.local:3000/
 
 The starter profile requires no custom tags or albums. It favors the last 30,
 180, and 730 days while retaining an all-time path and Immich memories.
+
+Before moving to the frame, confirm that a photo loads from another LAN device
+and that `docker compose ps` reports the service as healthy. Then verify the
+frame's physical image size and reconnect behavior using
+[Validation](#validation).
+
+If that first check fails, jump to the relevant troubleshooting section:
+
+- [Black screen or permanent loading indicator](docs/troubleshooting.md#black-screen-or-permanent-loading-indicator)
+- [Soft or low-resolution images](docs/troubleshooting.md#the-image-looks-soft)
+- [A profile returns an error](docs/troubleshooting.md#a-profile-returns-an-error)
+- [Offline/reconnect indicator](docs/troubleshooting.md#flower-icon-with-a-red-slash)
+- [Wireless ADB disappeared after reboot](docs/troubleshooting.md#wireless-adb-disappeared)
 
 ### API-key permissions
 
@@ -274,6 +301,12 @@ See [SECURITY.md](SECURITY.md) for reporting and deployment guidance and
 network isolation.
 
 ## Release and version policy
+
+The published [v0.1.0 release](https://github.com/wyattf1995/immich-smart-frame/releases/tag/v0.1.0)
+is the initial release. The default branch also contains later work listed in
+[`Unreleased`](CHANGELOG.md#unreleased); its documentation and optional FrameOS
+features should not be assumed to describe that older tag. Check the source
+revision and matching release notes before deploying or rolling back.
 
 Tagged releases follow [Semantic Versioning](https://semver.org/). Before
 `1.0.0`, configuration and deployment behavior may still change faster, but any
