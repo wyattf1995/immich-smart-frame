@@ -1,0 +1,27 @@
+diff --git a/internal/cache/cache_test.go b/internal/cache/cache_test.go
+index 99ce7ba..f6c8cc1 100644
+--- a/internal/cache/cache_test.go
++++ b/internal/cache/cache_test.go
+@@ -237,3 +237,22 @@ func TestOldBugBehavior(t *testing.T) {
+ 		}
+ 	})
+ }
++
++func TestLockTelemetryReportsBoundedP95UpperBounds(t *testing.T) {
++	var telemetry lockTelemetry
++	for range 18 {
++		telemetry.record(time.Nanosecond, 2*time.Nanosecond)
++	}
++	for range 2 {
++		telemetry.record(8*time.Nanosecond, 16*time.Nanosecond)
++	}
++
++	waitP95, samples := lockP95UpperBound(&telemetry.waits)
++	holdP95, holdSamples := lockP95UpperBound(&telemetry.holds)
++	if samples != 20 || holdSamples != 20 {
++		t.Fatalf("expected 20 bounded telemetry samples, got wait=%d hold=%d", samples, holdSamples)
++	}
++	if waitP95 != 8 || holdP95 != 16 {
++		t.Fatalf("expected p95 upper bounds wait=8ns hold=16ns, got wait=%dns hold=%dns", waitP95, holdP95)
++	}
++}

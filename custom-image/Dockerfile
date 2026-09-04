@@ -70,6 +70,8 @@ COPY burst-variety-tests.patch /tmp/burst-variety-tests.patch
 COPY burst-variety.patch /tmp/burst-variety.patch
 COPY burst-variety-followup-tests.patch /tmp/burst-variety-followup-tests.patch
 COPY burst-variety-followup.patch /tmp/burst-variety-followup.patch
+COPY cache-lock-telemetry-tests.patch /tmp/cache-lock-telemetry-tests.patch
+COPY cache-lock-telemetry.patch /tmp/cache-lock-telemetry.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -192,7 +194,11 @@ RUN cd /src \
 		&& git apply --check /tmp/burst-variety-followup-tests.patch \
 		&& git apply /tmp/burst-variety-followup-tests.patch \
 		&& git apply --check /tmp/burst-variety-followup.patch \
-		&& git apply /tmp/burst-variety-followup.patch
+		&& git apply /tmp/burst-variety-followup.patch \
+		&& git apply --check /tmp/cache-lock-telemetry-tests.patch \
+		&& git apply /tmp/cache-lock-telemetry-tests.patch \
+		&& git apply --check --unidiff-zero /tmp/cache-lock-telemetry.patch \
+		&& git apply --unidiff-zero /tmp/cache-lock-telemetry.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
