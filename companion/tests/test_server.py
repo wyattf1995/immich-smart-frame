@@ -18,6 +18,9 @@ class CompanionTests(unittest.TestCase):
         self.tmp.cleanup()
     def poll(self, device='main', acks=None):
         return self.store.poll(device, {'schema':1,'status':{'mode':'photos','photosPaused':False,'lastPaintAt':self.clock,'appVersion':'0.2.0'},'acks':acks or []})
+    def test_profile_command_persists_desired_setting(self):
+        self.poll();self.store.command('main',{'type':'set_profile','profile':'family'})
+        result=self.poll();self.assertEqual(result['settings']['profile'],'family');self.assertEqual(result['settingsRevision'],2)
     def test_offline_frames_cannot_accumulate_commands(self):
         with self.assertRaises(module.FrameError) as e: self.store.command('main', {'type':'photo_next'})
         self.assertEqual(e.exception.status,409)
