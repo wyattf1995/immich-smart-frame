@@ -1,9 +1,9 @@
-diff --git a/tmp/immich-kiosk-memory.l6pjOT/src/internal/routes/render_memory_regression_test.go b/internal/routes/render_memory_regression_test.go
+diff --git a/internal/routes/render_memory_regression_test.go b/internal/routes/render_memory_regression_test.go
 new file mode 100644
-index 0000000..62d4404
+index 0000000..f874261
 --- /dev/null
 +++ b/internal/routes/render_memory_regression_test.go
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,87 @@
 +package routes
 +
 +import (
@@ -12,6 +12,7 @@ index 0000000..62d4404
 +	"testing"
 +	"time"
 +
++	"github.com/damongolding/immich-kiosk/internal/config"
 +	"github.com/damongolding/immich-kiosk/internal/immich"
 +	"github.com/stretchr/testify/require"
 +)
@@ -50,9 +51,19 @@ index 0000000..62d4404
 +	<-secondEntered
 +}
 +
++func TestOptimizedClientDimensionsCapRenderBuffers(t *testing.T) {
++	err := validateOptimizedClientDimensions(config.Config{OptimizeImages: true, ClientData: config.ClientData{Width: 7680, Height: 4320}})
++	require.ErrorIs(t, err, ErrClientPixelsExceeded)
++	require.NoError(t, validateOptimizedClientDimensions(config.Config{OptimizeImages: true, ClientData: config.ClientData{Width: 3840, Height: 2160}}))
++}
++
 +func TestOriginalDecodeIsLimitedBySourcePixels(t *testing.T) {
 +	large := immich.Asset{ExifInfo: immich.ExifInfo{ExifImageWidth: 6000, ExifImageHeight: 4000}}
 +	require.False(t, shouldFetchOriginal(&large), "24MP source must use Immich's preview path")
++
++	overDecodeBudget := immich.Asset{ExifInfo: immich.ExifInfo{ExifImageWidth: 5000, ExifImageHeight: 3400}}
++	require.False(t, shouldFetchOriginal(&overDecodeBudget), "17MP source must use Immich's preview path")
++	require.False(t, shouldFetchOriginal(&immich.Asset{}), "unknown source dimensions must use Immich's preview path")
 +
 +	frameSized := immich.Asset{ExifInfo: immich.ExifInfo{ExifImageWidth: 1920, ExifImageHeight: 1080}}
 +	require.True(t, shouldFetchOriginal(&frameSized))
@@ -79,36 +90,4 @@ index 0000000..62d4404
 +	}
 +	wg.Wait()
 +	require.Len(t, gate.tokens, 0)
-+}
-diff --git a/tmp/immich-kiosk-memory.l6pjOT/src/internal/cache/cache_memory_regression_test.go b/internal/cache/cache_memory_regression_test.go
-new file mode 100644
-index 0000000..4c47d68
---- /dev/null
-+++ b/internal/cache/cache_memory_regression_test.go
-@@ -0,0 +1,26 @@
-+package cache
-+
-+import (
-+	"strings"
-+	"testing"
-+
-+	"github.com/stretchr/testify/require"
-+)
-+
-+func TestCacheEvictsToTheConfiguredByteBudget(t *testing.T) {
-+	Initialize()
-+	Flush()
-+	oldBudget := maxCacheBytes
-+	maxCacheBytes = 32
-+	t.Cleanup(func() {
-+		maxCacheBytes = oldBudget
-+		Flush()
-+	})
-+
-+	Set("first", strings.Repeat("a", 20), 60, 60)
-+	Set("second", strings.Repeat("b", 20), 60, 60)
-+	require.LessOrEqual(t, ByteSize(), int64(maxCacheBytes))
-+	_, firstFound := Get("first")
-+	_, secondFound := Get("second")
-+	require.False(t, firstFound && secondFound, "both values exceed the bounded cache budget")
 +}

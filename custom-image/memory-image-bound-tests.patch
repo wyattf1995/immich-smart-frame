@@ -1,0 +1,34 @@
+diff --git a/internal/utils/utils_test.go b/internal/utils/utils_test.go
+index 7a10497..2408348 100644
+--- a/internal/utils/utils_test.go
++++ b/internal/utils/utils_test.go
+@@ -1,9 +1,12 @@
+ package utils
+ 
+ import (
++	"encoding/binary"
++	"hash/crc32"
+ 	"math"
+ 	"net/url"
+ 	"reflect"
++	"strings"
+ 	"testing"
+ 	"time"
+ 
+@@ -874,3 +877,16 @@ func TestContainsWholeWord(t *testing.T) {
+ 		})
+ 	}
+ }
++
++func TestBytesToImageRejectsOversizedHeaderBeforeDecode(t *testing.T) {
++	// A valid PNG IHDR needs no pixel data for DecodeConfig. This proves the
++	// limit runs before the decoder could allocate the declared raster.
++	data := []byte{137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
++		0, 0, 78, 32, 0, 0, 78, 32, 8, 2, 0, 0, 0}
++	crc := crc32.ChecksumIEEE(data[12:])
++	data = binary.BigEndian.AppendUint32(data, crc)
++	_, _, err := BytesToImage(data, false)
++	if err == nil || !strings.Contains(err.Error(), "exceed") {
++		t.Fatalf("BytesToImage() error = %v, want pixel-limit rejection", err)
++	}
++}
