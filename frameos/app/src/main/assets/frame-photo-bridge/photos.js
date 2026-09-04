@@ -17,18 +17,35 @@ let playbackPort = null;
 let portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
 let portRetryTimer = 0;
 
+function isVisible(element) {
+  for (let current = element; current && current !== document.documentElement; current = current.parentElement) {
+    const box = current.getBoundingClientRect();
+    const style = getComputedStyle(current);
+    if (box.width <= 0 || box.height <= 0 || style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+  }
+  return true;
+}
+
+function currentFrame() {
+  const container = document.querySelector("#kiosk-container");
+  if (!(container instanceof HTMLElement)) return null;
+  const kiosk = container.querySelector(":scope > #kiosk");
+  if (!(kiosk instanceof HTMLElement)) return null;
+  const frames = Array.from(kiosk.querySelectorAll(":scope > .frame"));
+  if (!frames.length) return null;
+  return container.classList.contains("transition-push") ? frames[0] : frames[frames.length - 1];
+}
+
 function capture() {
   queued = false;
   const histories = Array.from(document.querySelectorAll("#kiosk-history input[name='history']"))
     .filter((history) => typeof history.value === "string" && history.value.startsWith("*"));
   if (histories.length !== 1) return;
-  const images = Array.from(document.querySelectorAll("img[alt='Main image']"))
+  const frame = currentFrame();
+  if (!frame || !isVisible(frame)) return;
+  const images = Array.from(frame.querySelectorAll("img[alt='Main image']"))
     .filter((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0 && image.naturalHeight > 0)
-    .filter((image) => {
-      const box = image.getBoundingClientRect();
-      const style = getComputedStyle(image);
-      return box.width > 0 && box.height > 0 && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
-    });
+    .filter(isVisible);
   if (images.length !== 1) return;
   const image = images[0];
   const current = histories[0].value.match(/^\*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}):[^:]*$/i);
@@ -148,6 +165,8 @@ new MutationObserver(() => {
 }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
 
 document.addEventListener("load", scheduleCapture, true);
-new MutationObserver(scheduleCapture).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value"] });
+document.addEventListener("transitionend", scheduleCapture, true);
+document.addEventListener("animationend", scheduleCapture, true);
+new MutationObserver(scheduleCapture).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
 scheduleCapture();
 connectPlaybackPort();
