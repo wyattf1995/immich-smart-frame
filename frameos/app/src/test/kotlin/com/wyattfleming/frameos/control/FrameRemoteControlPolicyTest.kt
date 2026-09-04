@@ -12,4 +12,10 @@ class FrameRemoteControlPolicyTest {
         assertFalse(FrameRemoteControlPolicy.acceptsProfile("family;rm"))
         assertTrue(FrameRemoteControlPolicy.acceptsProfile("family_2026"))
     }
+
+    @Test fun `accepts only bounded device identifiers`() {
+        assertTrue(FrameRemoteControlPolicy.acceptsDeviceId("frame-living_room"))
+        assertFalse(FrameRemoteControlPolicy.acceptsDeviceId("frame id"))
+        assertFalse(FrameRemoteControlPolicy.acceptsDeviceId("x".repeat(81)))
+    }
 }
