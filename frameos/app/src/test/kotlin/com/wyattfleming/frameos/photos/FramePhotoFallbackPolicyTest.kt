@@ -5,6 +5,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FramePhotoFallbackPolicyTest {
+    @Test fun `fallback rejects photo observations older than the healthy probe`() {
+        val policy = FramePhotoFallbackPolicy()
+        repeat(3) { policy.recordFailure(true, true) }
+        assertFalse(policy.canDismiss(100, null))
+        assertFalse(policy.canDismiss(100, 101))
+        assertTrue(policy.canDismiss(102, 101))
+    }
+
     @Test fun `reachable probe resets consecutive failures but does not prove a photo recovered`() {
         val policy = FramePhotoFallbackPolicy()
         repeat(2) { policy.recordFailure(true, true) }
