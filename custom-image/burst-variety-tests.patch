@@ -1,0 +1,80 @@
+diff --git a/internal/routes/routes_preferences_test.go b/internal/routes/routes_preferences_test.go
+index eed22a6..3a11cd7 100644
+--- a/internal/routes/routes_preferences_test.go
++++ b/internal/routes/routes_preferences_test.go
+@@ -1,6 +1,7 @@
+ package routes
+ 
+ import (
++	"fmt"
+ 	"os"
+ 	"path/filepath"
+ 	"testing"
+@@ -81,3 +82,39 @@ func TestFrameViewDataRechecksHideAtServeTime(t *testing.T) {
+ 	viewData := common.ViewData{Assets: []common.ViewImageData{{ImmichAsset: immich.Asset{ID: "11111111-1111-1111-1111-111111111111"}}}}
+ 	require.False(t, frameViewDataVisible("main", viewData), "cached and offline records must be filtered again when served")
+ }
++
++func TestFrameSelectionSuppressesCaptureBurstsAndCanBeDisabled(t *testing.T) {
++	previous := frameRecentAssets
++	frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset{}}
++	t.Cleanup(func() { frameRecentAssets = previous })
++
++	captured := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
++	frameRecentAssets.remember("frame-a", &immich.Asset{ID: "prior", LocalDateTime: captured}, false)
++	candidate := &immich.Asset{ID: "candidate", LocalDateTime: captured.Add(4 * time.Minute)}
++	t.Setenv("FRAME_CAPTURE_BURST_SECONDS", "")
++	require.False(t, frameSelectionAllowed("frame-a", candidate, 0), "the default five-minute capture window must suppress adjacent shots")
++	require.True(t, frameSelectionAllowed("frame-a", candidate, finalSelectionAttempt), "the final attempt must relax burst suppression")
++
++	t.Setenv("FRAME_CAPTURE_BURST_SECONDS", "0")
++	require.True(t, frameSelectionAllowed("frame-a", candidate, 0), "an explicit zero must disable capture-burst suppression")
++	require.True(t, frameSelectionAllowed("frame-a", &immich.Asset{ID: "without-time"}, 0), "assets without a capture timestamp remain selectable")
++}
++
++func TestFrameSelectionCanSuppressRecentIDsAcrossFramesWithinBounds(t *testing.T) {
++	previous := frameRecentAssets
++	frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset{}}
++	t.Cleanup(func() { frameRecentAssets = previous })
++	t.Setenv("FRAME_CAPTURE_BURST_SECONDS", "0")
++	t.Setenv("FRAME_CROSS_FRAME_REPEAT_SUPPRESSION", "true")
++
++	shared := &immich.Asset{ID: "shared"}
++	frameRecentAssets.remember("frame-a", shared, true)
++	require.False(t, frameSelectionAllowed("frame-b", shared, 0), "a recent selection on another frame must be suppressed when enabled")
++	require.True(t, frameSelectionAllowed("frame-b", shared, finalSelectionAttempt), "the final attempt must still avoid starvation")
++
++	for index := 0; index < frameRecentDeviceLimit+1; index++ {
++		frameRecentAssets.remember(fmt.Sprintf("frame-%d", index), &immich.Asset{ID: fmt.Sprintf("asset-%d", index)}, true)
++	}
++	require.LessOrEqual(t, len(frameRecentAssets.devices), frameRecentDeviceLimit)
++	require.LessOrEqual(t, len(frameRecentAssets.global), frameRecentAssetLimit)
++}
+diff --git a/internal/immich/immich_date_hardening_test.go b/internal/immich/immich_date_hardening_test.go
+index 34d603b..44114a2 100644
+--- a/internal/immich/immich_date_hardening_test.go
++++ b/internal/immich/immich_date_hardening_test.go
+@@ -76,6 +76,13 @@ func TestDatePoolFailedRefreshPreservesUnservedCandidates(t *testing.T) {
+ }
+ 
+ func TestRandomAssetInDateRangeWidensWindowBelowMinimum(t *testing.T) {
++	previousWidenings, previousDays := DatePoolWideningMetrics()
++	datePoolWideningsTotal.Store(0)
++	datePoolLastEffectiveDays.Store(0)
++	t.Cleanup(func() {
++		datePoolWideningsTotal.Store(previousWidenings)
++		datePoolLastEffectiveDays.Store(previousDays)
++	})
+ 	cache.Initialize()
+ 	dateCandidatePools = newDatePoolRegistry(defaultDatePoolRegistrySize)
+ 	var searchCalls atomic.Int32
+@@ -87,6 +94,9 @@ func TestRandomAssetInDateRangeWidensWindowBelowMinimum(t *testing.T) {
+ 	require.NoError(t, asset.RandomAssetInDateRange("last-30", "request", "device", false))
+ 	require.EqualValues(t, 2, searchCalls.Load(), "a below-minimum fetch must trigger exactly one widened refetch")
+ 	require.True(t, strings.HasPrefix(asset.ID, "wide-"), "asset %q must come from the widened window", asset.ID)
++	widenings, effectiveDays := DatePoolWideningMetrics()
++	require.EqualValues(t, 1, widenings)
++	require.EqualValues(t, 90, effectiveDays)
+ }
+ 
+ func TestRandomAssetInDateRangeNoWideningWhenDisabled(t *testing.T) {

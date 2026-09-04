@@ -71,6 +71,20 @@ behaviors bound repetition:
   hour before picking a photo inside it, so a thousand-frame burst afternoon
   carries no more weight per pick than a single photo from another day.
 
+Frame selection also keeps its own bounded history: the last 24 accepted
+assets per frame. `FRAME_CAPTURE_BURST_SECONDS` defaults to `300`, rejecting a
+different photo captured within that window of a recent selection; set it to
+`0` to disable that capture-time check. Assets with no `localDateTime` remain
+eligible. `FRAME_CROSS_FRAME_REPEAT_SUPPRESSION=true` additionally rejects the
+last 24 selected asset IDs across frames. Both repeat checks relax only on the
+final bounded selection attempt; a `hide` preference is never relaxed.
+
+The authenticated aggregate metrics endpoint reports
+`date_pool_widenings_total` and `date_pool_last_effective_days`. These describe
+process-wide date-pool widening only; they contain no frame, request, asset,
+or user identifiers. The first is a cumulative count, and the second is the
+window used by the most recent eligible `last-N` refill.
+
 `cache_duration` (seconds) extends both the backend cache and the date pool
 TTL; an hour keeps recently served photos out of the immediate remix.
 

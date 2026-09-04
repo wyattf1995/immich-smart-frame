@@ -1,0 +1,210 @@
+diff --git a/internal/routes/routes_preferences.go b/internal/routes/routes_preferences.go
+index f6da841..e3e47b5 100644
+--- a/internal/routes/routes_preferences.go
++++ b/internal/routes/routes_preferences.go
+@@ -7,11 +7,13 @@ import (
+ 	"math/rand/v2"
+ 	"os"
+ 	"regexp"
++	"strconv"
+ 	"strings"
+ 	"sync"
+ 	"time"
+ 
+ 	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/immich"
+ 	"github.com/google/uuid"
+ )
+ 
+@@ -23,6 +25,7 @@ const (
+ 	maxPreferencesPerDevice  = 5000
+ 	maxPreferenceFileBytes   = 2 << 20
+ 	frameRecentAssetLimit    = 24
++	frameRecentDeviceLimit   = 64
+ 	finalSelectionAttempt    = maxProcessAssetRetries - 1
+ )
+ 
+@@ -184,36 +187,82 @@ func framePreferenceRandomInt(n int) int { return rand.IntN(n) }
+ 
+ type recentFrameAssets struct {
+ 	mu      sync.Mutex
+-	devices map[string][]string
++	devices map[string][]recentFrameAsset
++	global  []string
+ }
+ 
+-var frameRecentAssets = recentFrameAssets{devices: map[string][]string{}}
++type recentFrameAsset struct {
++	id         string
++	capturedAt time.Time
++}
++
++var frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset{}}
+ 
+-func (r *recentFrameAssets) contains(deviceID, assetID string) bool {
++func (r *recentFrameAssets) suppresses(deviceID string, asset *immich.Asset, burst time.Duration, crossFrame bool) bool {
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
+ 	for _, prior := range r.devices[deviceID] {
+-		if prior == assetID {
++		if prior.id == asset.ID || (burst > 0 && !asset.LocalDateTime.IsZero() && !prior.capturedAt.IsZero() && asset.LocalDateTime.Sub(prior.capturedAt).Abs() < burst) {
+ 			return true
+ 		}
+ 	}
++	if crossFrame {
++		for _, id := range r.global {
++			if id == asset.ID {
++				return true
++			}
++		}
++	}
+ 	return false
+ }
+ 
+-func (r *recentFrameAssets) remember(deviceID, assetID string) {
++func (r *recentFrameAssets) remember(deviceID string, asset *immich.Asset, crossFrame bool) {
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
+-	items := append([]string{assetID}, r.devices[deviceID]...)
++	items := append([]recentFrameAsset{{id: asset.ID, capturedAt: asset.LocalDateTime}}, r.devices[deviceID]...)
+ 	if len(items) > frameRecentAssetLimit {
+ 		items = items[:frameRecentAssetLimit]
+ 	}
++	if len(r.devices) >= frameRecentDeviceLimit {
++		for key := range r.devices {
++			if key != deviceID {
++				delete(r.devices, key)
++				break
++			}
++		}
++	}
+ 	r.devices[deviceID] = items
++	if crossFrame {
++		r.global = append([]string{asset.ID}, r.global...)
++		if len(r.global) > frameRecentAssetLimit {
++			r.global = r.global[:frameRecentAssetLimit]
++		}
++	}
+ }
+ 
+-func frameSelectionAllowed(deviceID, assetID string, attempt int) bool {
++func frameSelectionAllowed(deviceID string, asset *immich.Asset, attempt int) bool {
++	burst := frameCaptureBurstWindow()
++	crossFrame := frameCrossFrameRepeatSuppression()
+ 	recent := map[string]struct{}{}
+-	if frameRecentAssets.contains(deviceID, assetID) {
+-		recent[assetID] = struct{}{}
++	if attempt < finalSelectionAttempt && frameRecentAssets.suppresses(deviceID, asset, burst, crossFrame) {
++		recent[asset.ID] = struct{}{}
+ 	}
+-	return framePreferencePolicyFor(deviceID).allows(assetID, recent, attempt, framePreferenceRandomInt)
++	return framePreferencePolicyFor(deviceID).allows(asset.ID, recent, attempt, framePreferenceRandomInt)
++}
++
++func frameCaptureBurstWindow() time.Duration {
++	raw, set := os.LookupEnv("FRAME_CAPTURE_BURST_SECONDS")
++	if !set || strings.TrimSpace(raw) == "" {
++		return 5 * time.Minute
++	}
++	seconds, err := strconv.Atoi(strings.TrimSpace(raw))
++	if err != nil || seconds < 0 {
++		return 5 * time.Minute
++	}
++	return time.Duration(seconds) * time.Second
++}
++
++func frameCrossFrameRepeatSuppression() bool {
++	enabled, err := strconv.ParseBool(strings.TrimSpace(os.Getenv("FRAME_CROSS_FRAME_REPEAT_SUPPRESSION")))
++	return err == nil && enabled
+ }
+diff --git a/internal/routes/routes_asset_helpers.go b/internal/routes/routes_asset_helpers.go
+index beabdd7..94caf4c 100644
+--- a/internal/routes/routes_asset_helpers.go
++++ b/internal/routes/routes_asset_helpers.go
+@@ -419,13 +419,13 @@ func processAsset(ctx context.Context, asset *immich.Asset, requestConfig config
+ 		if err != nil {
+ 			continue
+ 		}
+-		if !frameSelectionAllowed(deviceID, asset.ID, attempt) {
++		if !frameSelectionAllowed(deviceID, asset, attempt) {
+ 			continue
+ 		}
+ 		// Record the selected Immich UUID after retrieval, so the same photo is
+ 		// avoided even when another curation source later yields it. The shared
+ 		// path covers foreground, prefetch, and offline prewarm selection.
+-		frameRecentAssets.remember(deviceID, asset.ID)
++		frameRecentAssets.remember(deviceID, asset, frameCrossFrameRepeatSuppression())
+ 
+ 		//  At this point immichAsset could be a video or an image
+ 		if requestConfig.ShowVideos && asset.Type == immich.VideoType {
+diff --git a/internal/immich/immich_date.go b/internal/immich/immich_date.go
+index ea3f6dd..0f9749c 100644
+--- a/internal/immich/immich_date.go
++++ b/internal/immich/immich_date.go
+@@ -13,6 +13,7 @@ import (
+ 	"strconv"
+ 	"strings"
+ 	"sync"
++	"sync/atomic"
+ 	"time"
+ 
+ 	"charm.land/log/v2"
+@@ -36,6 +37,17 @@ const (
+ 
+ var errDatePoolRegistryBusy = errors.New("date candidate pool registry is at capacity")
+ 
++var (
++	datePoolWideningsTotal    atomic.Int64
++	datePoolLastEffectiveDays atomic.Int64
++)
++
++// DatePoolWideningMetrics exposes aggregate process-wide widening state. It
++// deliberately has no pool, asset, request, user, or device identifiers.
++func DatePoolWideningMetrics() (wideningsTotal, lastEffectiveDays int64) {
++	return datePoolWideningsTotal.Load(), datePoolLastEffectiveDays.Load()
++}
++
+ type datePoolFetch func(context.Context) ([]Asset, error)
+ 
+ type dateCandidatePool struct {
+@@ -459,8 +471,11 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+ 		if floor < 1 || lastDays < 1 {
+ 			return candidates, nil
+ 		}
++		effectiveDays := lastDays
+ 		for days := lastDays; len(candidates) < floor && days < maxDatePoolWidenDays; {
+ 			days = min(days*3, maxDatePoolWidenDays)
++			effectiveDays = days
++			datePoolWideningsTotal.Add(1)
+ 			log.Warn("Date range candidates below date_pool_minimum, widening window",
+ 				"range", dateRange, "widenedDays", days, "candidates", len(candidates))
+ 			_, widenedURL, widenedBody, widenErr := buildSearchRequest(dateStart.AddDate(0, 0, lastDays-days))
+@@ -473,6 +488,7 @@ func (a *Asset) RandomAssetInDateRange(dateRange, requestID, deviceID string, is
+ 			}
+ 			candidates = widened
+ 		}
++		datePoolLastEffectiveDays.Store(int64(effectiveDays))
+ 		return candidates, nil
+ 	}
+ 
+diff --git a/internal/routes/routes_render_memory.go b/internal/routes/routes_render_memory.go
+index 7b20c9d..0193f5e 100644
+--- a/internal/routes/routes_render_memory.go
++++ b/internal/routes/routes_render_memory.go
+@@ -16,6 +16,7 @@ import (
+ func RenderMemoryMetrics() map[string]int64 {
+ 	var memory runtime.MemStats
+ 	runtime.ReadMemStats(&memory)
++	datePoolWidenings, datePoolLastEffectiveDays := immich.DatePoolWideningMetrics()
+ 	return map[string]int64{
+ 		"cache_bytes":                         cache.ByteSize(),
+ 		"cache_evictions_total":               cache.Evictions(),
+@@ -24,6 +25,8 @@ func RenderMemoryMetrics() map[string]int64 {
+ 		"image_work_render_nanoseconds_total": imageWorkRenderNanos.Load(),
+ 		"go_heap_alloc_bytes":                 int64(memory.HeapAlloc),
+ 		"go_heap_sys_bytes":                   int64(memory.HeapSys),
++		"date_pool_widenings_total":           datePoolWidenings,
++		"date_pool_last_effective_days":       datePoolLastEffectiveDays,
+ 	}
+ }
+ 
