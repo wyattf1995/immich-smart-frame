@@ -61,6 +61,8 @@ import com.wyattfleming.frameos.control.FrameControlStore
 import com.wyattfleming.frameos.control.FrameCompanionClient
 import com.wyattfleming.frameos.control.FrameCompanionCredentialsStore
 import com.wyattfleming.frameos.control.FrameRemoteStatus
+import com.wyattfleming.frameos.control.FrameCompanionCommandDecoder
+import com.wyattfleming.frameos.control.FrameRemoteCommand
 import com.wyattfleming.frameos.security.FrameExternalControlPolicy
 import com.wyattfleming.frameos.diagnostics.FrameDiagnosticStore
 import com.wyattfleming.frameos.ui.WeatherContentView
@@ -1080,9 +1082,20 @@ class MainActivity : Activity() {
             )
             handler.post {
                 companionPollInFlight = false
+                if (result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success) {
+                    FrameCompanionCommandDecoder.decode(result.body, System.currentTimeMillis())?.let(::applyCompanionCommand)
+                }
                 scheduleCompanionPoll(if (result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success) 5_000L else 10_000L)
             }
         }
+    }
+
+    private fun applyCompanionCommand(command: FrameRemoteCommand) = when (command) {
+        is FrameRemoteCommand.ShowMode -> showMode(command.mode)
+        is FrameRemoteCommand.PhotoStep -> { if (state.mode == FrameMode.PHOTOS) webSurface?.movePhoto(command.forward); Unit }
+        is FrameRemoteCommand.PhotoPause -> { if (state.mode == FrameMode.PHOTOS && state.photosPaused != command.paused) dispatch(FrameIntent.PrimaryAction); Unit }
+        is FrameRemoteCommand.PhotoHold -> { if (state.mode == FrameMode.PHOTOS && !state.photosPaused) dispatch(FrameIntent.PrimaryAction); Unit }
+        is FrameRemoteCommand.SetProfile -> Unit // URL mutation waits for a verified photo-session bridge.
     }
 
     private fun beginWeatherAuthorization() {
