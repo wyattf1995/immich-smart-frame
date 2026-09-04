@@ -18,6 +18,19 @@ class CompanionTests(unittest.TestCase):
         self.tmp.cleanup()
     def poll(self, device='main', acks=None):
         return self.store.poll(device, {'schema':1,'status':{'mode':'photos','photosPaused':False,'lastPaintAt':self.clock,'appVersion':'0.2.0'},'acks':acks or []})
+    def test_events_require_opt_in_and_expire(self):
+        event={'type':'calendar','text':'An event starts soon','expiresInSeconds':120}
+        with self.assertRaises(module.FrameError):self.store.event('main',event)
+        self.store.settings('main',{'eventOverlays':True})
+        saved=self.store.event('main',event)
+        self.assertEqual(self.poll()['events'][0]['id'],saved['id'])
+        with self.assertRaises(module.FrameError) as e:self.store.event('main',event)
+        self.assertEqual(e.exception.status,429)
+        self.clock+=121000;self.assertEqual(self.poll()['events'],[])
+    def test_events_never_accept_unreviewed_birds_or_html(self):
+        self.store.settings('main',{'eventOverlays':True})
+        for event in [{'type':'model_candidate','text':'bird','expiresInSeconds':120},{'type':'reviewed_bird','text':'<script>bad</script>','expiresInSeconds':120},{'type':'calendar','text':'x'*101,'expiresInSeconds':120},{'type':'calendar','text':'event','expiresInSeconds':3600}]:
+            with self.assertRaises(module.FrameError):self.store.event('main',event)
     def test_profile_command_persists_desired_setting(self):
         self.poll();self.store.command('main',{'type':'set_profile','profile':'family'})
         result=self.poll();self.assertEqual(result['settings']['profile'],'family');self.assertEqual(result['settingsRevision'],2)

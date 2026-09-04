@@ -18,4 +18,5 @@ ctx.state.audioLastAt=new Date();assert.equal(ctx.audioFreshnessState(),'fresh')
 const handler=html.slice(html.indexOf('const handleAudioLevel'),html.indexOf('audioStream.onmessage'));
 assert.ok(handler.indexOf('if (levelValues.length > 0)')<handler.indexOf('state.audioLastAt = new Date()'),'only valid audio may refresh evidence');
 assert.match(fn('updateClock'),/render\(\)/,'audio ages update even when sources stop sending');
+assert.doesNotMatch(fn('renderRecent'),/Review queue is clear/,'empty reviewed filter must not imply candidates are reviewed');
 console.log('PASS: audio freshness evidence and expiry');
