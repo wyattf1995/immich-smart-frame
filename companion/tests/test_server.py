@@ -130,6 +130,18 @@ class HttpBoundaryTests(unittest.TestCase):
         self.assertEqual(self.request('POST','/api/settings',basic,payload,{'Origin':'https://frame.example.com','X-Frame-CSRF':csrf})[0],200)
     def test_operator_bearer_is_not_accepted_with_cross_origin_browser(self):
         self.assertEqual(self.request('POST','/api/settings','Bearer '+'o'*48,{'deviceId':'main','patch':{'idleReturnSeconds':600}}, {'Origin':'https://evil.example'})[0],403)
+
+    def test_origin_normalizes_default_https_port_and_host_case_only(self):
+        self.assertEqual(module.canonical_origin('https://FRAME.EXAMPLE.COM:443'), 'https://frame.example.com')
+        self.assertEqual(module.canonical_origin('https://frame.example.com'), 'https://frame.example.com')
+        self.assertEqual(module.canonical_origin('https://FRAME.EXAMPLE.COM:8443'), 'https://frame.example.com:8443')
+        self.assertNotEqual(module.canonical_origin('https://frame.example.com:8443'), module.canonical_origin('https://frame.example.com'))
+
+    def test_origin_rejects_userinfo_paths_and_evil_suffixes(self):
+        trusted = module.canonical_origin('https://frame.example.com')
+        self.assertIsNone(module.canonical_origin('https://user@frame.example.com'))
+        self.assertIsNone(module.canonical_origin('https://frame.example.com/control'))
+        self.assertNotEqual(module.canonical_origin('https://frame.example.com.evil'), trusted)
     def test_unknown_paths_and_methods_never_proxy(self):
         self.assertEqual(self.request('GET','/../../etc/passwd','Bearer '+'o'*48)[0],404)
         self.assertEqual(self.request('POST','/api/reboot','Bearer '+'o'*48,{})[0],404)
