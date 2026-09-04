@@ -56,6 +56,7 @@ class FrameWebSurface(
         ?.isTouchExplorationEnabled == true
     private val recoveryPolicy = FrameWebRecoveryPolicy()
     private var photosContentActive = false
+    private var photosPlaybackPaused = false
 
     private inner class ManagedSession(
         val configuredUrls: List<String>,
@@ -172,7 +173,8 @@ class FrameWebSurface(
                         (photosContentActive && this === displayedManagedSession() && displayedSurfaceVisible())
                     if (label == "Photos") {
                         photoBridge?.attach(frameRuntime, session, configuredUrls.first(), photosProfile)
-                        photoBridge?.setCaptureEnabled(active, !active)
+                        photoBridge?.setPlaybackPaused(photosPlaybackPaused)
+                        photoBridge?.setCaptureEnabled(active, photosPlaybackPaused)
                     }
                     // Preserve Photos pause/lifecycle ownership when reopening a crashed session.
                     session.setActive(active)
@@ -418,7 +420,7 @@ class FrameWebSurface(
     fun setContentActive(active: Boolean) {
         if (displayedSlot == FrameWebSlot.PHOTOS) {
             photosContentActive = active
-            photoBridge?.setCaptureEnabled(active, !active)
+            photoBridge?.setCaptureEnabled(active, photosPlaybackPaused)
         }
         if (!active && displayedSlot == FrameWebSlot.CAMERAS) {
             disposeCameraSession()
@@ -433,6 +435,13 @@ class FrameWebSurface(
             if (active) managed.lifecycleSuspended = false
             managed.setActive(active)
         }
+    }
+
+    /** Pause the slideshow while preserving its visible Gecko compositor on Lenovo. */
+    fun setPhotosPaused(paused: Boolean) {
+        photosPlaybackPaused = paused
+        photoBridge?.setPlaybackPaused(paused)
+        photoBridge?.setCaptureEnabled(photosContentActive, paused)
     }
 
     fun isDisplayingRenderedLabel(label: String): Boolean {
@@ -475,6 +484,8 @@ class FrameWebSurface(
         if (displayedSlot != FrameWebSlot.PHOTOS || visibility != View.VISIBLE || width <= 0 || height <= 0) {
             return false
         }
+        if (photoBridge?.movePhoto(forward) == true) return true
+        if (photosPlaybackPaused) return false
         val eventTime = SystemClock.uptimeMillis()
         val x = width * if (forward) 0.75f else 0.25f
         val y = height * 0.50f

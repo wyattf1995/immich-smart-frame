@@ -180,7 +180,7 @@ class MainActivity : Activity() {
     private var manualPhotoStepPending = false
     private val finishManualPhotoStep = Runnable {
         manualPhotoStepPending = false
-        if (state.mode == FrameMode.PHOTOS && state.photosPaused) webSurface?.setContentActive(false)
+        photoBridge.setCaptureEnabled(activityResumed && state.mode == FrameMode.PHOTOS, state.photosPaused)
     }
     private var photosVisibleSince = 0L
     private var photosWereActive = false
@@ -870,7 +870,8 @@ class MainActivity : Activity() {
                     weatherContent.visibility = View.GONE
                     hideWebRecovery()
                     webSurface?.show(target.slot, target.url, takeFocus = false)
-                    webSurface?.setContentActive(activityResumed && !next.photosPaused)
+                    webSurface?.setContentActive(activityResumed)
+                    webSurface?.setPhotosPaused(next.photosPaused)
                     root.requestFocus()
                     if (photoFallbackPolicy.isShowing) showOfflinePhoto(manual = true)
                     schedulePhotoFreshness()
@@ -1567,7 +1568,7 @@ class MainActivity : Activity() {
         if (state.photosPaused) {
             manualPhotoStepPending = true
             handler.removeCallbacks(finishManualPhotoStep)
-            webSurface?.setContentActive(true)
+            photoBridge.setCaptureEnabled(activityResumed, false)
         }
         val moved = webSurface?.movePhoto(forward) == true
         if (state.photosPaused) {
