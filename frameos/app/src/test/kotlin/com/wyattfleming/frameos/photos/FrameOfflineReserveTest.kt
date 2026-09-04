@@ -9,6 +9,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class FrameOfflineReserveTest {
     @Test
@@ -116,6 +119,67 @@ class FrameOfflineReserveTest {
         assertFalse(bridge.accept(JSONObject().put("type", "loaded-photo").put("assetId", asset).put("image", "a".repeat(FramePhotoBridge.MAX_BASE64_CHARS + 1)), sender))
         bridge.setCaptureEnabled(photosVisible = false, photosPaused = false)
         assertFalse(bridge.accept(JSONObject().put("type", "loaded-photo").put("assetId", asset).put("image", "a"), sender))
+    }
+
+    @Test
+    fun `capture that pauses while decoding never enters reserve`() {
+        val decoder = BlockingDecoder()
+        val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-photo-pause-fence").toFile(), decoder)
+        val bridge = FramePhotoBridge(reserve)
+        val session = Any()
+        val sender = FramePhotoBridge.Sender(session, "https://photos.example/kiosk", true, true)
+        assertTrue(bridge.configure(session, "https://photos.example/kiosk", "family"))
+        bridge.setCaptureEnabled(photosVisible = true, photosPaused = false)
+
+        val accepted = AtomicBoolean(true)
+        val capture = Thread { accepted.set(bridge.accept(loadedPhotoMessage(), sender)) }
+        capture.start()
+        assertTrue(decoder.started.await(2, TimeUnit.SECONDS))
+        bridge.setCaptureEnabled(photosVisible = true, photosPaused = true)
+        decoder.release.countDown()
+        capture.join(2_000)
+
+        assertFalse(accepted.get())
+        assertTrue(reserve.entries().isEmpty())
+    }
+
+    @Test
+    fun `capture from before same url session rebuild never enters rebuilt reserve`() {
+        val decoder = BlockingDecoder()
+        val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-photo-rebuild-fence").toFile(), decoder)
+        val bridge = FramePhotoBridge(reserve)
+        val firstSession = Any()
+        val sender = FramePhotoBridge.Sender(firstSession, "https://photos.example/kiosk", true, true)
+        assertTrue(bridge.configure(firstSession, "https://photos.example/kiosk", "family"))
+        bridge.setCaptureEnabled(photosVisible = true, photosPaused = false)
+
+        val accepted = AtomicBoolean(true)
+        val capture = Thread { accepted.set(bridge.accept(loadedPhotoMessage(), sender)) }
+        capture.start()
+        assertTrue(decoder.started.await(2, TimeUnit.SECONDS))
+        assertTrue(bridge.configure(Any(), "https://photos.example/kiosk", "family"))
+        bridge.setCaptureEnabled(photosVisible = true, photosPaused = false)
+        decoder.release.countDown()
+        capture.join(2_000)
+
+        assertFalse(accepted.get())
+        assertTrue(reserve.entries().isEmpty())
+    }
+
+    private fun loadedPhotoMessage() = JSONObject()
+        .put("type", "loaded-photo")
+        .put("assetId", "11111111-1111-4111-8111-111111111111")
+        .put("image", "a")
+
+    private class BlockingDecoder : FramePhotoDecoder {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+
+        override fun decodeAndResize(base64Jpeg: String): ByteArray? {
+            started.countDown()
+            check(release.await(2, TimeUnit.SECONDS))
+            return "jpeg-$base64Jpeg".toByteArray()
+        }
     }
 
     private class FixedDecoder : FramePhotoDecoder {
