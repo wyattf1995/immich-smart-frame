@@ -124,10 +124,10 @@ frameos_duraspeed_ready() {
 
   config="$(adb -s "$adb_serial" shell dumpsys duraspeed config)" || return 1
   printf '%s\n' "${config//$'\r'/}" | awk '
-    /^[[:space:]]*AppWhitelist:[[:space:]]*/ {
+    /^[[:space:]]*(PlatformWhitelist|AppWhitelist):[[:space:]]*/ {
       records += 1
       list = $0
-      sub(/^[[:space:]]*AppWhitelist:[[:space:]]*/, "", list)
+      sub(/^[[:space:]]*(PlatformWhitelist|AppWhitelist):[[:space:]]*/, "", list)
       sub(/[[:space:]]+$/, "", list)
       if (list !~ /^\[.*\]$/) {
         invalid += 1
@@ -143,7 +143,7 @@ frameos_duraspeed_ready() {
         if (entry == "com.wyattfleming.frameos") found = 1
       }
     }
-    END { exit !(records == 1 && found == 1 && invalid == 0) }
+    END { exit !(records >= 1 && found == 1 && invalid == 0) }
   '
 }
 
