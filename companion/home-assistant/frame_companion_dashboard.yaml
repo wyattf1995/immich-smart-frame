@@ -1,0 +1,30 @@
+title: Frame Companion
+views:
+  - title: Frame
+    cards:
+      - type: entities
+        title: Frame health
+        entities:
+          - sensor.frame_companion
+          - sensor.frame_last_photo
+          - sensor.frame_weather_age
+          - sensor.frame_reserve_count
+          - sensor.frame_version
+          - sensor.frame_command_acknowledgement
+      - type: horizontal-stack
+        cards:
+          - type: button
+            name: Previous
+            tap_action: {action: perform-action, perform_action: script.frame_previous}
+          - type: button
+            name: Next
+            tap_action: {action: perform-action, perform_action: script.frame_next}
+          - type: button
+            name: Pause
+            tap_action: {action: perform-action, perform_action: script.frame_pause}
+          - type: button
+            name: Resume
+            tap_action: {action: perform-action, perform_action: script.frame_resume}
+      - type: button
+        name: Hold for 10 minutes
+        tap_action: {action: perform-action, perform_action: script.frame_hold_600}

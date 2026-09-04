@@ -1,0 +1,92 @@
+# Include as a Home Assistant package. URLs and bearer credential remain in secrets.yaml.
+rest:
+  - resource: !secret frame_companion_state_url
+    method: GET
+    headers: {Authorization: !secret frame_companion_authorization}
+    timeout: 8
+    scan_interval: 30
+    sensor:
+      - name: Frame Companion
+        unique_id: frame_companion_state
+        value_template: >-
+          {% set device = (value_json.devices | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {{ 'online' if device.online | default(false) else 'offline' }}
+        json_attributes: [devices, profiles, serverTime]
+
+template:
+  - sensor:
+      - name: Frame Last Photo
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([]) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {{ device.status.lastPhotoAt if device.status is defined and device.status.lastPhotoAt is not none else 'unknown' }}
+      - name: Frame Last Weather
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([]) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {{ device.status.lastWeatherAt if device.status is defined and device.status.lastWeatherAt is not none else 'unknown' }}
+      - name: Frame Reserve Count
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([]) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {{ device.status.offlineAssets if device.status is defined and device.status.offlineAssets is not none else 'unknown' }}
+      - name: Frame Version
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([]) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {{ device.status.appVersion if device.status is defined and device.status.appVersion is not none else 'unknown' }}
+      - name: Frame Command Acknowledgement
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([]) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {{ device.commands[0].status if device.commands is defined and device.commands | count > 0 else 'unknown' }}
+
+rest_command:
+  postframecommand:
+    url: !secret frame_companion_command_url
+    method: POST
+    headers: {Authorization: !secret frame_companion_authorization}
+    content_type: application/json
+    timeout: 8
+    payload: "{{ payload | to_json }}"
+  postframeevent:
+    url: !secret frame_companion_event_url
+    method: POST
+    headers: {Authorization: !secret frame_companion_authorization}
+    content_type: application/json
+    timeout: 8
+    payload: "{{ payload | to_json }}"
+
+script:
+  frame_next:
+    alias: Frame next photo
+    sequence: [{action: rest_command.postframecommand, data: {payload: {deviceId: main, command: {type: photo_next}}}}]
+  frame_previous:
+    alias: Frame previous photo
+    sequence: [{action: rest_command.postframecommand, data: {payload: {deviceId: main, command: {type: photo_previous}}}}]
+  frame_pause:
+    alias: Frame pause
+    sequence: [{action: rest_command.postframecommand, data: {payload: {deviceId: main, command: {type: photo_pause}}}}]
+  frame_resume:
+    alias: Frame resume
+    sequence: [{action: rest_command.postframecommand, data: {payload: {deviceId: main, command: {type: photo_resume}}}}]
+  frame_hold_600:
+    alias: Frame hold for ten minutes
+    sequence: [{action: rest_command.postframecommand, data: {payload: {deviceId: main, command: {type: photo_hold, durationSeconds: 600}}}}]
+  frame_show_mode:
+    alias: Frame show mode
+    fields: {mode: {required: true, selector: {select: {options: [photos, home, weather, birds, cameras, calendar]}}}}
+    sequence:
+      - condition: template
+        value_template: "{{ mode in ['photos', 'home', 'weather', 'birds', 'cameras', 'calendar'] }}"
+      - action: rest_command.postframecommand
+        data: {payload: {deviceId: main, command: {type: show_mode, mode: "{{ mode }}"}}}
+  frame_select_profile:
+    alias: Frame select photo profile
+    fields: {profile: {required: true, selector: {select: {options: [balanced, family, photography]}}}}
+    sequence:
+      - condition: template
+        value_template: "{{ profile in ['balanced', 'family', 'photography'] }}"
+      - action: rest_command.postframecommand
+        data: {payload: {deviceId: main, command: {type: set_profile, profile: "{{ profile }}"}}}
+  frame_event_calendar:
+    alias: Frame calendar event
+    sequence: [{action: rest_command.postframeevent, data: {payload: {deviceId: main, event: {type: calendar, text: "Calendar reminder", expiresInSeconds: 120}}}}]
+  frame_event_reviewed_bird:
+    alias: Frame reviewed bird event
+    sequence: [{action: rest_command.postframeevent, data: {payload: {deviceId: main, event: {type: reviewed_bird, text: "Reviewed bird", expiresInSeconds: 120}}}}]
