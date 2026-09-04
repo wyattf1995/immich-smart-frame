@@ -133,26 +133,38 @@ class FrameOfflineReserve(
         base64Jpeg: String,
         capturedAt: Long = System.currentTimeMillis(),
         expectedScopeKey: String? = null,
+        canCommit: (() -> Boolean)? = null,
     ): Boolean {
-        if (!canPersist(assetId, base64Jpeg, expectedScopeKey)) return false
+        if (!canPersist(assetId, base64Jpeg, expectedScopeKey, canCommit)) return false
         val jpeg = decoder.decodeAndResize(base64Jpeg) ?: return false
-        return commitPersist(assetId, jpeg, capturedAt, expectedScopeKey)
+        return commitPersist(assetId, jpeg, capturedAt, expectedScopeKey, canCommit)
     }
 
     /** Validates before decoding without holding the reserve monitor during untrusted JPEG work. */
     @Synchronized
-    private fun canPersist(assetId: String, base64Jpeg: String, expectedScopeKey: String?): Boolean {
+    private fun canPersist(
+        assetId: String,
+        base64Jpeg: String,
+        expectedScopeKey: String?,
+        canCommit: (() -> Boolean)?,
+    ): Boolean {
         val activeScope = scope ?: return false
         return (expectedScopeKey == null || activeScope.key == expectedScopeKey) &&
             FRAME_ASSET_ID.matches(assetId) && assetId.lowercase() !in hiddenAssets &&
-            base64Jpeg.length <= FramePhotoBridge.MAX_BASE64_CHARS
+            base64Jpeg.length <= FramePhotoBridge.MAX_BASE64_CHARS && canCommit?.invoke() != false
     }
 
     /** Re-checks scope and hidden policy at the atomic disk-commit boundary. */
     @Synchronized
-    private fun commitPersist(assetId: String, jpeg: ByteArray, capturedAt: Long, expectedScopeKey: String?): Boolean {
+    private fun commitPersist(
+        assetId: String,
+        jpeg: ByteArray,
+        capturedAt: Long,
+        expectedScopeKey: String?,
+        canCommit: (() -> Boolean)?,
+    ): Boolean {
         val activeScope = scope ?: return false
-        if (expectedScopeKey != null && activeScope.key != expectedScopeKey || assetId.lowercase() in hiddenAssets) return false
+        if (expectedScopeKey != null && activeScope.key != expectedScopeKey || assetId.lowercase() in hiddenAssets || canCommit?.invoke() == false) return false
         if (jpeg.isEmpty() || jpeg.size.toLong() > maxBytes) return false
         val target = photoFile(assetId)
         if (!writeAtomically(target, jpeg)) return false
