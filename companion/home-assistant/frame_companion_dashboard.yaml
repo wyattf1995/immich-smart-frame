@@ -7,7 +7,7 @@ views:
         entities:
           - sensor.frame_companion
           - sensor.frame_last_photo
-          - sensor.frame_weather_age
+          - sensor.frame_last_weather
           - sensor.frame_reserve_count
           - sensor.frame_version
           - sensor.frame_command_acknowledgement
