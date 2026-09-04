@@ -43,8 +43,10 @@ IDs and acknowledgements; an acknowledgement is terminal and device-scoped.
 
 Allowed commands: `show_mode` with `mode`, `photo_next`, `photo_previous`,
 `photo_pause`, `photo_resume`, `photo_hold` with `durationSeconds` (15–3600), and
-`set_profile` with a configured profile. Report `dispatched` when a key/tap was
-sent, `applied` only for completed state, or `failed`, `rejected`, `expired`.
+`set_profile` with a configured profile. Use terminal `dispatched` when a key/tap was sent but its page result cannot be
+attributed to that input. Use `applied` for a completed native state change, or
+`failed`, `rejected`, `expired`. A later acknowledgement does not replace a
+terminal result; photo freshness is reported independently.
 
 Operator API: GET `/api/state`, GET `/api/preferences?deviceId=main`, and POST
 `/api/command` (`deviceId`, `command`), `/api/settings` (`deviceId`, `patch`),
@@ -66,8 +68,9 @@ When a frame has `eventOverlays: true`, an operator may POST `/api/event` with
 The only types are `calendar` and `reviewed_bird`; do not label an unreviewed
 model result as a reviewed bird. Text is limited to 100 characters, expiry to
 30–300 seconds, and delivery to one event per frame every 15 minutes. Events
-are returned in the next poll and expire without replay. The device shows notes
-only in active Photos, outside quiet hours and a manual pause.
+may be redelivered in polls until expiry. Devices persist event IDs before display
+and suppress duplicate IDs across restarts. Expired events are never delivered.
+The device shows notes only in active Photos, outside quiet hours and a manual pause.
 
 Home Assistant configuration and controls are in [home-assistant/](home-assistant/).
 

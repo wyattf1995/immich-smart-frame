@@ -137,6 +137,11 @@ fi
 
 ./birdnet/tests/test-nest-audio-bridge.sh
 
+node birdnet/tests/test-audio-freshness.mjs
+python3 -m unittest discover -s companion/tests
+ruby scripts/test-kiosk-log-settings.rb
+ruby companion/home-assistant/test_validate.rb
+
 ./scripts/test-check-frame-readiness.sh
 
 ./scripts/validate-frameos.sh

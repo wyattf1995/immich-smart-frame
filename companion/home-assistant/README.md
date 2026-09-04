@@ -1,6 +1,7 @@
 # Frame Companion Home Assistant package
 
-This is a deployment example only. It has **not** been provisioned in Home Assistant.
+This reusable package adds health sensors and authenticated frame controls.
+Provision it separately for each Home Assistant installation.
 
 Add `homeassistant: { packages: !include_dir_named packages }` to `configuration.yaml`, place `frame_companion.yaml` in `packages/`, and add these secret values to `secrets.yaml`:
 
