@@ -98,6 +98,18 @@ class CompanionTests(unittest.TestCase):
         self.assertEqual(self.store.preferences('main'),[])
         with self.assertRaises(module.FrameError):self.store.feedback('main',{'assetId':'../../etc','preference':'hide'})
 
+    def test_device_receives_its_full_hidden_snapshot_for_offline_reserve(self):
+        asset='11111111-1111-4111-8111-111111111111'
+        self.store=module.FrameStore(Path(self.tmp.name)/'state.db',{'parents':{}},['balanced','family'],clock=lambda:self.clock)
+        self.assertEqual(self.poll()['hiddenAssets'],[])
+        self.store.feedback('main',{'assetId':asset,'preference':'hide'})
+        self.assertEqual(self.poll()['hiddenAssets'],[asset])
+        self.assertEqual(self.poll('parents')['hiddenAssets'],[])
+        reopened=module.FrameStore(Path(self.tmp.name)/'state.db',{},['balanced','family'],clock=lambda:self.clock)
+        self.assertEqual(reopened.poll('main',{'status':{}})['hiddenAssets'],[asset])
+        self.store.feedback('main',{'assetId':asset,'preference':'clear'})
+        self.assertEqual(self.poll()['hiddenAssets'],[])
+
 class HttpBoundaryTests(unittest.TestCase):
     def setUp(self):
         import threading
