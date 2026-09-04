@@ -66,6 +66,8 @@ class FrameStore:
             CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, label TEXT NOT NULL, settings TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT '{}', seen INTEGER);
             CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, device TEXT NOT NULL, payload TEXT NOT NULL, issued INTEGER NOT NULL, expires INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'queued', message TEXT NOT NULL DEFAULT '', acknowledged INTEGER);
             CREATE INDEX IF NOT EXISTS device_commands ON commands(device, issued);
+            CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, device TEXT NOT NULL, payload TEXT NOT NULL, issued INTEGER NOT NULL, expires INTEGER NOT NULL);
+            CREATE INDEX IF NOT EXISTS device_events ON events(device, issued);
             CREATE TABLE IF NOT EXISTS preferences (device TEXT NOT NULL, asset TEXT NOT NULL, preference TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY(device, asset));
             ''')
             for device, conf in devices.items():
@@ -136,7 +138,7 @@ class FrameStore:
                 db.execute("UPDATE commands SET status=?,message=?,acknowledged=? WHERE id=? AND device=? AND status='queued'", (ack['status'],message,self.clock(),ack['id'],device))
             db.execute('UPDATE devices SET status=?,seen=? WHERE id=?', (json.dumps(status),self.clock(),device))
             commands = [json.loads(c['payload']) for c in db.execute("SELECT payload FROM commands WHERE device=? AND status='queued' AND expires>? ORDER BY issued,id LIMIT 1", (device,self.clock()))]
-            return {'schema':1,'deviceId':device,'serverTime':self.clock(),'pollAfterMs':5000,'settingsRevision':row['revision'],'settings':json.loads(row['settings']),'commands':commands}
+            return {'schema':1,'deviceId':device,'serverTime':self.clock(),'pollAfterMs':5000,'settingsRevision':row['revision'],'settings':json.loads(row['settings']),'commands':commands,'events':[json.loads(e['payload']) for e in db.execute('SELECT payload FROM events WHERE device=? AND expires>? ORDER BY issued DESC LIMIT 1',(device,self.clock()))] if json.loads(row['settings']).get('eventOverlays') else []}
 
     def command(self, device, payload):
         if not isinstance(payload,dict) or not isinstance(payload.get('type'),str) or payload.get('type') not in COMMANDS: raise FrameError('Unsupported command')
@@ -165,6 +167,20 @@ class FrameStore:
             updated=settings_patch(json.loads(row['settings']),patch,self.profiles)
             db.execute('UPDATE devices SET settings=?,revision=revision+1 WHERE id=?',(json.dumps(updated),device))
             return {'settings':updated,'settingsRevision':row['revision']+1}
+
+    def event(self, device, payload):
+        if not isinstance(payload,dict) or set(payload)!={'type','text','expiresInSeconds'}: raise FrameError('Invalid event')
+        kind=payload['type']; message=payload['text']; seconds=payload['expiresInSeconds']
+        if kind not in ('calendar','reviewed_bird') or not isinstance(message,str) or not 1<=len(message.strip())<=100 or any(ord(c)<32 or c in '<>' for c in message) or not integer(seconds,30,300): raise FrameError('Invalid event')
+        with self.db() as db:
+            row=self._device(db,device)
+            if not json.loads(row['settings']).get('eventOverlays'): raise FrameError('Event overlays are disabled for this frame',409)
+            recent=db.execute('SELECT issued FROM events WHERE device=? ORDER BY issued DESC LIMIT 1',(device,)).fetchone()
+            if recent and self.clock()-recent['issued']<900000: raise FrameError('Frame overlays are limited to one every 15 minutes',429)
+            event={'id':str(uuid.uuid4()),'type':kind,'text':message.strip(),'issuedAt':self.clock(),'expiresAt':self.clock()+seconds*1000}
+            db.execute('INSERT INTO events VALUES(?,?,?,?,?)',(event['id'],device,json.dumps(event),event['issuedAt'],event['expiresAt']))
+            db.execute('DELETE FROM events WHERE expires < ?',(self.clock()-86400000,))
+            return event
 
     def preferences(self, device):
         with self.db() as db:
@@ -275,7 +291,7 @@ def make_server(config,store,host='127.0.0.1',port=8092):
                 device_route=path=='/device/poll'
                 if device_route and role[0]!='device' or not device_route and role[0]!='operator':raise FrameError('Credential is not authorized for this route',403)
                 if self.command=='POST':
-                    if path not in ('/device/poll','/api/command','/api/settings','/api/feedback'):raise FrameError('Not found',404)
+                    if path not in ('/device/poll','/api/command','/api/settings','/api/feedback','/api/event'):raise FrameError('Not found',404)
                     request_origin=self.headers.get('Origin')
                     if request_origin and request_origin!=origin:raise FrameError('Origin rejected',403)
                     if role[0]=='operator' and self.headers.get('Authorization','').startswith('Basic '):
@@ -294,6 +310,7 @@ def make_server(config,store,host='127.0.0.1',port=8092):
                     if path=='/api/command':return self.reply(200,store.command(device,body.get('command')))
                     if path=='/api/settings':return self.reply(200,store.settings(device,body.get('patch')))
                     if path=='/api/feedback':return self.reply(200,store.feedback(device,body.get('feedback')))
+                    if path=='/api/event':return self.reply(200,store.event(device,body.get('event')))
                 elif path=='/api/state':return self.reply(200,dict(store.state(),csrfToken=csrf))
                 elif path=='/api/preferences':
                     from urllib.parse import parse_qs
