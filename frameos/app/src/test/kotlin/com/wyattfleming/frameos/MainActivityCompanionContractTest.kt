@@ -14,8 +14,9 @@ class MainActivityCompanionContractTest {
         assertTrue(source.contains("FrameCompanionCredentialsStore(this).read() != credentials"))
     }
 
-    @Test fun `photo commands honor pause and bounded holds resume after their duration`() {
-        assertTrue(source.contains("!state.photosPaused) webSurface?.movePhoto"))
+    @Test fun `photo commands dispatch while paused and bounded holds resume after their duration`() {
+        assertTrue(source.contains("if (state.photosPaused) webSurface?.setContentActive(true)"))
+        assertTrue(source.contains("if (moved) \"dispatched\" else \"rejected\""))
         assertTrue(source.contains("handler.postDelayed(resumePhotosAfterHold, command.durationSeconds * 1_000L)"))
         assertTrue(source.contains("private val resumePhotosAfterHold"))
     }
