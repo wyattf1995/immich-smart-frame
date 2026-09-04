@@ -63,6 +63,7 @@ import com.wyattfleming.frameos.control.FrameCompanionCredentialsStore
 import com.wyattfleming.frameos.control.FrameRemoteStatus
 import com.wyattfleming.frameos.control.FrameCompanionCommandDecoder
 import com.wyattfleming.frameos.control.FrameRemoteCommand
+import com.wyattfleming.frameos.control.FrameCompanionCommandStore
 import com.wyattfleming.frameos.security.FrameExternalControlPolicy
 import com.wyattfleming.frameos.diagnostics.FrameDiagnosticStore
 import com.wyattfleming.frameos.ui.WeatherContentView
@@ -1078,12 +1079,15 @@ class MainActivity : Activity() {
             val result = FrameCompanionClient(credentials.endpoint, credentials.token).poll(
                 credentials.deviceId,
                 FrameRemoteStatus(state.mode, state.photosPaused, snapshot.lastPaintEpochMillis.takeIf { it > 0 }, snapshot.lastWeatherSuccessEpochMillis.takeIf { it > 0 }, snapshot.recoveryCount, snapshot.lastError, false, packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"),
-                emptyList(),
+                FrameCompanionCommandStore(this).consumeAcks(),
             )
             handler.post {
                 companionPollInFlight = false
                 if (result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success) {
-                    FrameCompanionCommandDecoder.decode(result.body, System.currentTimeMillis())?.let(::applyCompanionCommand)
+                    FrameCompanionCommandDecoder.decode(result.body, System.currentTimeMillis())?.let { command ->
+                        val store = FrameCompanionCommandStore(this)
+                        if (store.claim(command.id)) { applyCompanionCommand(command); store.ack(command.id, "applied") }
+                    }
                 }
                 scheduleCompanionPoll(if (result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success) 5_000L else 10_000L)
             }
