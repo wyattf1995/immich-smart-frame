@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.Color
 import android.graphics.BitmapFactory
+import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -168,6 +169,14 @@ class MainActivity : Activity() {
     private lateinit var offlinePhoto: ImageView
     private val photoFallbackPolicy = com.wyattfleming.frameos.photos.FramePhotoFallbackPolicy()
     private var fallbackIndex = 0
+    private var offlineBitmap: Bitmap? = null
+    private var photoDisplayGeneration = 0L
+    private var photoProbeGeneration = 0L
+    private var photoProbeInFlight = false
+    private var photoProbeReachable = false
+    private var photosVisibleSince = 0L
+    private var photosWereActive = false
+    private val photoWorkerExecutor = Executors.newSingleThreadExecutor()
     private val slowPageLoads = mutableMapOf<String, Runnable>()
     private var bootRecoveryConfirmed = false
     private var companionPollInFlight = false
@@ -195,7 +204,7 @@ class MainActivity : Activity() {
         if (state.mode == FrameMode.PHOTOS && state.photosPaused) dispatch(FrameIntent.PrimaryAction)
     }
     private val refreshPhotoFreshness = Runnable { checkPhotoFreshness() }
-    private val rotateOfflinePhoto = Runnable { showOfflinePhoto(advance = true) }
+    private val rotateOfflinePhoto = Runnable { showOfflinePhoto(step = 1) }
     private val refreshVisibleWeather = Runnable { refreshWeather() }
     private val preloadCalendar = Runnable {
         if (!FrameWebCompositionPolicy.forMode(state.mode).warmCalendarInBackground || !activityResumed) {
@@ -245,10 +254,13 @@ class MainActivity : Activity() {
         photoReserve = com.wyattfleming.frameos.photos.FrameOfflineReserve(java.io.File(filesDir, "frame-offline-reserve"))
         photoBridge = com.wyattfleming.frameos.photos.FramePhotoBridge(photoReserve) { photo ->
             handler.post {
+                if (!activityResumed || state.mode != FrameMode.PHOTOS || state.photosPaused) return@post
                 currentPhotoAssetId = photo.assetId
                 lastPhotoAt = photo.capturedAt
-                photoFallbackPolicy.recordFreshPhoto()
-                hideOfflinePhoto()
+                if (!photoFallbackPolicy.isShowing || photoProbeReachable) {
+                    photoFallbackPolicy.recordFreshPhoto()
+                    hideOfflinePhoto()
+                }
             }
         }
         experienceSettings = experienceStore.read()
@@ -310,6 +322,9 @@ class MainActivity : Activity() {
         handler.removeCallbacks(refreshVisibleWeather)
         handler.removeCallbacks(preloadCalendar)
         handler.removeCallbacks(pollCompanion)
+        cancelPhotoWork()
+        hideOfflinePhoto()
+        photoBridge.setCaptureEnabled(false, true)
         webSurface?.suspendAllContent()
         super.onPause()
     }
@@ -329,6 +344,9 @@ class MainActivity : Activity() {
         cancelHomeAssistantWork(stage = "activity_destroy", clearPendingAuthorizationCode = true)
         weatherWorkerExecutor.shutdownNow()
         companionWorkerExecutor.shutdownNow()
+        cancelPhotoWork()
+        hideOfflinePhoto()
+        photoWorkerExecutor.shutdownNow()
         weatherRequestExecutor.shutdownNow()
         authorizationExecutor.shutdownNow()
         handler.removeCallbacksAndMessages(null)
@@ -350,7 +368,7 @@ class MainActivity : Activity() {
         return when (val action = contextualInputMapper.map(state.mode, event.keyCode, event.isShiftPressed)) {
             is ContextualFrameAction.PhotoStep -> {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    if (webSurface?.movePhoto(action.forward) == true) {
+                    if (movePhoto(action.forward)) {
                         showHud(if (action.forward) "Next photo" else "Previous photo")
                     }
                     scheduleIdleReset()
@@ -566,7 +584,6 @@ class MainActivity : Activity() {
                         diagnosticStore.recordRecovery("$label unavailable")
                         updatePageLoading(label, false)
                         if (isWebLabelActive(label)) showWebRecovery("$label is temporarily unavailable")
-                        if (label == FrameMode.PHOTOS.label && photoFallbackPolicy.recordFailure(state.mode == FrameMode.PHOTOS && !state.photosPaused, photoReserve.latest() != null)) showOfflinePhoto()
                     }
                 }
 
@@ -821,6 +838,10 @@ class MainActivity : Activity() {
 
     private fun render(next: FrameState, announce: Boolean) {
         if (::diagnosticStore.isInitialized) diagnosticStore.recordMode(next.mode)
+        if (next.mode != FrameMode.PHOTOS || next.photosPaused || !activityResumed) {
+            cancelPhotoWork()
+            photoBridge.setCaptureEnabled(false, true)
+        }
         val router = surfaceRouter ?: return
         when (val target = router.target(next.mode)) {
             is FrameSurfaceTarget.Web -> when (target.slot) {
@@ -830,6 +851,7 @@ class MainActivity : Activity() {
                     webSurface?.show(target.slot, target.url, takeFocus = false)
                     webSurface?.setContentActive(!next.photosPaused)
                     root.requestFocus()
+                    if (photoFallbackPolicy.isShowing) showOfflinePhoto(manual = true)
                     schedulePhotoFreshness()
                 }
                 FrameWebSlot.HOME_ASSISTANT, FrameWebSlot.CAMERAS -> {
@@ -1096,7 +1118,7 @@ class MainActivity : Activity() {
                 weatherRefreshStartedAtUptimeMillis = 0L
                 weatherRefreshInProgress = false
                 weatherContent.presentation = presentation
-                if (presentation.emptyMessage == null) diagnosticStore.recordWeatherSuccess(System.currentTimeMillis())
+                presentation.freshDataEpochMillis?.let(diagnosticStore::recordWeatherSuccess)
                 weatherNeedsAuthentication = presentation.authenticationRequired ||
                     presentation.emptyMessage == "Weather needs Home Assistant sign-in"
                 scheduleWeatherRefresh()
@@ -1135,7 +1157,7 @@ class MainActivity : Activity() {
             lastWeatherAt = snapshot.lastWeatherSuccessEpochMillis.takeIf { it > 0 },
             recoveryCount = snapshot.recoveryCount,
             lastError = snapshot.lastError,
-            offline = false,
+            offline = ::offlinePhoto.isInitialized && offlinePhoto.visibility == View.VISIBLE,
             appVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown",
             currentAssetId = currentPhotoAssetId,
             lastPhotoAt = lastPhotoAt,
@@ -1199,9 +1221,7 @@ class MainActivity : Activity() {
     private fun applyCompanionCommand(command: FrameRemoteCommand): String = when (command) {
         is FrameRemoteCommand.ShowMode -> { showMode(command.mode); "applied" }
         is FrameRemoteCommand.PhotoStep -> if (state.mode == FrameMode.PHOTOS) {
-            if (state.photosPaused) webSurface?.setContentActive(true)
-            val moved = webSurface?.movePhoto(command.forward) == true
-            if (state.photosPaused) webSurface?.setContentActive(false)
+            val moved = movePhoto(command.forward)
             if (moved) "dispatched" else "rejected"
         } else "rejected"
         is FrameRemoteCommand.PhotoPause -> if (state.mode == FrameMode.PHOTOS) {
@@ -1262,6 +1282,11 @@ class MainActivity : Activity() {
     }
 
     private fun rebuildExperienceUi() {
+        cancelPhotoWork()
+        hideOfflinePhoto()
+        currentPhotoAssetId = null
+        lastPhotoAt = null
+        photoFallbackPolicy.recordFreshPhoto()
         webSurface?.destroy()
         buildUi()
         state = state.copy(mode = availability().resolve(state.mode))
@@ -1475,33 +1500,109 @@ class MainActivity : Activity() {
         handler.postDelayed(expireIdle, experienceSettings.idleReturnSeconds * 1_000L)
     }
 
-    private fun showOfflinePhoto(advance: Boolean = false) {
-        if (state.mode != FrameMode.PHOTOS || state.photosPaused) return
+    private fun movePhoto(forward: Boolean): Boolean {
+        if (state.mode != FrameMode.PHOTOS || !activityResumed) return false
+        if (photoFallbackPolicy.isShowing) return showOfflinePhoto(if (forward) 1 else -1, manual = true)
+        if (state.photosPaused) webSurface?.setContentActive(true)
+        val moved = webSurface?.movePhoto(forward) == true
+        if (state.photosPaused) webSurface?.setContentActive(false)
+        return moved
+    }
+
+    private fun showOfflinePhoto(step: Int = 0, manual: Boolean = false): Boolean {
+        if (!activityResumed || state.mode != FrameMode.PHOTOS || (state.photosPaused && !manual)) return false
         val entries = photoReserve.entries()
-        if (entries.isEmpty()) return
-        if (advance) fallbackIndex = (fallbackIndex + 1) % entries.size
-        val bitmap = BitmapFactory.decodeFile(entries[fallbackIndex % entries.size].file.path) ?: return
-        offlinePhoto.setImageBitmap(bitmap)
-        offlinePhoto.visibility = View.VISIBLE
+        if (entries.isEmpty()) { hideOfflinePhoto(); return false }
+        fallbackIndex = Math.floorMod(fallbackIndex + step, entries.size)
+        val entry = entries[fallbackIndex]
+        val generation = ++photoDisplayGeneration
         handler.removeCallbacks(rotateOfflinePhoto)
-        handler.postDelayed(rotateOfflinePhoto, OFFLINE_PHOTO_ROTATION_MILLIS)
+        photoWorkerExecutor.submit {
+            val bitmap = runCatching { BitmapFactory.decodeFile(entry.file.path) }.getOrNull()
+            handler.post {
+                if (bitmap == null) return@post
+                if (generation != photoDisplayGeneration || !activityResumed || state.mode != FrameMode.PHOTOS ||
+                    !photoFallbackPolicy.isShowing || photoReserve.entries().none { it.assetId == entry.assetId }) {
+                    bitmap.recycle()
+                    return@post
+                }
+                val previous = offlineBitmap
+                offlineBitmap = bitmap
+                offlinePhoto.setImageBitmap(bitmap)
+                previous?.recycle()
+                currentPhotoAssetId = entry.assetId
+                offlinePhoto.visibility = View.VISIBLE
+                hideWebRecovery()
+                showHud("Offline photos · reconnecting")
+                if (!state.photosPaused) handler.postDelayed(rotateOfflinePhoto, OFFLINE_PHOTO_ROTATION_MILLIS)
+            }
+        }
+        return true
     }
 
     private fun hideOfflinePhoto() {
+        ++photoDisplayGeneration
         handler.removeCallbacks(rotateOfflinePhoto)
-        if (::offlinePhoto.isInitialized) offlinePhoto.visibility = View.GONE
+        if (::offlinePhoto.isInitialized) {
+            offlinePhoto.visibility = View.GONE
+            offlinePhoto.setImageDrawable(null)
+        }
+        offlineBitmap?.recycle()
+        offlineBitmap = null
+    }
+
+    private fun cancelPhotoWork() {
+        ++photoProbeGeneration
+        ++photoDisplayGeneration
+        photosWereActive = false
+        handler.removeCallbacks(refreshPhotoFreshness)
+        handler.removeCallbacks(rotateOfflinePhoto)
     }
 
     private fun schedulePhotoFreshness() {
         handler.removeCallbacks(refreshPhotoFreshness)
-        if (state.mode == FrameMode.PHOTOS && !state.photosPaused) handler.postDelayed(refreshPhotoFreshness, PHOTO_FRESHNESS_CHECK_MILLIS)
+        val active = activityResumed && state.mode == FrameMode.PHOTOS && !state.photosPaused
+        if (active && !photosWereActive) photosVisibleSince = System.currentTimeMillis()
+        photosWereActive = active
+        if (active && !photoProbeInFlight) handler.postDelayed(refreshPhotoFreshness, PHOTO_FRESHNESS_CHECK_MILLIS)
+        if (!active) handler.removeCallbacks(rotateOfflinePhoto)
     }
 
     private fun checkPhotoFreshness() {
-        if (com.wyattfleming.frameos.photos.FramePhotoFreshnessPolicy.isStale(lastPhotoAt, System.currentTimeMillis(), state.mode == FrameMode.PHOTOS, state.photosPaused)) {
-            webSurface?.refreshPhotos()
+        if (!activityResumed || state.mode != FrameMode.PHOTOS || state.photosPaused || photoProbeInFlight) return
+        val photosUrl = configuration?.photosUrl ?: return
+        val generation = photoProbeGeneration
+        photoProbeInFlight = true
+        photoWorkerExecutor.submit {
+            val reachable = runCatching {
+                val source = java.net.URI(photosUrl)
+                val url = java.net.URI(source.scheme, null, source.host, source.port, "/livez", null, null).toURL()
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                try {
+                    connection.instanceFollowRedirects = false
+                    connection.connectTimeout = 2_000
+                    connection.readTimeout = 2_000
+                    connection.useCaches = false
+                    connection.responseCode == 200
+                } finally { connection.disconnect() }
+            }.getOrDefault(false)
+            handler.post {
+                photoProbeInFlight = false
+                if (generation != photoProbeGeneration || !activityResumed || state.mode != FrameMode.PHOTOS ||
+                    state.photosPaused || configuration?.photosUrl != photosUrl) {
+                    schedulePhotoFreshness()
+                    return@post
+                }
+                photoProbeReachable = reachable
+                if (reachable) photoFallbackPolicy.recordReachable()
+                else if (photoFallbackPolicy.recordFailure(true, photoReserve.latest() != null) && offlinePhoto.visibility != View.VISIBLE) showOfflinePhoto()
+                if (reachable && photoFallbackPolicy.shouldRecover(lastPhotoAt, photosVisibleSince, System.currentTimeMillis(), true, false)) {
+                    diagnosticStore.recordRecovery("Photos data stale")
+                    webSurface?.refreshPhotos()
+                }
+                schedulePhotoFreshness()
+            }
         }
-        schedulePhotoFreshness()
     }
 
     private fun applyBrightness(percent: Int?) {
@@ -1561,7 +1662,7 @@ class MainActivity : Activity() {
         const val HUD_VISIBLE_MILLIS = 1_500L
         const val EVENT_OVERLAY_VISIBLE_MILLIS = 9_000L
         const val OFFLINE_PHOTO_ROTATION_MILLIS = 45_000L
-        const val PHOTO_FRESHNESS_CHECK_MILLIS = 60_000L
+        const val PHOTO_FRESHNESS_CHECK_MILLIS = 15_000L
         const val WEATHER_CACHE_FRESH_MILLIS = 5 * 60 * 1_000L
         const val OAUTH_EXCHANGE_TIMEOUT_MILLIS = 10_000L
         const val OAUTH_STATE_BYTES = 32
