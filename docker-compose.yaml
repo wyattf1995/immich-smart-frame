@@ -25,6 +25,9 @@ services:
       KIOSK_IMMICH_URL: ${IMMICH_URL:?Set IMMICH_URL in .env}
       KIOSK_IMMICH_API_KEY_FILE: /run/secrets/immich_api_key
       KIOSK_LOG_LEVEL: info
+      # Reserve cgroup headroom for one full camera-original decode plus the
+      # optimized slide; Go begins collecting before the 1 GiB hard limit.
+      GOMEMLIMIT: ${KIOSK_GOMEMLIMIT:-800MiB}
     ports:
       - "${KIOSK_PORT:-3000}:3000"
     volumes:
@@ -48,6 +51,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    logging:
+      driver: local
+      options:
+        max-size: 50m
+        max-file: "1"
 
 secrets:
   immich_api_key:

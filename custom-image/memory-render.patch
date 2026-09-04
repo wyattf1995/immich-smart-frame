@@ -1,0 +1,465 @@
+diff --git a/internal/cache/cache.go b/internal/cache/cache.go
+index 69455ba..7cd9e28 100644
+--- a/internal/cache/cache.go
++++ b/internal/cache/cache.go
+@@ -35,6 +35,12 @@ var (
+ 	maxCacheTTL       = 24 * time.Hour
+ 	maxCacheEntries   = 4096
+ 	maxCacheValueSize = 16 << 20
++	// Keep the cache well below the 1 GiB container limit; render buffers need
++	// substantial temporary headroom while a camera original is decoded.
++	maxCacheBytes  int64 = 256 << 20
++	cacheBytes     int64
++	cacheSizes     = map[string]int64{}
++	cacheEvictions atomic.Int64
+ 
+ 	DemoMode = false
+ )
+@@ -63,6 +69,8 @@ func Initialize() {
+ 	if generation.Load() == 0 {
+ 		generation.Store(1)
+ 	}
++	cacheBytes = 0
++	cacheSizes = map[string]int64{}
+ }
+ 
+ // RegisterInvalidationHook registers a callback for logical cache invalidation.
+@@ -98,6 +106,8 @@ func InvalidateAll() {
+ 	if kioskCache != nil {
+ 		kioskCache.Flush()
+ 	}
++	cacheBytes = 0
++	cacheSizes = map[string]int64{}
+ 	cacheMu.Unlock()
+ 
+ 	hooksMu.RLock()
+@@ -125,6 +135,16 @@ func ItemCount() int {
+ 	return kioskCache.ItemCount()
+ }
+ 
++// ByteSize reports the accounted cache payload bytes for operational metrics.
++func ByteSize() int64 {
++	cacheMu.Lock()
++	defer cacheMu.Unlock()
++	return cacheBytes
++}
++
++// Evictions reports byte-budget and cardinality evictions since process start.
++func Evictions() int64 { return cacheEvictions.Load() }
++
+ // ViewCacheKey generates a cache key from the API URL and device ID by combining them
+ // with ':view' suffix for cache view operations. The key is hashed using SHA-256
+ // for consistent length and character set.
+@@ -166,15 +186,15 @@ func boundedExpiration(d time.Duration) time.Duration {
+ 	return d
+ }
+ 
+-func valueWithinLimit(value any) bool {
++func valueSize(value any) (int64, bool) {
+ 	if bytes, ok := value.([]byte); ok {
+-		return len(bytes) <= maxCacheValueSize
++		return int64(len(bytes)), len(bytes) <= maxCacheValueSize
+ 	}
+ 	if text, ok := value.(string); ok {
+-		return len(text) <= maxCacheValueSize
++		return int64(len(text)), len(text) <= maxCacheValueSize
+ 	}
+ 	encoded, err := json.Marshal(value)
+-	return err == nil && len(encoded) <= maxCacheValueSize
++	return int64(len(encoded)), err == nil && len(encoded) <= maxCacheValueSize
+ }
+ 
+ func evictOldestLocked() {
+@@ -191,17 +211,32 @@ func evictOldestLocked() {
+ 	}
+ 	if oldestKey != "" {
+ 		kioskCache.Delete(oldestKey)
++		cacheBytes -= cacheSizes[oldestKey]
++		delete(cacheSizes, oldestKey)
++		cacheEvictions.Add(1)
+ 	}
+ }
+ 
+ func setLocked(key string, value any, expiration time.Duration) {
+-	if kioskCache == nil || !valueWithinLimit(value) {
++	size, valid := valueSize(value)
++	if kioskCache == nil || !valid || size > maxCacheBytes {
+ 		return
+ 	}
+-	if _, found := kioskCache.Get(key); !found {
++	if _, found := kioskCache.Get(key); found {
++		cacheBytes -= cacheSizes[key]
++	} else {
++		evictOldestLocked()
++	}
++	for cacheBytes+size > maxCacheBytes {
++		before := cacheBytes
+ 		evictOldestLocked()
++		if cacheBytes == before {
++			return
++		}
+ 	}
+ 	kioskCache.Set(key, value, boundedExpiration(expiration))
++	cacheSizes[key] = size
++	cacheBytes += size
+ }
+ 
+ // Set stores a value in the cache under the given key, replacing any existing entry.
+@@ -318,6 +353,8 @@ func Delete(key string) {
+ 	defer cacheMu.Unlock()
+ 	if kioskCache != nil {
+ 		kioskCache.Delete(key)
++		cacheBytes -= cacheSizes[key]
++		delete(cacheSizes, key)
+ 	}
+ }
+ 
+@@ -326,7 +363,10 @@ func Delete(key string) {
+ func Replace(key string, x any) error {
+ 	cacheMu.Lock()
+ 	defer cacheMu.Unlock()
+-	if kioskCache == nil || !valueWithinLimit(x) {
++	if kioskCache == nil {
++		return fmt.Errorf("cache is not initialized or value exceeds size limit")
++	}
++	if _, valid := valueSize(x); !valid {
+ 		return fmt.Errorf("cache is not initialized or value exceeds size limit")
+ 	}
+ 	return kioskCache.Replace(key, x, boundedExpiration(defaultExpiration))
+diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
+index 4876d4d..2cfd5a9 100644
+--- a/internal/immich/immich_helpers.go
++++ b/internal/immich/immich_helpers.go
+@@ -29,9 +29,10 @@ import (
+ )
+ 
+ const (
+-	defaultAlbumRestrictionRegistrySize = 128
+-	defaultAlbumRestrictionTTL          = 10 * time.Minute
+-	defaultAPICallTimeout               = 20 * time.Second
++	defaultAlbumRestrictionRegistrySize       = 128
++	defaultAlbumRestrictionTTL                = 10 * time.Minute
++	defaultAPICallTimeout                     = 20 * time.Second
++	maxImageResponseBytes               int64 = 32 << 20
+ )
+ 
+ type albumRestrictionCacheKey string
+@@ -150,6 +151,12 @@ func withImmichAPICache[T APIResponse](immichAPICall apiCall, requestID, deviceI
+ 
+ // immichAPICall bootstrap for immich api call
+ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body []byte, headers ...map[string]string) ([]byte, string, bool, error) {
++	return a.immichAPICallLimited(ctx, method, apiURL, body, 0, headers...)
++}
++
++// immichAPICallLimited rejects successful response bodies over maxResponseBytes before
++// they can be retained for image decoding. A zero limit preserves the normal API path.
++func (a *Asset) immichAPICallLimited(ctx context.Context, method, apiURL string, body []byte, maxResponseBytes int64, headers ...map[string]string) ([]byte, string, bool, error) {
+ 	var responseBody []byte
+ 	var lastErr error
+ 	var contentType string
+@@ -265,6 +272,9 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
+ 		defer res.Body.Close()
+ 
+ 		contentType = res.Header.Get("Content-Type")
++		if maxResponseBytes > 0 && res.StatusCode >= 200 && res.StatusCode < 300 && res.ContentLength > maxResponseBytes {
++			return responseBody, contentType, false, fmt.Errorf("image response exceeds %d byte limit", maxResponseBytes)
++		}
+ 
+ 		// in demo mode and unauthorized, attempt to login again
+ 		if res.StatusCode == http.StatusUnauthorized && a.requestConfig.Kiosk.DemoMode {
+@@ -299,11 +309,18 @@ func (a *Asset) immichAPICall(ctx context.Context, method, apiURL string, body [
+ 			return responseBody, contentType, false, fmt.Errorf("HTTP %d: unexpected status code", res.StatusCode)
+ 		}
+ 
+-		responseBody, err = io.ReadAll(res.Body)
++		reader := io.Reader(res.Body)
++		if maxResponseBytes > 0 {
++			reader = io.LimitReader(res.Body, maxResponseBytes+1)
++		}
++		responseBody, err = io.ReadAll(reader)
+ 		if err != nil {
+ 			log.Error("reading response body", "method", method, "url", apiURL, "err", err)
+ 			return responseBody, contentType, false, err
+ 		}
++		if maxResponseBytes > 0 && int64(len(responseBody)) > maxResponseBytes {
++			return nil, contentType, false, fmt.Errorf("image response exceeds %d byte limit", maxResponseBytes)
++		}
+ 
+ 		return responseBody, contentType, false, nil
+ 	}
+@@ -577,6 +594,12 @@ func (a *Asset) AssetInfo(requestID, deviceID string) error {
+ 
+ // ImagePreview fetches the raw image data from Immich
+ func (a *Asset) ImagePreview() ([]byte, string, error) {
++	return a.ImagePreviewForDisplay(a.requestConfig.UseOriginalImage)
++}
++
++// ImagePreviewForDisplay fetches an original only when the caller admits it;
++// otherwise Immich's preview derivative avoids decoding a camera-sized source.
++func (a *Asset) ImagePreviewForDisplay(useOriginal bool) ([]byte, string, error) {
+ 	var bytes []byte
+ 
+ 	u, err := url.Parse(a.requestConfig.ImmichURL)
+@@ -586,7 +609,7 @@ func (a *Asset) ImagePreview() ([]byte, string, error) {
+ 	}
+ 
+ 	assetSize := AssetSizeThumbnail
+-	if a.requestConfig.UseOriginalImage && slices.Contains(kiosk.SupportedImageMimeTypes, a.OriginalMimeType) {
++	if useOriginal && slices.Contains(kiosk.SupportedImageMimeTypes, a.OriginalMimeType) {
+ 		assetSize = AssetSizeOriginal
+ 	}
+ 
+@@ -597,11 +620,11 @@ func (a *Asset) ImagePreview() ([]byte, string, error) {
+ 		RawQuery: "size=preview",
+ 	}
+ 
+-	if !a.requestConfig.UseOriginalImage {
++	if !useOriginal {
+ 		apiURL.RawQuery += "&edited=true"
+ 	}
+ 
+-	b, s, _, e := a.immichAPICall(a.ctx, http.MethodGet, apiURL.String(), nil)
++	b, s, _, e := a.immichAPICallLimited(a.ctx, http.MethodGet, apiURL.String(), nil, maxImageResponseBytes)
+ 
+ 	return b, s, e
+ }
+diff --git a/internal/routes/routes_asset.go b/internal/routes/routes_asset.go
+index 118bd38..10a663b 100644
+--- a/internal/routes/routes_asset.go
++++ b/internal/routes/routes_asset.go
+@@ -33,6 +33,9 @@ const (
+ )
+ 
+ var ErrClientDimensionsRequired = errors.New("client dimensions are required when image optimization is enabled")
++var ErrClientPixelsExceeded = errors.New("client dimensions exceed renderer pixel budget")
++
++const maxRenderedOutputPixels int64 = 3840 * 2160
+ 
+ func validateOptimizedClientDimensions(requestConfig config.Config) error {
+ 	if !requestConfig.OptimizeImages {
+@@ -41,6 +44,9 @@ func validateOptimizedClientDimensions(requestConfig config.Config) error {
+ 	if requestConfig.ClientData.Width <= 0 || requestConfig.ClientData.Height <= 0 {
+ 		return ErrClientDimensionsRequired
+ 	}
++	if int64(requestConfig.ClientData.Width) > maxRenderedOutputPixels/int64(requestConfig.ClientData.Height) {
++		return ErrClientPixelsExceeded
++	}
+ 	return nil
+ }
+ 
+@@ -176,26 +182,29 @@ func Image(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 
+ 		fakeDeviceID := requestID
+ 
+-		img, err := processAsset(routeCtx, &immichAsset, requestConfig, requestID, fakeDeviceID, "", false)
+-		if err != nil {
+-			return err
+-		}
+-		if err := routeCtx.Err(); err != nil {
+-			return err
+-		}
+-
+-		// Optimize image if wanted
+-		if requestConfig.OptimizeImages && requestConfig.ClientData.Width > 0 && requestConfig.ClientData.Height > 0 {
+-			img, err = utils.OptimizeImage(img, requestConfig.ClientData.Width, requestConfig.ClientData.Height)
+-			if err != nil {
+-				return err
++		var imgBytes []byte
++		err = imageWorkGateGlobal.withWork(routeCtx, func() error {
++			img, renderErr := processAsset(routeCtx, &immichAsset, requestConfig, requestID, fakeDeviceID, "", false)
++			if renderErr != nil {
++				return renderErr
+ 			}
+-			if err := routeCtx.Err(); err != nil {
+-				return err
++			if renderErr = routeCtx.Err(); renderErr != nil {
++				return renderErr
+ 			}
+-		}
+ 
+-		imgBytes, err := utils.ImageToBytes(img)
++			// Optimize image if wanted.
++			if requestConfig.OptimizeImages && requestConfig.ClientData.Width > 0 && requestConfig.ClientData.Height > 0 {
++				img, renderErr = utils.OptimizeImage(img, requestConfig.ClientData.Width, requestConfig.ClientData.Height)
++				if renderErr != nil {
++					return renderErr
++				}
++			}
++			if renderErr = routeCtx.Err(); renderErr != nil {
++				return renderErr
++			}
++			imgBytes, renderErr = utils.ImageToBytes(img)
++			return renderErr
++		})
+ 		if err != nil {
+ 			return err
+ 		}
+@@ -272,7 +281,7 @@ func ImageWithID(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 			}
+ 		}
+ 
+-		imgBytes, _, previewErr := immichAsset.ImagePreview()
++		imgBytes, _, previewErr := immichAsset.ImagePreviewForDisplay(requestConfig.UseOriginalImage && shouldFetchOriginal(&immichAsset))
+ 		if previewErr != nil {
+ 			return echo.NewHTTPError(http.StatusBadRequest, "unable to retrieve image")
+ 		}
+diff --git a/internal/routes/routes_asset_helpers.go b/internal/routes/routes_asset_helpers.go
+index 6ecdd64..47554da 100644
+--- a/internal/routes/routes_asset_helpers.go
++++ b/internal/routes/routes_asset_helpers.go
+@@ -376,7 +376,7 @@ func retrieveImage(immichAsset *immich.Asset, pickedAsset utils.WeightedAsset, e
+ func fetchImagePreview(immichAsset *immich.Asset, isOriginal bool, requestID, deviceID string, isPrefetch bool) (image.Image, error) {
+ 	imageGet := time.Now()
+ 
+-	imgBytes, _, err := immichAsset.ImagePreview()
++	imgBytes, _, err := immichAsset.ImagePreviewForDisplay(isOriginal)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("getting image preview: %w", err)
+ 	}
+@@ -486,7 +486,7 @@ func processImage(ctx context.Context, immichAsset *immich.Asset, requestConfig
+ 	if err := checkCanceled(ctx); err != nil {
+ 		return nil, err
+ 	}
+-	return fetchImagePreview(immichAsset, requestConfig.UseOriginalImage, requestID, deviceID, isPrefetch)
++	return fetchImagePreview(immichAsset, requestConfig.UseOriginalImage && shouldFetchOriginal(immichAsset), requestID, deviceID, isPrefetch)
+ }
+ 
+ // imageToBase64 converts image bytes to a base64 string and logs the processing time.
+@@ -616,6 +616,18 @@ func processViewImageData(requestConfig config.Config, c common.ContextCopy, isP
+ }
+ 
+ func processViewImageDataWithContext(ctx context.Context, requestConfig config.Config, c common.ContextCopy, isPrefetch bool, options common.ViewImageDataOptions) (common.ViewImageData, error) {
++	var result common.ViewImageData
++	err := imageWorkGateGlobal.withWork(ctx, func() error {
++		var renderErr error
++		result, renderErr = processViewImageDataAdmitted(ctx, requestConfig, c, isPrefetch, options)
++		return renderErr
++	})
++	return result, err
++}
++
++// processViewImageDataAdmitted performs one complete source decode through
++// encoded view-data render while the shared renderer permit is held.
++func processViewImageDataAdmitted(ctx context.Context, requestConfig config.Config, c common.ContextCopy, isPrefetch bool, options common.ViewImageDataOptions) (common.ViewImageData, error) {
+ 	// Initialize request metadata
+ 	metadata := requestMetadata{
+ 		requestID: utils.ColorizeRequestID(c.ResponseHeader.Get(echo.HeaderXRequestID)),
+diff --git a/internal/utils/utils.go b/internal/utils/utils.go
+index 85ee347..6dae3e1 100644
+--- a/internal/utils/utils.go
++++ b/internal/utils/utils.go
+@@ -45,6 +45,9 @@ import (
+ )
+ 
+ const (
++	// maxDecodedImagePixels keeps a camera-sized or malicious response from
++	// allocating more than the renderer can safely hold. It still exceeds 4K.
++	maxDecodedImagePixels int64 = 16_000_000
+ 
+ 	// sigmaConstant is used to normalise the blur effect across different image sizes.
+ 	// The value 1300.0 was chosen as it provides consistent blur effects for typical screen resolutions.
+@@ -140,7 +143,18 @@ func BytesToImage(imgBytes []byte, isOriginal bool) (image.Image, string, error)
+ 	var img image.Image
+ 	var err error
+ 
+-	imageMime := ImageMimeType(bytes.NewReader(imgBytes))
++	imageConfig, format, err := image.DecodeConfig(bytes.NewReader(imgBytes))
++	if err != nil {
++		return nil, "", fmt.Errorf("reading image dimensions: %w", err)
++	}
++	if imageConfig.Width <= 0 || imageConfig.Height <= 0 || int64(imageConfig.Width) > maxDecodedImagePixels/int64(imageConfig.Height) {
++		return nil, format, fmt.Errorf("image dimensions %dx%d exceed %d pixel limit", imageConfig.Width, imageConfig.Height, maxDecodedImagePixels)
++	}
++
++	imageMime := mime.TypeByExtension("." + format)
++	if imageMime == "" {
++		imageMime = ImageMimeType(bytes.NewReader(imgBytes))
++	}
+ 
+ 	switch imageMime {
+ 	case kiosk.MimeTypeWebp:
+diff --git a/internal/routes/routes_render_memory.go b/internal/routes/routes_render_memory.go
+new file mode 100644
+index 0000000..229892f
+--- /dev/null
++++ b/internal/routes/routes_render_memory.go
+@@ -0,0 +1,79 @@
++package routes
++
++import (
++	"context"
++	"sync/atomic"
++	"time"
++
++	"charm.land/log/v2"
++	"github.com/damongolding/immich-kiosk/internal/cache"
++	"github.com/damongolding/immich-kiosk/internal/immich"
++)
++
++// RenderMemoryMetrics is intentionally aggregate-only: it exposes no asset,
++// user, or device identifiers while making cgroup tuning observable.
++func RenderMemoryMetrics() map[string]int64 {
++	return map[string]int64{
++		"cache_bytes":                         cache.ByteSize(),
++		"cache_evictions_total":               cache.Evictions(),
++		"image_work_admissions_total":         imageWorkAdmissions.Load(),
++		"image_work_wait_nanoseconds_total":   imageWorkWaitNanos.Load(),
++		"image_work_render_nanoseconds_total": imageWorkRenderNanos.Load(),
++	}
++}
++
++// A decoded camera original can be hundreds of MiB before it is resized. Keep
++// one complete decode/render pipeline in flight in a 1 GiB kiosk container.
++// Foreground, prefetch, and offline generation all share this gate.
++const maxOriginalDecodePixels int64 = 16_000_000
++
++type imageWorkGate struct {
++	tokens chan struct{}
++}
++
++func newImageWorkGate(concurrency int) *imageWorkGate {
++	return &imageWorkGate{tokens: make(chan struct{}, concurrency)}
++}
++
++func (g *imageWorkGate) withWork(ctx context.Context, work func() error) error {
++	started := time.Now()
++	select {
++	case g.tokens <- struct{}{}:
++	case <-ctx.Done():
++		return ctx.Err()
++	}
++	imageWorkWaitNanos.Add(time.Since(started).Nanoseconds())
++	imageWorkAdmissions.Add(1)
++	defer func() { <-g.tokens }()
++
++	renderStarted := time.Now()
++	err := work()
++	imageWorkRenderNanos.Add(time.Since(renderStarted).Nanoseconds())
++	return err
++}
++
++var (
++	imageWorkGateGlobal  = newImageWorkGate(1)
++	imageWorkAdmissions  atomic.Int64
++	imageWorkWaitNanos   atomic.Int64
++	imageWorkRenderNanos atomic.Int64
++)
++
++// shouldFetchOriginal keeps quality for ordinary originals, but requests
++// Immich's preview derivative before a source can exceed the renderer budget.
++// Unknown dimensions are untrusted, so they also use the derivative.
++func shouldFetchOriginal(asset *immich.Asset) bool {
++	if asset == nil {
++		return false
++	}
++	width := int64(asset.ExifInfo.ExifImageWidth)
++	height := int64(asset.ExifInfo.ExifImageHeight)
++	if width <= 0 || height <= 0 {
++		return false
++	}
++	if width > maxOriginalDecodePixels/height {
++		log.Warn("using Immich preview for oversized original", "asset", asset.ID, "width", width, "height", height)
++		return false
++	}
++	return width*height < maxOriginalDecodePixels
++}
