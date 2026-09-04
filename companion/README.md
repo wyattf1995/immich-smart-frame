@@ -36,7 +36,9 @@ export contains asset UUIDs and preference values, so treat it as private data.
 
 Devices POST `/device/poll` with `{schema:1,status:{...},acks:[...]}`. The response
 contains schema, deviceId, serverTime, pollAfterMs, settingsRevision, settings,
-and at most one command. Poll while the app is resumed, at five-second intervals,
+at most one command, and a full `hiddenAssets` UUID snapshot for that device.
+Persist this snapshot privately and remove hidden images from the offline reserve;
+a missing snapshot is not permission to clear previous exclusions. Poll while the app is resumed, at five-second intervals,
 with bounded timeouts and backoff. Commands expire after 60 seconds and are only
 accepted while the frame's heartbeat is less than 90 seconds old. Persist command
 IDs and acknowledgements; an acknowledgement is terminal and device-scoped.
