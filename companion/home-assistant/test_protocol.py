@@ -15,7 +15,7 @@ class ProtocolTest(unittest.TestCase):
   self.data=yaml.load((ROOT/'frame_companion.yaml').read_text(), Loader=Loader)
   self.store=server.FrameStore(Path(tempfile.mkdtemp())/'state.db', {'main':{}}, ['balanced','family','photography'], clock=lambda:100000)
   self.store.poll('main', {'status': {'mode':'photos'}})
-  self.env=Environment(); self.env.filters['to_json']=json.dumps
+  self.env=Environment(); self.env.filters['to_json']=json.dumps; self.env.filters['timestamp_local']=lambda value: f'ISO:{int(value)}'
  def command(self, payload):
   rendered=self.env.from_string(self.data['rest_command']['postframecommand']['payload']).render(payload=payload)
   body=json.loads(rendered); return self.store.command(body['deviceId'],body['command'])
@@ -39,9 +39,9 @@ class ProtocolTest(unittest.TestCase):
   missing = [{'id':'main', 'status':{}, 'commands':[]}]
   for name in sensors:
    self.assertEqual(render(name, missing), 'unknown')
-  populated = [{'id':'main', 'status':{'lastPhotoAt':'2026-09-04T12:00:00Z','lastWeatherAt':'2026-09-04T12:01:00Z','offlineAssets':0,'appVersion':'0.3.0'}, 'commands':[{'status':'applied'}]}]
-  self.assertEqual(render('Frame Last Photo', populated), '2026-09-04T12:00:00Z')
-  self.assertEqual(render('Frame Last Weather', populated), '2026-09-04T12:01:00Z')
+  populated = [{'id':'main', 'status':{'lastPhotoAt':100000,'lastWeatherAt':101000,'offlineAssets':0,'appVersion':'0.3.0'}, 'commands':[{'status':'applied'}]}]
+  self.assertEqual(render('Frame Last Photo', populated), 'ISO:100')
+  self.assertEqual(render('Frame Last Weather', populated), 'ISO:101')
   self.assertEqual(render('Frame Reserve Count', populated), '0')
   self.assertEqual(render('Frame Version', populated), '0.3.0')
   self.assertEqual(render('Frame Command Acknowledgement', populated), 'applied')

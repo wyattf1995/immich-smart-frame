@@ -16,25 +16,32 @@ rest:
 template:
   - sensor:
       - name: Frame Last Photo
+        device_class: timestamp
         state: >-
-          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([]) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
-          {{ device.status.lastPhotoAt if device.status is defined and device.status.lastPhotoAt is not none else 'unknown' }}
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('lastPhotoAt') %}
+          {{ (value / 1000) | timestamp_local if value is not none else 'unknown' }}
       - name: Frame Last Weather
+        device_class: timestamp
         state: >-
-          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([]) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
-          {{ device.status.lastWeatherAt if device.status is defined and device.status.lastWeatherAt is not none else 'unknown' }}
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('lastWeatherAt') %}
+          {{ (value / 1000) | timestamp_local if value is not none else 'unknown' }}
       - name: Frame Reserve Count
         state: >-
-          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([]) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
-          {{ device.status.offlineAssets if device.status is defined and device.status.offlineAssets is not none else 'unknown' }}
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('offlineAssets') %}
+          {{ value if value is not none else 'unknown' }}
       - name: Frame Version
         state: >-
-          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([]) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
-          {{ device.status.appVersion if device.status is defined and device.status.appVersion is not none else 'unknown' }}
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('appVersion') %}
+          {{ value if value is not none else 'unknown' }}
       - name: Frame Command Acknowledgement
         state: >-
-          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([]) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
-          {{ device.commands[0].status if device.commands is defined and device.commands | count > 0 else 'unknown' }}
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set commands = device.get('commands') | default([{}], true) %}
+          {{ commands[0].get('status') | default('unknown', true) }}
 
 rest_command:
   postframecommand:
