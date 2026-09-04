@@ -36,12 +36,27 @@ function currentFrame() {
   return container.classList.contains("transition-push") ? frames[0] : frames[frames.length - 1];
 }
 
+function settlePausedFrame(frame) {
+  if (!desiredPlaybackPaused || !document.body.classList.contains("polling-paused")) return;
+  for (const animation of frame.getAnimations()) {
+    const effect = animation.effect;
+    const timing = effect && effect.getTiming();
+    if (!effect || effect.target !== frame || !timing || !Number.isFinite(timing.iterations) || animation.playState === "finished") continue;
+    try {
+      animation.finish();
+    } catch (_) {
+      // A canceled animation cannot make the frame visible.
+    }
+  }
+}
+
 function capture() {
   queued = false;
   const histories = Array.from(document.querySelectorAll("#kiosk-history input[name='history']"))
     .filter((history) => typeof history.value === "string" && history.value.startsWith("*"));
   if (histories.length !== 1) return;
   const frame = currentFrame();
+  if (frame) settlePausedFrame(frame);
   if (!frame || !isVisible(frame)) return;
   const images = Array.from(frame.querySelectorAll("img[alt='Main image']"))
     .filter((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0 && image.naturalHeight > 0)
@@ -127,6 +142,7 @@ function handlePlaybackCommand(command) {
   if (command.type === "pause" && typeof command.paused === "boolean") {
     desiredPlaybackPaused = command.paused;
     setPollingPaused(command.paused);
+    if (command.paused) scheduleCapture();
   } else if (command.type === "step" && typeof command.forward === "boolean") {
     stepPhoto(command.forward);
   }
