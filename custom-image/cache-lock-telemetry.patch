@@ -1,0 +1,180 @@
+diff --git a/internal/cache/cache.go b/internal/cache/cache.go
+index 7cd9e28..1f1243b 100644
+--- a/internal/cache/cache.go
++++ b/internal/cache/cache.go
+@@ -4,6 +4,7 @@ import (
+ 	"crypto/sha256"
+ 	"encoding/json"
+ 	"fmt"
++	"math/bits"
+ 	"sync"
+ 	"sync/atomic"
+ 	"time"
+@@ -41,8 +42,67 @@ var (
+ 	cacheBytes     int64
+ 	cacheSizes     = map[string]int64{}
+ 	cacheEvictions atomic.Int64
++	cacheLockStats lockTelemetry
+ 
+ 	DemoMode = false
+ )
+ 
++const lockHistogramBuckets = 64
++
++// lockTelemetry records aggregate mutex timing in power-of-two nanosecond
++// buckets. The fixed-size histograms keep observability bounded.
++type lockTelemetry struct {
++	waits [lockHistogramBuckets]atomic.Uint64
++	holds [lockHistogramBuckets]atomic.Uint64
++}
++
++func lockLatencyBucket(nanoseconds uint64) int {
++	if nanoseconds <= 1 {
++		return 0
++	}
++	return bits.Len64(nanoseconds - 1)
++}
++
++func (h *lockTelemetry) record(wait, hold time.Duration) {
++	h.waits[lockLatencyBucket(uint64(wait))].Add(1)
++	h.holds[lockLatencyBucket(uint64(hold))].Add(1)
++}
++
++func lockP95UpperBound(histogram *[lockHistogramBuckets]atomic.Uint64) (uint64, uint64) {
++	var total uint64
++	for index := range histogram {
++		total += histogram[index].Load()
++	}
++	if total == 0 {
++		return 0, 0
++	}
++	target := (total*95 + 99) / 100
++	var seen uint64
++	for index := range histogram {
++		seen += histogram[index].Load()
++		if seen >= target {
++			return uint64(1) << index, total
++		}
++	}
++	return uint64(1) << (lockHistogramBuckets - 1), total
++}
++
++// LockMetrics exposes aggregate cache mutex p95 upper bounds and the number
++// of recorded acquisitions. It contains no cache keys, values, or callers.
++func LockMetrics() (waitP95Nanoseconds, holdP95Nanoseconds, samples uint64) {
++	waitP95Nanoseconds, samples = lockP95UpperBound(&cacheLockStats.waits)
++	holdP95Nanoseconds, _ = lockP95UpperBound(&cacheLockStats.holds)
++	return waitP95Nanoseconds, holdP95Nanoseconds, samples
++}
++
++func lockCache() func() {
++	waitStarted := time.Now()
++	cacheMu.Lock()
++	lockedAt := time.Now()
++	return func() {
++		cacheLockStats.record(lockedAt.Sub(waitStarted), time.Since(lockedAt))
++		cacheMu.Unlock()
++	}
++}
++
+ func init() {
+@@ -58,3 +118,3 @@ func init() {
+ func Initialize() {
+-	cacheMu.Lock()
+-	defer cacheMu.Unlock()
++	unlock := lockCache()
++	defer unlock()
+@@ -93,3 +153,3 @@ func CurrentGeneration() uint64 { return generation.Load() }
+ func IsCurrentGeneration(g uint64) bool {
+-	cacheMu.Lock()
+-	defer cacheMu.Unlock()
++	unlock := lockCache()
++	defer unlock()
+@@ -102,9 +162,9 @@ func IsCurrentGeneration(g uint64) bool {
+ func InvalidateAll() {
+-	cacheMu.Lock()
++	unlock := lockCache()
+ 	generation.Add(1)
+ 	if kioskCache != nil {
+ 		kioskCache.Flush()
+ 	}
+ 	cacheBytes = 0
+ 	cacheSizes = map[string]int64{}
+-	cacheMu.Unlock()
++	unlock()
+@@ -127,3 +187,3 @@ func Flush() {
+ func ItemCount() int {
+-	cacheMu.Lock()
+-	defer cacheMu.Unlock()
++	unlock := lockCache()
++	defer unlock()
+@@ -137,3 +197,3 @@ func ItemCount() int {
+ func ByteSize() int64 {
+-	cacheMu.Lock()
+-	defer cacheMu.Unlock()
++	unlock := lockCache()
++	defer unlock()
+@@ -171,3 +231,3 @@ func APICacheKey(apiURL, deviceID string, user string) string {
+ func Get(s string) (any, bool) {
+-	cacheMu.Lock()
+-	defer cacheMu.Unlock()
++	unlock := lockCache()
++	defer unlock()
+@@ -244,3 +304,3 @@ func setLocked(key string, value any, expiration time.Duration) {
+ func Set(key string, value any, deviceDuration, cacheDuration int) {
+-	cacheMu.Lock()
+-	defer cacheMu.Unlock()
++	unlock := lockCache()
++	defer unlock()
+@@ -267,3 +327,3 @@ func Set(key string, value any, deviceDuration, cacheDuration int) bool {
+ func SetIfGeneration(g uint64, key string, value any, deviceDuration, cacheDuration int) bool {
+-	cacheMu.Lock()
+-	defer cacheMu.Unlock()
++	unlock := lockCache()
++	defer unlock()
+@@ -286,3 +346,3 @@ func SetIfGeneration(g uint64, key string, value any, deviceDuration, cacheDurat
+ func SetWithExpiration(key string, x any, t time.Duration) {
+-	cacheMu.Lock()
+-	defer cacheMu.Unlock()
++	unlock := lockCache()
++	defer unlock()
+@@ -301,3 +361,3 @@ func Update[T any](key string, update func([]T) []T, deviceDuration, cacheDurati
+ func UpdateIfGeneration[T any](g uint64, key string, update func([]T) []T, deviceDuration, cacheDuration int) bool {
+-	cacheMu.Lock()
+-	defer cacheMu.Unlock()
++	unlock := lockCache()
++	defer unlock()
+@@ -324,3 +384,3 @@ func UpdateIfGeneration[T any](g uint64, key string, update func([]T) []T, devic
+ func Pop[T any](key string, deviceDuration, cacheDuration int) (T, bool) {
+-	cacheMu.Lock()
+-	defer cacheMu.Unlock()
++	unlock := lockCache()
++	defer unlock()
+@@ -349,3 +409,3 @@ func Pop[T any](key string, deviceDuration, cacheDuration int) (T, bool {
+ func Delete(key string) {
+-	cacheMu.Lock()
+-	defer cacheMu.Unlock()
++	unlock := lockCache()
++	defer unlock()
+@@ -361,3 +421,3 @@ func Delete(key string) {
+ func Replace(key string, x any) error {
+-	cacheMu.Lock()
+-	defer cacheMu.Unlock()
++	unlock := lockCache()
++	defer unlock()
+diff --git a/internal/routes/routes_render_memory.go b/internal/routes/routes_render_memory.go
+index 0193f5e..189a21c 100644
+--- a/internal/routes/routes_render_memory.go
++++ b/internal/routes/routes_render_memory.go
+@@ -17,7 +17,11 @@ func RenderMemoryMetrics() map[string]int64 {
+ 	var memory runtime.MemStats
+ 	runtime.ReadMemStats(&memory)
+ 	datePoolWidenings, datePoolLastEffectiveDays := immich.DatePoolWideningMetrics()
++	cacheLockWaitP95, cacheLockHoldP95, cacheLockSamples := cache.LockMetrics()
+ 	return map[string]int64{
+ 		"cache_bytes":                         cache.ByteSize(),
+ 		"cache_evictions_total":               cache.Evictions(),
++		"cache_lock_wait_p95_ns":              int64(cacheLockWaitP95),
++		"cache_lock_hold_p95_ns":              int64(cacheLockHoldP95),
++		"cache_lock_samples_total":            int64(cacheLockSamples),
+ 		"image_work_admissions_total":         imageWorkAdmissions.Load(),
