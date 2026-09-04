@@ -62,6 +62,8 @@ COPY album-date-metadata.patch /tmp/album-date-metadata.patch
 COPY memory-render-tests.patch /tmp/memory-render-tests.patch
 COPY memory-image-bound-tests.patch /tmp/memory-image-bound-tests.patch
 COPY memory-render.patch /tmp/memory-render.patch
+COPY photo-variety-tests.patch /tmp/photo-variety-tests.patch
+COPY photo-variety.patch /tmp/photo-variety.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -168,7 +170,11 @@ RUN cd /src \
 		&& git apply --check /tmp/memory-image-bound-tests.patch \
 		&& git apply /tmp/memory-image-bound-tests.patch \
 		&& git apply --check /tmp/memory-render.patch \
-		&& git apply /tmp/memory-render.patch
+		&& git apply /tmp/memory-render.patch \
+		&& git apply --check /tmp/photo-variety-tests.patch \
+		&& git apply /tmp/photo-variety-tests.patch \
+		&& git apply --check /tmp/photo-variety.patch \
+		&& git apply /tmp/photo-variety.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
