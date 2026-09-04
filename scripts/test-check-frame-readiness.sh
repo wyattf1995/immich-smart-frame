@@ -44,7 +44,22 @@ case "$1" in
       'pidof keymapper_sysbridge') exit 1 ;;
       'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME')
         printf 'Warning: intent resolution used the current user\n'
-        printf 'com.wyattfleming.frameos/.MainActivity\r\n'
+        if [[ "${FRAME_READINESS_HOME_STATE:-resolved-frameos}" == resolved-frameos ]]; then
+          printf 'com.wyattfleming.frameos/.MainActivity\r\n'
+        else
+          printf 'com.walnut.bluetooth/com.smart_frame.SplashActivity\r\n'
+        fi
+        ;;
+      'dumpsys role')
+        printf 'RoleUserState{user=0}\n'
+        printf '  {\n'
+        printf '    name=android.app.role.HOME\n'
+        if [[ "${FRAME_READINESS_HOME_STATE:-resolved-frameos}" == missing-frameos ]]; then
+          printf '    holders=com.wyattfleming.frameos.evil\n'
+        else
+          printf '    holders=com.wyattfleming.frameos\n'
+        fi
+        printf '  }\n'
         ;;
       'dumpsys activity activities')
         printf 'mResumedActivity: ActivityRecord{1 u0 com.wyattfleming.frameos/.MainActivity}\n'
@@ -126,7 +141,7 @@ set -e
   fail 'a missing optional Key Mapper sysbridge must not fail FrameOS readiness'
 }
 
-grep -Fqx 'ready: FrameOS default HOME component' "$tmp_dir/stdout" || fail 'readiness must verify the resolved HOME component'
+grep -Fqx 'ready: FrameOS HOME ownership' "$tmp_dir/stdout" || fail 'readiness must verify FrameOS HOME ownership'
 grep -Fqx 'ready: FrameOS resumed activity' "$tmp_dir/stdout" || fail 'readiness must verify the resumed FrameOS activity'
 grep -Fqx 'informational: Key Mapper sysbridge is not running (FrameOS direct keys remain available)' "$tmp_dir/stdout" || fail 'sysbridge absence must be reported as informational'
 grep -Fq 'adb shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME' "$command_log" || fail 'readiness must resolve Android HOME'
@@ -143,6 +158,28 @@ grep -Fq 'adb shell dumpsys duraspeed status' "$command_log" || \
   fail 'readiness must inspect whether Lenovo DuraSpeed is active'
 grep -Fq 'adb shell dumpsys duraspeed config' "$command_log" || \
   fail 'enabled DuraSpeed must be checked for the exact FrameOS package exemption'
+
+FRAME_READINESS_HOME_STATE=role-frameos-stock-resolver FRAME_READINESS_LOG="$command_log" PATH="$fake_bin:$PATH" "$readiness_script" \
+  --adb FRAME-TEST \
+  --array-check-command 'exit 0' \
+  --ha-check-command 'exit 0' > "$tmp_dir/home-role-stdout" 2> "$tmp_dir/home-role-stderr" || {
+    cat "$tmp_dir/home-role-stdout" "$tmp_dir/home-role-stderr" >&2
+    fail 'FrameOS HOME role must survive Lenovo stock resolver priority'
+  }
+grep -Fqx 'ready: FrameOS HOME ownership' "$tmp_dir/home-role-stdout" || \
+  fail 'the FrameOS HOME role must report ready despite the stock resolver result'
+grep -Fq 'adb shell dumpsys role' "$command_log" || fail 'a non-FrameOS resolver result must inspect Android role ownership'
+
+set +e
+FRAME_READINESS_HOME_STATE=missing-frameos FRAME_READINESS_LOG="$command_log" PATH="$fake_bin:$PATH" "$readiness_script" \
+  --adb FRAME-TEST \
+  --array-check-command 'exit 0' \
+  --ha-check-command 'exit 0' > "$tmp_dir/home-missing-stdout" 2> "$tmp_dir/home-missing-stderr"
+home_missing_result=$?
+set -e
+[[ "$home_missing_result" != 0 ]] || fail 'a near-match HOME role holder must not satisfy FrameOS ownership'
+grep -Fqx 'not ready: FrameOS HOME ownership' "$tmp_dir/home-missing-stderr" || \
+  fail 'missing FrameOS HOME ownership must identify the failed readiness check'
 
 set +e
 FRAME_READINESS_ACCESSIBILITY_STATE=suppressed FRAME_READINESS_LOG="$command_log" PATH="$fake_bin:$PATH" "$readiness_script" \
