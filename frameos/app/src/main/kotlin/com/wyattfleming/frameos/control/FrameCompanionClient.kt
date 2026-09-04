@@ -17,12 +17,13 @@ class FrameCompanionClient(private val endpoint: FrameRemoteEndpoint, private va
             connection.requestMethod = "POST"
             connection.connectTimeout = FrameRemotePollPolicy.CONNECT_TIMEOUT_MILLIS
             connection.readTimeout = FrameRemotePollPolicy.READ_TIMEOUT_MILLIS
+            connection.instanceFollowRedirects = false
             connection.setRequestProperty("Authorization", "Bearer $bearerToken")
             connection.setRequestProperty("Content-Type", "application/json")
             connection.doOutput = true
             connection.outputStream.use { it.write(payload(deviceId, status, acknowledgements).toByteArray(StandardCharsets.UTF_8)) }
             if (connection.responseCode !in 200..299) return FrameCompanionPollResult.Offline
-            FrameCompanionPollResult.Success(connection.inputStream.bufferedReader().use { it.readText() })
+            FrameCompanionResponseReader.read(connection.inputStream)?.let(FrameCompanionPollResult::Success) ?: FrameCompanionPollResult.Offline
         } catch (_: Exception) { FrameCompanionPollResult.Offline } finally { connection.disconnect() }
     }
 
