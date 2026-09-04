@@ -62,6 +62,8 @@ services:
       options:
         max-size: 50m
         max-file: "1"
+        # Docker local logging rejects its default compression with one file.
+        compress: "false"
 
 secrets:
   immich_api_key:

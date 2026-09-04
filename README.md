@@ -89,6 +89,10 @@ cp .env.example .env
 cp config/config.example.yaml config/config.yaml
 install -d -m 700 secrets
 install -m 600 /dev/null secrets/immich_api_key
+openssl rand -hex 32 > secrets/kiosk_metrics_token
+chmod 600 secrets/kiosk_metrics_token
+chown 65532:65532 secrets/kiosk_metrics_token
+install -d -m 755 frame-preferences
 install -d -m 700 -o 65532 -g 65532 offline-assets
 ./scripts/check-offline-assets-permissions.sh
 ${EDITOR:-vi} secrets/immich_api_key
@@ -98,7 +102,9 @@ chmod 600 .env
 Edit `.env` and set at least `IMMICH_URL` and `TZ`. Neither `.env`, the active
 configuration, nor `secrets/` is tracked by Git. Paste only the API-key value
 into the secret file—without quotes—and save it. This editor-based flow keeps
-the key out of shell history.
+the key out of shell history. The separate metrics token protects aggregate
+renderer diagnostics; keep it private too. For phone controls, quiet hours,
+and reversible per-frame photo choices, see [Frame remote](companion/README.md).
 
 Build and start the service:
 

@@ -19,3 +19,6 @@ frameos/**/*.aab
 frameos/**/*.jks
 frameos/**/*.keystore
 frameos/frameos.local.properties
+
+# Private frame-specific photo preference exports.
+frame-preferences/
