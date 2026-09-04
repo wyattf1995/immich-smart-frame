@@ -4,8 +4,8 @@ const ASSET_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$
 const MAX_BASE64_CHARS = 4 * 1024 * 1024;
 const MAX_REJECTED_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
-const MAX_PORT_RETRIES = 3;
-const PORT_RETRY_DELAY_MS = 1000;
+const INITIAL_PORT_RETRY_DELAY_MS = 1000;
+const MAX_PORT_RETRY_DELAY_MS = 60000;
 let lastFingerprint = "";
 let inFlightFingerprint = "";
 let rejectedFingerprint = "";
@@ -14,7 +14,7 @@ let queued = false;
 let retryTimer = 0;
 let desiredPlaybackPaused = null;
 let playbackPort = null;
-let portRetries = 0;
+let portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
 let portRetryTimer = 0;
 
 function capture() {
@@ -46,6 +46,7 @@ function capture() {
       lastFingerprint = fingerprint;
       rejectedFingerprint = "";
       rejectedRetries = 0;
+      portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
       return;
     }
     retryRejectedCapture(fingerprint);
@@ -99,6 +100,7 @@ function stepPhoto(forward) {
 
 function handlePlaybackCommand(command) {
   if (!command || typeof command.type !== "string") return;
+  portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
   if (command.type === "pause" && typeof command.paused === "boolean") {
     desiredPlaybackPaused = command.paused;
     setPollingPaused(command.paused);
@@ -108,12 +110,13 @@ function handlePlaybackCommand(command) {
 }
 
 function schedulePlaybackReconnect() {
-  if (portRetryTimer || portRetries >= MAX_PORT_RETRIES) return;
-  portRetries += 1;
+  if (portRetryTimer) return;
+  const delay = portRetryDelayMs;
+  portRetryDelayMs = Math.min(portRetryDelayMs * 2, MAX_PORT_RETRY_DELAY_MS);
   portRetryTimer = setTimeout(() => {
     portRetryTimer = 0;
     connectPlaybackPort();
-  }, PORT_RETRY_DELAY_MS);
+  }, delay);
 }
 
 function connectPlaybackPort() {
@@ -121,7 +124,6 @@ function connectPlaybackPort() {
     const port = browser.runtime.connectNative("frame_photo_bridge");
     if (!port || !port.onMessage || typeof port.onMessage.addListener !== "function") throw new Error("missing native port");
     playbackPort = port;
-    portRetries = 0;
     port.onMessage.addListener(handlePlaybackCommand);
     if (port.onDisconnect && typeof port.onDisconnect.addListener === "function") {
       port.onDisconnect.addListener(() => {

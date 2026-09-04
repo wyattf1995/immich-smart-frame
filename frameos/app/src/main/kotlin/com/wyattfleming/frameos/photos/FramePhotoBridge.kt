@@ -23,6 +23,7 @@ class FramePhotoBridge(
     private val reserve: FrameOfflineReserve,
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val uiPost: ((() -> Unit) -> Unit) = { action -> Handler(Looper.getMainLooper()).post(action) },
+    private val isMainThread: () -> Boolean = { Looper.myLooper() === Looper.getMainLooper() },
     private val onPhotoObserved: (PhotoObserved) -> Unit = {},
 ) {
     data class Sender(val session: Any, val url: String, val topLevel: Boolean, val contentScript: Boolean)
@@ -127,13 +128,13 @@ class FramePhotoBridge(
     @Synchronized
     fun setPlaybackPaused(paused: Boolean): Boolean {
         desiredPlaybackPaused = paused
-        return playbackPort?.let { dispatchPlayback(it, JSONObject().put("type", "pause").put("paused", paused)) } ?: false
+        return playbackPort?.let { dispatchPlayback(it, JSONObject().put("type", "pause").put("paused", paused), queuePauseWhenOffMain = true) } ?: false
     }
 
     /** Sends one trusted next/previous request; it never falls back to synthetic surface input. */
     @Synchronized
     fun movePhoto(forward: Boolean): Boolean =
-        playbackPort?.let { dispatchPlayback(it, JSONObject().put("type", "step").put("forward", forward)) } ?: false
+        playbackPort?.let { dispatchPlayback(it, JSONObject().put("type", "step").put("forward", forward), queuePauseWhenOffMain = false) } ?: false
 
     /** Testable strict port gate; the real delegate adapts Gecko's port into this narrow interface. */
     @Synchronized
@@ -144,7 +145,7 @@ class FramePhotoBridge(
         }
         clearPlaybackPort()
         playbackPort = port
-        dispatchPlayback(port, JSONObject().put("type", "pause").put("paused", desiredPlaybackPaused))
+        dispatchPlayback(port, JSONObject().put("type", "pause").put("paused", desiredPlaybackPaused), queuePauseWhenOffMain = true)
         return true
     }
 
@@ -160,17 +161,28 @@ class FramePhotoBridge(
         return sender.session === configuredSession && sender.topLevel && sender.contentScript && sender.url == scope.photosUrl
     }
 
-    private fun dispatchPlayback(port: PlaybackPort, command: JSONObject): Boolean {
+    private fun dispatchPlayback(port: PlaybackPort, command: JSONObject, queuePauseWhenOffMain: Boolean): Boolean {
         if (playbackPort !== port || !isTrustedPlaybackPort(port)) return false
-        uiPost {
-            synchronized(this) {
-                if (playbackPort !== port || !isTrustedPlaybackPort(port)) return@synchronized
-                runCatching { port.post(command) }.onFailure {
-                    if (playbackPort === port) playbackPort = null
+        if (isMainThread()) return postPlayback(port, command)
+        if (queuePauseWhenOffMain) {
+            uiPost {
+                synchronized(this) {
+                    postPlayback(port, command)
                 }
             }
         }
-        return true
+        return false
+    }
+
+    private fun postPlayback(port: PlaybackPort, command: JSONObject): Boolean {
+        if (playbackPort !== port || !isTrustedPlaybackPort(port)) return false
+        return runCatching {
+            port.post(command)
+            true
+        }.getOrElse {
+            if (playbackPort === port) playbackPort = null
+            false
+        }
     }
 
     /** Testable validation path; every input received from a WebExtension is untrusted. */
