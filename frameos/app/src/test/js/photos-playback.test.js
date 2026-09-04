@@ -139,7 +139,7 @@ test("failed native port connection backs off without exhausting and leaves capt
   }
   assert.equal(attempts, 6);
   assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000]);
-  assert.equal(runtime.listeners.length, 1);
+  assert.deepEqual(runtime.listeners.map(([type]) => type), ["load", "transitionend", "animationend"]);
   assert.equal(runtime.observers.length, 2);
 });
 
