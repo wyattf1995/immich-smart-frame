@@ -2,7 +2,7 @@ package com.wyattfleming.frameos.control
 
 import java.net.URI
 
-class FrameRemoteEndpoint private constructor(val pollUrl: String) {
+data class FrameRemoteEndpoint private constructor(val pollUrl: String) {
     companion object {
         fun from(value: String): FrameRemoteEndpoint? = runCatching {
             val uri = URI(value.trim())
