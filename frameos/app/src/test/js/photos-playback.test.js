@@ -6,7 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function loadScript({ connectNative, historyValues = [], images = [] } = {}) {
+function loadScript({ connectNative, historyValues = [], frames, push = false } = {}) {
   const events = [];
   const nativeMessages = [];
   const microtasks = [];
@@ -21,14 +21,28 @@ function loadScript({ connectNative, historyValues = [], images = [] } = {}) {
   Object.setPrototypeOf(next, HTMLElement.prototype);
   Object.setPrototypeOf(previous, HTMLElement.prototype);
   const history = historyValues.map((value) => ({ value }));
-  const mainImages = images.map((image) => Object.assign(new HTMLImageElement(), {
-    complete: true,
-    naturalWidth: 100,
-    naturalHeight: 100,
-    currentSrc: image,
-    src: image,
-    getBoundingClientRect() { return { width: 100, height: 100 }; },
-  }));
+  const makeElement = (visible = true) => Object.assign(new HTMLElement(), {
+    parentElement: null,
+    getBoundingClientRect() { return { width: visible ? 100 : 0, height: visible ? 100 : 0 }; },
+  });
+  const kioskContainer = makeElement();
+  kioskContainer.classList = { contains: (name) => push && name === "transition-push" };
+  const frameList = (frames || []).map(({ images, visible = true }) => {
+    const frame = makeElement(visible);
+    frame.parentElement = kioskContainer;
+    frame.images = images.map((source) => Object.assign(new HTMLImageElement(), {
+      parentElement: frame,
+      complete: true,
+      naturalWidth: 100,
+      naturalHeight: 100,
+      currentSrc: source,
+      src: source,
+      getBoundingClientRect() { return { width: 100, height: 100 }; },
+    }));
+    frame.querySelectorAll = (selector) => selector === "img[alt='Main image']" ? frame.images : [];
+    return frame;
+  });
+  kioskContainer.querySelectorAll = (selector) => selector === ":scope > .frame" ? frameList : [];
   const body = {
     classList: { contains: (name) => classes.has(name) },
     dispatchEvent(event) {
@@ -54,14 +68,13 @@ function loadScript({ connectNative, historyValues = [], images = [] } = {}) {
       documentElement: {},
       addEventListener(...args) { listeners.push(args); },
       querySelector(selector) {
-        if (selector === "img[alt='Main image']") return mainImages[0] || null;
         if (selector === "#kiosk-history input[name='history']") return history[0] || null;
+        if (selector === "#kiosk-container") return kioskContainer;
         if (selector === ".navigation--next-asset") return next;
         if (selector === ".navigation--prev-asset") return previous;
         return null;
       },
       querySelectorAll(selector) {
-        if (selector === "img[alt='Main image']") return mainImages;
         if (selector === "#kiosk-history input[name='history']") return history;
         return [];
       },
@@ -124,44 +137,56 @@ test("failed native port connection backs off without exhausting and leaves capt
   assert.equal(runtime.observers.length, 2);
 });
 
-test("capture pairs the unique marked current history with the sole visible main image", () => {
+test("capture uses the last current frame for normal forward and backward transitions", () => {
   const runtime = loadScript({
     historyValues: ["11111111-1111-4111-8111-111111111111:old", "*22222222-2222-4222-8222-222222222222:current"],
-    images: ["data:image/jpeg;base64,abc"],
+    frames: [
+      { images: ["data:image/jpeg;base64,old"] },
+      { images: ["data:image/jpeg;base64,current"] },
+    ],
   });
   runtime.runMicrotasks();
   assert.equal(runtime.nativeMessages.length, 1);
   assert.equal(runtime.nativeMessages[0].assetId, "22222222-2222-4222-8222-222222222222");
 });
 
-test("capture accepts a marked current history entry in the middle and rejects missing or duplicate current entries", () => {
-  const middle = loadScript({
+test("capture uses the first current frame for push transitions", () => {
+  const pushed = loadScript({
     historyValues: ["11111111-1111-4111-8111-111111111111:old", "*22222222-2222-4222-8222-222222222222:current", "33333333-3333-4333-8333-333333333333:old"],
-    images: ["data:image/jpeg;base64,abc"],
+    push: true,
+    frames: [
+      { images: ["data:image/jpeg;base64,current"] },
+      { images: ["data:image/jpeg;base64,old"] },
+    ],
   });
-  middle.runMicrotasks();
-  assert.equal(middle.nativeMessages[0].assetId, "22222222-2222-4222-8222-222222222222");
+  pushed.runMicrotasks();
+  assert.equal(pushed.nativeMessages[0].assetId, "22222222-2222-4222-8222-222222222222");
+});
+
+test("capture rejects missing or duplicate active history and split views in the current frame", () => {
   for (const historyValues of [
     ["11111111-1111-4111-8111-111111111111:old"],
     ["*11111111-1111-4111-8111-111111111111:one", "*22222222-2222-4222-8222-222222222222:two"],
   ]) {
-    const rejected = loadScript({ historyValues, images: ["data:image/jpeg;base64,abc"] });
+    const rejected = loadScript({ historyValues, frames: [{ images: ["data:image/jpeg;base64,abc"] }] });
     rejected.runMicrotasks();
     assert.equal(rejected.nativeMessages.length, 0);
   }
+  const split = loadScript({
+    historyValues: ["*22222222-2222-4222-8222-222222222222:current"],
+    frames: [{ images: ["data:image/jpeg;base64,left", "data:image/jpeg;base64,right"] }],
+  });
+  split.runMicrotasks();
+  assert.equal(split.nativeMessages.length, 0);
 });
 
-test("capture rejects retained competing main images and still captures the active asset after a paused step", () => {
-  const ambiguous = loadScript({
-    historyValues: ["*22222222-2222-4222-8222-222222222222:current"],
-    images: ["data:image/jpeg;base64,old", "data:image/jpeg;base64,new"],
-  });
-  ambiguous.runMicrotasks();
-  assert.equal(ambiguous.nativeMessages.length, 0);
-
+test("capture after a paused step uses the active frame rather than its retained predecessor", () => {
   const pausedStep = loadScript({
     historyValues: ["11111111-1111-4111-8111-111111111111:old", "*22222222-2222-4222-8222-222222222222:current"],
-    images: ["data:image/jpeg;base64,new"],
+    frames: [
+      { images: ["data:image/jpeg;base64,old"] },
+      { images: ["data:image/jpeg;base64,current"] },
+    ],
   });
   pausedStep.port.listener({ type: "pause", paused: true });
   pausedStep.port.listener({ type: "step", forward: true });
