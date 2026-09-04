@@ -4,6 +4,8 @@ const ASSET_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$
 const MAX_BASE64_CHARS = 4 * 1024 * 1024;
 const MAX_REJECTED_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
+const MAX_PORT_RETRIES = 3;
+const PORT_RETRY_DELAY_MS = 1000;
 let lastFingerprint = "";
 let inFlightFingerprint = "";
 let rejectedFingerprint = "";
@@ -11,6 +13,9 @@ let rejectedRetries = 0;
 let queued = false;
 let retryTimer = 0;
 let desiredPlaybackPaused = null;
+let playbackPort = null;
+let portRetries = 0;
+let portRetryTimer = 0;
 
 function capture() {
   queued = false;
@@ -90,13 +95,9 @@ function stepPhoto(forward) {
       bubbles: true,
     }));
   }
-  if (desiredPlaybackPaused) {
-    setTimeout(() => setPollingPaused(true), 250);
-  }
 }
 
-const playbackPort = browser.runtime.connectNative("frame_photo_bridge");
-playbackPort.onMessage.addListener((command) => {
+function handlePlaybackCommand(command) {
   if (!command || typeof command.type !== "string") return;
   if (command.type === "pause" && typeof command.paused === "boolean") {
     desiredPlaybackPaused = command.paused;
@@ -104,8 +105,41 @@ playbackPort.onMessage.addListener((command) => {
   } else if (command.type === "step" && typeof command.forward === "boolean") {
     stepPhoto(command.forward);
   }
-});
+}
+
+function schedulePlaybackReconnect() {
+  if (portRetryTimer || portRetries >= MAX_PORT_RETRIES) return;
+  portRetries += 1;
+  portRetryTimer = setTimeout(() => {
+    portRetryTimer = 0;
+    connectPlaybackPort();
+  }, PORT_RETRY_DELAY_MS);
+}
+
+function connectPlaybackPort() {
+  try {
+    const port = browser.runtime.connectNative("frame_photo_bridge");
+    if (!port || !port.onMessage || typeof port.onMessage.addListener !== "function") throw new Error("missing native port");
+    playbackPort = port;
+    portRetries = 0;
+    port.onMessage.addListener(handlePlaybackCommand);
+    if (port.onDisconnect && typeof port.onDisconnect.addListener === "function") {
+      port.onDisconnect.addListener(() => {
+        playbackPort = null;
+        schedulePlaybackReconnect();
+      });
+    }
+  } catch (_) {
+    playbackPort = null;
+    schedulePlaybackReconnect();
+  }
+}
+
+new MutationObserver(() => {
+  if (desiredPlaybackPaused && !document.body.classList.contains("polling-paused")) setPollingPaused(true);
+}).observe(document.body, { attributes: true, attributeFilter: ["class"] });
 
 document.addEventListener("load", scheduleCapture, true);
 new MutationObserver(scheduleCapture).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value"] });
 scheduleCapture();
+connectPlaybackPort();

@@ -6,9 +6,11 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function loadScript() {
+function loadScript({ connectNative } = {}) {
   const events = [];
   const timers = [];
+  const observers = [];
+  const listeners = [];
   const classes = new Set();
   const next = { clicks: 0, click() { this.clicks += 1; } };
   const previous = { clicks: 0, click() { this.clicks += 1; } };
@@ -30,12 +32,15 @@ function loadScript() {
     HTMLElement,
     HTMLImageElement: class HTMLImageElement {},
     KeyboardEvent: class KeyboardEvent { constructor(type, init) { this.type = type; Object.assign(this, init); } },
-    MutationObserver: class MutationObserver { observe() {} },
-    browser: { runtime: { connectNative() { return port; }, sendNativeMessage() { return Promise.resolve({ accepted: false }); } } },
+    MutationObserver: class MutationObserver {
+      constructor(callback) { this.callback = callback; observers.push(this); }
+      observe(target, options) { this.target = target; this.options = options; }
+    },
+    browser: { runtime: { connectNative: connectNative || (() => port), sendNativeMessage() { return Promise.resolve({ accepted: false }); } } },
     document: {
       body,
       documentElement: {},
-      addEventListener() {},
+      addEventListener(...args) { listeners.push(args); },
       querySelector(selector) {
         if (selector === ".navigation--next-asset") return next;
         if (selector === ".navigation--prev-asset") return previous;
@@ -48,7 +53,7 @@ function loadScript() {
     clearTimeout() {},
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../../main/assets/frame-photo-bridge/photos.js"), "utf8"), context);
-  return { body, events, next, previous, port, timers };
+  return { body, events, next, previous, port, timers, observers, listeners, classes };
 }
 
 test("pause command targets body with the pinned KeyP contract", () => {
@@ -68,8 +73,8 @@ test("step clicks pinned navigation and restores desired paused state after swap
   runtime.port.listener({ type: "pause", paused: true });
   runtime.port.listener({ type: "step", forward: true });
   assert.equal(runtime.next.clicks, 1);
-  runtime.body.classList.contains = () => false;
-  runtime.timers.forEach((timer) => timer());
+  runtime.classes.delete("polling-paused");
+  runtime.observers.find((observer) => observer.target === runtime.body).callback();
   assert.equal(runtime.events.filter((event) => event.code === "KeyP").length, 2);
 });
 
@@ -80,4 +85,13 @@ test("step falls back to the exact body ArrowLeft HTMX contract", () => {
   assert.equal(runtime.events[0].type, "keyup");
   assert.equal(runtime.events[0].key, "ArrowLeft");
   assert.equal(runtime.events[0].bubbles, true);
+});
+
+test("failed native port connection retries a bounded number of times and leaves capture observers installed", () => {
+  let attempts = 0;
+  const runtime = loadScript({ connectNative() { attempts += 1; throw new Error("native unavailable"); } });
+  while (runtime.timers.length) runtime.timers.shift()();
+  assert.equal(attempts, 4);
+  assert.equal(runtime.listeners.length, 1);
+  assert.equal(runtime.observers.length, 2);
 });
