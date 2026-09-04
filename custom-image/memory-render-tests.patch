@@ -1,0 +1,114 @@
+diff --git a/tmp/immich-kiosk-memory.l6pjOT/src/internal/routes/render_memory_regression_test.go b/internal/routes/render_memory_regression_test.go
+new file mode 100644
+index 0000000..62d4404
+--- /dev/null
++++ b/internal/routes/render_memory_regression_test.go
+@@ -0,0 +1,76 @@
++package routes
++
++import (
++	"context"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/stretchr/testify/require"
++)
++
++func TestImageWorkGateAdmitsOnlyOneRenderer(t *testing.T) {
++	gate := newImageWorkGate(1)
++	entered := make(chan struct{})
++	release := make(chan struct{})
++	firstDone := make(chan error, 1)
++	go func() {
++		firstDone <- gate.withWork(context.Background(), func() error {
++			close(entered)
++			<-release
++			return nil
++		})
++	}()
++	<-entered
++
++	secondEntered := make(chan struct{})
++	secondDone := make(chan error, 1)
++	go func() {
++		secondDone <- gate.withWork(context.Background(), func() error {
++			close(secondEntered)
++			return nil
++		})
++	}()
++
++	select {
++	case <-secondEntered:
++		t.Fatal("second renderer bypassed image-work admission")
++	case <-time.After(25 * time.Millisecond):
++	}
++	close(release)
++	require.NoError(t, <-firstDone)
++	require.NoError(t, <-secondDone)
++	<-secondEntered
++}
++
++func TestOriginalDecodeIsLimitedBySourcePixels(t *testing.T) {
++	large := immich.Asset{ExifInfo: immich.ExifInfo{ExifImageWidth: 6000, ExifImageHeight: 4000}}
++	require.False(t, shouldFetchOriginal(&large), "24MP source must use Immich's preview path")
++
++	frameSized := immich.Asset{ExifInfo: immich.ExifInfo{ExifImageWidth: 1920, ExifImageHeight: 1080}}
++	require.True(t, shouldFetchOriginal(&frameSized))
++}
++
++func TestImageWorkGateCancelsWhileWaiting(t *testing.T) {
++	gate := newImageWorkGate(1)
++	gate.tokens <- struct{}{}
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	require.ErrorIs(t, gate.withWork(ctx, func() error { return nil }), context.Canceled)
++	<-gate.tokens
++}
++
++func TestImageWorkGateDoesNotLeakTokens(t *testing.T) {
++	gate := newImageWorkGate(1)
++	var wg sync.WaitGroup
++	for range 8 {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			require.NoError(t, gate.withWork(context.Background(), func() error { return nil }))
++		}()
++	}
++	wg.Wait()
++	require.Len(t, gate.tokens, 0)
++}
+diff --git a/tmp/immich-kiosk-memory.l6pjOT/src/internal/cache/cache_memory_regression_test.go b/internal/cache/cache_memory_regression_test.go
+new file mode 100644
+index 0000000..4c47d68
+--- /dev/null
++++ b/internal/cache/cache_memory_regression_test.go
+@@ -0,0 +1,26 @@
++package cache
++
++import (
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestCacheEvictsToTheConfiguredByteBudget(t *testing.T) {
++	Initialize()
++	Flush()
++	oldBudget := maxCacheBytes
++	maxCacheBytes = 32
++	t.Cleanup(func() {
++		maxCacheBytes = oldBudget
++		Flush()
++	})
++
++	Set("first", strings.Repeat("a", 20), 60, 60)
++	Set("second", strings.Repeat("b", 20), 60, 60)
++	require.LessOrEqual(t, ByteSize(), int64(maxCacheBytes))
++	_, firstFound := Get("first")
++	_, secondFound := Get("second")
++	require.False(t, firstFound && secondFound, "both values exceed the bounded cache budget")
++}
