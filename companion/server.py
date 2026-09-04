@@ -151,7 +151,7 @@ class FrameStore:
                 db.execute("UPDATE commands SET status=?,message=?,acknowledged=? WHERE id=? AND device=? AND status='queued'", (ack['status'],message,self.clock(),ack['id'],device))
             db.execute('UPDATE devices SET status=?,seen=? WHERE id=?', (json.dumps(status),self.clock(),device))
             commands = [json.loads(c['payload']) for c in db.execute("SELECT payload FROM commands WHERE device=? AND status='queued' AND expires>? ORDER BY issued,id LIMIT 1", (device,self.clock()))]
-            return {'schema':1,'deviceId':device,'serverTime':self.clock(),'pollAfterMs':5000,'settingsRevision':row['revision'],'settings':json.loads(row['settings']),'commands':commands,'events':[json.loads(e['payload']) for e in db.execute('SELECT payload FROM events WHERE device=? AND expires>? ORDER BY issued DESC LIMIT 1',(device,self.clock()))] if json.loads(row['settings']).get('eventOverlays') else []}
+            return {'schema':1,'deviceId':device,'serverTime':self.clock(),'pollAfterMs':5000,'settingsRevision':row['revision'],'settings':json.loads(row['settings']),'commands':commands,'hiddenAssets':[p['asset'] for p in db.execute("SELECT asset FROM preferences WHERE device=? AND preference='hide' ORDER BY asset LIMIT 1000",(device,))],'events':[json.loads(e['payload']) for e in db.execute('SELECT payload FROM events WHERE device=? AND expires>? ORDER BY issued DESC LIMIT 1',(device,self.clock()))] if json.loads(row['settings']).get('eventOverlays') else []}
 
     def command(self, device, payload):
         if not isinstance(payload,dict) or not isinstance(payload.get('type'),str) or payload.get('type') not in COMMANDS: raise FrameError('Unsupported command')
