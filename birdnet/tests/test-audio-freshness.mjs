@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+const html=readFileSync(new URL('../frame-view/index.html',import.meta.url),'utf8');
+function fn(name){const start=html.indexOf(`        function ${name}(`);assert.ok(start>=0,`${name} exists`);const end=html.indexOf('\n        }',start);return html.slice(start,end+10)}
+const ctx=vm.createContext({state:{},Date,AUDIO_DELAYED_AFTER_MS:45000,AUDIO_OFFLINE_AFTER_MS:120000});
+vm.runInContext(fn('audioFreshnessState')+'\n'+fn('validAudioLevels'),ctx);
+const valid=value=>Array.from(ctx.validAudioLevels(value));
+assert.deepEqual(valid({}),[],'empty keepalives are not audio');
+assert.deepEqual(valid({levels:{source:null}}),[],'missing meters are not silent audio');
+assert.deepEqual(valid({level:''}),[],'empty text is not silent audio');
+assert.deepEqual(valid({levels:{source:{level:0}}}),[0],'a real zero level proves audio arrived');
+assert.deepEqual(valid({level:22}),[22]);
+ctx.state={audioKnown:true,configuredSources:[{state:'running'}],audioLastAt:new Date(Date.now()-46000)};
+assert.equal(ctx.audioFreshnessState(),'delayed','running process cannot override stale audio');
+ctx.state.audioLastAt=new Date(Date.now()-121000);assert.equal(ctx.audioFreshnessState(),'offline');
+ctx.state.audioLastAt=new Date();assert.equal(ctx.audioFreshnessState(),'fresh');
+const handler=html.slice(html.indexOf('const handleAudioLevel'),html.indexOf('audioStream.onmessage'));
+assert.ok(handler.indexOf('if (levelValues.length > 0)')<handler.indexOf('state.audioLastAt = new Date()'),'only valid audio may refresh evidence');
+assert.match(fn('updateClock'),/render\(\)/,'audio ages update even when sources stop sending');
+console.log('PASS: audio freshness evidence and expiry');
