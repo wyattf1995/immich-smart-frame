@@ -12,14 +12,27 @@ data class FrameExperienceSettings(
     val orderedEnabledModes: List<FrameMode> = DEFAULT_MODES,
     val quietHours: QuietHours? = null,
     val deactivateHiddenHomeAssistant: Boolean = false,
+    val idleReturnSeconds: Int = DEFAULT_IDLE_RETURN_SECONDS,
+    val eventOverlays: List<String> = emptyList(),
+    val settingsRevision: Long = NO_SETTINGS_REVISION,
 ) {
     init {
         require(orderedEnabledModes.isNotEmpty())
         require(orderedEnabledModes.first() == FrameMode.PHOTOS) { "Photos must remain first" }
         require(orderedEnabledModes.distinct().size == orderedEnabledModes.size)
+        require(idleReturnSeconds in MIN_IDLE_RETURN_SECONDS..MAX_IDLE_RETURN_SECONDS)
+        require(eventOverlays.size <= MAX_EVENT_OVERLAYS)
+        require(eventOverlays.all { it.isNotBlank() && it.length <= MAX_EVENT_OVERLAY_LENGTH })
+        require(settingsRevision >= NO_SETTINGS_REVISION)
     }
 
     companion object {
+        const val NO_SETTINGS_REVISION = -1L
+        const val DEFAULT_IDLE_RETURN_SECONDS = 15 * 60
+        const val MIN_IDLE_RETURN_SECONDS = 30
+        const val MAX_IDLE_RETURN_SECONDS = 24 * 60 * 60
+        const val MAX_EVENT_OVERLAYS = 3
+        const val MAX_EVENT_OVERLAY_LENGTH = 120
         val DEFAULT_MODES = listOf(
             FrameMode.PHOTOS,
             FrameMode.HOME,

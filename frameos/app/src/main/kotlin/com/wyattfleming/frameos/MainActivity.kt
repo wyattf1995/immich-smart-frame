@@ -64,6 +64,9 @@ import com.wyattfleming.frameos.control.FrameRemoteStatus
 import com.wyattfleming.frameos.control.FrameCompanionCommandDecoder
 import com.wyattfleming.frameos.control.FrameRemoteCommand
 import com.wyattfleming.frameos.control.FrameCompanionCommandStore
+import com.wyattfleming.frameos.control.FrameCompanionSettingsDecoder
+import com.wyattfleming.frameos.control.FramePhotosProfileUrl
+import com.wyattfleming.frameos.control.FrameRemoteSettings
 import com.wyattfleming.frameos.security.FrameExternalControlPolicy
 import com.wyattfleming.frameos.diagnostics.FrameDiagnosticStore
 import com.wyattfleming.frameos.ui.WeatherContentView
@@ -600,6 +603,19 @@ class MainActivity : Activity() {
         )
         webRecovery = buildWebRecoveryView()
         root.addView(webRecovery, fullScreenLayout)
+        if (experienceSettings.eventOverlays.isNotEmpty()) {
+            root.addView(
+                textView(experienceSettings.eventOverlays.joinToString("\n"), 16f, getColor(R.color.frame_ink), medium = true).apply {
+                    background = roundedBackground(getColor(R.color.frame_dark), getColor(R.color.frame_cobalt))
+                    setPadding(dp(16), dp(10), dp(16), dp(10))
+                    contentDescription = "Upcoming events: ${experienceSettings.eventOverlays.joinToString()}."
+                },
+                FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply {
+                    leftMargin = resources.getDimensionPixelSize(R.dimen.frame_safe_inset)
+                    bottomMargin = resources.getDimensionPixelSize(R.dimen.frame_safe_inset)
+                },
+            )
+        }
         setContentView(root)
         root.requestFocus()
     }
@@ -1086,6 +1102,7 @@ class MainActivity : Activity() {
                 companionPollInFlight = false
                 if (result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success) {
                     FrameCompanionCommandStore(this).clearAcks(pendingAcks)
+                    FrameCompanionSettingsDecoder.decode(result.body)?.let(::applyCompanionSettings)
                     FrameCompanionCommandDecoder.decode(result.body, System.currentTimeMillis())?.let { command ->
                         val store = FrameCompanionCommandStore(this)
                         if (store.claim(command.id)) { applyCompanionCommand(command); store.ack(command.id, "applied") }
@@ -1101,7 +1118,58 @@ class MainActivity : Activity() {
         is FrameRemoteCommand.PhotoStep -> { if (state.mode == FrameMode.PHOTOS) webSurface?.movePhoto(command.forward); Unit }
         is FrameRemoteCommand.PhotoPause -> { if (state.mode == FrameMode.PHOTOS && state.photosPaused != command.paused) dispatch(FrameIntent.PrimaryAction); Unit }
         is FrameRemoteCommand.PhotoHold -> { if (state.mode == FrameMode.PHOTOS && !state.photosPaused) dispatch(FrameIntent.PrimaryAction); Unit }
-        is FrameRemoteCommand.SetProfile -> Unit // URL mutation waits for a verified photo-session bridge.
+        is FrameRemoteCommand.SetProfile -> setPhotosProfile(command.profile)
+    }
+
+    private fun applyCompanionSettings(settings: FrameRemoteSettings) {
+        if (settings.revision <= experienceSettings.settingsRevision) return
+        val updated = runCatching {
+            experienceSettings.copy(
+                orderedEnabledModes = settings.modeOrder ?: experienceSettings.orderedEnabledModes,
+                quietHours = settings.quietHours ?: experienceSettings.quietHours,
+                deactivateHiddenHomeAssistant = settings.hiddenHomeSuspend ?: experienceSettings.deactivateHiddenHomeAssistant,
+                idleReturnSeconds = settings.idleReturnSeconds ?: experienceSettings.idleReturnSeconds,
+                eventOverlays = settings.eventOverlays ?: experienceSettings.eventOverlays,
+                settingsRevision = settings.revision,
+            )
+        }.getOrNull() ?: return
+        experienceSettings = updated
+        experienceStore.write(updated)
+        settings.profile?.let(::updatePhotosProfile)
+        rebuildExperienceUi()
+    }
+
+    private fun setPhotosProfile(profile: String) {
+        if (updatePhotosProfile(profile)) refreshPhotos()
+    }
+
+    private fun updatePhotosProfile(profile: String): Boolean {
+        val current = configuration ?: return false
+        val updatedPhotosUrl = FramePhotosProfileUrl.withProfile(current.photosUrl, profile) ?: return false
+        val updated = FrameConfiguration.from(
+            photosUrl = updatedPhotosUrl,
+            homeAssistantUrl = current.homeAssistantUrl,
+            weatherEntityId = current.weatherEntityId,
+            homeAssistantFallbackUrl = current.homeAssistantFallbackUrl,
+            birdsUrl = current.birdsUrl,
+        ) ?: return false
+        configuration = updated
+        configurationStore.write(updated)
+        return true
+    }
+
+    private fun refreshPhotos() {
+        rebuildExperienceUi()
+        showMode(FrameMode.PHOTOS)
+    }
+
+    private fun rebuildExperienceUi() {
+        webSurface?.destroy()
+        buildUi()
+        state = state.copy(mode = availability().resolve(state.mode))
+        applyBrightness(state.brightnessOverridePercent)
+        render(state, announce = false)
+        scheduleIdleReset()
     }
 
     private fun beginWeatherAuthorization() {
@@ -1306,7 +1374,7 @@ class MainActivity : Activity() {
 
     private fun scheduleIdleReset() {
         handler.removeCallbacks(expireIdle)
-        handler.postDelayed(expireIdle, IDLE_TIMEOUT_MILLIS)
+        handler.postDelayed(expireIdle, experienceSettings.idleReturnSeconds * 1_000L)
     }
 
     private fun applyBrightness(percent: Int?) {
@@ -1364,7 +1432,6 @@ class MainActivity : Activity() {
         const val HUD_FADE_IN_MILLIS = 160L
         const val HUD_FADE_OUT_MILLIS = 220L
         const val HUD_VISIBLE_MILLIS = 1_500L
-        const val IDLE_TIMEOUT_MILLIS = 15 * 60 * 1_000L
         const val WEATHER_CACHE_FRESH_MILLIS = 5 * 60 * 1_000L
         const val OAUTH_EXCHANGE_TIMEOUT_MILLIS = 10_000L
         const val OAUTH_STATE_BYTES = 32
