@@ -193,7 +193,7 @@ class FrameOfflineReserveTest {
     @Test
     fun `playback controls retain desired pause and only dispatch through the configured content port`() {
         val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-photo-playback-port").toFile(), FixedDecoder())
-        val bridge = FramePhotoBridge(reserve, uiPost = { it() })
+        val bridge = FramePhotoBridge(reserve, uiPost = { it() }, isMainThread = { true })
         val session = Any()
         val url = "https://photos.example/kiosk"
         assertTrue(bridge.configure(session, url, "family"))
@@ -209,6 +209,25 @@ class FrameOfflineReserveTest {
         assertFalse(bridge.connectPlaybackPort(FakePlaybackPort(FramePhotoBridge.Sender(Any(), url, true, true))))
         assertTrue(bridge.configure(Any(), url, "family"))
         assertFalse(bridge.movePhoto(forward = false))
+    }
+
+    @Test
+    fun `off main pause retains desired state but does not claim dispatched`() {
+        val queued = mutableListOf<() -> Unit>()
+        val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-photo-playback-thread").toFile(), FixedDecoder())
+        val bridge = FramePhotoBridge(reserve, uiPost = queued::add, isMainThread = { false })
+        val session = Any()
+        val url = "https://photos.example/kiosk"
+        val port = FakePlaybackPort(FramePhotoBridge.Sender(session, url, true, true))
+        assertTrue(bridge.configure(session, url, "family"))
+        assertTrue(bridge.connectPlaybackPort(port))
+
+        assertFalse(bridge.setPlaybackPaused(true))
+        assertFalse(bridge.movePhoto(forward = true))
+        assertTrue(port.commands.isEmpty())
+        queued.last().invoke()
+        assertEquals("pause", port.commands.single().getString("type"))
+        assertTrue(port.commands.single().getBoolean("paused"))
     }
 
     private fun loadedPhotoMessage() = JSONObject()
