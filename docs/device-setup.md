@@ -122,6 +122,17 @@ listed as `com.wyattfleming.frameos`; an exemption for Fully or Key Mapper does
 not carry over. The repository's readiness sampler accepts either safe state and
 does not change it.
 
+On the tested firmware, the supported command below adds FrameOS to
+`PlatformWhitelist`; a package selected through the hidden Settings screen can
+appear in `AppWhitelist`. Verify the exact package in either list:
+
+```sh
+adb -s FRAME_IP:5555 shell dumpsys duraspeed addwhitelist \
+  com.wyattfleming.frameos
+adb -s FRAME_IP:5555 shell dumpsys duraspeed status
+adb -s FRAME_IP:5555 shell dumpsys duraspeed config
+```
+
 The legacy Fully-only recovery sequence disables DuraSpeed globally:
 
 ```sh

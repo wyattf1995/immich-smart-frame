@@ -295,6 +295,21 @@ adb -s DEVICE_SERIAL shell appops get \
   com.wyattfleming.frameos SYSTEM_ALERT_WINDOW
 ```
 
+The tested Lenovo firmware also exposes a supported DuraSpeed whitelist command.
+Use the exact package name, then read the status and configuration back:
+
+```sh
+adb -s DEVICE_SERIAL shell dumpsys duraspeed addwhitelist \
+  com.wyattfleming.frameos
+adb -s DEVICE_SERIAL shell dumpsys duraspeed status
+adb -s DEVICE_SERIAL shell dumpsys duraspeed config
+```
+
+On the tested build, `addwhitelist` records the package under
+`PlatformWhitelist`; the Settings UI may instead use `AppWhitelist`. Either is
+an exemption when it contains the exact package token. Do not edit DuraSpeed's
+private configuration file directly.
+
 Keep USB attached for the first controlled reboot. Verify FrameOS becomes the
 resumed activity without an explicit `am start`, then test both physical
 gesture directions and a rapid multi-gesture burst. Do not call automatic boot
