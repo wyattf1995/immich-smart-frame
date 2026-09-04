@@ -36,7 +36,7 @@ while (( $(date +%s) < end )); do
       # A validated header value is sent through stdin, never curl's process args.
       if [[ "$token" =~ ^[A-Za-z0-9_-]{32,}$ ]]; then
         raw=$(printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --config - --silent --fail --max-time 8 "$metrics_url" 2>/dev/null || true)
-        metrics=$(printf '%s\n' "$raw" | jq -ce 'if type == "object" then with_entries(select((.key | test("^(cache_bytes|cache_evictions_total|image_work_admissions_total|image_work_wait_nanoseconds_total|image_work_render_nanoseconds_total|go_heap_alloc_bytes|go_heap_sys_bytes)$")) and (.value | type == "number"))) else {} end' 2>/dev/null || printf '{}')
+        metrics=$(printf '%s\n' "$raw" | jq -ce 'if type == "object" then with_entries(select((.key | test("^(cache_bytes|cache_evictions_total|image_work_admissions_total|image_work_wait_nanoseconds_total|image_work_render_nanoseconds_total|go_heap_alloc_bytes|go_heap_sys_bytes|date_pool_widenings_total|date_pool_last_effective_days)$")) and (.value | type == "number"))) else {} end' 2>/dev/null || printf '{}')
       fi
       unset token
     fi
