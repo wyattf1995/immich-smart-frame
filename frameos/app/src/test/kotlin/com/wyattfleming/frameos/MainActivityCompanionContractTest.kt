@@ -15,7 +15,10 @@ class MainActivityCompanionContractTest {
     }
 
     @Test fun `photo commands dispatch while paused and bounded holds resume after their duration`() {
-        assertTrue(source.contains("if (state.photosPaused) webSurface?.setContentActive(true)"))
+        assertTrue(source.contains("manualPhotoStepPending = true"))
+        assertTrue(source.contains("webSurface?.setContentActive(true)"))
+        assertTrue(source.contains("if (moved) handler.postDelayed(finishManualPhotoStep, 8_000L) else finishManualPhotoStep.run()"))
+        assertTrue(source.contains("if (state.mode == FrameMode.PHOTOS && state.photosPaused) webSurface?.setContentActive(false)"))
         assertTrue(source.contains("if (moved) \"dispatched\" else \"rejected\""))
         assertTrue(source.contains("handler.postDelayed(resumePhotosAfterHold, command.durationSeconds * 1_000L)"))
         assertTrue(source.contains("private val resumePhotosAfterHold"))

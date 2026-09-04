@@ -166,6 +166,30 @@ class FrameOfflineReserveTest {
         assertTrue(reserve.entries().isEmpty())
     }
 
+    @Test
+    fun `queued observation is invalidated by pause and by same url profile rebuild`() {
+        val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-photo-observation-fence").toFile(), FixedDecoder())
+        val reports = mutableListOf<FramePhotoBridge.PhotoObserved>()
+        val bridge = FramePhotoBridge(reserve, onPhotoObserved = reports::add)
+        val session = Any()
+        val url = "https://photos.example/kiosk"
+        val sender = FramePhotoBridge.Sender(session, url, true, true)
+        assertTrue(bridge.configure(session, url, "family"))
+        bridge.setCaptureEnabled(true, false)
+        assertTrue(bridge.accept(loadedPhotoMessage(), sender))
+        val beforePause = reports.last()
+        assertTrue(bridge.isCurrentObservation(beforePause))
+        bridge.setCaptureEnabled(false, true)
+        bridge.setCaptureEnabled(true, false)
+        assertFalse(bridge.isCurrentObservation(beforePause))
+        assertTrue(bridge.accept(loadedPhotoMessage(), sender))
+        val beforeRebuild = reports.last()
+        assertTrue(bridge.isCurrentObservation(beforeRebuild))
+        assertTrue(bridge.configure(session, url, "photography"))
+        bridge.setCaptureEnabled(true, false)
+        assertFalse(bridge.isCurrentObservation(beforeRebuild))
+    }
+
     private fun loadedPhotoMessage() = JSONObject()
         .put("type", "loaded-photo")
         .put("assetId", "11111111-1111-4111-8111-111111111111")
