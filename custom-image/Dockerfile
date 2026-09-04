@@ -66,6 +66,8 @@ COPY photo-variety-tests.patch /tmp/photo-variety-tests.patch
 COPY photo-variety.patch /tmp/photo-variety.patch
 COPY memory-metrics-tests.patch /tmp/memory-metrics-tests.patch
 COPY memory-metrics.patch /tmp/memory-metrics.patch
+COPY burst-variety-tests.patch /tmp/burst-variety-tests.patch
+COPY burst-variety.patch /tmp/burst-variety.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -180,7 +182,11 @@ RUN cd /src \
 		&& git apply --check /tmp/memory-metrics-tests.patch \
 		&& git apply /tmp/memory-metrics-tests.patch \
 		&& git apply --check /tmp/memory-metrics.patch \
-		&& git apply /tmp/memory-metrics.patch
+		&& git apply /tmp/memory-metrics.patch \
+		&& git apply --check /tmp/burst-variety-tests.patch \
+		&& git apply /tmp/burst-variety-tests.patch \
+		&& git apply --check /tmp/burst-variety.patch \
+		&& git apply /tmp/burst-variety.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
