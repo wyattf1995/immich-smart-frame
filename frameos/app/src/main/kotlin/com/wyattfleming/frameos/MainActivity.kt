@@ -1076,14 +1076,16 @@ class MainActivity : Activity() {
         companionPollInFlight = true
         val snapshot = diagnosticStore.snapshot()
         weatherWorkerExecutor.submit {
+            val pendingAcks = FrameCompanionCommandStore(this).consumeAcks()
             val result = FrameCompanionClient(credentials.endpoint, credentials.token).poll(
                 credentials.deviceId,
                 FrameRemoteStatus(state.mode, state.photosPaused, snapshot.lastPaintEpochMillis.takeIf { it > 0 }, snapshot.lastWeatherSuccessEpochMillis.takeIf { it > 0 }, snapshot.recoveryCount, snapshot.lastError, false, packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"),
-                FrameCompanionCommandStore(this).consumeAcks(),
+                pendingAcks,
             )
             handler.post {
                 companionPollInFlight = false
                 if (result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success) {
+                    FrameCompanionCommandStore(this).clearAcks(pendingAcks)
                     FrameCompanionCommandDecoder.decode(result.body, System.currentTimeMillis())?.let { command ->
                         val store = FrameCompanionCommandStore(this)
                         if (store.claim(command.id)) { applyCompanionCommand(command); store.ack(command.id, "applied") }
