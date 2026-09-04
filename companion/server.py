@@ -32,6 +32,19 @@ class FrameError(Exception):
 def integer(value, minimum, maximum):
     return isinstance(value, int) and not isinstance(value, bool) and minimum <= value <= maximum
 
+def canonical_origin(value):
+    """Return the browser Origin form for a credential-free HTTPS origin."""
+    if not isinstance(value, str) or value != value.strip(): return None
+    try:
+        origin = urlsplit(value)
+        if origin.scheme.lower() != 'https' or not origin.hostname or origin.username or origin.password or origin.path not in ('','/') or origin.query or origin.fragment: return None
+        host = origin.hostname.lower()
+        port = origin.port
+    except ValueError:
+        return None
+    authority = f'[{host}]' if ':' in host else host
+    return f'https://{authority}' if port in (None, 443) else f'https://{authority}:{port}'
+
 def settings_patch(existing, patch, profiles):
     if not isinstance(patch, dict) or set(patch) - set(DEFAULTS):
         raise FrameError('Unsupported settings')
@@ -260,7 +273,8 @@ class BoundedServer(ThreadingHTTPServer):
 def make_server(config,store,host='127.0.0.1',port=8092):
     auth=FrameAuth(config)
     csrf=secrets.token_urlsafe(32)
-    origin=config.get('publicOrigin','')
+    origin=canonical_origin(config.get('publicOrigin',''))
+    if origin is None: raise FrameError('publicOrigin must be a credential-free HTTPS origin')
     ui=Path(__file__).with_name('index.html')
     class Handler(BaseHTTPRequestHandler):
         server_version='FrameCompanion/1'
@@ -292,7 +306,7 @@ def make_server(config,store,host='127.0.0.1',port=8092):
                 if device_route and role[0]!='device' or not device_route and role[0]!='operator':raise FrameError('Credential is not authorized for this route',403)
                 if self.command=='POST':
                     if path not in ('/device/poll','/api/command','/api/settings','/api/feedback','/api/event'):raise FrameError('Not found',404)
-                    request_origin=self.headers.get('Origin')
+                    request_origin=canonical_origin(self.headers.get('Origin')) if self.headers.get('Origin') else None
                     if request_origin and request_origin!=origin:raise FrameError('Origin rejected',403)
                     if role[0]=='operator' and self.headers.get('Authorization','').startswith('Basic '):
                         if request_origin!=origin or not hmac.compare_digest(self.headers.get('X-Frame-CSRF',''),csrf):raise FrameError('CSRF check failed',403)
@@ -331,8 +345,7 @@ def make_server(config,store,host='127.0.0.1',port=8092):
 def main():
     config_path=Path(os.environ.get('FRAME_CONFIG_FILE','/run/secrets/frame_config'))
     config=json.loads(config_path.read_text())
-    origin=urlsplit(config.get('publicOrigin',''))
-    if origin.scheme!='https' or not origin.hostname or origin.username or origin.password or origin.path not in ('','/') or origin.query or origin.fragment:raise SystemExit('publicOrigin must be a credential-free HTTPS origin')
+    if canonical_origin(config.get('publicOrigin','')) is None:raise SystemExit('publicOrigin must be a credential-free HTTPS origin')
     profiles=config.get('profiles',['balanced','family','photography'])
     if not profiles or not all(isinstance(p,str) and IDENTIFIER.fullmatch(p) for p in profiles):raise SystemExit('Invalid profiles')
     state_dir=Path(os.environ.get('FRAME_STATE_DIR','/data'))
