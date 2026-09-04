@@ -13,6 +13,14 @@ class WeatherPresenterTest {
     )
 
     @Test
+    fun `only fresh data reports its source timestamp for frame health`() {
+        val snapshot = weatherSnapshot()
+        assertEquals(snapshot.current.updatedAtEpochMillis, presenter.present(WeatherLoadResult.Fresh(snapshot)).freshDataEpochMillis)
+        assertEquals(null, presenter.present(WeatherLoadResult.Stale(snapshot)).freshDataEpochMillis)
+        assertEquals(null, presenter.present(WeatherLoadResult.Offline).freshDataEpochMillis)
+    }
+
+    @Test
     fun `keeps the complete hourly timeline and formats Home Assistant units`() {
         val snapshot = weatherSnapshot(
             hourly = (0 until 24).map { hour ->
