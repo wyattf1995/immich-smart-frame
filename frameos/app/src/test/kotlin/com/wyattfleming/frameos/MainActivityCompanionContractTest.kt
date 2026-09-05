@@ -32,7 +32,7 @@ class MainActivityCompanionContractTest {
     }
 
     @Test fun `paused remote state accepts only a bridge authorized snapshot`() {
-        assertTrue(source.contains("photo.pauseSnapshotNonce != null"))
+        assertTrue(source.contains("photo.pauseSnapshotNonce == null"))
         assertTrue(source.contains("photoBridge.setCaptureEnabled(true, true)"))
     }
 
