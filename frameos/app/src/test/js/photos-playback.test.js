@@ -27,13 +27,16 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
     getBoundingClientRect() { return { width: this.visible ? 100 : 0, height: this.visible ? 100 : 0 }; },
   });
   const kioskContainer = makeElement();
+  kioskContainer.id = "kiosk-container";
   kioskContainer.classList = { contains: (name) => push && name === "transition-push" };
   const kiosk = makeElement();
+  kiosk.id = "kiosk";
   kiosk.parentElement = kioskContainer;
   const progress = makeElement();
   const frameList = (frames || []).map(({ images, visible = true, animations = [] }) => {
     const frame = makeElement(visible);
     frame.parentElement = kiosk;
+    frame.closest = (selector) => selector === "#kiosk" ? kiosk : null;
     frame.images = images.map((source) => Object.assign(new HTMLImageElement(), {
       parentElement: frame,
       complete: true,
