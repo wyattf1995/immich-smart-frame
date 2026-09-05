@@ -48,4 +48,3 @@ class FramePhotoLoadGateTest {
         assertNull(gate.takePendingIfReady(attachment))
     }
 }
-
