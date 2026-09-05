@@ -74,6 +74,7 @@ COPY cache-lock-telemetry-tests.patch /tmp/cache-lock-telemetry-tests.patch
 COPY cache-lock-telemetry.patch /tmp/cache-lock-telemetry.patch
 COPY history-render-memory-tests.patch /tmp/history-render-memory-tests.patch
 COPY history-render-memory.patch /tmp/history-render-memory.patch
+COPY paused-retry-tests.patch /tmp/paused-retry-tests.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -204,7 +205,9 @@ RUN cd /src \
 		&& git apply --check --unidiff-zero /tmp/history-render-memory-tests.patch \
 		&& git apply --unidiff-zero /tmp/history-render-memory-tests.patch \
 		&& git apply --check /tmp/history-render-memory.patch \
-		&& git apply /tmp/history-render-memory.patch
+		&& git apply /tmp/history-render-memory.patch \
+		&& git apply --check /tmp/paused-retry-tests.patch \
+		&& git apply /tmp/paused-retry-tests.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
@@ -224,6 +227,11 @@ RUN node_modules/.bin/esbuild tests/asset-request-recovery.test.ts \
       --alias:htmx.org=./tests/htmx.mock.ts \
       --outfile=/tmp/polling-recovery.test.mjs \
     && node --test /tmp/polling-recovery.test.mjs \
+    && node_modules/.bin/esbuild tests/paused-retry.test.ts \
+      --bundle --platform=node --format=esm \
+      --alias:htmx.org=./tests/htmx.mock.ts \
+      --outfile=/tmp/paused-retry.test.mjs \
+    && node --test /tmp/paused-retry.test.mjs \
     && node --test tests/browser-cache-contract.test.mjs tests/offline-cache-contract.test.mjs
 RUN task frontend
 
