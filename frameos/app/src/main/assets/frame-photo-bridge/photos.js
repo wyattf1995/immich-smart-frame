@@ -16,7 +16,8 @@ let desiredPlaybackPaused = null;
 let playbackPort = null;
 let portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
 let portRetryTimer = 0;
-let htmxKioskRequests = 0;
+let activeKioskRequest = null;
+let kioskCaptureReady = true;
 
 function isVisible(element) {
   for (let current = element; current && current !== document.documentElement; current = current.parentElement) {
@@ -53,6 +54,7 @@ function settlePausedFrame(frame) {
 
 function capture() {
   queued = false;
+  if (activeKioskRequest || !kioskCaptureReady) return;
   const histories = Array.from(document.querySelectorAll("#kiosk-history input[name='history']"))
     .filter((history) => typeof history.value === "string" && history.value.startsWith("*"));
   if (histories.length !== 1) return;
@@ -109,24 +111,38 @@ function retryRejectedCapture(fingerprint) {
 }
 
 function scheduleCapture() {
-  if (queued || htmxKioskRequests > 0) return;
+  if (queued || activeKioskRequest || !kioskCaptureReady) return;
   queued = true;
   queueMicrotask(capture);
 }
 
-function isKioskHtmxEvent(event) {
-  const target = event.detail && event.detail.target;
-  return target instanceof HTMLElement && target.id === "kiosk";
+function kioskHtmxRequest(event) {
+  const detail = event.detail;
+  return detail && detail.target instanceof HTMLElement && detail.target.id === "kiosk" && detail.xhr ? detail.xhr : null;
 }
 
 function beginKioskHtmxRequest(event) {
-  if (isKioskHtmxEvent(event)) htmxKioskRequests += 1;
+  const request = kioskHtmxRequest(event);
+  if (!request) return;
+  activeKioskRequest = request;
+  kioskCaptureReady = false;
 }
 
-function finishKioskHtmxRequest(event) {
-  if (!isKioskHtmxEvent(event) || htmxKioskRequests === 0) return;
-  htmxKioskRequests -= 1;
-  if (htmxKioskRequests === 0) scheduleCapture();
+function settleKioskHtmxRequest(event) {
+  const request = kioskHtmxRequest(event);
+  // HTMX settles OOB elements too; only the primary #kiosk target completes its response transaction.
+  if (!request || request !== activeKioskRequest || event.target !== event.detail.target) return;
+  activeKioskRequest = null;
+  kioskCaptureReady = true;
+  scheduleCapture();
+}
+
+function failKioskHtmxRequest(event) {
+  const request = kioskHtmxRequest(event);
+  if (!request || request !== activeKioskRequest) return;
+  activeKioskRequest = null;
+  // Wait for another successful Kiosk response; a failed partial response has no trustworthy pair.
+  kioskCaptureReady = false;
 }
 
 function isCaptureMutation(mutation) {
@@ -215,11 +231,12 @@ new MutationObserver(() => {
 document.addEventListener("load", scheduleCapture, true);
 document.addEventListener("transitionend", scheduleCapture, true);
 document.addEventListener("animationend", scheduleCapture, true);
-document.addEventListener("htmx:beforeRequest", beginKioskHtmxRequest, true);
-document.addEventListener("htmx:afterSettle", finishKioskHtmxRequest, true);
-document.addEventListener("htmx:responseError", finishKioskHtmxRequest, true);
-document.addEventListener("htmx:sendError", finishKioskHtmxRequest, true);
-document.addEventListener("htmx:timeout", finishKioskHtmxRequest, true);
+document.addEventListener("htmx:beforeSend", beginKioskHtmxRequest, true);
+document.addEventListener("htmx:afterSettle", settleKioskHtmxRequest, true);
+document.addEventListener("htmx:responseError", failKioskHtmxRequest, true);
+document.addEventListener("htmx:sendError", failKioskHtmxRequest, true);
+document.addEventListener("htmx:sendAbort", failKioskHtmxRequest, true);
+document.addEventListener("htmx:timeout", failKioskHtmxRequest, true);
 new MutationObserver(scheduleCaptureMutations).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
 scheduleCapture();
 connectPlaybackPort();
