@@ -290,6 +290,38 @@ test("document-start error and 204 leave initial paused capture closed until a l
   }
 });
 
+test("pre-DOM initial error and 204 never become a DOM-ready paused baseline", async () => {
+  const oldId = "11111111-1111-4111-8111-111111111111";
+  const currentId = "33333333-3333-4333-8333-333333333333";
+  for (const [eventName, detail] of [
+    ["htmx:responseError", {}],
+    ["htmx:afterRequest", { xhr: { status: 204 } }],
+  ]) {
+    const failed = detail.xhr || {};
+    const recovered = {};
+    const runtime = loadScript({
+      documentReady: false,
+      historyValues: [`*${oldId}:old`],
+      frames: [{ images: ["data:image/jpeg;base64,old"] }],
+    });
+    runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: failed }, runtime.kiosk);
+    runtime.fireEvent(eventName, { target: runtime.kiosk, xhr: failed }, runtime.kiosk);
+    runtime.setHistory([`${oldId}:old`, `*${currentId}:current`]);
+    runtime.setFrameImage(0, "data:image/jpeg;base64,current");
+    runtime.fireDomReady();
+    runtime.port.listener({ type: "pause", paused: true, snapshotNonce: "44444444-4444-4444-8444-444444444444" });
+    runtime.runMicrotasks();
+    await Promise.resolve();
+    assert.equal(runtime.nativeMessages.length, 0, `${eventName} cannot reopen capture at DOM ready`);
+
+    runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: recovered }, runtime.kiosk);
+    runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: recovered }, runtime.kiosk);
+    runtime.runMicrotasks();
+    await Promise.resolve();
+    assert.deepEqual(runtime.nativeMessages.map(({ assetId }) => assetId), [currentId]);
+  }
+});
+
 test("diagnostics report only bounded scalar HTMX and paused-command state", () => {
   const runtime = loadScript();
   const request = {};
