@@ -113,6 +113,15 @@ class PublisherTests(unittest.TestCase):
                 publisher.read_token(token)
         self.assertNotIn("do-not-disclose", str(raised.exception))
 
+    def test_invalid_webhook_id_is_rejected_without_returning_its_value(self):
+        with tempfile.TemporaryDirectory() as directory:
+            webhook = Path(directory) / "webhook"
+            webhook.write_text("not-a-webhook-id")
+            webhook.chmod(0o600)
+            with self.assertRaises(publisher.WebhookError) as raised:
+                publisher.read_webhook_id(webhook)
+        self.assertNotIn("not-a-webhook-id", str(raised.exception))
+
     def test_oversized_subprocess_output_is_reaped_and_unknown(self):
         code, output = publisher.bounded_run([sys.executable, "-c", "import sys; sys.stdout.write('x' * 8193)"], 5, 8192)
         self.assertIsNone(output)
@@ -172,6 +181,47 @@ class PublisherTests(unittest.TestCase):
                 token.chmod(0o600)
                 with self.assertRaises(publisher.PublishError) as raised:
                     publisher.publish(f"http://127.0.0.1:{redirect.server_port}", token, {"state": "unknown", "attributes": {}})
+                if isinstance(raised.exception.__cause__, HTTPError):
+                    raised.exception.__cause__.close()
+        finally:
+            redirect.shutdown(); target.shutdown()
+            redirect.server_close(); target.server_close()
+        self.assertEqual(target_requests, [])
+
+    def test_webhook_uses_no_authorization_header_and_refuses_redirects(self):
+        target_requests = []
+
+        class Target(BaseHTTPRequestHandler):
+            def do_POST(self):
+                target_requests.append(dict(self.headers))
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        target = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+        threading.Thread(target=target.serve_forever, daemon=True).start()
+
+        class Redirect(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{target.server_port}/other-origin")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        redirect = ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+        threading.Thread(target=redirect.serve_forever, daemon=True).start()
+        webhook_id = "a" * 64
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                webhook = Path(directory) / "webhook"
+                webhook.write_text(webhook_id)
+                webhook.chmod(0o600)
+                with self.assertRaises(publisher.PublishError) as raised:
+                    publisher.publish_webhook(f"http://127.0.0.1:{redirect.server_port}", webhook, {"state": "unknown", "attributes": {}})
                 if isinstance(raised.exception.__cause__, HTTPError):
                     raised.exception.__cause__.close()
         finally:

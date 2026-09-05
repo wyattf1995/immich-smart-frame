@@ -15,12 +15,14 @@ grep -Fq 'flock -n 9' "$loop" || fail 'frame-health loop must prevent duplicate 
 grep -Fq 'FRAME_HEALTH_LOCK_FILE' "$loop" || fail 'frame-health loop must allow its lock location to be isolated for verification'
 grep -Fq 'trap ' "$loop" || fail 'frame-health loop must clean up on TERM or INT'
 [[ $(grep -Fc 'frame-health publish failed' "$loop") -eq 1 ]] || fail 'frame-health loop must use one generic failure transition message'
-grep -Fq 'docker run --rm --network host --read-only --cap-drop ALL' "$loop" || fail 'frame-health loop must use the hardened ephemeral publisher container'
+grep -Fq 'docker run --rm -i --network host --read-only --user 0:0 --pull never --cap-drop ALL' "$loop" || fail 'frame-health loop must use the hardened ephemeral publisher container'
 grep -Fq -- '--pids-limit 32 --cpus .1' "$loop" || fail 'frame-health loop must bound publisher resources'
 grep -Fq -- '--evidence-stdin' "$loop" || fail 'frame-health loop must send bounded host evidence over stdin'
 ! grep -Fq '/var/run/docker.sock' "$loop" || fail 'frame-health loop must not mount the Docker socket'
 grep -Fq 'FRAME_HEALTH_PYTHON_IMAGE=sha256:f3ac72983efcf1a310abe2ecb0ebeee84fefcb1a797668eac82697a43f8e3c5b' "$env_example" || fail 'sample loop config must pin the companion Python image digest'
-! grep -Eq '(^|[[:space:]])(HA_TOKEN|FRAME_HEALTH_TOKEN)=' "$env_example" || fail 'sample loop config must not contain token values'
+! grep -Fq 'FRAME_HEALTH_TOKEN_FILE=' "$env_example" || fail 'sample loop config must not use the broad REST token transport'
+grep -Fq 'FRAME_HEALTH_WEBHOOK_ID_FILE=' "$env_example" || fail 'sample loop config must use a scoped webhook ID file'
+grep -Fq 'FRAME_HEALTH_CONTAINER_WEBHOOK_ID_FILE=' "$env_example" || fail 'sample loop config must define the webhook mount path'
 grep -Fq 'BIRDNET_WATCHDOG_AUTH_FILE=' "$env_example" || fail 'sample loop config must provide the watchdog auth-file path'
 printf 'PASS: frame-health loop invariants\n'
 
@@ -67,10 +69,11 @@ expected='127.0.0.1|/mnt/user/appdata/birdnet-go/secrets/frame-watchdog-auth.jso
 jq -e '.observedAt | type == "number"' "$tmp/evidence" >/dev/null || fail 'publisher evidence must contain observedAt'
 jq -e '.watchdog.returncode == 0 and .containers["birdnet-go"].output == "true|healthy|false|0\n"' "$tmp/evidence" >/dev/null || fail 'publisher evidence must contain only fixed reports'
 grep -Fxq -- '-i' "$tmp/docker-args" || fail 'publisher container must receive evidence stdin interactively'
-grep -Fxq -- '--user' "$tmp/docker-args" || fail 'publisher container must run as root for the dedicated token mount'
+grep -Fxq -- '--user' "$tmp/docker-args" || fail 'publisher container must run as root for the dedicated webhook mount'
 grep -Fxq -- '0:0' "$tmp/docker-args" || fail 'publisher container user must be root'
 grep -Fxq -- '--pull' "$tmp/docker-args" || fail 'publisher container must not pull at runtime'
 grep -Fxq -- 'never' "$tmp/docker-args" || fail 'publisher container pull policy must be never'
+grep -Fxq -- '--webhook-id-file' "$tmp/docker-args" || fail 'publisher container must use scoped webhook transport'
 child_pid=$(cat "$tmp/docker-child")
 kill -TERM "$main_pid"
 wait "$main_pid" || true
