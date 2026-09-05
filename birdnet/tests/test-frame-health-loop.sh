@@ -12,6 +12,7 @@ grep -Fq '[[ "$owner" == "$(id -u)" || "$owner" == "0" ]]' "$loop" || fail 'fram
 grep -Fq 'export BIRDNET_BIND_IP BIRDNET_WATCHDOG_AUTH_FILE' "$loop" || fail 'frame-health loop must export watchdog auth-path settings to its Python child'
 grep -Fq 'WEB_PORT' "$loop" || fail 'frame-health loop must preserve optional watchdog web-port configuration'
 grep -Fq 'flock -n 9' "$loop" || fail 'frame-health loop must prevent duplicate publishers'
+grep -Fq 'FRAME_HEALTH_LOCK_FILE' "$loop" || fail 'frame-health loop must allow its lock location to be isolated for verification'
 grep -Fq 'trap ' "$loop" || fail 'frame-health loop must clean up on TERM or INT'
 [[ $(grep -Fc "frame-health publish failed" "$loop") -eq 1 ]] || fail 'frame-health loop must use one generic failure transition message'
 grep -Fq 'docker run --rm --network host --read-only --cap-drop ALL' "$loop" || fail 'frame-health loop must use the hardened ephemeral publisher container'
@@ -22,3 +23,41 @@ grep -Fq 'FRAME_HEALTH_PYTHON_IMAGE=sha256:f3ac72983efcf1a310abe2ecb0ebeee84fefc
 ! grep -Eq '(^|[[:space:]])(HA_TOKEN|FRAME_HEALTH_TOKEN)=' "$env_example" || fail 'sample loop config must not contain token values'
 grep -Fq 'BIRDNET_WATCHDOG_AUTH_FILE=' "$env_example" || fail 'sample loop config must provide the watchdog auth-file path'
 printf 'PASS: frame-health loop invariants\n'
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+mkdir "$tmp/bin"
+cat >"$tmp/bin/flock" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+cat >"$tmp/bin/timeout" <<'EOF'
+#!/usr/bin/env bash
+shift
+exec "$@"
+EOF
+cat >"$tmp/bin/docker" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  inspect) printf 'true|healthy|false|0\n' ;;
+  run) cat >/dev/null ;;
+  *) exit 1 ;;
+esac
+EOF
+cat >"$tmp/bin/watchdog" <<'EOF'
+#!/usr/bin/env bash
+printf '%s|%s|%s\n' "${BIRDNET_BIND_IP:-}" "${BIRDNET_WATCHDOG_AUTH_FILE:-}" "${WEB_PORT:-}" >>"$CHILD_ENV_LOG"
+printf '%s\n' 'INFO: every reported audio source is HEALTHY' 'INFO: audio health fresh (0s <= 120s)'
+EOF
+cat >"$tmp/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+kill -TERM "$PPID"
+EOF
+chmod +x "$tmp/bin"/*
+cp "$env_example" "$tmp/config"
+printf 'FRAME_HEALTH_WATCHDOG=%s\nWEB_PORT=8090\n' "$tmp/bin/watchdog" >>"$tmp/config"
+chmod 600 "$tmp/config"
+CHILD_ENV_LOG="$tmp/child-env" FRAME_HEALTH_LOCK_FILE="$tmp/lock" PATH="$tmp/bin:$PATH" bash "$loop" "$tmp/config" >/dev/null 2>"$tmp/err" || true
+expected='127.0.0.1|/mnt/user/appdata/birdnet-go/secrets/frame-watchdog-auth.json|8090'
+[[ "$(cat "$tmp/child-env")" == "$expected" ]] || fail 'sample config watchdog settings must reach the watchdog child'
+printf 'PASS: frame-health loop child environment\n'
