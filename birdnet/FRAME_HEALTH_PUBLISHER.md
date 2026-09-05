@@ -15,16 +15,22 @@ and OOM fields. `observedAt` is epoch milliseconds; HA derives staleness itself.
 
 Install the publisher, watchdog, and loop outside the repository. Copy
 `frame-health-loop.env.example` to a root-owned mode-`0600` configuration file,
-set the local Home Assistant URL and token-file path, then run:
+set the local Home Assistant URL, dedicated root-owned token copy, and the
+pinned `FRAME_HEALTH_PYTHON_IMAGE`, then run:
 
 ```sh
 bash /mnt/user/appdata/frame-review-soak-20260904/monitor/frame-health-loop.sh \
   /mnt/user/appdata/frame-review-soak-20260904/monitor/frame-health.env
 ```
 
-The loop holds a nonblocking `flock`, publishes every 60 seconds, and emits only
-a generic failure line. The token is read from the mode-`0600` file in memory;
-it is never an argument, environment value, log field, or persistent payload.
-The watchdog continues to obtain BirdNET credentials only from its existing
-private auth file. A failed HA POST does not trigger notifications or change any
-other entity.
+The NAS host collects bounded watchdog and fixed Docker-inspect evidence, then
+pipes it to an ephemeral, pinned companion-Python container. That container has
+no Docker socket or host-data access: it receives only `publisher.py`, the
+dedicated read-only token file, and evidence on stdin. It runs read-only with
+all capabilities dropped, no-new-privileges, a 64 MiB memory limit, a 32 PID
+limit, 0.1 CPU, and an 8 MiB `/tmp` tmpfs. The host loop holds a nonblocking
+`flock`, publishes every 60 seconds, and logs only failure/recovery transitions.
+The token is read in memory; it is never an argument, environment value, log
+field, or persistent payload. The watchdog continues to obtain BirdNET
+credentials only from its existing private auth file. A failed HA POST does not
+trigger notifications or change any other entity.
