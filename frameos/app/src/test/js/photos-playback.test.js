@@ -322,6 +322,54 @@ test("pre-DOM initial error and 204 never become a DOM-ready paused baseline", a
   }
 });
 
+test("an unreadable primary pre-DOM request closes capture and prevents later settles from spending a nonce", async () => {
+  const oldId = "11111111-1111-4111-8111-111111111111";
+  const currentId = "33333333-3333-4333-8333-333333333333";
+  const nonce = "44444444-4444-4444-8444-444444444444";
+  const recovered = {};
+  const runtime = loadScript({
+    documentReady: false,
+    historyValues: [`*${oldId}:old`],
+    frames: [{ images: ["data:image/jpeg;base64,old"] }],
+  });
+  const unreadable = { target: runtime.kiosk };
+  Object.defineProperty(unreadable, "detail", { get() { throw new Error("cross-realm"); } });
+
+  runtime.fireRawEvent("htmx:beforeSend", unreadable);
+  runtime.fireDomReady();
+  runtime.port.listener({ type: "pause", paused: true, snapshotNonce: nonce });
+  runtime.setHistory([`${oldId}:old`, `*${currentId}:current`]);
+  runtime.setFrameImage(0, "data:image/jpeg;base64,current");
+  runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: recovered }, runtime.kiosk);
+  runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: recovered }, runtime.kiosk);
+  runtime.runMicrotasks();
+  await Promise.resolve();
+
+  assert.equal(runtime.nativeMessages.length, 0);
+});
+
+test("an unreadable non-Kiosk event does not close a DOM-ready baseline", async () => {
+  const currentId = "33333333-3333-4333-8333-333333333333";
+  const nonce = "44444444-4444-4444-8444-444444444444";
+  const runtime = loadScript({
+    documentReady: false,
+    historyValues: [`*${currentId}:current`],
+    frames: [{ images: ["data:image/jpeg;base64,current"] }],
+  });
+  const unrelated = { target: { id: "sidebar" } };
+  Object.defineProperty(unrelated, "detail", { get() { throw new Error("cross-realm"); } });
+
+  runtime.fireRawEvent("htmx:beforeSend", unrelated);
+  runtime.fireDomReady();
+  runtime.port.listener({ type: "pause", paused: true, snapshotNonce: nonce });
+  runtime.runMicrotasks();
+  await Promise.resolve();
+
+  assert.deepEqual(runtime.nativeMessages.map(({ assetId, snapshotNonce }) => ({ assetId, snapshotNonce })), [
+    { assetId: currentId, snapshotNonce: nonce },
+  ]);
+});
+
 test("diagnostics report only bounded scalar HTMX and paused-command state", () => {
   const runtime = loadScript();
   const request = {};
