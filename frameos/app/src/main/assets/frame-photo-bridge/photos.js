@@ -226,13 +226,18 @@ function scheduleCaptureMutations(mutations) {
 }
 
 function setPollingPaused(paused) {
-  if (document.body.classList.contains("polling-paused") === paused) return;
-  document.body.dispatchEvent(new KeyboardEvent("keydown", {
-    code: "KeyP",
-    key: "p",
-    shiftKey: !paused,
-    bubbles: true,
-  }));
+  if (document.body.classList.contains("polling-paused") !== paused) {
+    document.body.dispatchEvent(new KeyboardEvent("keydown", {
+      code: "KeyP",
+      key: "p",
+      shiftKey: !paused,
+      bubbles: true,
+    }));
+  }
+  // Native pause intentionally exposes Kiosk controls. FrameOS owns physical
+  // playback controls, so keep the DOM controls callable but visually hidden.
+  const navigation = document.querySelector(".navigation");
+  if (navigation instanceof HTMLElement) navigation.classList.add("navigation-hidden");
 }
 
 function stepPhoto(forward) {
