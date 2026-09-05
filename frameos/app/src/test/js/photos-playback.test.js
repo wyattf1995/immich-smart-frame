@@ -30,6 +30,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
   kioskContainer.classList = { contains: (name) => push && name === "transition-push" };
   const kiosk = makeElement();
   kiosk.parentElement = kioskContainer;
+  const progress = makeElement();
   const frameList = (frames || []).map(({ images, visible = true, animations = [] }) => {
     const frame = makeElement(visible);
     frame.parentElement = kiosk;
@@ -64,6 +65,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
   });
   kioskContainer.querySelector = (selector) => selector === ":scope > #kiosk" ? kiosk : null;
   kiosk.querySelectorAll = (selector) => selector === ":scope > .frame" ? frameList : [];
+  kiosk.contains = (element) => element === kiosk || frameList.includes(element) || frameList.some((frame) => frame.images.includes(element));
   const body = {
     classList: { contains: (name) => classes.has(name) },
     dispatchEvent(event) {
@@ -107,10 +109,13 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../../main/assets/frame-photo-bridge/photos.js"), "utf8"), context);
   return {
-    body, events, next, previous, port, timers, observers, listeners, classes, nativeMessages,
+    body, events, next, previous, port, timers, observers, listeners, classes, nativeMessages, progress,
     runMicrotasks() { while (microtasks.length) microtasks.shift()(); },
+    pendingMicrotasks() { return microtasks.length; },
     setFrameVisible(index, visible) { frameList[index].visible = visible; },
     frameAnimations(index) { return frameList[index].animations; },
+    frame(index) { return frameList[index]; },
+    mutate(records) { observers.find((observer) => observer.target === context.document.documentElement).callback(records); },
     fireEvent(type) { listeners.filter(([eventType]) => eventType === type).forEach(([, listener]) => listener({ type })); },
   };
 }
@@ -249,4 +254,16 @@ test("paused capture finishes only the current frame's finite entrance animation
   runtime.fireEvent("animationend");
   runtime.runMicrotasks();
   assert.equal(entrance.finishCalls, 1);
+});
+
+test("capture ignores progress bar RAF styles but keeps Kiosk visibility mutations", () => {
+  const runtime = loadScript({
+    historyValues: ["*22222222-2222-4222-8222-222222222222:current"],
+    frames: [{ images: ["data:image/jpeg;base64,current"] }],
+  });
+  runtime.runMicrotasks();
+  runtime.mutate([{ type: "attributes", attributeName: "style", target: runtime.progress }]);
+  assert.equal(runtime.pendingMicrotasks(), 0);
+  runtime.mutate([{ type: "attributes", attributeName: "style", target: runtime.frame(0) }]);
+  assert.equal(runtime.pendingMicrotasks(), 1);
 });
