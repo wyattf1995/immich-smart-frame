@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.os.SystemClock
+import android.util.Log
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -70,6 +71,8 @@ class FrameWebSurface(
         var recoveryAttempts = 0
         var retryPending = false
         var lifecycleSuspended = false
+        private var traceGeneration = 0L
+        private var traceEvents = 0
         private val pageLoadWatchdogState = FrameWebPageLoadWatchdogState()
         private var pageLoadWatchdog: Runnable? = null
 
@@ -106,6 +109,7 @@ class FrameWebSurface(
             session.progressDelegate = object : GeckoSession.ProgressDelegate {
                 override fun onPageStart(session: GeckoSession, url: String) {
                     renderedState.recordPageStart()
+                    trace("page_start")
                     listener.onPageRenderInvalidated(label)
                     armPageLoadWatchdog(session)
                     listener.onPageLoading(label, true)
@@ -114,11 +118,13 @@ class FrameWebSurface(
                 override fun onPageStop(session: GeckoSession, success: Boolean) {
                     listener.onPageLoading(label, false)
                     if (!success) {
+                        trace("page_stop_failure")
                         val pageLoad = disarmPageLoadWatchdog()
                         renderedState.recordFailure()
                         if (!pageLoad.timedOut) reportUnavailable(this@ManagedSession)
                     } else {
                         val newlyRendered = renderedState.recordPageStop(success = true)
+                        trace("page_stop_success")
                         maybeReportRendered(newlyRendered)
                     }
                 }
@@ -126,11 +132,17 @@ class FrameWebSurface(
             session.contentDelegate = object : GeckoSession.ContentDelegate {
                 override fun onFirstContentfulPaint(session: GeckoSession) {
                     val newlyRendered = renderedState.recordFirstContentfulPaint()
+                    trace("first_contentful_paint")
                     maybeReportRendered(newlyRendered)
+                }
+
+                override fun onFirstComposite(session: GeckoSession) {
+                    trace("first_composite")
                 }
 
                 override fun onPaintStatusReset(session: GeckoSession) {
                     val invalidatedRenderedContent = renderedState.recordPaintStatusReset()
+                    trace("paint_status_reset")
                     listener.onPageRenderInvalidated(label)
                     if (!invalidatedRenderedContent) return
                     if (
@@ -165,8 +177,10 @@ class FrameWebSurface(
         fun request(url: String): Boolean {
             require(urlPolicy.isAllowedTopLevelNavigation(configuredUrls, url)) { "Unsafe $label navigation" }
             lifecycleSuspended = false
+            traceGeneration += 1
             loadState.recordRequest(url)
             renderedState.recordRequest()
+            trace("request")
             try {
                 if (crashRecovery.reopenIfRequired { session.open(frameRuntime) }) {
                     val active = label != "Photos" ||
@@ -190,9 +204,11 @@ class FrameWebSurface(
 
         private fun maybeReportRendered(newlyRendered: Boolean) {
             if (!newlyRendered) return
+            trace("rendered")
             val pageLoad = disarmPageLoadWatchdog()
             if (pageLoad.timedOut) {
                 renderedState.recordFailure()
+                trace("rendered_after_timeout")
                 return
             }
             loadState.recordSuccess()
@@ -267,10 +283,12 @@ class FrameWebSurface(
             pageLoadWatchdog?.let(this@FrameWebSurface::removeCallbacks)
             pageLoadWatchdog = null
             val load = pageLoadWatchdogState.arm(elapsedRealtime())
+            trace("watchdog_armed")
             val watchdog = Runnable {
                 if (session !== observedSession) return@Runnable
                 val startedAtMillis = pageLoadWatchdogState.markTimedOut(load.generation) ?: return@Runnable
                 pageLoadWatchdog = null
+                trace("watchdog_timeout")
                 operationLogger.log(
                     FrameOperationLogEntry(
                         route = label,
@@ -290,6 +308,18 @@ class FrameWebSurface(
             pageLoadWatchdog?.let(this@FrameWebSurface::removeCallbacks)
             pageLoadWatchdog = null
             return pageLoadWatchdogState.disarm()
+        }
+
+        private fun trace(event: String) {
+            if (!Log.isLoggable(SURFACE_TRACE_TAG, Log.DEBUG) || traceEvents >= MAX_SURFACE_TRACE_EVENTS) return
+            traceEvents += 1
+            val current = this === displayedManagedSession()
+            val visible = displayedSurfaceVisible()
+            Log.d(
+                SURFACE_TRACE_TAG,
+                "event=$event mode=$label generation=$traceGeneration rendered=${renderedState.rendered} " +
+                    "current=$current visible=$visible lifecycle=$lifecycleSuspended retry=$retryPending",
+            )
         }
     }
 
@@ -635,6 +665,7 @@ class FrameWebSurface(
     }
 
     private fun reportUnavailable(managed: ManagedSession) {
+        managed.trace("unavailable")
         managed.renderedState.recordFailure()
         managed.loadState.recordFailure()
         if (managed.lifecycleSuspended) {
@@ -651,11 +682,16 @@ class FrameWebSurface(
         val retry = recoveryPolicy.nextRetry(managed.recoveryAttempts)
         managed.recoveryAttempts = retry.attempt
         managed.retryPending = true
+        managed.trace("recovery_scheduled")
         listener.onPageRecovery(managed.label, retry.attempt, retry.delayMillis)
         val callback = Runnable {
             retryCallbacks.remove(managed)
             managed.retryPending = false
-            if (managed.lifecycleSuspended || !displayedSurfaceVisible() || managed !== displayedManagedSession()) return@Runnable
+            if (managed.lifecycleSuspended || !displayedSurfaceVisible() || managed !== displayedManagedSession()) {
+                managed.trace("recovery_suppressed")
+                return@Runnable
+            }
+            managed.trace("recovery_fired")
             managed.request(url)
         }
         retryCallbacks[managed] = callback
@@ -695,7 +731,10 @@ class FrameWebSurface(
             managed === displayedManagedSession() &&
             displayedSurfaceVisible()
         ) {
+            managed.trace("report_rendered")
             listener.onPageRendered(managed.label)
+        } else {
+            managed.trace("report_suppressed")
         }
     }
 
@@ -737,5 +776,7 @@ class FrameWebSurface(
     private companion object {
         const val PHOTO_TAP_MILLIS = 36L
         const val PAGE_LOAD_WATCHDOG_MILLIS = 20_000L
+        const val SURFACE_TRACE_TAG = "FrameSurfaceTrace"
+        const val MAX_SURFACE_TRACE_EVENTS = 32
     }
 }
