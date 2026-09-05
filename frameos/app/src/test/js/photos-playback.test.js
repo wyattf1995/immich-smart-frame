@@ -6,7 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function loadScript({ connectNative, historyValues = [], frames, push = false } = {}) {
+function loadScript({ connectNative, historyValues = [], frames, push = false, documentReady = true } = {}) {
   const events = [];
   const nativeMessages = [];
   const diagnosticMessages = [];
@@ -110,6 +110,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
     document: {
       body,
       documentElement: {},
+      readyState: documentReady ? "complete" : "loading",
       addEventListener(...args) { listeners.push(args); },
       querySelector(selector) {
         if (selector === "#kiosk-history input[name='history']") return history[0] || null;
@@ -144,6 +145,10 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
     fireRawEvent(type, event) {
       listeners.filter(([eventType]) => eventType === type).forEach(([, listener]) => listener(event));
     },
+    fireDomReady() {
+      context.document.readyState = "interactive";
+      listeners.filter(([eventType]) => eventType === "DOMContentLoaded").forEach(([, listener]) => listener({ type: "DOMContentLoaded", target: context.document }));
+    },
     setHistory(values) {
       history.splice(0, history.length, ...values.map((value) => ({ value })));
     },
@@ -176,6 +181,113 @@ test("pause command hides Kiosk controls while preserving the pinned KeyP contra
   assert.equal(runtime.events.length, 2);
   assert.equal(runtime.body.classList.contains("polling-paused"), false);
   assert.equal(runtime.navigation.classList.contains("navigation-hidden"), true);
+});
+
+test("document-start listener fences initial HTMX before DOM ready and spends its paused nonce after settle", async () => {
+  const oldId = "11111111-1111-4111-8111-111111111111";
+  const currentId = "33333333-3333-4333-8333-333333333333";
+  const request = {};
+  const nonce = "44444444-4444-4444-8444-444444444444";
+  const runtime = loadScript({
+    documentReady: false,
+    historyValues: [`*${oldId}:old`],
+    frames: [{ images: ["data:image/jpeg;base64,old"] }],
+  });
+  runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: request }, runtime.kiosk);
+  runtime.setHistory([`${oldId}:old`, `*${currentId}:current`]);
+  runtime.setFrameImage(0, "data:image/jpeg;base64,current");
+  runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: request }, runtime.kiosk);
+  runtime.runMicrotasks();
+  await Promise.resolve();
+  assert.equal(runtime.nativeMessages.length, 0, "capture cannot run against a pre-body pair");
+  assert.equal(runtime.port.listener, undefined, "native port and DOM playback stay deferred");
+
+  runtime.fireDomReady();
+  runtime.port.listener({ type: "pause", paused: true, snapshotNonce: nonce });
+  runtime.runMicrotasks();
+  await Promise.resolve();
+  assert.deepEqual(
+    runtime.nativeMessages.map(({ assetId, snapshotNonce }) => ({ assetId, snapshotNonce })),
+    [{ assetId: currentId, snapshotNonce: nonce }],
+  );
+});
+
+test("document-start accepts an already complete initial pair only after DOM ready when no request was observed", async () => {
+  const currentId = "33333333-3333-4333-8333-333333333333";
+  const runtime = loadScript({
+    documentReady: false,
+    historyValues: [`*${currentId}:current`],
+    frames: [{ images: ["data:image/jpeg;base64,current"] }],
+  });
+  runtime.runMicrotasks();
+  await Promise.resolve();
+  assert.equal(runtime.nativeMessages.length, 0, "document-start never captures before the DOM readiness boundary");
+
+  runtime.fireDomReady();
+  runtime.runMicrotasks();
+  await Promise.resolve();
+  assert.deepEqual(runtime.nativeMessages.map(({ assetId }) => assetId), [currentId]);
+});
+
+test("document-start tracked requests remain fenced in either primary-settle order", async () => {
+  const oldId = "11111111-1111-4111-8111-111111111111";
+  const currentId = "33333333-3333-4333-8333-333333333333";
+  for (const order of [["first", "second"], ["second", "first"]]) {
+    const first = {};
+    const second = {};
+    const runtime = loadScript({
+      documentReady: false,
+      historyValues: [`*${oldId}:old`],
+      frames: [{ images: ["data:image/jpeg;base64,old"] }],
+    });
+    runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: first }, runtime.kiosk);
+    runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: second }, runtime.kiosk);
+    runtime.fireDomReady();
+    runtime.port.listener({ type: "pause", paused: true, snapshotNonce: "44444444-4444-4444-8444-444444444444" });
+    runtime.setHistory([`${oldId}:old`, `*${currentId}:current`]);
+    runtime.setFrameImage(0, "data:image/jpeg;base64,current");
+    const byName = { first, second };
+    runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: byName[order[0]] }, runtime.kiosk);
+    runtime.runMicrotasks();
+    await Promise.resolve();
+    assert.equal(runtime.nativeMessages.length, 0, `${order.join(" then ")} leaves the other request fenced`);
+    runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: byName[order[1]] }, runtime.kiosk);
+    runtime.runMicrotasks();
+    await Promise.resolve();
+    assert.deepEqual(runtime.nativeMessages.map(({ assetId }) => assetId), [currentId]);
+  }
+});
+
+test("document-start error and 204 leave initial paused capture closed until a later exact settle", async () => {
+  const oldId = "11111111-1111-4111-8111-111111111111";
+  const currentId = "33333333-3333-4333-8333-333333333333";
+  for (const [eventName, detail] of [
+    ["htmx:responseError", {}],
+    ["htmx:afterRequest", { xhr: { status: 204 } }],
+  ]) {
+    const failed = detail.xhr || {};
+    const recovered = {};
+    const runtime = loadScript({
+      documentReady: false,
+      historyValues: [`*${oldId}:old`],
+      frames: [{ images: ["data:image/jpeg;base64,old"] }],
+    });
+    runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: failed }, runtime.kiosk);
+    runtime.fireDomReady();
+    runtime.port.listener({ type: "pause", paused: true, snapshotNonce: "44444444-4444-4444-8444-444444444444" });
+    runtime.fireEvent(eventName, { target: runtime.kiosk, xhr: failed }, runtime.kiosk);
+    runtime.setHistory([`${oldId}:old`, `*${currentId}:current`]);
+    runtime.setFrameImage(0, "data:image/jpeg;base64,current");
+    runtime.runMicrotasks();
+    await Promise.resolve();
+    assert.equal(runtime.nativeMessages.length, 0, `${eventName} does not spend the initial paused nonce`);
+
+    runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: recovered }, runtime.kiosk);
+    runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: recovered }, runtime.kiosk);
+    runtime.runMicrotasks();
+    await Promise.resolve();
+    assert.deepEqual(runtime.nativeMessages.map(({ assetId }) => assetId), [currentId]);
+  }
 });
 
 test("diagnostics report only bounded scalar HTMX and paused-command state", () => {
@@ -245,8 +357,8 @@ test("failed native port connection backs off without exhausting and leaves capt
   assert.equal(attempts, 6);
   assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000]);
   assert.deepEqual(runtime.listeners.map(([type]) => type), [
-    "load", "transitionend", "animationend",
     "htmx:beforeSend", "htmx:afterSettle", "htmx:responseError", "htmx:sendError", "htmx:sendAbort", "htmx:timeout", "htmx:afterRequest",
+    "load", "transitionend", "animationend",
   ]);
   assert.equal(runtime.observers.length, 2);
 });
