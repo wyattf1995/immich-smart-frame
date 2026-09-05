@@ -15,9 +15,9 @@ class MorningSceneTest < Minitest::Test
     refute PACKAGE.fetch('input_select').fetch('frame_morning_scene_choice').key?('initial')
     assert_equal 'single', scene.fetch('mode')
     assert_equal({ 'trigger' => 'time', 'at' => 'input_datetime.frame_morning_scene_time' }, scene.fetch('triggers').first)
-    assert_includes scene.fetch('conditions')[2].fetch('value_template'), 'photosPaused'
-    assert_includes scene.fetch('conditions')[2].fetch('value_template'), 'offline'
     actions = YAML.dump(scene.fetch('actions'))
+    assert_includes actions, 'photosPaused'
+    assert_includes actions, 'offline'
     assert_includes actions, '00:05:00'
     assert_includes actions, '00:02:30'
     refute_includes actions, 'photo_hold'
