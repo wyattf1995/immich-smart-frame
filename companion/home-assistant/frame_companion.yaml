@@ -98,7 +98,7 @@ template:
         state: >-
           {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
           {% set value = device.get('status', {}).get('lastError') %}
-          {{ value if value is string and value else 'none' }}
+          {{ value if value is string and value else ('none' if value is string else 'unknown') }}
       - name: Frame Reserve Count
         state: >-
           {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
