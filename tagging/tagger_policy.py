@@ -181,7 +181,8 @@ def main():
     if APPLY:
         ensure_tags()
     if IDS_FILE:
-        ids = [line.strip() for line in open(IDS_FILE) if line.strip()]
+        with open(IDS_FILE) as ids_file:
+            ids = [line.strip() for line in ids_file if line.strip()]
         log(f"ID mode over {len(ids)} assets"); failed = 0
         for i, aid in enumerate(ids, 1):
             try:
