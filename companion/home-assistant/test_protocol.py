@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util, json, tempfile, unittest
+from datetime import datetime, timezone
 from pathlib import Path
 import yaml
 from jinja2 import Environment
@@ -32,16 +33,23 @@ class ProtocolTest(unittest.TestCase):
  def test_state_templates_handle_startup_and_populated_values(self):
   sensors = {item['name']: item for item in self.data['template'][0]['sensor']}
   def render(name, devices):
-   return self.env.from_string(sensors[name]['state']).render(state_attr=lambda *_: devices).strip()
+   return self.env.from_string(sensors[name]['state']).render(
+    state_attr=lambda *_: devices,
+    now=lambda: datetime.fromtimestamp(200, tz=timezone.utc),
+    as_timestamp=lambda value, default=0: value.timestamp() if hasattr(value, 'timestamp') else default,
+   ).strip()
   for devices in (None, []):
    for name in sensors:
     self.assertEqual(render(name, devices), 'unknown')
   missing = [{'id':'main', 'status':{}, 'commands':[]}]
   for name in sensors:
    self.assertEqual(render(name, missing), 'unknown')
-  populated = [{'id':'main', 'status':{'lastPhotoAt':100000,'lastWeatherAt':101000,'offlineAssets':0,'appVersion':'0.3.0'}, 'commands':[{'status':'applied'}]}]
+  populated = [{'id':'main', 'status':{'lastPhotoAt':100000,'lastWeatherAt':101000,'lastPaintAt':102000,'recoveryCount':15,'lastError':'last failure','offlineAssets':0,'appVersion':'0.3.0'}, 'commands':[{'status':'applied'}]}]
   self.assertEqual(render('Frame Last Photo', populated), 'ISO:100')
   self.assertEqual(render('Frame Last Weather', populated), 'ISO:101')
+  self.assertEqual(render('Frame Last Visible Render', populated), 'ISO:102')
+  self.assertEqual(render('Frame Recovery Count', populated), '15')
+  self.assertEqual(render('Frame Last Failure', populated), 'last failure')
   self.assertEqual(render('Frame Reserve Count', populated), '0')
   self.assertEqual(render('Frame Version', populated), '0.3.0')
   self.assertEqual(render('Frame Command Acknowledgement', populated), 'applied')
