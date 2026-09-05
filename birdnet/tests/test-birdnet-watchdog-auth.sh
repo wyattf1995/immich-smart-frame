@@ -28,7 +28,7 @@ EOF
 chmod +x "$tmp/bin"/*
 printf '%s' '{"clientid":"birdnet-client","password":"not-in-argv"}' >"$tmp/auth.json"
 chmod 600 "$tmp/auth.json"
-CURL_LOG="$tmp/curl.log" PATH="$tmp/bin:$PATH" BIRDNET_BIND_IP=127.0.0.1 BIRDNET_WATCHDOG_AUTH_FILE="$tmp/auth.json" bash "$watchdog" >"$tmp/out"
+CURL_LOG="$tmp/curl.log" PATH="$tmp/bin:$PATH" BIRDNET_BIND_IP=127.0.0.1 BIRDNET_WATCHDOG_AUTH_FILE="$tmp/auth.json" bash "$watchdog" >"$tmp/out" 2>"$tmp/err" || { cat "$tmp/err" >&2; exit 1; }
 grep -Fq 'audio health fresh' "$tmp/out"
 grep -Fq '/api/v2/auth/login' "$tmp/curl.log"
 grep -Fq '/api/v2/auth/callback?' "$tmp/curl.log"
