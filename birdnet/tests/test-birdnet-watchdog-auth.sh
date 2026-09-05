@@ -21,9 +21,9 @@ case "$* $input" in
     ;;
   *'/api/v2/auth/callback?'*)
     if [[ "${SESSION_COOKIE_ORDER:-clear-first}" == "clear-last" ]]; then
-      printf 'Set-Cookie: _gothic_session=opaque|signature; Path=/; HttpOnly\r\nSet-Cookie: _gothic_session=; Max-Age=0; Path=/\r\n\r\n'
+      printf 'Set-Cookie: _gothic_session=opaque|signature; Path=/; HttpOnly\r\nSet-Cookie: _gothic_session=cleared; Max-Age=0; Path=/\r\n\r\n'
     else
-      printf 'Set-Cookie: csrf=not-the-session; Path=/\r\nSet-Cookie: _gothic_session=; Max-Age=0; Path=/\r\nSet-Cookie: _gothic_session=opaque|signature; Path=/; HttpOnly\r\n\r\n'
+      printf 'Set-Cookie: csrf=not-the-session; Path=/\r\nSet-Cookie: _gothic_session=cleared; Max-Age=0; Path=/\r\nSet-Cookie: _gothic_session=opaque|signature; Path=/; HttpOnly\r\n\r\n'
     fi
     ;;
   *'/api/v2/health/audio'*)
