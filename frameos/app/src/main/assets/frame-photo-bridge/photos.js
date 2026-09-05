@@ -16,6 +16,7 @@ let desiredPlaybackPaused = null;
 let playbackPort = null;
 let portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
 let portRetryTimer = 0;
+let htmxKioskRequests = 0;
 
 function isVisible(element) {
   for (let current = element; current && current !== document.documentElement; current = current.parentElement) {
@@ -108,9 +109,24 @@ function retryRejectedCapture(fingerprint) {
 }
 
 function scheduleCapture() {
-  if (queued) return;
+  if (queued || htmxKioskRequests > 0) return;
   queued = true;
   queueMicrotask(capture);
+}
+
+function isKioskHtmxEvent(event) {
+  const target = event.detail && event.detail.target;
+  return target instanceof HTMLElement && target.id === "kiosk";
+}
+
+function beginKioskHtmxRequest(event) {
+  if (isKioskHtmxEvent(event)) htmxKioskRequests += 1;
+}
+
+function finishKioskHtmxRequest(event) {
+  if (!isKioskHtmxEvent(event) || htmxKioskRequests === 0) return;
+  htmxKioskRequests -= 1;
+  if (htmxKioskRequests === 0) scheduleCapture();
 }
 
 function isCaptureMutation(mutation) {
@@ -199,6 +215,11 @@ new MutationObserver(() => {
 document.addEventListener("load", scheduleCapture, true);
 document.addEventListener("transitionend", scheduleCapture, true);
 document.addEventListener("animationend", scheduleCapture, true);
+document.addEventListener("htmx:beforeRequest", beginKioskHtmxRequest, true);
+document.addEventListener("htmx:afterSettle", finishKioskHtmxRequest, true);
+document.addEventListener("htmx:responseError", finishKioskHtmxRequest, true);
+document.addEventListener("htmx:sendError", finishKioskHtmxRequest, true);
+document.addEventListener("htmx:timeout", finishKioskHtmxRequest, true);
 new MutationObserver(scheduleCaptureMutations).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
 scheduleCapture();
 connectPlaybackPort();
