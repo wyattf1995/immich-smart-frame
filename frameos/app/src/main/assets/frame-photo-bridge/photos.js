@@ -6,6 +6,7 @@ const MAX_REJECTED_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
 const INITIAL_PORT_RETRY_DELAY_MS = 1000;
 const MAX_PORT_RETRY_DELAY_MS = 60000;
+const MAX_SETTLING_KIOSK_REQUESTS = 4;
 let lastFingerprint = "";
 let inFlightFingerprint = "";
 let rejectedFingerprint = "";
@@ -16,7 +17,7 @@ let desiredPlaybackPaused = null;
 let playbackPort = null;
 let portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
 let portRetryTimer = 0;
-let activeKioskRequest = null;
+const settlingKioskRequests = new Set();
 let kioskCaptureReady = true;
 
 function isVisible(element) {
@@ -54,7 +55,7 @@ function settlePausedFrame(frame) {
 
 function capture() {
   queued = false;
-  if (activeKioskRequest || !kioskCaptureReady) return;
+  if (settlingKioskRequests.size > 0 || !kioskCaptureReady) return;
   const histories = Array.from(document.querySelectorAll("#kiosk-history input[name='history']"))
     .filter((history) => typeof history.value === "string" && history.value.startsWith("*"));
   if (histories.length !== 1) return;
@@ -111,7 +112,7 @@ function retryRejectedCapture(fingerprint) {
 }
 
 function scheduleCapture() {
-  if (queued || activeKioskRequest || !kioskCaptureReady) return;
+  if (queued || settlingKioskRequests.size > 0 || !kioskCaptureReady) return;
   queued = true;
   queueMicrotask(capture);
 }
@@ -124,25 +125,31 @@ function kioskHtmxRequest(event) {
 function beginKioskHtmxRequest(event) {
   const request = kioskHtmxRequest(event);
   if (!request) return;
-  activeKioskRequest = request;
+  // Kiosk releases its request lock after swap, before settle; retain only a bounded tail of settle-only responses.
+  if (settlingKioskRequests.size >= MAX_SETTLING_KIOSK_REQUESTS) settlingKioskRequests.clear();
+  settlingKioskRequests.add(request);
   kioskCaptureReady = false;
 }
 
 function settleKioskHtmxRequest(event) {
   const request = kioskHtmxRequest(event);
   // HTMX settles OOB elements too; only the primary #kiosk target completes its response transaction.
-  if (!request || request !== activeKioskRequest || event.target !== event.detail.target) return;
-  activeKioskRequest = null;
+  if (!request || event.target !== event.detail.target || !settlingKioskRequests.delete(request)) return;
+  if (settlingKioskRequests.size > 0) return;
   kioskCaptureReady = true;
   scheduleCapture();
 }
 
 function failKioskHtmxRequest(event) {
   const request = kioskHtmxRequest(event);
-  if (!request || request !== activeKioskRequest) return;
-  activeKioskRequest = null;
+  if (!request || !settlingKioskRequests.delete(request)) return;
+  if (settlingKioskRequests.size > 0) return;
   // Wait for another successful Kiosk response; a failed partial response has no trustworthy pair.
   kioskCaptureReady = false;
+}
+
+function skipNoSwapKioskRequest(event) {
+  if (event.detail && event.detail.xhr && event.detail.xhr.status === 204) failKioskHtmxRequest(event);
 }
 
 function isCaptureMutation(mutation) {
@@ -237,6 +244,7 @@ document.addEventListener("htmx:responseError", failKioskHtmxRequest, true);
 document.addEventListener("htmx:sendError", failKioskHtmxRequest, true);
 document.addEventListener("htmx:sendAbort", failKioskHtmxRequest, true);
 document.addEventListener("htmx:timeout", failKioskHtmxRequest, true);
+document.addEventListener("htmx:afterRequest", skipNoSwapKioskRequest, true);
 new MutationObserver(scheduleCaptureMutations).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
 scheduleCapture();
 connectPlaybackPort();
