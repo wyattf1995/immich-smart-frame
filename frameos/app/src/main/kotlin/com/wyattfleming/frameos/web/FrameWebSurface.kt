@@ -183,8 +183,13 @@ class FrameWebSurface(
             require(urlPolicy.isAllowedTopLevelNavigation(configuredUrls, url)) { "Unsafe $label navigation" }
             lifecycleSuspended = false
             traceGeneration += 1
+            val fragmentOnly = loadState.isExactFragmentOnlyRequest(url)
             loadState.recordRequest(url)
-            renderedState.recordRequest()
+            if (fragmentOnly) {
+                renderedState.recordFragmentOnlyRequest()
+            } else {
+                renderedState.recordRequest()
+            }
             trace("request")
             try {
                 if (crashRecovery.reopenIfRequired { session.open(frameRuntime) }) {
