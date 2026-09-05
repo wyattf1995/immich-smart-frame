@@ -190,6 +190,7 @@ class PublisherTests(unittest.TestCase):
 
     def test_webhook_uses_no_authorization_header_and_refuses_redirects(self):
         target_requests = []
+        webhook_headers = []
 
         class Target(BaseHTTPRequestHandler):
             def do_POST(self):
@@ -205,6 +206,7 @@ class PublisherTests(unittest.TestCase):
 
         class Redirect(BaseHTTPRequestHandler):
             def do_POST(self):
+                webhook_headers.append(dict(self.headers))
                 self.send_response(302)
                 self.send_header("Location", f"http://127.0.0.1:{target.server_port}/other-origin")
                 self.end_headers()
@@ -228,6 +230,7 @@ class PublisherTests(unittest.TestCase):
             redirect.shutdown(); target.shutdown()
             redirect.server_close(); target.server_close()
         self.assertEqual(target_requests, [])
+        self.assertNotIn("Authorization", webhook_headers[0])
 
     def test_stdin_evidence_uses_the_same_conservative_parser(self):
         payload = publisher.payload_from_evidence({
