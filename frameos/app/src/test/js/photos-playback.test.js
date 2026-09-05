@@ -15,12 +15,20 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
   const observers = [];
   const listeners = [];
   const classes = new Set();
+  const navigationClasses = new Set(["navigation-hidden"]);
   const next = { clicks: 0, click() { this.clicks += 1; } };
   const previous = { clicks: 0, click() { this.clicks += 1; } };
   class HTMLElement {}
   class HTMLImageElement extends HTMLElement {}
   Object.setPrototypeOf(next, HTMLElement.prototype);
   Object.setPrototypeOf(previous, HTMLElement.prototype);
+  const navigation = Object.assign(new HTMLElement(), {
+    classList: {
+      add(name) { navigationClasses.add(name); },
+      remove(name) { navigationClasses.delete(name); },
+      contains(name) { return navigationClasses.has(name); },
+    },
+  });
   const history = historyValues.map((value) => ({ value }));
   const makeElement = (visible = true) => Object.assign(new HTMLElement(), {
     visible,
@@ -75,7 +83,13 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
     dispatchEvent(event) {
       events.push(event);
       if (event.type === "keydown" && event.code === "KeyP") {
-        if (event.shiftKey) classes.delete("polling-paused"); else classes.add("polling-paused");
+        if (event.shiftKey) {
+          classes.delete("polling-paused");
+          navigation.classList.add("navigation-hidden");
+        } else {
+          classes.add("polling-paused");
+          navigation.classList.remove("navigation-hidden");
+        }
       }
     },
   };
@@ -100,6 +114,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
       querySelector(selector) {
         if (selector === "#kiosk-history input[name='history']") return history[0] || null;
         if (selector === "#kiosk-container") return kioskContainer;
+        if (selector === ".navigation") return navigation;
         if (selector === ".navigation--next-asset") return next;
         if (selector === ".navigation--prev-asset") return previous;
         return null;
@@ -116,7 +131,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../../main/assets/frame-photo-bridge/photos.js"), "utf8"), context);
   return {
-    body, events, next, previous, port, timers, observers, listeners, classes, nativeMessages, diagnosticMessages, progress, kiosk,
+    body, events, next, previous, navigation, port, timers, observers, listeners, classes, nativeMessages, diagnosticMessages, progress, kiosk,
     runMicrotasks() { while (microtasks.length) microtasks.shift()(); },
     pendingMicrotasks() { return microtasks.length; },
     setFrameVisible(index, visible) { frameList[index].visible = visible; },
@@ -140,7 +155,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
   };
 }
 
-test("pause command targets body with the pinned KeyP contract", () => {
+test("pause command hides Kiosk controls while preserving the pinned KeyP contract", () => {
   const runtime = loadScript();
   runtime.port.listener({ type: "pause", paused: true });
   assert.equal(runtime.events.length, 1);
@@ -150,6 +165,17 @@ test("pause command targets body with the pinned KeyP contract", () => {
   assert.equal(runtime.events[0].shiftKey, false);
   assert.equal(runtime.events[0].bubbles, true);
   assert.equal(runtime.body.classList.contains("polling-paused"), true);
+  assert.equal(runtime.navigation.classList.contains("navigation-hidden"), true);
+
+  runtime.navigation.classList.remove("navigation-hidden");
+  runtime.port.listener({ type: "pause", paused: true });
+  assert.equal(runtime.events.length, 1, "idempotent pause does not dispatch another KeyP");
+  assert.equal(runtime.navigation.classList.contains("navigation-hidden"), true, "idempotent pause re-hides a visible Kiosk toolbar");
+
+  runtime.port.listener({ type: "pause", paused: false });
+  assert.equal(runtime.events.length, 2);
+  assert.equal(runtime.body.classList.contains("polling-paused"), false);
+  assert.equal(runtime.navigation.classList.contains("navigation-hidden"), true);
 });
 
 test("diagnostics report only bounded scalar HTMX and paused-command state", () => {
