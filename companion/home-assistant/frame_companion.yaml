@@ -13,6 +13,24 @@ rest:
           {{ 'online' if device.online | default(false) else 'offline' }}
         json_attributes: [devices, profiles, serverTime]
 
+input_boolean:
+  frame_morning_scene_enabled:
+    name: Frame morning scene enabled
+    icon: mdi:weather-sunset-up
+    initial: false
+
+input_datetime:
+  frame_morning_scene_time:
+    has_date: false
+    has_time: true
+    initial: "07:00:00"
+
+input_select:
+  frame_morning_scene_choice:
+    name: Frame morning scene
+    options: [weather, weather_then_calendar]
+    initial: weather
+
 template:
   - sensor:
       - name: Frame Last Photo
@@ -97,3 +115,65 @@ script:
   frame_event_reviewed_bird:
     alias: Frame reviewed bird event
     sequence: [{action: rest_command.postframeevent, data: {payload: {deviceId: main, event: {type: reviewed_bird, text: "Reviewed bird", expiresInSeconds: 120}}}}]
+
+automation:
+  - id: frame_morning_scene
+    alias: Frame morning scene
+    description: >-
+      Opt-in five-minute Weather scene, optionally followed by Calendar. It only
+      runs from an online, active Photos view and stops without forcing a return
+      when the reported view changes.
+    mode: single
+    triggers:
+      - trigger: time
+        at: input_datetime.frame_morning_scene_time
+    variables:
+      frame_device: >-
+        {{ (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) }}
+    conditions:
+      - condition: state
+        entity_id: input_boolean.frame_morning_scene_enabled
+        state: "on"
+      - condition: state
+        entity_id: sensor.frame_companion
+        state: "online"
+      - condition: template
+        value_template: >-
+          {{ frame_device.get('status', {}).get('mode') == 'photos'
+             and not frame_device.get('status', {}).get('photosPaused', false)
+             and not frame_device.get('status', {}).get('offline', false) }}
+    actions:
+      - action: rest_command.postframecommand
+        data: {payload: {deviceId: main, command: {type: show_mode, mode: weather}}}
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: input_select.frame_morning_scene_choice
+                state: weather
+            sequence:
+              - delay: "00:05:00"
+              - condition: template
+                value_template: >-
+                  {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+                  {{ is_state('input_boolean.frame_morning_scene_enabled', 'on') and device.get('status', {}).get('mode') == 'weather' }}
+              - action: rest_command.postframecommand
+                data: {payload: {deviceId: main, command: {type: show_mode, mode: photos}}}
+          - conditions:
+              - condition: state
+                entity_id: input_select.frame_morning_scene_choice
+                state: weather_then_calendar
+            sequence:
+              - delay: "00:02:30"
+              - condition: template
+                value_template: >-
+                  {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+                  {{ is_state('input_boolean.frame_morning_scene_enabled', 'on') and device.get('status', {}).get('mode') == 'weather' }}
+              - action: rest_command.postframecommand
+                data: {payload: {deviceId: main, command: {type: show_mode, mode: calendar}}}
+              - delay: "00:02:30"
+              - condition: template
+                value_template: >-
+                  {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+                  {{ is_state('input_boolean.frame_morning_scene_enabled', 'on') and device.get('status', {}).get('mode') == 'calendar' }}
+              - action: rest_command.postframecommand
+                data: {payload: {deviceId: main, command: {type: show_mode, mode: photos}}}

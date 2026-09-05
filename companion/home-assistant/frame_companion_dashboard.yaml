@@ -11,6 +11,12 @@ views:
           - sensor.frame_reserve_count
           - sensor.frame_version
           - sensor.frame_command_acknowledgement
+      - type: entities
+        title: Morning scene
+        entities:
+          - input_boolean.frame_morning_scene_enabled
+          - input_datetime.frame_morning_scene_time
+          - input_select.frame_morning_scene_choice
       - type: horizontal-stack
         cards:
           - type: button
