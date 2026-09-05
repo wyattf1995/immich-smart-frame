@@ -70,3 +70,25 @@ class RunnerSchemaAndOrderingTests(unittest.TestCase):
         self.assertEqual('screenshot', recovered['image_type'])
         with self.assertRaises(Exception):
             runner.parse_vlm('{"tags":["screen"],"caption":"A screen"')
+
+class RunnerExitStatusTests(unittest.TestCase):
+    def test_id_mode_reports_failure_when_classification_fails(self):
+        from tempfile import NamedTemporaryFile
+        old = (runner.APPLY, runner.DRY, runner.IDS_FILE)
+        with NamedTemporaryFile(mode='w', encoding='utf-8') as ids:
+            ids.write('asset-id\n'); ids.flush()
+            try:
+                runner.APPLY, runner.DRY, runner.IDS_FILE = True, False, ids.name
+                asset = {'originalFileName': 'IMG_0001.jpg', 'originalPath': '', 'tags': [], 'exifInfo': {}}
+                with patch.object(runner, 'ensure_tags'), patch.object(runner, 'im', return_value=asset), patch.object(runner, 'record_success_after_process', return_value=False):
+                    self.assertEqual(1, runner.main())
+            finally:
+                runner.APPLY, runner.DRY, runner.IDS_FILE = old
+
+    def test_subprocess_invalid_mode_exits_nonzero_without_api_work(self):
+        import subprocess
+        env = dict(os.environ, IMMICH_KEY='test-only')
+        result = subprocess.run([sys.executable, str(Path(runner.__file__))], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        self.assertEqual(2, result.returncode)
+        self.assertIn('explicit --apply is required', result.stdout)
+        self.assertNotIn('http', result.stdout.lower() + result.stderr.lower())
