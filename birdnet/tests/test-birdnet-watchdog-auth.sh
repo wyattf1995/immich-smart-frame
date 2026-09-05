@@ -75,7 +75,7 @@ assert_rejected_login_response() {
 assert_rejected_login_response '{"success":true,"redirectUrl":"https://invalid.example/api/v2/auth/callback?code=one"}' off-origin
 assert_rejected_login_response '{"success":true,"redirectUrl":"/api/v2/auth/callback?code=one\\"evil"}' quote
 assert_rejected_login_response '{"success":true,"redirectUrl":"/api/v2/auth/callback?code=one\\\\evil"}' backslash
-assert_rejected_login_response '{"success":true,"redirectUrl":"/api/v2/auth/callback?code=one\\r\\nevil"}' crlf
+assert_rejected_login_response '{"success":true,"redirectUrl":"/api/v2/auth/callback?code=one\r\nevil"}' crlf
 long=$(printf '%*s' 2049 ''); long=${long// /a}
 assert_rejected_login_response "$(printf '{\"success\":true,\"redirectUrl\":\"/api/v2/auth/callback?code=%s\"}' "$long")" oversized
 assert_rejected_login_response 'not-json' bad-json
