@@ -20,7 +20,11 @@ case "$* $input" in
     fi
     ;;
   *'/api/v2/auth/callback?'*)
-    printf 'Set-Cookie: csrf=not-the-session; Path=/\r\nSet-Cookie: _gothic_session=opaque|signature; Path=/; HttpOnly\r\n\r\n'
+    if [[ "${SESSION_COOKIE_ORDER:-clear-first}" == "clear-last" ]]; then
+      printf 'Set-Cookie: _gothic_session=opaque|signature; Path=/; HttpOnly\r\nSet-Cookie: _gothic_session=cleared; Max-Age=0; Path=/\r\n\r\n'
+    else
+      printf 'Set-Cookie: csrf=not-the-session; Path=/\r\nSet-Cookie: _gothic_session=cleared; Max-Age=0; Path=/\r\nSet-Cookie: _gothic_session=opaque|signature; Path=/; HttpOnly\r\n\r\n'
+    fi
     ;;
   *'/api/v2/health/audio'*)
     [[ "$input" == *'Cookie: _gothic_session=opaque|signature'* ]] || exit 1
@@ -58,6 +62,13 @@ grep -Fq '/api/v2/auth/login' "$tmp/curl.log"
 ! grep -Fq 'not-in-argv' "$tmp/curl.log"
 ! grep -Fq 'code=one' "$tmp/curl.log"
 ! grep -Fq 'not-in-argv' "$tmp/jq.log"
+
+: >"$tmp/curl.log"; : >"$tmp/jq.log"
+if SESSION_COOKIE_ORDER=clear-last run_watchdog >"$tmp/clear-last.out" 2>"$tmp/clear-last.err"; then
+  cat "$tmp/clear-last.out" "$tmp/clear-last.err" >&2
+  exit 1
+fi
+[[ $(wc -l <"$tmp/curl.log") -eq 2 ]]
 
 assert_rejected_login_response() {
   local response="$1" label="$2"

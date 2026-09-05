@@ -126,9 +126,10 @@ require_command docker || true
 require_command df || true
 
 authenticated_health() {
-  local login callback headers cookie mode owner current_uid callback_pattern cookie_pattern
+  local login callback headers session_header cookie mode owner current_uid callback_pattern cookie_pattern max_age_pattern
   callback_pattern='^/api/v2/auth/callback\?[A-Za-z0-9._~%=&/-]+$'
   cookie_pattern='^_gothic_session=[A-Za-z0-9._~%+=:@|/-]+$'
+  max_age_pattern='(^|;[[:space:]]*)[Mm]ax-[Aa]ge[[:space:]]*=[[:space:]]*(-?[0-9]+)'
   [[ -r "$AUTH_FILE" ]] || return 1
   mode=$(stat -c '%a' "$AUTH_FILE" 2>/dev/null || stat -f '%Lp' "$AUTH_FILE" 2>/dev/null) || return 1
   [[ "$mode" == "600" ]] || return 1
@@ -149,7 +150,14 @@ authenticated_health() {
   # escapes, CRLF, and alternate origins.
   headers=$(printf 'url = "http://%s:%s%s"\n' "$BIRDNET_BIND_IP" "$WEB_PORT" "$callback" | curl --config - --fail --silent --show-error --connect-timeout 3 --max-time 8 --max-filesize "$AUTH_CALLBACK_HEADER_MAX_BYTES" -D - -o /dev/null) || return 1
   [[ ${#headers} -le "$AUTH_CALLBACK_HEADER_MAX_BYTES" ]] || return 1
-  cookie=$(printf '%s\n' "$headers" | awk 'tolower($0) ~ /^set-cookie:[[:space:]]*_gothic_session=/ { sub(/^[^:]*:[[:space:]]*/, ""); sub(/;.*/, ""); print; exit }')
+  # Browser cookie processing is ordered: a later Set-Cookie for the same name
+  # replaces an earlier one. Keep the last session header and reject its expiry.
+  session_header=$(printf '%s\n' "$headers" | awk 'tolower($0) ~ /^set-cookie:[[:space:]]*_gothic_session=/ { header = $0 } END { print header }')
+  [[ -n "$session_header" ]] || return 1
+  if [[ "$session_header" =~ $max_age_pattern ]] && (( ${BASH_REMATCH[2]} <= 0 )); then
+    return 1
+  fi
+  cookie=$(printf '%s\n' "$session_header" | awk '{ sub(/^[^:]*:[[:space:]]*/, ""); sub(/;.*/, ""); print }')
   [[ ${#cookie} -le 4096 && "$cookie" =~ $cookie_pattern ]] || return 1
   # curl --config sends /api/v2/health/audio without exposing the session
   # credential in argv or persistent jars.
