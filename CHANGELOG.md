@@ -9,6 +9,13 @@ changes will still be called out explicitly.
 
 ## [Unreleased]
 
+### Fixed
+
+- FrameOS pause and resume commands keep the web slideshow toolbar hidden,
+  including repeated pause commands, while preserving native Next/Previous
+  actions and paused-photo capture. FrameOS 0.2.7 packages extension 1.0.3 so
+  installed GeckoView sessions receive the updated bridge.
+
 ### Removed
 
 - Removed the inert GitHub Actions validation and release workflows and all

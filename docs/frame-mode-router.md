@@ -197,6 +197,12 @@ mode without swiping an unrelated foreground surface.
 
 ## Contextual no-touch controls
 
+FrameOS playback commands keep the web slideshow toolbar hidden, including
+while Photos is paused. The navigation elements remain in the document because
+the native Next/Previous bridge invokes them. Do not enable Kiosk
+`disable_navigation` to hide the toolbar: that removes the elements needed for
+manual stepping. The standalone browser slideshow retains its normal controls.
+
 Mode gestures and within-view controls remain separate:
 
 | Physical input | FrameOS action |
