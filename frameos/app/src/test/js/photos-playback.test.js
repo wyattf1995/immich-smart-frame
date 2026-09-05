@@ -363,3 +363,30 @@ test("failed Kiosk HTMX does not release capture until a later successful transa
     [{ type: "loaded-photo", assetId: finalId, image: "final" }],
   );
 });
+
+test("overlapping Kiosk settles retain capture until every response settles", () => {
+  const firstId = "11111111-1111-4111-8111-111111111111";
+  const secondId = "22222222-2222-4222-8222-222222222222";
+  const thirdId = "33333333-3333-4333-8333-333333333333";
+  const runtime = loadScript({ historyValues: [`*${firstId}:first`], frames: [{ images: ["data:image/jpeg;base64,first"] }] });
+  const requestA = {};
+  const requestB = {};
+  runtime.runMicrotasks();
+  runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: requestA });
+  runtime.setHistory([`${firstId}:first`, `*${secondId}:second`]);
+  runtime.setFrameImage(0, "data:image/jpeg;base64,second");
+  runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
+  runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: requestB });
+  runtime.setHistory([`${secondId}:second`, `*${thirdId}:third`]);
+  runtime.setFrameImage(0, "data:image/jpeg;base64,third");
+  runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
+  runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: requestB }, runtime.kiosk);
+  runtime.runMicrotasks();
+  assert.equal(runtime.nativeMessages.length, 1);
+  runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: requestA }, runtime.kiosk);
+  runtime.runMicrotasks();
+  assert.deepEqual(
+    runtime.nativeMessages.slice(-1).map(({ assetId, image }) => ({ assetId, image })),
+    [{ assetId: thirdId, image: "third" }],
+  );
+});
