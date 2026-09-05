@@ -284,7 +284,7 @@ test("paused capture finishes only the current frame's finite entrance animation
       animations: [{ target: "frame" }, { target: "descendant" }],
     }],
   });
-  runtime.port.listener({ type: "pause", paused: true });
+  runtime.port.listener({ type: "pause", paused: true, snapshotNonce: "11111111-1111-4111-8111-111111111111" });
   runtime.runMicrotasks();
   const [entrance, descendant] = runtime.frameAnimations(0);
   assert.equal(entrance.finishCalls, 1);
