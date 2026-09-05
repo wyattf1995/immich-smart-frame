@@ -3,6 +3,7 @@ import unittest
 from tagging.policy import (
     ClassificationError,
     filename_skip_tag,
+    _SCREENSHOT_NAME,
     plan_asset_update,
     require_vlm_classification,
 )
@@ -23,6 +24,7 @@ class FilenamePolicyTests(unittest.TestCase):
         self.assertIsNone(filename_skip_tag('Screenshot reference.jpg'))
         self.assertIsNone(filename_skip_tag('family-screenshotphoto-inside.jpg'))
         self.assertIsNone(filename_skip_tag('vacation_screenshot_reference.jpg'))
+        self.assertNotIn('?=', _SCREENSHOT_NAME.pattern)
 
 
 class VlmPolicyTests(unittest.TestCase):
