@@ -31,6 +31,11 @@ class MainActivityCompanionContractTest {
         assertTrue(source.contains("private val resumePhotosAfterHold"))
     }
 
+    @Test fun `paused remote state accepts only a bridge authorized snapshot`() {
+        assertTrue(source.contains("photo.pauseSnapshotNonce == null"))
+        assertTrue(source.contains("photoBridge.setCaptureEnabled(true, true)"))
+    }
+
     @Test fun `manual photo step does not complete on its previously observed asset`() {
         assertFalse(isNewManualPhotoStepAsset("11111111-1111-4111-8111-111111111111", "11111111-1111-4111-8111-111111111111"))
         assertTrue(isNewManualPhotoStepAsset("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"))

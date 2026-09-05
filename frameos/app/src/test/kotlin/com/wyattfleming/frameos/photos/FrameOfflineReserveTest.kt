@@ -122,6 +122,104 @@ class FrameOfflineReserveTest {
     }
 
     @Test
+    fun `paused bridge accepts exactly one host-issued snapshot and revokes it on resume`() {
+        val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-photo-paused-snapshot").toFile(), FixedDecoder())
+        val reports = mutableListOf<FramePhotoBridge.PhotoObserved>()
+        val bridge = FramePhotoBridge(reserve, uiPost = { it() }, isMainThread = { true }, onPhotoObserved = reports::add)
+        val session = Any()
+        val url = "https://photos.example/kiosk"
+        val sender = FramePhotoBridge.Sender(session, url, true, true)
+        val port = FakePlaybackPort(sender)
+        assertTrue(bridge.configure(session, url, "family"))
+        assertTrue(bridge.connectPlaybackPort(port))
+        bridge.setCaptureEnabled(true, true)
+        assertTrue(bridge.setPlaybackPaused(true))
+        val nonce = port.commands.last().getString("snapshotNonce")
+        val snapshot = loadedPhotoMessage().put("snapshotNonce", nonce)
+
+        assertFalse(bridge.accept(loadedPhotoMessage(), sender))
+        assertTrue(bridge.accept(snapshot, sender))
+        assertTrue(bridge.isCurrentObservation(reports.single()))
+        assertFalse(bridge.accept(snapshot, sender))
+
+        bridge.setPlaybackPaused(false)
+        bridge.setCaptureEnabled(true, false)
+        assertFalse(bridge.isCurrentObservation(reports.single()))
+        assertFalse(bridge.accept(snapshot, sender))
+    }
+
+    @Test
+    fun `paused step gets a fresh one-shot snapshot nonce`() {
+        val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-photo-paused-step-snapshot").toFile(), FixedDecoder())
+        val bridge = FramePhotoBridge(reserve, uiPost = { it() }, isMainThread = { true })
+        val session = Any()
+        val url = "https://photos.example/kiosk"
+        val sender = FramePhotoBridge.Sender(session, url, true, true)
+        val port = FakePlaybackPort(sender)
+        assertTrue(bridge.configure(session, url, "family"))
+        assertTrue(bridge.connectPlaybackPort(port))
+        bridge.setCaptureEnabled(true, true)
+        assertTrue(bridge.setPlaybackPaused(true))
+        val pauseNonce = port.commands.last().getString("snapshotNonce")
+        assertTrue(bridge.accept(loadedPhotoMessage().put("snapshotNonce", pauseNonce), sender))
+
+        assertTrue(bridge.movePhoto(forward = true))
+        val step = port.commands.last()
+        assertEquals("step", step.getString("type"))
+        val stepNonce = step.getString("snapshotNonce")
+        assertFalse(bridge.accept(loadedPhotoMessage().put("snapshotNonce", pauseNonce), sender))
+        assertTrue(bridge.accept(loadedPhotoMessage().put("snapshotNonce", stepNonce), sender))
+        assertFalse(bridge.accept(loadedPhotoMessage().put("snapshotNonce", stepNonce), sender))
+    }
+
+    @Test
+    fun `hidden paused configure never grants a snapshot until Photos becomes visible`() {
+        val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-photo-hidden-snapshot").toFile(), FixedDecoder())
+        val bridge = FramePhotoBridge(reserve, uiPost = { it() }, isMainThread = { true })
+        val session = Any()
+        val url = "https://photos.example/kiosk"
+        val sender = FramePhotoBridge.Sender(session, url, true, true)
+        val port = FakePlaybackPort(sender)
+        assertTrue(bridge.configure(session, url, "family"))
+        assertFalse(bridge.setPlaybackPaused(true))
+        assertTrue(bridge.connectPlaybackPort(port))
+        assertFalse(port.commands.last().has("snapshotNonce"))
+        assertFalse(bridge.accept(loadedPhotoMessage().put("snapshotNonce", "11111111-1111-4111-8111-111111111111"), sender))
+
+        bridge.setCaptureEnabled(true, true)
+        val nonce = port.commands.last().getString("snapshotNonce")
+        assertTrue(bridge.accept(loadedPhotoMessage().put("snapshotNonce", nonce), sender))
+    }
+
+    @Test
+    fun `paused snapshot that resumes while decoding never enters reserve`() {
+        val decoder = BlockingDecoder()
+        val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-photo-snapshot-resume-fence").toFile(), decoder)
+        val bridge = FramePhotoBridge(reserve, uiPost = { it() }, isMainThread = { true })
+        val session = Any()
+        val url = "https://photos.example/kiosk"
+        val sender = FramePhotoBridge.Sender(session, url, true, true)
+        val port = FakePlaybackPort(sender)
+        assertTrue(bridge.configure(session, url, "family"))
+        assertTrue(bridge.connectPlaybackPort(port))
+        bridge.setCaptureEnabled(true, true)
+        assertTrue(bridge.setPlaybackPaused(true))
+        val snapshot = loadedPhotoMessage().put("snapshotNonce", port.commands.last().getString("snapshotNonce"))
+
+        val accepted = AtomicBoolean(true)
+        val capture = Thread { accepted.set(bridge.accept(snapshot, sender)) }
+        capture.start()
+        assertTrue(decoder.started.await(2, TimeUnit.SECONDS))
+        bridge.setPlaybackPaused(false)
+        bridge.setCaptureEnabled(true, false)
+        decoder.release.countDown()
+        capture.join(2_000)
+
+        assertFalse(accepted.get())
+        assertTrue(reserve.entries().isEmpty())
+    }
+
+    @Test
     fun `capture that pauses while decoding never enters reserve`() {
         val decoder = BlockingDecoder()
         val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-photo-pause-fence").toFile(), decoder)

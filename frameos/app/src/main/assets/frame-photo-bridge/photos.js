@@ -14,11 +14,14 @@ let rejectedRetries = 0;
 let queued = false;
 let retryTimer = 0;
 let desiredPlaybackPaused = null;
+let pauseSnapshotNonce = null;
 let playbackPort = null;
 let portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
 let portRetryTimer = 0;
 const settlingKioskRequests = new Set();
 let kioskCaptureReady = true;
+let settledKioskEpoch = 0;
+let pauseSnapshotRequiresSettleEpoch = null;
 
 function isVisible(element) {
   for (let current = element; current && current !== document.documentElement; current = current.parentElement) {
@@ -75,26 +78,33 @@ function capture() {
   if (!ASSET_ID.test(assetId) || !source.startsWith(prefix)) return;
   const base64 = source.slice(prefix.length);
   if (!base64 || base64.length > MAX_BASE64_CHARS) return;
+  const snapshotNonce = desiredPlaybackPaused ? pauseSnapshotNonce : null;
+  // A paused document may send only the host-issued one-shot snapshot, never ordinary capture.
+  if (desiredPlaybackPaused && !snapshotNonce) return;
+  if (snapshotNonce && pauseSnapshotRequiresSettleEpoch !== null && settledKioskEpoch <= pauseSnapshotRequiresSettleEpoch) return;
   const fingerprint = `${assetId}:${base64.length}:${base64.slice(0, 24)}`;
-  if (fingerprint === lastFingerprint || fingerprint === inFlightFingerprint) return;
-  inFlightFingerprint = fingerprint;
-  browser.runtime.sendNativeMessage("frame_photo_bridge", {
-    type: "loaded-photo",
-    assetId,
-    image: base64,
-  }).then((response) => {
+  const captureFingerprint = snapshotNonce ? `${fingerprint}:${snapshotNonce}` : fingerprint;
+  if ((!snapshotNonce && fingerprint === lastFingerprint) || captureFingerprint === inFlightFingerprint) return;
+  inFlightFingerprint = captureFingerprint;
+  const message = { type: "loaded-photo", assetId, image: base64 };
+  if (snapshotNonce) message.snapshotNonce = snapshotNonce;
+  browser.runtime.sendNativeMessage("frame_photo_bridge", message).then((response) => {
     inFlightFingerprint = "";
     if (response && response.accepted) {
       lastFingerprint = fingerprint;
+      if (snapshotNonce === pauseSnapshotNonce) {
+        pauseSnapshotNonce = null;
+        pauseSnapshotRequiresSettleEpoch = null;
+      }
       rejectedFingerprint = "";
       rejectedRetries = 0;
       portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
       return;
     }
-    retryRejectedCapture(fingerprint);
+    retryRejectedCapture(captureFingerprint);
   }).catch(() => {
     inFlightFingerprint = "";
-    retryRejectedCapture(fingerprint);
+    retryRejectedCapture(captureFingerprint);
   });
 }
 
@@ -137,6 +147,7 @@ function settleKioskHtmxRequest(event) {
   if (!request || event.target !== event.detail.target || !settlingKioskRequests.delete(request)) return;
   if (settlingKioskRequests.size > 0) return;
   kioskCaptureReady = true;
+  settledKioskEpoch += 1;
   scheduleCapture();
 }
 
@@ -146,6 +157,10 @@ function failKioskHtmxRequest(event) {
   if (settlingKioskRequests.size > 0) return;
   // Wait for another successful Kiosk response; a failed partial response has no trustworthy pair.
   kioskCaptureReady = false;
+  if (pauseSnapshotRequiresSettleEpoch !== null) {
+    pauseSnapshotNonce = null;
+    pauseSnapshotRequiresSettleEpoch = null;
+  }
 }
 
 function skipNoSwapKioskRequest(event) {
@@ -196,9 +211,15 @@ function handlePlaybackCommand(command) {
   portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
   if (command.type === "pause" && typeof command.paused === "boolean") {
     desiredPlaybackPaused = command.paused;
+    pauseSnapshotNonce = command.paused && typeof command.snapshotNonce === "string" ? command.snapshotNonce : null;
+    pauseSnapshotRequiresSettleEpoch = null;
     setPollingPaused(command.paused);
     if (command.paused) scheduleCapture();
   } else if (command.type === "step" && typeof command.forward === "boolean") {
+    if (desiredPlaybackPaused && typeof command.snapshotNonce === "string") {
+      pauseSnapshotNonce = command.snapshotNonce;
+      pauseSnapshotRequiresSettleEpoch = settledKioskEpoch;
+    }
     stepPhoto(command.forward);
   }
 }

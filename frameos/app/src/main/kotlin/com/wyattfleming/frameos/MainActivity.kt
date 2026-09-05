@@ -275,7 +275,8 @@ class MainActivity : Activity() {
             handler.post {
                 if (!photoBridge.isCurrentObservation(photo)) return@post
                 if (!activityResumed || state.mode != FrameMode.PHOTOS ||
-                    (state.photosPaused && (!manualPhotoStepPending || !isNewManualPhotoStepAsset(manualPhotoStepPreviousAssetId, photo.assetId)))
+                    (state.photosPaused && photo.pauseSnapshotNonce == null &&
+                        (!manualPhotoStepPending || !isNewManualPhotoStepAsset(manualPhotoStepPreviousAssetId, photo.assetId)))
                 ) return@post
                 currentPhotoAssetId = photo.assetId
                 lastPhotoAt = photo.capturedAt
@@ -871,9 +872,12 @@ class MainActivity : Activity() {
 
     private fun render(next: FrameState, announce: Boolean) {
         if (::diagnosticStore.isInitialized) diagnosticStore.recordMode(next.mode)
-        if (next.mode != FrameMode.PHOTOS || next.photosPaused || !activityResumed) {
+        if (next.mode != FrameMode.PHOTOS || !activityResumed) {
             cancelPhotoWork()
             photoBridge.setCaptureEnabled(false, true)
+        } else if (next.photosPaused) {
+            cancelPhotoWork()
+            photoBridge.setCaptureEnabled(true, true)
         }
         val router = surfaceRouter ?: return
         when (val target = router.target(next.mode)) {
