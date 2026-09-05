@@ -11,6 +11,11 @@ class FrameWebRenderedState {
         reset()
     }
 
+    fun recordFragmentOnlyRequest() {
+        // Fragment navigation changes a view within the existing document, so its
+        // page-start, page-stop, and paint evidence remains attributable.
+    }
+
     fun recordPageStart() {
         reset()
         pageStarted = true
