@@ -113,6 +113,22 @@ function scheduleCapture() {
   queueMicrotask(capture);
 }
 
+function isCaptureMutation(mutation) {
+  if (mutation.type === "childList") return true;
+  if (mutation.type !== "attributes") return false;
+  if (mutation.attributeName === "src" || mutation.attributeName === "value") return true;
+  if (mutation.attributeName !== "class" && mutation.attributeName !== "style") return false;
+  const target = mutation.target;
+  if (target === document.documentElement || target === document.body) return true;
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.id === "kiosk-container" || target.id === "kiosk") return true;
+  return typeof target.closest === "function" && target.closest("#kiosk") !== null;
+}
+
+function scheduleCaptureMutations(mutations) {
+  if (mutations.some(isCaptureMutation)) scheduleCapture();
+}
+
 function setPollingPaused(paused) {
   if (document.body.classList.contains("polling-paused") === paused) return;
   document.body.dispatchEvent(new KeyboardEvent("keydown", {
@@ -183,6 +199,6 @@ new MutationObserver(() => {
 document.addEventListener("load", scheduleCapture, true);
 document.addEventListener("transitionend", scheduleCapture, true);
 document.addEventListener("animationend", scheduleCapture, true);
-new MutationObserver(scheduleCapture).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
+new MutationObserver(scheduleCaptureMutations).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
 scheduleCapture();
 connectPlaybackPort();
