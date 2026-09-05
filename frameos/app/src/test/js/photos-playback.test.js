@@ -119,7 +119,9 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
     frameAnimations(index) { return frameList[index].animations; },
     frame(index) { return frameList[index]; },
     mutate(records) { observers.find((observer) => observer.target === context.document.documentElement).callback(records); },
-    fireEvent(type, detail = {}) { listeners.filter(([eventType]) => eventType === type).forEach(([, listener]) => listener({ type, detail })); },
+    fireEvent(type, detail = {}, target = detail.target) {
+      listeners.filter(([eventType]) => eventType === type).forEach(([, listener]) => listener({ type, detail, target }));
+    },
     setHistory(values) {
       history.splice(0, history.length, ...values.map((value) => ({ value })));
     },
@@ -175,7 +177,7 @@ test("failed native port connection backs off without exhausting and leaves capt
   assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000]);
   assert.deepEqual(runtime.listeners.map(([type]) => type), [
     "load", "transitionend", "animationend",
-    "htmx:beforeRequest", "htmx:afterSettle", "htmx:responseError", "htmx:sendError", "htmx:timeout",
+    "htmx:beforeSend", "htmx:afterSettle", "htmx:responseError", "htmx:sendError", "htmx:sendAbort", "htmx:timeout",
   ]);
   assert.equal(runtime.observers.length, 2);
 });
@@ -282,27 +284,79 @@ test("capture ignores progress bar RAF styles but keeps Kiosk visibility mutatio
   assert.equal(runtime.pendingMicrotasks(), 1);
 });
 
-test("HTMX transaction gating never pairs a new history id with the old frame", () => {
+test("HTMX transaction gating never pairs split frame and history swaps", () => {
   const oldId = "11111111-1111-4111-8111-111111111111";
   const newId = "22222222-2222-4222-8222-222222222222";
-  const runtime = loadScript({
-    historyValues: [`*${oldId}:old`],
-    frames: [{ images: ["data:image/jpeg;base64,old"] }],
-  });
+  for (const historyFirst of [true, false]) {
+    const runtime = loadScript({
+      historyValues: [`*${oldId}:old`],
+      frames: [{ images: ["data:image/jpeg;base64,old"] }],
+    });
+    const request = {};
+    runtime.runMicrotasks();
+    runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: request });
+    if (historyFirst) {
+      runtime.setHistory([`${oldId}:old`, `*${newId}:new`]);
+      runtime.mutate([{ type: "attributes", attributeName: "value", target: {} }]);
+      runtime.runMicrotasks();
+      runtime.setFrameImage(0, "data:image/jpeg;base64,new");
+    } else {
+      runtime.setFrameImage(0, "data:image/jpeg;base64,new");
+      runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
+      runtime.runMicrotasks();
+      runtime.setHistory([`${oldId}:old`, `*${newId}:new`]);
+    }
+    runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
+    runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: request }, runtime.kiosk);
+    runtime.runMicrotasks();
+    assert.deepEqual(
+      runtime.nativeMessages.map(({ assetId, image }) => ({ assetId, image })),
+      [
+        { assetId: oldId, image: "old" },
+        { assetId: newId, image: "new" },
+      ],
+    );
+  }
+});
+
+test("a capture queued before Kiosk HTMX starts cannot run until that request settles", () => {
+  const oldId = "11111111-1111-4111-8111-111111111111";
+  const newId = "22222222-2222-4222-8222-222222222222";
+  const runtime = loadScript({ historyValues: [`*${oldId}:old`], frames: [{ images: ["data:image/jpeg;base64,old"] }] });
+  const request = {};
   runtime.runMicrotasks();
-  runtime.fireEvent("htmx:beforeRequest", { target: runtime.kiosk });
   runtime.setHistory([`${oldId}:old`, `*${newId}:new`]);
-  runtime.mutate([{ type: "attributes", attributeName: "value", target: {} }]);
-  runtime.runMicrotasks();
   runtime.setFrameImage(0, "data:image/jpeg;base64,new");
   runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
-  runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk });
+  runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: request });
   runtime.runMicrotasks();
-  assert.deepEqual(
-    runtime.nativeMessages.map(({ assetId, image }) => ({ assetId, image })),
-    [
-      { assetId: oldId, image: "old" },
-      { assetId: newId, image: "new" },
-    ],
-  );
+  assert.equal(runtime.nativeMessages.length, 1);
+  runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: request }, runtime.kiosk);
+  runtime.runMicrotasks();
+  assert.equal(runtime.nativeMessages[1].assetId, newId);
+  assert.equal(runtime.nativeMessages[1].image, "new");
+});
+
+test("failed Kiosk HTMX does not release capture until a later successful transaction", () => {
+  const oldId = "11111111-1111-4111-8111-111111111111";
+  const newId = "22222222-2222-4222-8222-222222222222";
+  const finalId = "33333333-3333-4333-8333-333333333333";
+  const runtime = loadScript({ historyValues: [`*${oldId}:old`], frames: [{ images: ["data:image/jpeg;base64,old"] }] });
+  const failed = {};
+  runtime.runMicrotasks();
+  runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: failed });
+  runtime.setHistory([`${oldId}:old`, `*${newId}:new`]);
+  runtime.setFrameImage(0, "data:image/jpeg;base64,new");
+  runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
+  runtime.fireEvent("htmx:sendError", { target: runtime.kiosk, xhr: failed });
+  runtime.runMicrotasks();
+  assert.equal(runtime.nativeMessages.length, 1);
+  const successful = {};
+  runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: successful });
+  runtime.setHistory([`${newId}:new`, `*${finalId}:final`]);
+  runtime.setFrameImage(0, "data:image/jpeg;base64,final");
+  runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
+  runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: successful }, runtime.kiosk);
+  runtime.runMicrotasks();
+  assert.deepEqual(runtime.nativeMessages.at(-1), { type: "loaded-photo", assetId: finalId, image: "final" });
 });
