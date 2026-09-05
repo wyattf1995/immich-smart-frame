@@ -6,7 +6,7 @@ runtime. Every write requires `--apply`; `--dry-run --ids <file>` is read-only
 and does not call tag creation or any tag/caption write. It preserves the legacy controlled vocabulary, `[AI] … [/AI]` caption
 replacement rule, and its no-GPS/no-original-write behavior.
 
-The policy fast path accepts only strong `originalFileName` forms: a standalone
+The policy fast path accepts only strong timestamped `originalFileName` forms: a standalone
 leading `Screenshot`, `Screen Shot`, or `ScreenCapture`, optionally after a
 calendar/timestamp prefix. It never applies that rule to an asset ID or an
 original path. All other images require VLM JSON with `tags`, `caption`, and
@@ -55,3 +55,24 @@ The tool fails closed on malformed candidate rows, response limits, metadata
 mismatch, transport failures, and missing tag identifiers. Re-running a
 partially completed apply is idempotent because the relationship is checked
 before each batch is selected.
+
+## Existing auto-tagger launcher
+
+Keep the existing host lock, protected env-file handoff, five-hour timeout,
+GPU queue lifecycle, and namespace-local stale-lock cleanup. Change only the
+Python entry point and its explicit write mode when activating this bundle:
+
+```sh
+sh -c 'rm -f /work/tagger.lock; exec python /work/policy-v2-20260905/tagger_policy.py --apply --ids /work/autotag_ids.txt'
+```
+
+The legacy snapshot used `--dry-run --ids` for real writes. That historical
+quirk does **not** apply to this successor. The successor returns nonzero when
+an ID or full-run classification fails; callers must surface that failure.
+
+Before additive backfill, retain the exact IDs missing the new relationship
+in a protected rollback file. Verify the relationships by rereading metadata,
+not just the successful write count. Compare the cohort's description/EXIF/GPS
+and original-reference digest before and after; they must match. Empty the
+controlled sidecar queue after completion and leave it paused. A backlog drain
+can then resume through its existing launcher; do not start a parallel VLM.
