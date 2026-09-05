@@ -8,11 +8,12 @@ mkdir "$tmp/bin"
 cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+input=$(cat)
 printf '%s\n' "$*" >>"$CURL_LOG"
-case "$*" in
-  *'/api/v2/auth/login'*) cat >/dev/null; printf '%s' '{"success":true,"redirectUrl":"/api/v2/auth/callback?code=one&redirect=%2F"}' ;;
+case "$* $input" in
+  *'/api/v2/auth/login'*) printf '%s' '{"success":true,"redirectUrl":"/api/v2/auth/callback?code=one&redirect=%2F"}' ;;
   *'/api/v2/auth/callback?'*) printf 'Set-Cookie: session=opaque; Path=/; HttpOnly\r\n\r\n' ;;
-  *'/api/v2/health/audio'*) cat >/dev/null; printf '%s' '{"sources":[{"state":"HEALTHY","audio_age_seconds":1}]}' ;;
+  *'/api/v2/health/audio'*) printf '%s' '{"sources":[{"state":"HEALTHY","audio_age_seconds":1}]}' ;;
   *) exit 1 ;;
 esac
 EOF
