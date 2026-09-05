@@ -2,11 +2,13 @@
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -171,8 +173,14 @@ class PublisherTests(unittest.TestCase):
                 time.sleep(0.05)
             self.assertTrue(child_pid.exists())
             pid = int(child_pid.read_text())
-            with self.assertRaises(ProcessLookupError):
-                os.kill(pid, 0)
+            for _ in range(20):
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            else:
+                self.fail("forked TERM-ignoring child remained alive")
 
     def test_http_failure_is_reported_without_a_token(self):
         with tempfile.TemporaryDirectory() as directory:
