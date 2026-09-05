@@ -8,6 +8,7 @@ import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.WebExtension
+import java.util.IdentityHashMap
 import java.util.UUID
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.SynchronousQueue
@@ -26,6 +27,7 @@ class FramePhotoBridge(
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val uiPost: ((() -> Unit) -> Unit) = { action -> Handler(Looper.getMainLooper()).post(action) },
     private val isMainThread: () -> Boolean = { Looper.myLooper() === Looper.getMainLooper() },
+    private val diagnosticLog: (String) -> Unit = { message -> Log.i(TAG, message) },
     private val onPhotoObserved: (PhotoObserved) -> Unit = {},
 ) {
     data class Sender(val session: Any, val url: String, val topLevel: Boolean, val contentScript: Boolean)
@@ -55,6 +57,7 @@ class FramePhotoBridge(
     /** One host-issued paused snapshot is allowed only for this configured generation and scope. */
     @Volatile private var pauseSnapshotNonce: String? = null
     @Volatile private var consumedPauseSnapshotNonce: String? = null
+    private val diagnosticCounts = IdentityHashMap<Any, Int>()
     private val decodeWorker = ThreadPoolExecutor(
         1,
         1,
@@ -85,6 +88,7 @@ class FramePhotoBridge(
         clearPausedSnapshot()
         configuredSession = session
         configuredScope = requested
+        diagnosticCounts.clear()
         photosVisible = false
         captureEnabled = false
         return true
@@ -129,6 +133,7 @@ class FramePhotoBridge(
         if (installed != null) session.webExtensionController.setMessageDelegate(installed, null, NATIVE_APP)
         configuredSession = null
         configuredScope = null
+        diagnosticCounts.clear()
         photosVisible = false
         captureEnabled = false
         generation += 1
@@ -253,9 +258,42 @@ class FramePhotoBridge(
         return reportIfCurrent(capture)
     }
 
+    /** Accepts only scalar diagnostics from the same configured Photos content script. */
+    @Synchronized
+    internal fun acceptDiagnostic(message: Any, sender: Sender): Boolean {
+        val scope = configuredScope ?: return false
+        if (!isTrustedSender(scope, sender)) return false
+        val objectMessage = message as? JSONObject ?: return false
+        if (objectMessage.optString("type") != DIAGNOSTIC_TYPE) return false
+        val stage = objectMessage.optString("stage")
+        if (stage !in DIAGNOSTIC_STAGES) return false
+        val booleanFields = listOf(
+            "detailReadable",
+            "targetIsKiosk",
+            "xhrPresent",
+            "primaryTarget",
+            "desiredPaused",
+            "noncePresent",
+        )
+        if (booleanFields.any { objectMessage.opt(it) !is Boolean }) return false
+        val settledEpoch = objectMessage.opt("settledEpoch") as? Number ?: return false
+        val trackedCount = objectMessage.opt("trackedCount") as? Number ?: return false
+        if (!boundedWholeNumber(settledEpoch, MAX_DIAGNOSTIC_EPOCH) || !boundedWholeNumber(trackedCount, MAX_DIAGNOSTIC_TRACKED_COUNT)) return false
+        val count = diagnosticCounts[sender.session] ?: 0
+        if (count >= MAX_DIAGNOSTICS_PER_SESSION) return false
+        diagnosticCounts[sender.session] = count + 1
+        diagnosticLog(
+            "Frame Photos diagnostic stage=$stage detailReadable=${objectMessage.getBoolean("detailReadable")} " +
+                "targetIsKiosk=${objectMessage.getBoolean("targetIsKiosk")} xhrPresent=${objectMessage.getBoolean("xhrPresent")} " +
+                "primaryTarget=${objectMessage.getBoolean("primaryTarget")} desiredPaused=${objectMessage.getBoolean("desiredPaused")} " +
+                "noncePresent=${objectMessage.getBoolean("noncePresent")} settledEpoch=${settledEpoch.toLong()} trackedCount=${trackedCount.toLong()}",
+        )
+        return true
+    }
+
     private fun captureFrom(message: Any, sender: Sender): Capture? = synchronized(this) {
         val scope = configuredScope ?: return@synchronized null
-        if (sender.session !== configuredSession || !sender.topLevel || !sender.contentScript || sender.url != scope.photosUrl) return@synchronized null
+        if (!isTrustedSender(scope, sender)) return@synchronized null
         val objectMessage = message as? JSONObject ?: return@synchronized null
         if (objectMessage.optString("type") != MESSAGE_TYPE) return@synchronized null
         val requestedNonce = objectMessage.optString(PAUSE_SNAPSHOT_NONCE, "")
@@ -301,6 +339,12 @@ class FramePhotoBridge(
     /** This intentionally avoids the bridge monitor: Reserve invokes it under its own monitor. */
     private fun canCommit(capture: Capture): Boolean = isCurrent(capture)
 
+    private fun isTrustedSender(scope: FramePhotoScope, sender: Sender): Boolean =
+        sender.session === configuredSession && sender.topLevel && sender.contentScript && sender.url == scope.photosUrl
+
+    private fun boundedWholeNumber(value: Number, maximum: Long): Boolean =
+        value.toDouble().isFinite() && value.toDouble() == value.toLong().toDouble() && value.toLong() in 0L..maximum
+
     @Synchronized
     private fun isCurrentSession(session: Any): Boolean = configuredSession === session
 
@@ -337,14 +381,18 @@ class FramePhotoBridge(
         override fun onMessage(nativeApp: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
             val senderSession = sender.session
             if (nativeApp != NATIVE_APP || senderSession == null) return GeckoResult.fromValue(JSONObject().put("accepted", false))
+            val trustedSender = Sender(
+                session = senderSession,
+                url = sender.url,
+                topLevel = sender.isTopLevel,
+                contentScript = sender.environmentType == WebExtension.MessageSender.ENV_TYPE_CONTENT_SCRIPT,
+            )
+            if ((message as? JSONObject)?.optString("type") == DIAGNOSTIC_TYPE) {
+                return GeckoResult.fromValue(JSONObject().put("accepted", acceptDiagnostic(message, trustedSender)))
+            }
             val capture = captureFrom(
                 message,
-                Sender(
-                    session = senderSession,
-                    url = sender.url,
-                    topLevel = sender.isTopLevel,
-                    contentScript = sender.environmentType == WebExtension.MessageSender.ENV_TYPE_CONTENT_SCRIPT,
-                ),
+                trustedSender,
             )
             if (capture == null) return GeckoResult.fromValue(JSONObject().put("accepted", false))
             val result = GeckoResult<Any>()
@@ -368,5 +416,10 @@ class FramePhotoBridge(
         const val NATIVE_APP = "frame_photo_bridge"
         private const val MESSAGE_TYPE = "loaded-photo"
         private const val PAUSE_SNAPSHOT_NONCE = "snapshotNonce"
+        private const val DIAGNOSTIC_TYPE = "bridge-diagnostic"
+        private const val MAX_DIAGNOSTICS_PER_SESSION = 32
+        private const val MAX_DIAGNOSTIC_EPOCH = 4096L
+        private const val MAX_DIAGNOSTIC_TRACKED_COUNT = 4L
+        private val DIAGNOSTIC_STAGES = setOf("pause", "step", "htmx_before", "htmx_primary_settle", "htmx_error")
     }
 }
