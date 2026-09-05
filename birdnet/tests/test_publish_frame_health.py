@@ -2,11 +2,13 @@
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -153,6 +155,32 @@ class PublisherTests(unittest.TestCase):
         code, output = publisher.bounded_run([sys.executable, "-c", "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"], 1, 8192)
         self.assertIsNone(output)
         self.assertIsNotNone(code)
+
+    def test_forked_term_ignoring_child_is_killed_after_leader_exits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            child_pid = Path(directory) / "child-pid"
+            program = (
+                "import os,signal,time,pathlib; "
+                "pid=os.fork(); "
+                "(signal.signal(signal.SIGTERM, signal.SIG_IGN), pathlib.Path(%r).write_text(str(os.getpid())), time.sleep(30)) if pid == 0 else time.sleep(30)"
+            ) % str(child_pid)
+            code, output = publisher.bounded_run([sys.executable, "-c", program], 1, 8192)
+            self.assertIsNone(output)
+            self.assertIsNotNone(code)
+            for _ in range(20):
+                if child_pid.exists():
+                    break
+                time.sleep(0.05)
+            self.assertTrue(child_pid.exists())
+            pid = int(child_pid.read_text())
+            for _ in range(20):
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            else:
+                self.fail("forked TERM-ignoring child remained alive")
 
     def test_http_failure_is_reported_without_a_token(self):
         with tempfile.TemporaryDirectory() as directory:
