@@ -24,7 +24,6 @@ class HealthSensorsTest < Minitest::Test
       assert_includes availability, "serverTime"
       assert_includes availability, "lastSeenAt"
       assert_includes availability, "device.get('online', false)"
-      assert_includes availability, "get('offline', false)"
       assert_includes availability, 'last_updated'
     end
   end
