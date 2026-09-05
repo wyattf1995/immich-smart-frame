@@ -122,6 +122,32 @@ class FrameOfflineReserveTest {
     }
 
     @Test
+    fun `paused bridge accepts exactly one host-issued snapshot and revokes it on resume`() {
+        val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-photo-paused-snapshot").toFile(), FixedDecoder())
+        val reports = mutableListOf<FramePhotoBridge.PhotoObserved>()
+        val bridge = FramePhotoBridge(reserve, uiPost = { it() }, isMainThread = { true }, onPhotoObserved = reports::add)
+        val session = Any()
+        val url = "https://photos.example/kiosk"
+        val sender = FramePhotoBridge.Sender(session, url, true, true)
+        val port = FakePlaybackPort(sender)
+        assertTrue(bridge.configure(session, url, "family"))
+        assertTrue(bridge.connectPlaybackPort(port))
+        bridge.setCaptureEnabled(true, true)
+        assertTrue(bridge.setPlaybackPaused(true))
+        val nonce = port.commands.last().getString("snapshotNonce")
+        val snapshot = loadedPhotoMessage().put("snapshotNonce", nonce)
+
+        assertFalse(bridge.accept(loadedPhotoMessage(), sender))
+        assertTrue(bridge.accept(snapshot, sender))
+        assertTrue(bridge.isCurrentObservation(reports.single()))
+        assertFalse(bridge.accept(snapshot, sender))
+
+        bridge.setPlaybackPaused(false)
+        assertFalse(bridge.isCurrentObservation(reports.single()))
+        assertFalse(bridge.accept(snapshot, sender))
+    }
+
+    @Test
     fun `capture that pauses while decoding never enters reserve`() {
         val decoder = BlockingDecoder()
         val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-photo-pause-fence").toFile(), decoder)

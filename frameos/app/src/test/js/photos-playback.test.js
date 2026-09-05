@@ -225,18 +225,41 @@ test("capture rejects missing or duplicate active history and split views in the
   assert.equal(split.nativeMessages.length, 0);
 });
 
-test("capture after a paused step uses the active frame rather than its retained predecessor", () => {
-  const pausedStep = loadScript({
-    historyValues: ["11111111-1111-4111-8111-111111111111:old", "*22222222-2222-4222-8222-222222222222:current"],
-    frames: [
-      { images: ["data:image/jpeg;base64,old"] },
-      { images: ["data:image/jpeg;base64,current"] },
-    ],
+test("paused capture needs its host-issued snapshot nonce", () => {
+  const paused = loadScript({
+    historyValues: ["*22222222-2222-4222-8222-222222222222:current"],
+    frames: [{ images: ["data:image/jpeg;base64,current"] }],
   });
-  pausedStep.port.listener({ type: "pause", paused: true });
-  pausedStep.port.listener({ type: "step", forward: true });
-  pausedStep.runMicrotasks();
-  assert.equal(pausedStep.nativeMessages[0].assetId, "22222222-2222-4222-8222-222222222222");
+  paused.port.listener({ type: "pause", paused: true });
+  paused.runMicrotasks();
+  assert.equal(paused.nativeMessages.length, 0);
+
+  paused.port.listener({ type: "pause", paused: true, snapshotNonce: "11111111-1111-4111-8111-111111111111" });
+  paused.runMicrotasks();
+  assert.equal(paused.nativeMessages.length, 1);
+  assert.equal(paused.nativeMessages[0].snapshotNonce, "11111111-1111-4111-8111-111111111111");
+});
+
+test("paused snapshot waits for the settled Kiosk pair", () => {
+  const oldId = "11111111-1111-4111-8111-111111111111";
+  const newId = "22222222-2222-4222-8222-222222222222";
+  const nonce = "33333333-3333-4333-8333-333333333333";
+  const runtime = loadScript({ historyValues: [`*${oldId}:old`], frames: [{ images: ["data:image/jpeg;base64,old"] }] });
+  const request = {};
+  runtime.runMicrotasks();
+  runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: request });
+  runtime.port.listener({ type: "pause", paused: true, snapshotNonce: nonce });
+  runtime.setHistory([`${oldId}:old`, `*${newId}:new`]);
+  runtime.setFrameImage(0, "data:image/jpeg;base64,new");
+  runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
+  runtime.runMicrotasks();
+  assert.equal(runtime.nativeMessages.length, 1);
+  runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: request }, runtime.kiosk);
+  runtime.runMicrotasks();
+  assert.deepEqual(
+    runtime.nativeMessages.slice(-1).map(({ assetId, image, snapshotNonce }) => ({ assetId, image, snapshotNonce })),
+    [{ assetId: newId, image: "new", snapshotNonce: nonce }],
+  );
 });
 
 test("capture retries when the current frame becomes visible after its transition", () => {
