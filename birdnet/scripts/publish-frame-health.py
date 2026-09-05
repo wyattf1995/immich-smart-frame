@@ -44,6 +44,10 @@ class PublishError(RuntimeError):
     pass
 
 
+class WebhookError(RuntimeError):
+    pass
+
+
 class EvidenceError(RuntimeError):
     pass
 
@@ -196,32 +200,43 @@ def payload_from_evidence(evidence: Any) -> dict[str, Any]:
     return make_payload(observed_at, audio_healthy, audio_last_at, statuses)
 
 
-def read_token(token_file: Path) -> str:
+def read_private_file(secret_file: Path, error_type: type[RuntimeError]) -> str:
     flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
     try:
-        descriptor = os.open(token_file, flags)
+        descriptor = os.open(secret_file, flags)
     except OSError as error:
-        raise TokenError("token file is unavailable") from error
+        raise error_type("private file is unavailable") from error
     try:
         metadata = os.fstat(descriptor)
         if (not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600 or
                 metadata.st_uid not in (os.geteuid(), 0) or metadata.st_size <= 0 or
                 metadata.st_size > MAX_TOKEN_BYTES):
-            raise TokenError("token file permissions are unsafe")
+            raise error_type("private file permissions are unsafe")
         token_bytes = os.read(descriptor, MAX_TOKEN_BYTES + 1)
     except OSError as error:
-        raise TokenError("token file is unreadable") from error
+        raise error_type("private file is unreadable") from error
     finally:
         os.close(descriptor)
     if len(token_bytes) > MAX_TOKEN_BYTES:
-        raise TokenError("token file size is invalid")
+        raise error_type("private file size is invalid")
     try:
         token = token_bytes.decode("utf-8").rstrip("\n")
     except UnicodeDecodeError as error:
-        raise TokenError("token file contents are invalid") from error
+        raise error_type("private file contents are invalid") from error
     if not token or "\n" in token or "\r" in token:
-        raise TokenError("token file contents are invalid")
+        raise error_type("private file contents are invalid")
     return token
+
+
+def read_token(token_file: Path) -> str:
+    return read_private_file(token_file, TokenError)
+
+
+def read_webhook_id(webhook_file: Path) -> str:
+    webhook_id = read_private_file(webhook_file, WebhookError)
+    if not re.fullmatch(r"[0-9a-f]{64}", webhook_id):
+        raise WebhookError("webhook identifier is invalid")
+    return webhook_id
 
 
 def state_url(ha_url: str) -> str:
@@ -250,13 +265,29 @@ def publish(ha_url: str, token_file: Path, payload: dict[str, Any]) -> None:
         raise PublishError("Home Assistant state update failed") from error
 
 
+def publish_webhook(ha_url: str, webhook_file: Path, payload: dict[str, Any]) -> None:
+    webhook_id = read_webhook_id(webhook_file)
+    request = Request(state_url(ha_url).replace(STATE_ENDPOINT, "/api/webhook/" + webhook_id),
+                      data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+                      headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with NO_REDIRECT_OPENER.open(request, timeout=PUBLISH_TIMEOUT_SECONDS) as response:
+            if response.status not in (200, 201):
+                raise PublishError("Home Assistant webhook update was rejected")
+            response.read(1024)
+    except (HTTPError, URLError, OSError) as error:
+        raise PublishError("Home Assistant webhook update failed") from error
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(add_help=True)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--watchdog")
     source.add_argument("--evidence-stdin", action="store_true")
     parser.add_argument("--ha-url", required=True)
-    parser.add_argument("--token-file", required=True)
+    transport = parser.add_mutually_exclusive_group(required=True)
+    transport.add_argument("--token-file")
+    transport.add_argument("--webhook-id-file")
     arguments = parser.parse_args(argv)
     try:
         if arguments.evidence_stdin:
@@ -266,8 +297,11 @@ def main(argv: list[str] | None = None) -> int:
             payload = payload_from_evidence(json.loads(raw))
         else:
             payload = collect_payload(arguments.watchdog)
-        publish(arguments.ha_url, Path(arguments.token_file), payload)
-    except (EvidenceError, TokenError, PublishError, json.JSONDecodeError):
+        if arguments.webhook_id_file:
+            publish_webhook(arguments.ha_url, Path(arguments.webhook_id_file), payload)
+        else:
+            publish(arguments.ha_url, Path(arguments.token_file), payload)
+    except (EvidenceError, TokenError, WebhookError, PublishError, json.JSONDecodeError):
         return 1
     return 0
 
