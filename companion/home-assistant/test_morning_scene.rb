@@ -66,7 +66,7 @@ class MorningSceneTest < Minitest::Test
                         photos_paused: false, offline: false)
     sensor_online && snapshot_age_seconds.between?(0, 15) &&
       server_age_milliseconds.between?(0, 15_000) &&
-      last_seen_age_milliseconds.between?(0, 90_000) &&
+      last_seen_age_milliseconds.between?(0, 15_000) &&
       device_online && mode == expected_mode && !photos_paused && !offline
   end
 end
