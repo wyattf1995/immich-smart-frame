@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import tempfile
 import threading
@@ -101,6 +102,22 @@ class PublisherTests(unittest.TestCase):
                 publisher.read_token(token)
         self.assertNotIn("do-not-disclose", str(raised.exception))
 
+    def test_token_symlink_is_rejected_without_following_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "target"
+            target.write_text("do-not-disclose")
+            target.chmod(0o600)
+            token = Path(directory) / "token"
+            token.symlink_to(target)
+            with self.assertRaises(publisher.TokenError) as raised:
+                publisher.read_token(token)
+        self.assertNotIn("do-not-disclose", str(raised.exception))
+
+    def test_oversized_subprocess_output_is_reaped_and_unknown(self):
+        code, output = publisher.bounded_run([sys.executable, "-c", "import sys; sys.stdout.write('x' * 8193)"], 5, 8192)
+        self.assertIsNone(output)
+        self.assertIsNotNone(code)
+
     def test_http_failure_is_reported_without_a_token(self):
         with tempfile.TemporaryDirectory() as directory:
             token = Path(directory) / "token"
@@ -159,6 +176,15 @@ class PublisherTests(unittest.TestCase):
             redirect.shutdown(); target.shutdown()
             redirect.server_close(); target.server_close()
         self.assertEqual(target_requests, [])
+
+    def test_stdin_evidence_uses_the_same_conservative_parser(self):
+        payload = publisher.payload_from_evidence({
+            "observedAt": 1_000_000,
+            "watchdog": {"returncode": 1, "output": STALE},
+            "containers": {name: {"returncode": 0, "output": INSPECT_OK} for name, _ in publisher.CONTAINERS},
+        })
+        self.assertEqual(payload["state"], "degraded")
+        self.assertEqual(payload["attributes"]["audioLastAt"], 819000)
 
 
 if __name__ == "__main__":
