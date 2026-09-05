@@ -2,7 +2,8 @@
 
 `tagger_policy.py` is a drop-in successor to the committed legacy snapshot. Keep
 `policy.py` beside it when mounting or copying it into the existing controlled
-runtime. It preserves the legacy controlled vocabulary, `[AI] … [/AI]` caption
+runtime. Every write requires `--apply`; `--dry-run --ids <file>` is read-only
+and does not call tag creation or any tag/caption write. It preserves the legacy controlled vocabulary, `[AI] … [/AI]` caption
 replacement rule, and its no-GPS/no-original-write behavior.
 
 The policy fast path accepts only strong `originalFileName` forms: a standalone
