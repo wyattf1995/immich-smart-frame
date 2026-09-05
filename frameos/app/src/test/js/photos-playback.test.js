@@ -177,7 +177,7 @@ test("failed native port connection backs off without exhausting and leaves capt
   assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000]);
   assert.deepEqual(runtime.listeners.map(([type]) => type), [
     "load", "transitionend", "animationend",
-    "htmx:beforeSend", "htmx:afterSettle", "htmx:responseError", "htmx:sendError", "htmx:sendAbort", "htmx:timeout",
+    "htmx:beforeSend", "htmx:afterSettle", "htmx:responseError", "htmx:sendError", "htmx:sendAbort", "htmx:timeout", "htmx:afterRequest",
   ]);
   assert.equal(runtime.observers.length, 2);
 });
