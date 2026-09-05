@@ -49,10 +49,11 @@ class FramePhotoBridge(
     @Volatile private var captureEnabled = false
     @Volatile private var generation = 0L
     private var playbackPort: PlaybackPort? = null
-    private var desiredPlaybackPaused = false
+    @Volatile private var desiredPlaybackPaused = false
+    @Volatile private var photosVisible = false
     /** One host-issued paused snapshot is allowed only for this configured generation and scope. */
-    private var pauseSnapshotNonce: String? = null
-    private var consumedPauseSnapshotNonce: String? = null
+    @Volatile private var pauseSnapshotNonce: String? = null
+    @Volatile private var consumedPauseSnapshotNonce: String? = null
     private val decodeWorker = ThreadPoolExecutor(
         1,
         1,
@@ -83,19 +84,26 @@ class FramePhotoBridge(
         clearPausedSnapshot()
         configuredSession = session
         configuredScope = requested
+        photosVisible = false
         captureEnabled = false
-        if (desiredPlaybackPaused) issuePausedSnapshot()
         return true
     }
 
     /** MainActivity must call this from Photos visibility and pause state; false is the safe default. */
     @Synchronized
     fun setCaptureEnabled(photosVisible: Boolean, photosPaused: Boolean) {
+        val becameVisible = photosVisible && !this.photosVisible
+        this.photosVisible = photosVisible
         val enabled = photosVisible && !photosPaused
         if (captureEnabled && !enabled) generation += 1
         captureEnabled = enabled
         // Leaving the visible paused state revokes a callback that may still be queued on the UI thread.
-        if (!photosVisible || !photosPaused) clearPausedSnapshot()
+        if (!photosVisible || !photosPaused) {
+            clearPausedSnapshot()
+        } else if (becameVisible && desiredPlaybackPaused) {
+            issuePausedSnapshot()
+            playbackPort?.let { dispatchPlayback(it, pauseCommand(true), queuePauseWhenOffMain = true) }
+        }
     }
 
     /** Installs the APK-bundled extension and attaches its message delegate to this Photos session. */
@@ -119,6 +127,7 @@ class FramePhotoBridge(
         if (installed != null) session.webExtensionController.setMessageDelegate(installed, null, NATIVE_APP)
         configuredSession = null
         configuredScope = null
+        photosVisible = false
         captureEnabled = false
         generation += 1
         clearPausedSnapshot()
@@ -129,6 +138,7 @@ class FramePhotoBridge(
     @Synchronized
     fun close() {
         generation += 1
+        photosVisible = false
         captureEnabled = false
         clearPausedSnapshot()
         clearPlaybackPort()
@@ -139,13 +149,19 @@ class FramePhotoBridge(
     /** Records desired state even while the page reconnects; true means a current port accepted the dispatch. */
     @Synchronized
     fun setPlaybackPaused(paused: Boolean): Boolean {
-        if (paused && !desiredPlaybackPaused) issuePausedSnapshot()
-        if (!paused) clearPausedSnapshot()
-        desiredPlaybackPaused = paused
+        if (!paused) {
+            desiredPlaybackPaused = false
+            clearPausedSnapshot()
+        } else {
+            val changed = !desiredPlaybackPaused
+            desiredPlaybackPaused = true
+            if (changed) issuePausedSnapshot()
+        }
         return playbackPort?.let { dispatchPlayback(it, pauseCommand(paused), queuePauseWhenOffMain = true) } ?: false
     }
 
     private fun issuePausedSnapshot() {
+        if (!photosVisible || !desiredPlaybackPaused) return
         pauseSnapshotNonce = UUID.randomUUID().toString()
         consumedPauseSnapshotNonce = null
     }
@@ -161,8 +177,23 @@ class FramePhotoBridge(
 
     /** Sends one trusted next/previous request; it never falls back to synthetic surface input. */
     @Synchronized
-    fun movePhoto(forward: Boolean): Boolean =
-        playbackPort?.let { dispatchPlayback(it, JSONObject().put("type", "step").put("forward", forward), queuePauseWhenOffMain = false) } ?: false
+    fun movePhoto(forward: Boolean): Boolean {
+        val port = playbackPort ?: return false
+        val priorSnapshot = pauseSnapshotNonce
+        val priorConsumed = consumedPauseSnapshotNonce
+        val step = JSONObject().put("type", "step").put("forward", forward)
+        if (photosVisible && desiredPlaybackPaused) {
+            pauseSnapshotNonce = UUID.randomUUID().toString()
+            consumedPauseSnapshotNonce = null
+            step.put(PAUSE_SNAPSHOT_NONCE, pauseSnapshotNonce)
+        }
+        val dispatched = dispatchPlayback(port, step, queuePauseWhenOffMain = false)
+        if (!dispatched) {
+            pauseSnapshotNonce = priorSnapshot
+            consumedPauseSnapshotNonce = priorConsumed
+        }
+        return dispatched
+    }
 
     /** Testable strict port gate; the real delegate adapts Gecko's port into this narrow interface. */
     @Synchronized
@@ -227,7 +258,7 @@ class FramePhotoBridge(
         if (objectMessage.optString("type") != MESSAGE_TYPE) return@synchronized null
         val requestedNonce = objectMessage.optString(PAUSE_SNAPSHOT_NONCE, "")
         val snapshotNonce = requestedNonce.takeIf { it.isNotBlank() }
-        if (snapshotNonce != null && snapshotNonce != pauseSnapshotNonce) return@synchronized null
+        if (snapshotNonce != null && (snapshotNonce != pauseSnapshotNonce || !photosVisible || !desiredPlaybackPaused)) return@synchronized null
         if (!captureEnabled && snapshotNonce == null) return@synchronized null
         val assetId = objectMessage.optString("assetId")
         val image = objectMessage.optString("image")
@@ -251,11 +282,19 @@ class FramePhotoBridge(
     @Synchronized
     fun isCurrentObservation(photo: PhotoObserved): Boolean =
         generation == photo.generation && configuredScope?.key == photo.scopeKey &&
-            (captureEnabled || photo.pauseSnapshotNonce != null && photo.pauseSnapshotNonce == consumedPauseSnapshotNonce)
+            if (photo.pauseSnapshotNonce != null) {
+                photosVisible && desiredPlaybackPaused && photo.pauseSnapshotNonce == consumedPauseSnapshotNonce
+            } else {
+                captureEnabled
+            }
 
     private fun isCurrent(capture: Capture): Boolean =
         generation == capture.generation && configuredSession === capture.session && configuredScope?.key == capture.scope.key &&
-            (captureEnabled || capture.pauseSnapshotNonce != null && capture.pauseSnapshotNonce == pauseSnapshotNonce)
+            if (capture.pauseSnapshotNonce != null) {
+                photosVisible && desiredPlaybackPaused && capture.pauseSnapshotNonce == pauseSnapshotNonce
+            } else {
+                captureEnabled
+            }
 
     /** This intentionally avoids the bridge monitor: Reserve invokes it under its own monitor. */
     private fun canCommit(capture: Capture): Boolean = isCurrent(capture)
