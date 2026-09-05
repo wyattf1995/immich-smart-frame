@@ -7,6 +7,8 @@ const RETRY_DELAY_MS = 1000;
 const INITIAL_PORT_RETRY_DELAY_MS = 1000;
 const MAX_PORT_RETRY_DELAY_MS = 60000;
 const MAX_SETTLING_KIOSK_REQUESTS = 4;
+const MAX_DIAGNOSTICS_PER_PAGE = 16;
+const MAX_DIAGNOSTIC_EPOCH = 4096;
 let lastFingerprint = "";
 let inFlightFingerprint = "";
 let rejectedFingerprint = "";
@@ -22,6 +24,26 @@ const settlingKioskRequests = new Set();
 let kioskCaptureReady = true;
 let settledKioskEpoch = 0;
 let pauseSnapshotRequiresSettleEpoch = null;
+let diagnosticReports = 0;
+const firstDiagnosticStages = new Set();
+
+function reportDiagnostic(stage, fields = {}, once = false) {
+  if (diagnosticReports >= MAX_DIAGNOSTICS_PER_PAGE || (once && firstDiagnosticStages.has(stage))) return;
+  if (once) firstDiagnosticStages.add(stage);
+  diagnosticReports += 1;
+  browser.runtime.sendNativeMessage("frame_photo_bridge", {
+    type: "bridge-diagnostic",
+    stage,
+    detailReadable: fields.detailReadable === true,
+    targetIsKiosk: fields.targetIsKiosk === true,
+    xhrPresent: fields.xhrPresent === true,
+    primaryTarget: fields.primaryTarget === true,
+    desiredPaused: desiredPlaybackPaused === true,
+    noncePresent: pauseSnapshotNonce !== null,
+    settledEpoch: Math.min(settledKioskEpoch, MAX_DIAGNOSTIC_EPOCH),
+    trackedCount: Math.min(settlingKioskRequests.size, MAX_SETTLING_KIOSK_REQUESTS),
+  }).catch(() => {});
+}
 
 function isVisible(element) {
   for (let current = element; current && current !== document.documentElement; current = current.parentElement) {
@@ -127,13 +149,29 @@ function scheduleCapture() {
   queueMicrotask(capture);
 }
 
-function kioskHtmxRequest(event) {
-  const detail = event.detail;
-  return detail && detail.target instanceof HTMLElement && detail.target.id === "kiosk" && detail.xhr ? detail.xhr : null;
+function kioskHtmxRequest(event, stage = null) {
+  let detailReadable = false;
+  let targetIsKiosk = false;
+  let xhrPresent = false;
+  let primaryTarget = false;
+  let request = null;
+  try {
+    const detail = event.detail;
+    targetIsKiosk = !!detail && detail.target instanceof HTMLElement && detail.target.id === "kiosk";
+    xhrPresent = !!detail && !!detail.xhr;
+    primaryTarget = !!detail && event.target === detail.target;
+    request = targetIsKiosk && xhrPresent ? detail.xhr : null;
+    detailReadable = true;
+  } catch (_) {
+    // Page-created HTMX detail can be unreadable from Firefox's isolated content realm.
+  }
+  const fields = { detailReadable, targetIsKiosk, xhrPresent, primaryTarget };
+  if (stage) reportDiagnostic(stage, fields);
+  return { request, primaryTarget, fields };
 }
 
 function beginKioskHtmxRequest(event) {
-  const request = kioskHtmxRequest(event);
+  const { request } = kioskHtmxRequest(event, "htmx_before");
   if (!request) return;
   // Kiosk releases its request lock after swap, before settle; retain only a bounded tail of settle-only responses.
   if (settlingKioskRequests.size >= MAX_SETTLING_KIOSK_REQUESTS) settlingKioskRequests.clear();
@@ -142,17 +180,17 @@ function beginKioskHtmxRequest(event) {
 }
 
 function settleKioskHtmxRequest(event) {
-  const request = kioskHtmxRequest(event);
+  const { request, primaryTarget } = kioskHtmxRequest(event, "htmx_primary_settle");
   // HTMX settles OOB elements too; only the primary #kiosk target completes its response transaction.
-  if (!request || event.target !== event.detail.target || !settlingKioskRequests.delete(request)) return;
+  if (!request || !primaryTarget || !settlingKioskRequests.delete(request)) return;
   if (settlingKioskRequests.size > 0) return;
   kioskCaptureReady = true;
   settledKioskEpoch += 1;
   scheduleCapture();
 }
 
-function failKioskHtmxRequest(event) {
-  const request = kioskHtmxRequest(event);
+function failKioskHtmxRequest(event, inspected = null) {
+  const { request } = inspected || kioskHtmxRequest(event, "htmx_error");
   if (!request || !settlingKioskRequests.delete(request)) return;
   if (settlingKioskRequests.size > 0) return;
   // Wait for another successful Kiosk response; a failed partial response has no trustworthy pair.
@@ -164,7 +202,11 @@ function failKioskHtmxRequest(event) {
 }
 
 function skipNoSwapKioskRequest(event) {
-  if (event.detail && event.detail.xhr && event.detail.xhr.status === 204) failKioskHtmxRequest(event);
+  const inspected = kioskHtmxRequest(event);
+  if (inspected.request && inspected.request.status === 204) {
+    reportDiagnostic("htmx_error", inspected.fields);
+    failKioskHtmxRequest(event, inspected);
+  }
 }
 
 function isCaptureMutation(mutation) {
@@ -213,6 +255,7 @@ function handlePlaybackCommand(command) {
     desiredPlaybackPaused = command.paused;
     pauseSnapshotNonce = command.paused && typeof command.snapshotNonce === "string" ? command.snapshotNonce : null;
     pauseSnapshotRequiresSettleEpoch = null;
+    reportDiagnostic("pause", {}, true);
     setPollingPaused(command.paused);
     if (command.paused) scheduleCapture();
   } else if (command.type === "step" && typeof command.forward === "boolean") {
@@ -220,6 +263,7 @@ function handlePlaybackCommand(command) {
       pauseSnapshotNonce = command.snapshotNonce;
       pauseSnapshotRequiresSettleEpoch = settledKioskEpoch;
     }
+    reportDiagnostic("step", {}, true);
     stepPhoto(command.forward);
   }
 }
