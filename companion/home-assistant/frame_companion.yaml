@@ -54,7 +54,6 @@ template:
           {% set seen_ms = device.get('lastSeenAt', 0) | int(0) %}
           {{ is_state('sensor.frame_companion', 'online')
              and device.get('online', false)
-             and not device.get('status', {}).get('offline', false)
              and value is number and 0 <= value <= now_ms
              and 0 <= now_ms - updated_ms <= 90000
              and 0 <= now_ms - server_ms <= 90000
@@ -74,7 +73,6 @@ template:
           {% set seen_ms = device.get('lastSeenAt', 0) | int(0) %}
           {{ is_state('sensor.frame_companion', 'online')
              and device.get('online', false)
-             and not device.get('status', {}).get('offline', false)
              and value is number and value >= 0
              and 0 <= now_ms - updated_ms <= 90000
              and 0 <= now_ms - server_ms <= 90000
@@ -93,7 +91,6 @@ template:
           {% set seen_ms = device.get('lastSeenAt', 0) | int(0) %}
           {{ is_state('sensor.frame_companion', 'online')
              and device.get('online', false)
-             and not device.get('status', {}).get('offline', false)
              and value is string
              and 0 <= now_ms - updated_ms <= 90000
              and 0 <= now_ms - server_ms <= 90000
