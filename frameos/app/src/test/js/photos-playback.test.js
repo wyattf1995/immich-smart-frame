@@ -9,6 +9,7 @@ const vm = require("node:vm");
 function loadScript({ connectNative, historyValues = [], frames, push = false } = {}) {
   const events = [];
   const nativeMessages = [];
+  const diagnosticMessages = [];
   const microtasks = [];
   const timers = [];
   const observers = [];
@@ -88,7 +89,10 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
       constructor(callback) { this.callback = callback; observers.push(this); }
       observe(target, options) { this.target = target; this.options = options; }
     },
-    browser: { runtime: { connectNative: connectNative || (() => port), sendNativeMessage(_name, message) { nativeMessages.push(message); return Promise.resolve({ accepted: true }); } } },
+    browser: { runtime: { connectNative: connectNative || (() => port), sendNativeMessage(_name, message) {
+      if (message.type === "bridge-diagnostic") diagnosticMessages.push(message); else nativeMessages.push(message);
+      return Promise.resolve({ accepted: true });
+    } } },
     document: {
       body,
       documentElement: {},
@@ -112,7 +116,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../../main/assets/frame-photo-bridge/photos.js"), "utf8"), context);
   return {
-    body, events, next, previous, port, timers, observers, listeners, classes, nativeMessages, progress, kiosk,
+    body, events, next, previous, port, timers, observers, listeners, classes, nativeMessages, diagnosticMessages, progress, kiosk,
     runMicrotasks() { while (microtasks.length) microtasks.shift()(); },
     pendingMicrotasks() { return microtasks.length; },
     setFrameVisible(index, visible) { frameList[index].visible = visible; },
@@ -121,6 +125,9 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
     mutate(records) { observers.find((observer) => observer.target === context.document.documentElement).callback(records); },
     fireEvent(type, detail = {}, target = detail.target) {
       listeners.filter(([eventType]) => eventType === type).forEach(([, listener]) => listener({ type, detail, target }));
+    },
+    fireRawEvent(type, event) {
+      listeners.filter(([eventType]) => eventType === type).forEach(([, listener]) => listener(event));
     },
     setHistory(values) {
       history.splice(0, history.length, ...values.map((value) => ({ value })));
@@ -143,6 +150,42 @@ test("pause command targets body with the pinned KeyP contract", () => {
   assert.equal(runtime.events[0].shiftKey, false);
   assert.equal(runtime.events[0].bubbles, true);
   assert.equal(runtime.body.classList.contains("polling-paused"), true);
+});
+
+test("diagnostics report only bounded scalar HTMX and paused-command state", () => {
+  const runtime = loadScript();
+  const request = {};
+  runtime.port.listener({ type: "pause", paused: true, snapshotNonce: "11111111-1111-4111-8111-111111111111" });
+  runtime.port.listener({ type: "step", forward: true, snapshotNonce: "22222222-2222-4222-8222-222222222222" });
+  runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: request });
+  runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: request }, runtime.kiosk);
+  runtime.fireEvent("htmx:sendError", { target: runtime.kiosk, xhr: request });
+
+  assert.deepEqual(runtime.diagnosticMessages.map(({ stage, detailReadable, targetIsKiosk, xhrPresent, primaryTarget, desiredPaused, noncePresent, settledEpoch, trackedCount }) => ({ stage, detailReadable, targetIsKiosk, xhrPresent, primaryTarget, desiredPaused, noncePresent, settledEpoch, trackedCount })), [
+    { stage: "pause", detailReadable: false, targetIsKiosk: false, xhrPresent: false, primaryTarget: false, desiredPaused: true, noncePresent: true, settledEpoch: 0, trackedCount: 0 },
+    { stage: "step", detailReadable: false, targetIsKiosk: false, xhrPresent: false, primaryTarget: false, desiredPaused: true, noncePresent: true, settledEpoch: 0, trackedCount: 0 },
+    { stage: "htmx_before", detailReadable: true, targetIsKiosk: true, xhrPresent: true, primaryTarget: true, desiredPaused: true, noncePresent: true, settledEpoch: 0, trackedCount: 0 },
+    { stage: "htmx_primary_settle", detailReadable: true, targetIsKiosk: true, xhrPresent: true, primaryTarget: true, desiredPaused: true, noncePresent: true, settledEpoch: 0, trackedCount: 1 },
+    { stage: "htmx_error", detailReadable: true, targetIsKiosk: true, xhrPresent: true, primaryTarget: true, desiredPaused: true, noncePresent: true, settledEpoch: 1, trackedCount: 0 },
+  ]);
+  assert.equal(runtime.diagnosticMessages.every((message) => !Object.hasOwn(message, "assetId") && !Object.hasOwn(message, "image") && !Object.hasOwn(message, "snapshotNonce")), true);
+});
+
+test("diagnostics fail closed on unreadable page event detail and stop at sixteen per page", () => {
+  const runtime = loadScript();
+  const unreadable = { target: runtime.kiosk };
+  Object.defineProperty(unreadable, "detail", { get() { throw new Error("cross-realm"); } });
+  assert.doesNotThrow(() => runtime.fireRawEvent("htmx:beforeSend", unreadable));
+  assert.deepEqual({ ...runtime.diagnosticMessages[0] }, {
+    type: "bridge-diagnostic", stage: "htmx_before", detailReadable: false, targetIsKiosk: false,
+    xhrPresent: false, primaryTarget: false, desiredPaused: false, noncePresent: false, settledEpoch: 0, trackedCount: 0,
+  });
+  const unreadableTarget = { target: runtime.kiosk, detail: {} };
+  Object.defineProperty(unreadableTarget.detail, "target", { get() { throw new Error("xray target"); } });
+  assert.doesNotThrow(() => runtime.fireRawEvent("htmx:beforeSend", unreadableTarget));
+  assert.equal(runtime.diagnosticMessages[1].detailReadable, false);
+  for (let index = 0; index < 20; index += 1) runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: {} });
+  assert.equal(runtime.diagnosticMessages.length, 16);
 });
 
 test("step clicks pinned navigation and restores desired paused state after swap", () => {
