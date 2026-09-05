@@ -139,8 +139,10 @@ fi
 
 node birdnet/tests/test-audio-freshness.mjs
 python3 -m unittest discover -s companion/tests
+python3 -B -m unittest scripts/tests/test_observe_frame_variety.py
 ruby scripts/test-kiosk-log-settings.rb
 ruby companion/home-assistant/test_validate.rb
+ruby companion/home-assistant/test_morning_scene.rb
 
 ./scripts/test-check-frame-readiness.sh
 
