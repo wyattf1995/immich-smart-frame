@@ -62,6 +62,50 @@ class FrameWebRenderedStateTest {
     }
 
     @Test
+    fun `fragment navigation retains a qualified document but cannot create qualification`() {
+        val state = FrameWebRenderedState()
+
+        state.recordRequest()
+        state.recordPageStart()
+        state.recordPageStop(success = true)
+        assertTrue(state.recordFirstContentfulPaint())
+
+        state.recordFragmentOnlyRequest()
+        assertTrue(state.rendered)
+
+        state.recordRequest()
+        state.recordFragmentOnlyRequest()
+        assertFalse(state.rendered)
+    }
+
+    @Test
+    fun `fragment navigation retains partial document progress until both load signals arrive`() {
+        val state = FrameWebRenderedState()
+
+        state.recordRequest()
+        state.recordPageStart()
+        state.recordFragmentOnlyRequest()
+
+        assertFalse(state.rendered)
+        assertFalse(state.recordPageStop(success = true))
+        assertTrue(state.recordFirstContentfulPaint())
+    }
+
+    @Test
+    fun `fragment navigation retains completed document evidence across a paint reset`() {
+        val state = FrameWebRenderedState()
+
+        state.recordRequest()
+        state.recordPageStart()
+        state.recordPageStop(success = true)
+        assertTrue(state.recordFirstContentfulPaint())
+        assertTrue(state.recordPaintStatusReset())
+
+        state.recordFragmentOnlyRequest()
+        assertTrue(state.recordFirstContentfulPaint())
+    }
+
+    @Test
     fun `callbacks before page start cannot qualify initial blank content`() {
         val state = FrameWebRenderedState()
 
