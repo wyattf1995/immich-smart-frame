@@ -1,0 +1,48 @@
+import importlib
+import os
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+TAGGING = str(Path(__file__).resolve().parents[1])
+if TAGGING not in sys.path:
+    sys.path.insert(0, TAGGING)
+os.environ.setdefault('IMMICH_KEY', 'test-only')
+runner = importlib.import_module('tagger_policy')
+
+
+class RunnerWriteGateTests(unittest.TestCase):
+    def setUp(self):
+        runner.TAGMAP.clear()
+
+    def test_dry_direct_filename_plan_never_puts(self):
+        with patch.object(runner, 'im') as request:
+            runner.process('asset-id', 'Screenshot_2026-09-05.png', '', (), '', apply=False)
+        request.assert_not_called()
+
+    def test_apply_direct_filename_adds_only_skip_relationship(self):
+        runner.TAGMAP['Skip/Screenshot'] = 'skip-tag-id'
+        with patch.object(runner, 'im', return_value=None) as request:
+            runner.process('asset-id', 'Screenshot_2026-09-05.png', '', (), 'Human caption', apply=True)
+        request.assert_called_once_with('PUT', '/api/tags/assets', {'tagIds': ['skip-tag-id'], 'assetIds': ['asset-id']})
+
+    def test_failed_apply_does_not_checkpoint(self):
+        old = (runner.WORK, runner.CKPT, runner.LOGF, runner.LOCK, runner.APPLY, runner.DRY, runner.IDS_FILE)
+        temp = Path(self._testMethodName)
+        try:
+            runner.WORK = str(temp)
+            runner.CKPT = str(temp / 'processed.txt')
+            runner.LOGF = str(temp / 'tagger.log')
+            runner.LOCK = str(temp / 'tagger.lock')
+            runner.APPLY = True
+            runner.DRY = False
+            runner.IDS_FILE = None
+            with patch.object(runner, 'process', side_effect=runner.ClassificationError('bad response')):
+                self.assertFalse(runner.record_success_after_process('asset-id', open_checkpoint=lambda: None))
+        finally:
+            (runner.WORK, runner.CKPT, runner.LOGF, runner.LOCK, runner.APPLY, runner.DRY, runner.IDS_FILE) = old
+
+
+if __name__ == '__main__':
+    unittest.main()

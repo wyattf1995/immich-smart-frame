@@ -18,7 +18,9 @@ class FilenamePolicyTests(unittest.TestCase):
         ):
             self.assertEqual('Skip/Screenshot', filename_skip_tag(name), name)
 
-    def test_screenshot_word_inside_a_photo_name_is_not_a_match(self):
+    def test_generic_screenshot_prefixes_and_embedded_words_are_not_matches(self):
+        self.assertIsNone(filename_skip_tag('Screenshot of birthday.jpg'))
+        self.assertIsNone(filename_skip_tag('Screenshot reference.jpg'))
         self.assertIsNone(filename_skip_tag('family-screenshotphoto-inside.jpg'))
         self.assertIsNone(filename_skip_tag('vacation_screenshot_reference.jpg'))
 
