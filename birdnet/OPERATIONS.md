@@ -288,6 +288,34 @@ BIRDNET_DATA_DIR=/mnt/user/appdata/birdnet-go/data \
 bash ./scripts/birdnet-watchdog.sh
 ```
 
+When BirdNET-Go administration authentication also protects the audio-health
+endpoint, keep the normal direct request disabled and supply an optional
+mode-`0600` JSON file outside this repository through
+`BIRDNET_WATCHDOG_AUTH_FILE`. Its schema is `{"clientid":"...","password":"..."}`;
+use the configured BirdNET-Go browser client credentials and do not place their
+values in a User Script, shell history, or this document. For example:
+
+```sh
+BIRDNET_BIND_IP=<Unraid_LAN_IP> \
+BIRDNET_WATCHDOG_AUTH_FILE=/mnt/user/appdata/birdnet-go/secrets/watchdog-auth.json \
+bash ./scripts/birdnet-watchdog.sh
+```
+
+With that file, the watchdog posts a login request, accepts only BirdNET-Go's
+same-origin `/api/v2/auth/callback` path, and uses the resulting session cookie
+only in memory for its one health request. Passwords, callback codes, and
+cookies are not passed in command arguments, printed, or saved in a cookie jar.
+The login creates a short-lived BirdNET-Go server session and has the same
+binary authentication scope as the configured client; the watchdog itself still
+does not change configuration, detections, containers, or files. A missing,
+unreadable, malformed, mode-insecure, or rejected credential file fails closed.
+The file must be owned by the watchdog's effective user or by root; use a
+root-owned file when the User Script runs as root.
+Without `BIRDNET_WATCHDOG_AUTH_FILE`, the watchdog retains its unauthenticated
+request behavior; an authenticated deployment will then report the existing
+endpoint-unavailable alert. Do not work around authentication by widening the
+frame proxy or disabling BirdNET-Go access controls.
+
 The bridge is optional; its absent container is reported as `not-created` and
 does not make the watchdog fail. When audio monitoring is expected, a missing
 or stale audio-health result is a failure. Tune the conservative freshness
