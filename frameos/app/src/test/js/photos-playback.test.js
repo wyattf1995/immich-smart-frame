@@ -390,3 +390,27 @@ test("overlapping Kiosk settles retain capture until every response settles", ()
     [{ assetId: thirdId, image: "third" }],
   );
 });
+
+test("a no-content Kiosk response keeps capture closed until a later settled response", () => {
+  const firstId = "11111111-1111-4111-8111-111111111111";
+  const finalId = "33333333-3333-4333-8333-333333333333";
+  const runtime = loadScript({ historyValues: [`*${firstId}:first`], frames: [{ images: ["data:image/jpeg;base64,first"] }] });
+  const empty = {};
+  runtime.runMicrotasks();
+  runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: empty });
+  runtime.fireEvent("htmx:afterRequest", { target: runtime.kiosk, xhr: Object.assign(empty, { status: 204 }) });
+  runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
+  runtime.runMicrotasks();
+  assert.equal(runtime.nativeMessages.length, 1);
+  const successful = {};
+  runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: successful });
+  runtime.setHistory([`${firstId}:first`, `*${finalId}:final`]);
+  runtime.setFrameImage(0, "data:image/jpeg;base64,final");
+  runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
+  runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: successful }, runtime.kiosk);
+  runtime.runMicrotasks();
+  assert.deepEqual(
+    runtime.nativeMessages.slice(-1).map(({ assetId, image }) => ({ assetId, image })),
+    [{ assetId: finalId, image: "final" }],
+  );
+});
