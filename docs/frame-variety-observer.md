@@ -5,6 +5,18 @@ Frame companion SQLite database. It runs independently of Kiosk and its soak
 collector, opens the database with SQLite `mode=ro`, and never writes the
 companion database, Kiosk, or any service configuration.
 
+For a live database in WAL mode, SQLite may create or update its shared-memory
+sidecar even with `mode=ro` and `PRAGMA query_only=ON`. A container bind that makes
+the entire database directory read-only can therefore fail with `unable to open
+database file`. Allow sidecar writes in that directory while retaining the
+observer's SQL read-only settings. Run it in a separate constrained container
+under the database owner's UID, with no network, a read-only root filesystem,
+dropped capabilities, and a read-only script bind. This arrangement is SQL
+read-only, not filesystem-immutable. Do not use SQLite `immutable=1` against the
+live database: it bypasses normal locking and WAL handling. Before a long run,
+check a short run's `readFailures` count and inspect process completion separately
+from the numeric report.
+
 Run it on the host that has the companion `state.db` file mounted:
 
 ```sh
