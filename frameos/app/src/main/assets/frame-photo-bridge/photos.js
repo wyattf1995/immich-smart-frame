@@ -21,7 +21,10 @@ let playbackPort = null;
 let portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
 let portRetryTimer = 0;
 const settlingKioskRequests = new Set();
-let kioskCaptureReady = true;
+// At document_start no initial Kiosk transaction can be assumed complete. HTMX
+// listeners install immediately; DOM capture waits for a tracked settle or DOM ready.
+let kioskCaptureReady = false;
+let domReady = false;
 let settledKioskEpoch = 0;
 let pauseSnapshotRequiresSettleEpoch = null;
 let diagnosticReports = 0;
@@ -80,7 +83,7 @@ function settlePausedFrame(frame) {
 
 function capture() {
   queued = false;
-  if (settlingKioskRequests.size > 0 || !kioskCaptureReady) return;
+  if (!domReady || settlingKioskRequests.size > 0 || !kioskCaptureReady) return;
   const histories = Array.from(document.querySelectorAll("#kiosk-history input[name='history']"))
     .filter((history) => typeof history.value === "string" && history.value.startsWith("*"));
   if (histories.length !== 1) return;
@@ -144,7 +147,7 @@ function retryRejectedCapture(fingerprint) {
 }
 
 function scheduleCapture() {
-  if (queued || settlingKioskRequests.size > 0 || !kioskCaptureReady) return;
+  if (!domReady || queued || settlingKioskRequests.size > 0 || !kioskCaptureReady) return;
   queued = true;
   queueMicrotask(capture);
 }
@@ -254,7 +257,7 @@ function stepPhoto(forward) {
 }
 
 function handlePlaybackCommand(command) {
-  if (!command || typeof command.type !== "string") return;
+  if (!domReady || !command || typeof command.type !== "string") return;
   portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
   if (command.type === "pause" && typeof command.paused === "boolean") {
     desiredPlaybackPaused = command.paused;
@@ -301,13 +304,8 @@ function connectPlaybackPort() {
   }
 }
 
-new MutationObserver(() => {
-  if (desiredPlaybackPaused && !document.body.classList.contains("polling-paused")) setPollingPaused(true);
-}).observe(document.body, { attributes: true, attributeFilter: ["class"] });
-
-document.addEventListener("load", scheduleCapture, true);
-document.addEventListener("transitionend", scheduleCapture, true);
-document.addEventListener("animationend", scheduleCapture, true);
+// Install these before page scripts can process main#kiosk hx-trigger="load".
+// They only inspect HTMX event detail, so they are safe before document.body exists.
 document.addEventListener("htmx:beforeSend", beginKioskHtmxRequest, true);
 document.addEventListener("htmx:afterSettle", settleKioskHtmxRequest, true);
 document.addEventListener("htmx:responseError", failKioskHtmxRequest, true);
@@ -315,6 +313,26 @@ document.addEventListener("htmx:sendError", failKioskHtmxRequest, true);
 document.addEventListener("htmx:sendAbort", failKioskHtmxRequest, true);
 document.addEventListener("htmx:timeout", failKioskHtmxRequest, true);
 document.addEventListener("htmx:afterRequest", skipNoSwapKioskRequest, true);
-new MutationObserver(scheduleCaptureMutations).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
-scheduleCapture();
-connectPlaybackPort();
+
+function initializeDomCapture() {
+  if (domReady) return;
+  domReady = true;
+  new MutationObserver(() => {
+    if (desiredPlaybackPaused && !document.body.classList.contains("polling-paused")) setPollingPaused(true);
+  }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  new MutationObserver(scheduleCaptureMutations).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
+  // A document-start bridge has observed no main#kiosk request in this document.
+  // The initial DOM is therefore stable enough to validate as a complete pair.
+  if (settlingKioskRequests.size === 0) kioskCaptureReady = true;
+  scheduleCapture();
+  connectPlaybackPort();
+}
+
+document.addEventListener("load", scheduleCapture, true);
+document.addEventListener("transitionend", scheduleCapture, true);
+document.addEventListener("animationend", scheduleCapture, true);
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initializeDomCapture, { once: true });
+} else {
+  initializeDomCapture();
+}
