@@ -85,6 +85,26 @@ class VarietyAggregationTest(unittest.TestCase):
         self.assertEqual(1, report["ignoredNonPhotos"])
         self.assertEqual(1, report["ignoredStale"])
 
+    def test_recent_photo_from_a_disconnected_device_is_excluded(self):
+        aggregate = MODULE.VarietyAggregate(secret=b"d" * 32, stale_millis=180_000)
+        device, status = row("frame", ASSET_A, photo_at=NOW)
+        aggregate.accept(device, status, NOW, seen_at=NOW - MODULE.DEVICE_ONLINE_MILLIS - 1)
+
+        report = aggregate.report(duration_seconds=60, sample_seconds=2)
+        self.assertEqual(0, report["observations"])
+        self.assertEqual(1, report["ignoredDeviceOffline"])
+
+    def test_future_photo_or_device_timestamps_are_excluded(self):
+        aggregate = MODULE.VarietyAggregate(secret=b"f" * 32, stale_millis=180_000)
+        device, status = row("frame", ASSET_A, photo_at=NOW + 1)
+        aggregate.accept(device, status, NOW, seen_at=NOW)
+        device, status = row("frame", ASSET_B, photo_at=NOW)
+        aggregate.accept(device, status, NOW, seen_at=NOW + 1)
+
+        report = aggregate.report(duration_seconds=60, sample_seconds=2)
+        self.assertEqual(0, report["observations"])
+        self.assertEqual(2, report["ignoredFutureTimestamp"])
+
     def test_report_contains_no_identifiers_or_hashes(self):
         aggregate = MODULE.VarietyAggregate(secret=b"q" * 32, stale_millis=180_000)
         aggregate.accept("private-frame", row("private-frame", ASSET_A)[1], NOW + 1)
@@ -100,10 +120,10 @@ class ReadOnlySqliteTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "state.db"
             with sqlite3.connect(path) as connection:
-                connection.execute("CREATE TABLE devices (id TEXT PRIMARY KEY, status TEXT)")
+                connection.execute("CREATE TABLE devices (id TEXT PRIMARY KEY, status TEXT, seen INTEGER)")
                 connection.execute(
-                    "INSERT INTO devices VALUES (?, ?)",
-                    ("private-frame", json.dumps(row("private-frame", ASSET_A)[1])),
+                    "INSERT INTO devices VALUES (?, ?, ?)",
+                    ("private-frame", json.dumps(row("private-frame", ASSET_A)[1]), NOW),
                 )
                 connection.commit()
             before = path.read_bytes()
@@ -111,7 +131,7 @@ class ReadOnlySqliteTest(unittest.TestCase):
             after = path.read_bytes()
 
         self.assertEqual(before, after)
-        self.assertEqual([("private-frame", row("private-frame", ASSET_A)[1])], rows)
+        self.assertEqual([("private-frame", row("private-frame", ASSET_A)[1], NOW)], rows)
 
 
 if __name__ == "__main__":
