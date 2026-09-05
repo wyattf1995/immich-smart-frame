@@ -91,6 +91,30 @@ class FrameWebSurfaceContractTest {
     }
 
     @Test
+    fun `Photos waits for its current bridge attachment before loading and drops hidden pending work`() {
+        val source = source()
+        val request = methodBody(source, "fun request(url: String)")
+        val setActive = methodBody(source, "fun setActive(active: Boolean)")
+        val suspendForLifecycle = methodBody(source, "fun suspendForLifecycle()")
+
+        assertContainsInOrder(
+            request,
+            listOf(
+                "photoLoadGate.isReady()",
+                "photoLoadGate.defer(url)",
+                "return true",
+                "session.loadUri(url)",
+            ),
+        )
+        assertTrue(source.contains("photoLoadGate.beginAttachment()"))
+        assertTrue(source.contains("photoLoadGate.markReady(attachmentEpoch)"))
+        assertTrue(source.contains("photoLoadGate.takePendingIfReady(attachmentEpoch)"))
+        assertTrue(source.contains("canFlushPendingPhotoRequest()"))
+        assertTrue(setActive.contains("dropPendingPhotoRequest()"))
+        assertTrue(suspendForLifecycle.contains("dropPendingPhotoRequest()"))
+    }
+
+    @Test
     fun `boot retry actively reloads only an unrendered displayed web session`() {
         val retry = methodBody(source(), "fun retryDisplayedContentIfUnrendered()")
 
