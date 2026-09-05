@@ -53,6 +53,7 @@ required_files=(
   custom-image/history-render-memory-tests.patch
   custom-image/history-render-memory.patch
   custom-image/history-display-bounds-tests.patch
+  custom-image/history-display-bounds.patch
   custom-image/paused-retry-tests.patch
   custom-image/paused-retry.patch
   custom-image/offline-cache-hardening.patch

@@ -1,0 +1,26 @@
+--- a/internal/routes/routes_previous_asset.go
++++ b/internal/routes/routes_previous_asset.go
+@@ -74,6 +74,9 @@
+ 	requestConfig := requestData.RequestConfig
+ 	requestID := requestData.RequestID
+ 	deviceID := requestData.DeviceID
++	if err := validateOptimizedClientDimensions(requestConfig); err != nil {
++		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
++	}
+ 
+ 	log.Debug(
+ 		requestID,
+@@ -274,6 +277,13 @@
+ 		}
+ 
+ 		img = handleFaceProcessing(img, asset, requestConfig, requestMetadata{requestID: requestID, deviceID: deviceID})
++		if requestConfig.OptimizeImages {
++			optimized, optimizeErr := utils.OptimizeImage(img, requestConfig.ClientData.Width, requestConfig.ClientData.Height)
++			if optimizeErr != nil {
++				return optimizeErr
++			}
++			img = optimized
++		}
+ 		if err := ctx.Err(); err != nil {
+ 			return err
+ 		}
