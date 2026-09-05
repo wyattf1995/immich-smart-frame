@@ -310,7 +310,7 @@ class FrameWebSurface(
             return pageLoadWatchdogState.disarm()
         }
 
-        private fun trace(event: String) {
+        fun trace(event: String) {
             if (!Log.isLoggable(SURFACE_TRACE_TAG, Log.DEBUG) || traceEvents >= MAX_SURFACE_TRACE_EVENTS) return
             traceEvents += 1
             val current = this === displayedManagedSession()
