@@ -1,7 +1,7 @@
 services:
   frame-companion:
     build: .
-    image: local/frame-companion:0.3.2
+    image: local/frame-companion:0.3.3
     container_name: frame-companion
     restart: unless-stopped
     user: "10001:10001"
