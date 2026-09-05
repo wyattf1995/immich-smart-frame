@@ -37,7 +37,7 @@ class Completed:
 
 def command_results(watchdog=Completed(0, FRESH), containers=None):
     containers = containers or [Completed(0, INSPECT_OK)] * 3
-    return iter([watchdog, *containers])
+    return iter([(result.returncode, result.stdout) for result in [watchdog, *containers]])
 
 
 class PublisherTests(unittest.TestCase):
@@ -58,7 +58,7 @@ class PublisherTests(unittest.TestCase):
             token = Path(directory) / "token"
             token.write_text("private-token")
             token.chmod(0o600)
-            with patch.object(publisher.subprocess, "run", side_effect=run), patch.object(publisher.NO_REDIRECT_OPENER, "open", side_effect=urlopen):
+            with patch.object(publisher, "bounded_run", side_effect=run), patch.object(publisher.NO_REDIRECT_OPENER, "open", side_effect=urlopen):
                 payload = publisher.collect_payload("/watchdog", now_ms=1_000_000)
                 publisher.publish("http://ha.local", token, payload)
 
@@ -71,7 +71,7 @@ class PublisherTests(unittest.TestCase):
 
     def test_stale_audio_is_degraded_with_a_bounded_derived_timestamp(self):
         responses = command_results(Completed(1, STALE))
-        with patch.object(publisher.subprocess, "run", side_effect=lambda *a, **k: next(responses)):
+        with patch.object(publisher, "bounded_run", side_effect=lambda *a, **k: next(responses)):
             payload = publisher.collect_payload("/watchdog", now_ms=1_000_000)
         self.assertEqual(payload["state"], "degraded")
         self.assertFalse(payload["attributes"]["audioHealthy"])
@@ -79,7 +79,7 @@ class PublisherTests(unittest.TestCase):
 
     def test_missing_watchdog_data_is_unknown_never_healthy(self):
         responses = command_results(Completed(1, "CRITICAL: endpoint unavailable"))
-        with patch.object(publisher.subprocess, "run", side_effect=lambda *a, **k: next(responses)):
+        with patch.object(publisher, "bounded_run", side_effect=lambda *a, **k: next(responses)):
             payload = publisher.collect_payload("/watchdog", now_ms=1_000_000)
         self.assertEqual(payload["state"], "unknown")
         self.assertFalse(payload["attributes"]["audioHealthy"])
@@ -87,7 +87,7 @@ class PublisherTests(unittest.TestCase):
 
     def test_failed_inspect_is_unknown_and_never_marks_container_healthy(self):
         responses = command_results(containers=[Completed(0, INSPECT_OK), Completed(1, "private daemon detail"), Completed(0, INSPECT_OK)])
-        with patch.object(publisher.subprocess, "run", side_effect=lambda *a, **k: next(responses)):
+        with patch.object(publisher, "bounded_run", side_effect=lambda *a, **k: next(responses)):
             payload = publisher.collect_payload("/watchdog", now_ms=1_000_000)
         self.assertEqual(payload["state"], "unknown")
         self.assertFalse(payload["attributes"]["birdnetHealthy"])
