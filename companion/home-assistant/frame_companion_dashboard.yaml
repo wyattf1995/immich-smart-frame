@@ -15,6 +15,16 @@ views:
           - sensor.frame_version
           - sensor.frame_command_acknowledgement
       - type: entities
+        title: Photo and audio services
+        entities:
+          - binary_sensor.frame_server_telemetry_fresh
+          - sensor.frame_services
+          - sensor.frame_audio_last_received
+          - sensor.frame_audio_age
+          - sensor.frame_kiosk_restarts
+          - sensor.frame_birdnet_restarts
+          - sensor.frame_audio_bridge_restarts
+      - type: entities
         title: Morning scene
         entities:
           - input_boolean.frame_morning_scene_enabled

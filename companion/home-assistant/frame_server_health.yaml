@@ -1,0 +1,79 @@
+# Include as a second HA package alongside frame_companion.yaml.
+# The NAS publisher updates one source entity; all displayed values expire after 180s.
+# Restart counts are for the current container and can reset on replacement.
+template:
+- sensor:
+  - name: Frame Services
+    availability: |-
+      {% set observed = state_attr('sensor.frame_server_health', 'observedAt') %}
+      {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+      {% set fresh = observed is number and observed is not boolean and 0 <= now_ms - observed <= 180000 %}
+      {{ fresh }}
+    state: '{{ states(''sensor.frame_server_health'') if states(''sensor.frame_server_health'') in [''healthy'',
+      ''degraded''] else ''unknown'' }}'
+  - name: Frame Audio Last Received
+    availability: |-
+      {% set observed = state_attr('sensor.frame_server_health', 'observedAt') %}
+      {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+      {% set fresh = observed is number and observed is not boolean and 0 <= now_ms - observed <= 180000 %}
+      {% set value = state_attr('sensor.frame_server_health', 'audioLastAt') %}
+      {{ fresh and value is number and value is not boolean and 0 <= value <= now_ms }}
+    device_class: timestamp
+    state: |-
+      {% set value = state_attr('sensor.frame_server_health', 'audioLastAt') %}
+      {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+      {{ (value / 1000) | timestamp_local if value is number and value is not boolean and 0 <= value <= now_ms else 'unknown' }}
+  - name: Frame Audio Age
+    availability: |-
+      {% set observed = state_attr('sensor.frame_server_health', 'observedAt') %}
+      {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+      {% set fresh = observed is number and observed is not boolean and 0 <= now_ms - observed <= 180000 %}
+      {% set value = state_attr('sensor.frame_server_health', 'audioLastAt') %}
+      {{ fresh and value is number and value is not boolean and 0 <= value <= now_ms }}
+    device_class: duration
+    unit_of_measurement: s
+    state: |-
+      {% set value = state_attr('sensor.frame_server_health', 'audioLastAt') %}
+      {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+      {{ ((now_ms - value) / 1000) | int if value is number and value is not boolean and 0 <= value <= now_ms else 'unknown' }}
+  - name: Frame Kiosk Restarts
+    icon: mdi:restart
+    availability: |-
+      {% set observed = state_attr('sensor.frame_server_health', 'observedAt') %}
+      {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+      {% set fresh = observed is number and observed is not boolean and 0 <= now_ms - observed <= 180000 %}
+      {% set value = state_attr('sensor.frame_server_health', 'kioskRestarts') %}
+      {{ fresh and value is integer and value is not boolean and value >= 0 }}
+    state: |-
+      {% set value = state_attr('sensor.frame_server_health', 'kioskRestarts') %}
+      {{ value if value is integer and value is not boolean and value >= 0 else 'unknown' }}
+  - name: Frame BirdNET Restarts
+    icon: mdi:restart
+    availability: |-
+      {% set observed = state_attr('sensor.frame_server_health', 'observedAt') %}
+      {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+      {% set fresh = observed is number and observed is not boolean and 0 <= now_ms - observed <= 180000 %}
+      {% set value = state_attr('sensor.frame_server_health', 'birdnetRestarts') %}
+      {{ fresh and value is integer and value is not boolean and value >= 0 }}
+    state: |-
+      {% set value = state_attr('sensor.frame_server_health', 'birdnetRestarts') %}
+      {{ value if value is integer and value is not boolean and value >= 0 else 'unknown' }}
+  - name: Frame Audio Bridge Restarts
+    icon: mdi:restart
+    availability: |-
+      {% set observed = state_attr('sensor.frame_server_health', 'observedAt') %}
+      {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+      {% set fresh = observed is number and observed is not boolean and 0 <= now_ms - observed <= 180000 %}
+      {% set value = state_attr('sensor.frame_server_health', 'bridgeRestarts') %}
+      {{ fresh and value is integer and value is not boolean and value >= 0 }}
+    state: |-
+      {% set value = state_attr('sensor.frame_server_health', 'bridgeRestarts') %}
+      {{ value if value is integer and value is not boolean and value >= 0 else 'unknown' }}
+- binary_sensor:
+  - name: Frame Server Telemetry Fresh
+    device_class: connectivity
+    state: |-
+      {% set observed = state_attr('sensor.frame_server_health', 'observedAt') %}
+      {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+      {% set fresh = observed is number and observed is not boolean and 0 <= now_ms - observed <= 180000 %}
+      {{ fresh }}

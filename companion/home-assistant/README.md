@@ -1,6 +1,14 @@
 # Frame Companion Home Assistant package
 
 This reusable package adds health sensors and authenticated frame controls.
+
+Include `frame_server_health.yaml` as a second package for NAS audio freshness and
+Kiosk, BirdNET, and audio-bridge restart counts. The NAS publisher described in
+`../../birdnet/FRAME_HEALTH_PUBLISHER.md` supplies its source entity. The dashboard
+marks these values unavailable after 180 seconds without a current report and
+rejects future timestamps. Restart counts refer to the current container and can
+reset when it is replaced. Render and recovery sensors use the existing private
+companion snapshot; the last failure is historical, including recovered outages.
 Provision it separately for each Home Assistant installation.
 
 Add `homeassistant: { packages: !include_dir_named packages }` to `configuration.yaml`, place `frame_companion.yaml` in `packages/`, and add these secret values to `secrets.yaml`:
