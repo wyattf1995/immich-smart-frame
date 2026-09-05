@@ -32,7 +32,7 @@ run_bounded() {
   directory=$(mktemp -d) || return 1
   fifo="$directory/output"
   mkfifo "$fifo" || { rmdir "$directory"; return 1; }
-  timeout "$timeout_seconds" "$@" >"$fifo" 2>/dev/null &
+  timeout -k 2s "$timeout_seconds" "$@" >"$fifo" 2>/dev/null &
   worker=$!
   RUN_OUTPUT=$(head -c "$limit" <"$fifo")
   wait "$worker" || RUN_CODE=$?

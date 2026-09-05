@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import selectors
+import signal
 import stat
 import subprocess
 import sys
@@ -31,9 +32,11 @@ CONTAINERS = (
     ("birdnet-go", "birdnet"),
     ("nest-audio-bridge", "bridge"),
 )
-FRESH_REPORT = re.compile(r"^INFO: audio health fresh \(([0-9]{1,6})s <= [0-9]{1,6}s\)$")
+FRESH_REPORT = re.compile(r"^INFO: audio health fresh \(([0-9]{1,6})s <= ([0-9]{1,6})s\)$")
 STALE_REPORT = re.compile(r"^CRITICAL: audio health is stale \(([0-9]{1,6})s exceeds [0-9]{1,6}s\)$")
 INSPECT_REPORT = re.compile(r"^(true|false)\|(healthy|unhealthy|starting|none)\|(true|false)\|([0-9]{1,12})$")
+CONTAINER_REPORT = re.compile(r"^INFO: (birdnet-go|nest-audio-bridge) RestartCount=([0-9]+|not-created)$")
+DISK_REPORT = re.compile(r"^INFO: disk [0-9]+ KiB available on /[^\s]+$")
 
 
 class TokenError(RuntimeError):
@@ -60,11 +63,30 @@ class RefuseRedirect(HTTPRedirectHandler):
 NO_REDIRECT_OPENER = build_opener(RefuseRedirect())
 
 
+def stop_process_group(process: subprocess.Popen[bytes]) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except PermissionError:
+        process.terminate()
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except PermissionError:
+            process.kill()
+        except ProcessLookupError:
+            return
+        process.wait()
+
+
 def bounded_run(arguments: list[str], timeout: int, limit: int) -> tuple[int | None, str | None]:
     """Run a fixed command while incrementally bounding stdout and reaping it."""
     try:
         process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL)
+                                   stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError:
         return None, None
     assert process.stdout is not None
@@ -76,8 +98,7 @@ def bounded_run(arguments: list[str], timeout: int, limit: int) -> tuple[int | N
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                process.kill()
-                process.wait()
+                stop_process_group(process)
                 return process.returncode, None
             for key, _ in selector.select(remaining):
                 chunk = os.read(key.fileobj.fileno(), min(4096, limit + 1 - len(output)))
@@ -86,18 +107,15 @@ def bounded_run(arguments: list[str], timeout: int, limit: int) -> tuple[int | N
                     continue
                 output.extend(chunk)
                 if len(output) > limit:
-                    process.kill()
-                    process.wait()
+                    stop_process_group(process)
                     return process.returncode, None
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            process.kill()
-            process.wait()
+            stop_process_group(process)
             return process.returncode, None
         returncode = process.wait(timeout=remaining)
     except (OSError, subprocess.TimeoutExpired):
-        process.kill()
-        process.wait()
+        stop_process_group(process)
         return process.returncode, None
     finally:
         selector.close()
@@ -112,12 +130,24 @@ def parse_watchdog(returncode: int | None, output: str | None, now_ms: int) -> t
     if output is None or len(output) > MAX_WATCHDOG_OUTPUT:
         return None, None
     lines = output.splitlines()
+    if not lines:
+        return None, None
     sources_healthy = lines.count("INFO: every reported audio source is HEALTHY") == 1
     fresh = [match for line in lines if (match := FRESH_REPORT.fullmatch(line))]
     stale = [match for line in lines if (match := STALE_REPORT.fullmatch(line))]
+    containers = [match for line in lines if (match := CONTAINER_REPORT.fullmatch(line))]
+    disks = [line for line in lines if DISK_REPORT.fullmatch(line)]
+    allowed = {"INFO: every reported audio source is HEALTHY"}
+    allowed.update(match.group(0) for match in fresh + stale + containers)
+    allowed.update(disks)
+    if (any(line not in allowed for line in lines) or len(containers) != 2 or
+            {match.group(1) for match in containers} != {"birdnet-go", "nest-audio-bridge"} or len(disks) != 1):
+        return None, None
     if len(fresh) == 1 and not stale and sources_healthy and returncode == 0:
-        return True, now_ms - int(fresh[0].group(1)) * 1000
-    if len(stale) == 1 and not fresh:
+        age, maximum = (int(value) for value in fresh[0].groups())
+        if age <= maximum:
+            return True, now_ms - age * 1000
+    if len(stale) == 1 and not fresh and sources_healthy and returncode not in (None, 0):
         return False, now_ms - int(stale[0].group(1)) * 1000
     return None, None
 
