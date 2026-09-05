@@ -7,6 +7,7 @@ WEB_PORT="${WEB_PORT:-8090}"
 DATA_DIR="${BIRDNET_DATA_DIR:-/mnt/user/appdata/birdnet-go/data}"
 MAX_AGE_SECONDS="${BIRDNET_AUDIO_MAX_AGE_SECONDS:-120}"
 HEALTH_URL="http://${BIRDNET_BIND_IP}:${WEB_PORT}/api/v2/health/audio"
+AUTH_FILE="${BIRDNET_WATCHDOG_AUTH_FILE:-}"
 
 failed=0
 
@@ -120,7 +121,30 @@ require_command jq || true
 require_command docker || true
 require_command df || true
 
-if health_json=$(curl --fail --silent --show-error --connect-timeout 3 --max-time 8 "$HEALTH_URL"); then # /api/v2/health/audio
+authenticated_health() {
+  local clientid password login callback headers cookie mode
+  [[ -r "$AUTH_FILE" ]] || return 1
+  mode=$(stat -c '%a' "$AUTH_FILE" 2>/dev/null || stat -f '%Lp' "$AUTH_FILE" 2>/dev/null) || return 1
+  [[ "$mode" == "600" ]] || return 1
+  clientid=$(jq -er '.clientid | strings | select(length != 0)' "$AUTH_FILE") || return 1
+  password=$(jq -er '.password | strings | select(length != 0)' "$AUTH_FILE") || return 1
+  [[ "$clientid$password" != *$'\r'* && "$clientid$password" != *$'\n'* ]] || return 1
+  login=$(jq -nc --arg username "$clientid" --arg password "$password" --arg redirectUrl "/" '{username:$username,password:$password,redirectUrl:$redirectUrl}')
+  callback=$(printf '%s' "$login" | curl --fail --silent --show-error --connect-timeout 3 --max-time 8 --header 'Content-Type: application/json' --data-binary @- "http://${BIRDNET_BIND_IP}:${WEB_PORT}/api/v2/auth/login" | jq -er 'select(.success == true) | .redirectUrl | strings') || return 1
+  [[ "$callback" =~ ^/api/v2/auth/callback\? ]] && [[ "$callback" != *$'\r'* && "$callback" != *$'\n'* ]] || return 1
+  headers=$(printf 'url = "http://%s:%s%s"\n' "$BIRDNET_BIND_IP" "$WEB_PORT" "$callback" | curl --config - --fail --silent --show-error --connect-timeout 3 --max-time 8 -D - -o /dev/null) || return 1
+  cookie=$(printf '%s\n' "$headers" | awk -F': ' 'tolower($1) == "set-cookie" { sub(/;.*/, "", $2); print $2; exit }')
+  [[ "$cookie" == *=* && "$cookie" != *$'\r'* && "$cookie" != *$'\n'* ]] || return 1
+  # curl --config keeps the /api/v2/health/audio callback credential out of argv.
+  printf 'header = "Cookie: %s"\nurl = "%s"\n' "$cookie" "$HEALTH_URL" | curl --config - --fail --silent --show-error --connect-timeout 3 --max-time 8
+}
+
+if [[ -n "$AUTH_FILE" ]]; then
+  health_json=$(authenticated_health) || health_json=""
+else
+  health_json=$(curl --fail --silent --show-error --connect-timeout 3 --max-time 8 "$HEALTH_URL") || health_json=""
+fi
+if [[ -n "$health_json" ]]; then # /api/v2/health/audio
   if printf '%s' "$health_json" | sources_are_healthy >/dev/null; then
     report "INFO: every reported audio source is HEALTHY"
   else
