@@ -48,4 +48,10 @@ if CURL_LOG="$tmp/curl.log" PATH="$tmp/bin:$PATH" BIRDNET_BIND_IP=127.0.0.1 BIRD
   cat "$tmp/malformed.out" "$tmp/malformed.err" >&2
   exit 1
 fi
+
+chmod 644 "$tmp/auth.json"
+if CURL_LOG="$tmp/curl.log" PATH="$tmp/bin:$PATH" BIRDNET_BIND_IP=127.0.0.1 BIRDNET_WATCHDOG_AUTH_FILE="$tmp/auth.json" bash "$watchdog" >"$tmp/insecure-mode.out" 2>"$tmp/insecure-mode.err"; then
+  cat "$tmp/insecure-mode.out" "$tmp/insecure-mode.err" >&2
+  exit 1
+fi
 printf 'PASS: authenticated watchdog flow\n'
