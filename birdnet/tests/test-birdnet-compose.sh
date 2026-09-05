@@ -7,6 +7,7 @@ ENV_FILE="$ROOT_DIR/.env.example"
 CONFIG_FILE="$ROOT_DIR/config/config.yaml"
 OPS_FILE="$ROOT_DIR/OPERATIONS.md"
 WATCHDOG_FILE="$ROOT_DIR/scripts/birdnet-watchdog.sh"
+AUTH_WATCHDOG_TEST="$ROOT_DIR/tests/test-birdnet-watchdog-auth.sh"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -106,6 +107,7 @@ grep -Eq '^        maxage:[[:space:]]*30d[[:space:]]*$' "$CONFIG_FILE" || \
 
 [[ -f "$WATCHDOG_FILE" ]] || fail 'tracked read-only BirdNET watchdog artifact is missing'
 [[ -x "$WATCHDOG_FILE" ]] || fail 'BirdNET watchdog artifact must be executable'
+[[ -x "$AUTH_WATCHDOG_TEST" ]] || fail 'BirdNET watchdog auth-flow test must be executable'
 grep -Eq '^#!.*(ba)?sh([[:space:]]|$)' "$WATCHDOG_FILE" || \
   fail 'BirdNET watchdog artifact must be a directly runnable shell script'
 grep -Eq 'curl.*health/audio|health/audio.*curl' "$WATCHDOG_FILE" || \
@@ -200,5 +202,7 @@ PY
 else
   printf 'SKIP: docker is not installed; static BirdNET invariants passed\n'
 fi
+
+bash "$AUTH_WATCHDOG_TEST"
 
 printf 'PASS: BirdNET-Go deployment invariants\n'
