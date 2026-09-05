@@ -8,6 +8,9 @@ views:
           - sensor.frame_companion
           - sensor.frame_last_photo
           - sensor.frame_last_weather
+          - sensor.frame_last_visible_render
+          - sensor.frame_recovery_count
+          - sensor.frame_last_failure
           - sensor.frame_reserve_count
           - sensor.frame_version
           - sensor.frame_command_acknowledgement
