@@ -115,6 +115,22 @@ class FrameWebSurfaceContractTest {
     }
 
     @Test
+    fun `failed Photos registration retries through the next recovery request`() {
+        val request = methodBody(source(), "fun request(url: String)")
+
+        assertContainsInOrder(
+            request,
+            listOf(
+                "photoLoadGate.isFailed()",
+                "attachPhotoBridge()",
+                "restorePhotoBridgeState()",
+                "photoLoadGate.defer(url)",
+                "return true",
+            ),
+        )
+    }
+
+    @Test
     fun `boot retry actively reloads only an unrendered displayed web session`() {
         val retry = methodBody(source(), "fun retryDisplayedContentIfUnrendered()")
 

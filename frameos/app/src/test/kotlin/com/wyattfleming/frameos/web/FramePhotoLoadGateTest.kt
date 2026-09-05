@@ -22,6 +22,20 @@ class FramePhotoLoadGateTest {
     }
 
     @Test
+    fun `stale failed attachment cannot poison a retried current attachment`() {
+        val gate = FramePhotoLoadGate()
+        val failed = gate.beginAttachment()
+        assertTrue(gate.markFailed(failed))
+
+        val retry = gate.beginAttachment()
+        gate.defer("https://photos.example/latest")
+
+        assertFalse(gate.markFailed(failed))
+        assertTrue(gate.markReady(retry))
+        assertEquals("https://photos.example/latest", gate.takePendingIfReady(retry))
+    }
+
+    @Test
     fun `late readiness after suspension cannot flush a hidden request`() {
         val gate = FramePhotoLoadGate()
         val attachment = gate.beginAttachment()
@@ -34,3 +48,4 @@ class FramePhotoLoadGateTest {
         assertNull(gate.takePendingIfReady(attachment))
     }
 }
+
