@@ -73,6 +73,7 @@ class FrameWebSurface(
         var lifecycleSuspended = false
         private var traceGeneration = 0L
         private var traceEvents = 0
+        private val photoLoadGate = FramePhotoLoadGate()
         private val pageLoadWatchdogState = FrameWebPageLoadWatchdogState()
         private var pageLoadWatchdog: Runnable? = null
 
@@ -169,7 +170,7 @@ class FrameWebSurface(
                 }
             }
             session.open(frameRuntime)
-            if (label == "Photos") photoBridge?.attach(frameRuntime, session, configuredUrls.first(), photosProfile)
+            attachPhotoBridge()
             session.setActive(false)
             session.setFocused(false)
         }
@@ -185,8 +186,8 @@ class FrameWebSurface(
                 if (crashRecovery.reopenIfRequired { session.open(frameRuntime) }) {
                     val active = label != "Photos" ||
                         (photosContentActive && this === displayedManagedSession() && displayedSurfaceVisible())
+                    attachPhotoBridge()
                     if (label == "Photos") {
-                        photoBridge?.attach(frameRuntime, session, configuredUrls.first(), photosProfile)
                         photoBridge?.setPlaybackPaused(photosPlaybackPaused)
                         photoBridge?.setCaptureEnabled(active, photosPlaybackPaused)
                     }
@@ -194,12 +195,62 @@ class FrameWebSurface(
                     session.setActive(active)
                     session.setFocused(false)
                 }
+                if (label == "Photos" && photoBridge != null && !photoLoadGate.isReady()) {
+                    if (photoLoadGate.isFailed()) {
+                        reportUnavailable(this)
+                        return false
+                    }
+                    photoLoadGate.defer(url)
+                    return true
+                }
                 session.loadUri(url)
                 return true
             } catch (error: RuntimeException) {
                 reportUnavailable(this)
                 return false
             }
+        }
+
+        private fun attachPhotoBridge() {
+            if (label != "Photos") return
+            val attachmentEpoch = photoLoadGate.beginAttachment()
+            val attachedSession = session
+            val attached = photoBridge?.attach(
+                frameRuntime,
+                attachedSession,
+                configuredUrls.first(),
+                photosProfile,
+            ) { ready -> onPhotoBridgeReady(attachedSession, attachmentEpoch, ready) } ?: true
+            if (photoBridge == null) {
+                photoLoadGate.markReady(attachmentEpoch)
+            } else if (!attached) {
+                onPhotoBridgeReady(attachedSession, attachmentEpoch, ready = false)
+            }
+        }
+
+        private fun onPhotoBridgeReady(observedSession: GeckoSession, attachmentEpoch: Long, ready: Boolean) {
+            if (observedSession !== session) return
+            if (!ready) {
+                if (photoLoadGate.markFailed(attachmentEpoch) && photoLoadGate.dropPending()) {
+                    loadState.recordFailure()
+                    if (canFlushPendingPhotoRequest()) reportUnavailable(this)
+                }
+                return
+            }
+            if (!photoLoadGate.markReady(attachmentEpoch)) return
+            val pendingUrl = photoLoadGate.takePendingIfReady(attachmentEpoch) ?: return
+            if (!canFlushPendingPhotoRequest()) {
+                loadState.recordFailure()
+                return
+            }
+            request(pendingUrl)
+        }
+
+        private fun canFlushPendingPhotoRequest(): Boolean =
+            !lifecycleSuspended && crashRecovery.canUseSession && this === displayedManagedSession() && displayedSurfaceVisible()
+
+        private fun dropPendingPhotoRequest() {
+            if (label == "Photos" && photoLoadGate.dropPending()) loadState.recordFailure()
         }
 
         private fun maybeReportRendered(newlyRendered: Boolean) {
@@ -222,6 +273,7 @@ class FrameWebSurface(
                 lifecycleSuspended = false
             } else {
                 lifecycleSuspended = true
+                dropPendingPhotoRequest()
                 stopWatchingDisplayedContent()
             }
             runWhenSessionUsable { session.setActive(active) }
@@ -239,6 +291,8 @@ class FrameWebSurface(
         }
 
         fun close() {
+            dropPendingPhotoRequest()
+            photoLoadGate.invalidate()
             if (label == "Photos") photoBridge?.detach(session)
             prepareForDisposal()
             runCatching { session.close() }
@@ -247,6 +301,7 @@ class FrameWebSurface(
 
         fun prepareForDisposal() {
             lifecycleSuspended = true
+            dropPendingPhotoRequest()
             disarmPageLoadWatchdog()
             if (!crashRecovery.canUseSession) return
             val clean = FrameWebSessionDisposal.prepare(
@@ -259,6 +314,7 @@ class FrameWebSurface(
 
         fun suspendForLifecycle() {
             lifecycleSuspended = true
+            dropPendingPhotoRequest()
             val pageLoad = disarmPageLoadWatchdog()
             if (pageLoad.hadActiveLoad) {
                 loadState.recordFailure()

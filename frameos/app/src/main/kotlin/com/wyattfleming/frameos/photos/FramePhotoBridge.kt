@@ -48,6 +48,7 @@ class FramePhotoBridge(
 
     @Volatile private var configuredSession: Any? = null
     @Volatile private var configuredScope: FramePhotoScope? = null
+    private val attachmentEpoch = FramePhotoAttachmentEpoch()
     private var extension: WebExtension? = null
     @Volatile private var captureEnabled = false
     @Volatile private var generation = 0L
@@ -84,6 +85,7 @@ class FramePhotoBridge(
         val requested = FramePhotoScope.create(photosUrl, profile) ?: return false
         if (!reserve.activateScope(photosUrl, profile)) return false
         generation += 1
+        attachmentEpoch.begin()
         clearPlaybackPort()
         clearPausedSnapshot()
         configuredSession = session
@@ -112,17 +114,39 @@ class FramePhotoBridge(
     }
 
     /** Installs the APK-bundled extension and attaches its message delegate to this Photos session. */
-    fun attach(runtime: GeckoRuntime, session: GeckoSession, photosUrl: String, profile: String): Boolean {
+    fun attach(
+        runtime: GeckoRuntime,
+        session: GeckoSession,
+        photosUrl: String,
+        profile: String,
+        onReady: (Boolean) -> Unit = {},
+    ): Boolean {
         if (!configure(session, photosUrl, profile)) return false
+        val expectedAttachmentEpoch = synchronized(this) { attachmentEpoch.current() }
+        val expectedScopeKey = synchronized(this) { configuredScope?.key } ?: return false
         runtime.webExtensionController.ensureBuiltIn(EXTENSION_LOCATION, EXTENSION_ID).accept({ installed ->
             Handler(Looper.getMainLooper()).post {
-                if (isCurrentSession(session) && installed != null) {
-                    extension = installed
-                    session.webExtensionController.setMessageDelegate(installed, delegate, NATIVE_APP)
-                    Log.i(TAG, "Frame Photos extension ready id=${installed.id} version=${installed.metaData.version}")
+                if (!isCurrentAttachment(session, expectedAttachmentEpoch, expectedScopeKey)) return@post
+                if (installed == null) {
+                    onReady(false)
+                    return@post
                 }
+                val delegateInstalled = runCatching {
+                    session.webExtensionController.setMessageDelegate(installed, delegate, NATIVE_APP)
+                }.isSuccess
+                if (!delegateInstalled) {
+                    onReady(false)
+                    return@post
+                }
+                extension = installed
+                Log.i(TAG, "Frame Photos extension ready id=${installed.id} version=${installed.metaData.version}")
+                onReady(true)
             }
-        }, { _ -> })
+        }, { _ ->
+            Handler(Looper.getMainLooper()).post {
+                if (isCurrentAttachment(session, expectedAttachmentEpoch, expectedScopeKey)) onReady(false)
+            }
+        })
         return true
     }
 
@@ -137,6 +161,7 @@ class FramePhotoBridge(
         photosVisible = false
         captureEnabled = false
         generation += 1
+        attachmentEpoch.invalidate()
         clearPausedSnapshot()
         clearPlaybackPort()
     }
@@ -145,6 +170,7 @@ class FramePhotoBridge(
     @Synchronized
     fun close() {
         generation += 1
+        attachmentEpoch.invalidate()
         photosVisible = false
         captureEnabled = false
         clearPausedSnapshot()
@@ -346,7 +372,8 @@ class FramePhotoBridge(
         value.toDouble().isFinite() && value.toDouble() == value.toLong().toDouble() && value.toLong() in 0L..maximum
 
     @Synchronized
-    private fun isCurrentSession(session: Any): Boolean = configuredSession === session
+    private fun isCurrentAttachment(session: Any, expectedEpoch: Long, expectedScopeKey: String): Boolean =
+        configuredSession === session && attachmentEpoch.isCurrent(expectedEpoch) && configuredScope?.key == expectedScopeKey
 
     private inner class GeckoPlaybackPort(private val port: WebExtension.Port) : PlaybackPort {
         override val sender = port.sender.let {
