@@ -21,10 +21,15 @@ FRESH = "\n".join((
     "INFO: every reported audio source is HEALTHY",
     "INFO: audio health fresh (7s <= 120s)",
     "INFO: birdnet-go RestartCount=0",
+    "INFO: nest-audio-bridge RestartCount=0",
+    "INFO: disk 4096 KiB available on /mnt/user",
 ))
 STALE = "\n".join((
     "INFO: every reported audio source is HEALTHY",
     "CRITICAL: audio health is stale (181s exceeds 120s)",
+    "INFO: birdnet-go RestartCount=0",
+    "INFO: nest-audio-bridge RestartCount=0",
+    "INFO: disk 4096 KiB available on /mnt/user",
 ))
 INSPECT_OK = "true|healthy|false|2\n"
 
@@ -85,6 +90,23 @@ class PublisherTests(unittest.TestCase):
         self.assertFalse(payload["attributes"]["audioHealthy"])
         self.assertIsNone(payload["attributes"]["audioLastAt"])
 
+    def test_malformed_extra_watchdog_line_is_unknown_never_healthy(self):
+        responses = command_results(Completed(0, FRESH + "\nINFO: private unexpected detail"))
+        with patch.object(publisher, "bounded_run", side_effect=lambda *a, **k: next(responses)):
+            payload = publisher.collect_payload("/watchdog", now_ms=1_000_000)
+        self.assertEqual(payload["state"], "unknown")
+        self.assertFalse(payload["attributes"]["audioHealthy"])
+
+    def test_invalid_or_contradictory_freshness_is_unknown(self):
+        too_old = FRESH.replace("7s <= 120s", "121s <= 120s")
+        contradictory = FRESH + "\nCRITICAL: audio health is stale (181s exceeds 120s)"
+        for report in (too_old, contradictory):
+            with self.subTest(report=report):
+                responses = command_results(Completed(0, report))
+                with patch.object(publisher, "bounded_run", side_effect=lambda *a, **k: next(responses)):
+                    payload = publisher.collect_payload("/watchdog", now_ms=1_000_000)
+                self.assertEqual(payload["state"], "unknown")
+
     def test_failed_inspect_is_unknown_and_never_marks_container_healthy(self):
         responses = command_results(containers=[Completed(0, INSPECT_OK), Completed(1, "private daemon detail"), Completed(0, INSPECT_OK)])
         with patch.object(publisher, "bounded_run", side_effect=lambda *a, **k: next(responses)):
@@ -124,6 +146,11 @@ class PublisherTests(unittest.TestCase):
 
     def test_oversized_subprocess_output_is_reaped_and_unknown(self):
         code, output = publisher.bounded_run([sys.executable, "-c", "import sys; sys.stdout.write('x' * 8193)"], 5, 8192)
+        self.assertIsNone(output)
+        self.assertIsNotNone(code)
+
+    def test_term_ignoring_subprocess_is_killed_within_the_deadline_budget(self):
+        code, output = publisher.bounded_run([sys.executable, "-c", "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"], 1, 8192)
         self.assertIsNone(output)
         self.assertIsNotNone(code)
 

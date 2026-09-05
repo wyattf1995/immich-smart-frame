@@ -13,6 +13,7 @@ grep -Fq 'export BIRDNET_BIND_IP BIRDNET_WATCHDOG_AUTH_FILE' "$loop" || fail 'fr
 grep -Fq 'WEB_PORT' "$loop" || fail 'frame-health loop must preserve optional watchdog web-port configuration'
 grep -Fq 'flock -n 9' "$loop" || fail 'frame-health loop must prevent duplicate publishers'
 grep -Fq 'FRAME_HEALTH_LOCK_FILE' "$loop" || fail 'frame-health loop must allow its lock location to be isolated for verification'
+grep -Fq 'timeout -k 2s' "$loop" || fail 'frame-health loop must force-kill a timed-out FIFO writer'
 grep -Fq 'trap ' "$loop" || fail 'frame-health loop must clean up on TERM or INT'
 [[ $(grep -Fc 'frame-health publish failed' "$loop") -eq 1 ]] || fail 'frame-health loop must use one generic failure transition message'
 grep -Fq 'docker run --rm -i --network host --read-only --user 0:0 --pull never --cap-drop ALL' "$loop" || fail 'frame-health loop must use the hardened ephemeral publisher container'
