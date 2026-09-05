@@ -25,6 +25,7 @@ const settlingKioskRequests = new Set();
 // listeners install immediately; DOM capture waits for a tracked settle or DOM ready.
 let kioskCaptureReady = false;
 let domReady = false;
+let hasObservedKioskRequest = false;
 let settledKioskEpoch = 0;
 let pauseSnapshotRequiresSettleEpoch = null;
 let diagnosticReports = 0;
@@ -176,6 +177,7 @@ function kioskHtmxRequest(event, stage = null) {
 function beginKioskHtmxRequest(event) {
   const { request } = kioskHtmxRequest(event, "htmx_before");
   if (!request) return;
+  hasObservedKioskRequest = true;
   // Kiosk releases its request lock after swap, before settle; retain only a bounded tail of settle-only responses.
   if (settlingKioskRequests.size >= MAX_SETTLING_KIOSK_REQUESTS) settlingKioskRequests.clear();
   settlingKioskRequests.add(request);
@@ -321,9 +323,9 @@ function initializeDomCapture() {
     if (desiredPlaybackPaused && !document.body.classList.contains("polling-paused")) setPollingPaused(true);
   }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
   new MutationObserver(scheduleCaptureMutations).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
-  // A document-start bridge has observed no main#kiosk request in this document.
-  // The initial DOM is therefore stable enough to validate as a complete pair.
-  if (settlingKioskRequests.size === 0) kioskCaptureReady = true;
+  // Only a document with no observed main#kiosk request has a DOM-ready baseline.
+  // A failed or 204 request may already have left the settle set, but has no pair.
+  if (!hasObservedKioskRequest && settlingKioskRequests.size === 0) kioskCaptureReady = true;
   scheduleCapture();
   connectPlaybackPort();
 }
