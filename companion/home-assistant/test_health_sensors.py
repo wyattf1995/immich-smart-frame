@@ -71,6 +71,19 @@ class HealthSensorTemplateTest(unittest.TestCase):
         self.assertEqual(self.render('Frame Last Visible Render', 'state', future), 'unknown')
         self.assertEqual(self.render('Frame Last Visible Render', 'availability', future), 'false')
 
+    def test_last_failure_distinguishes_missing_invalid_and_empty_values(self):
+        base = {'lastPaintAt': 12_000, 'recoveryCount': 15}
+        missing = self.device(base)
+        invalid = self.device({**base, 'lastError': 9})
+        empty = self.device({**base, 'lastError': ''})
+
+        self.assertEqual(self.render('Frame Last Failure', 'state', missing), 'unknown')
+        self.assertEqual(self.render('Frame Last Failure', 'availability', missing), 'false')
+        self.assertEqual(self.render('Frame Last Failure', 'state', invalid), 'unknown')
+        self.assertEqual(self.render('Frame Last Failure', 'availability', invalid), 'false')
+        self.assertEqual(self.render('Frame Last Failure', 'state', empty), 'none')
+        self.assertEqual(self.render('Frame Last Failure', 'availability', empty), 'true')
+
 
 if __name__ == '__main__':
     unittest.main()
