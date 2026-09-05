@@ -112,7 +112,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../../main/assets/frame-photo-bridge/photos.js"), "utf8"), context);
   return {
-    body, events, next, previous, port, timers, observers, listeners, classes, nativeMessages, progress,
+    body, events, next, previous, port, timers, observers, listeners, classes, nativeMessages, progress, kiosk,
     runMicrotasks() { while (microtasks.length) microtasks.shift()(); },
     pendingMicrotasks() { return microtasks.length; },
     setFrameVisible(index, visible) { frameList[index].visible = visible; },
@@ -173,7 +173,10 @@ test("failed native port connection backs off without exhausting and leaves capt
   }
   assert.equal(attempts, 6);
   assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000]);
-  assert.deepEqual(runtime.listeners.map(([type]) => type), ["load", "transitionend", "animationend"]);
+  assert.deepEqual(runtime.listeners.map(([type]) => type), [
+    "load", "transitionend", "animationend",
+    "htmx:beforeRequest", "htmx:afterSettle", "htmx:responseError", "htmx:sendError", "htmx:timeout",
+  ]);
   assert.equal(runtime.observers.length, 2);
 });
 
@@ -287,13 +290,13 @@ test("HTMX transaction gating never pairs a new history id with the old frame", 
     frames: [{ images: ["data:image/jpeg;base64,old"] }],
   });
   runtime.runMicrotasks();
-  runtime.fireEvent("htmx:beforeRequest");
+  runtime.fireEvent("htmx:beforeRequest", { target: runtime.kiosk });
   runtime.setHistory([`${oldId}:old`, `*${newId}:new`]);
   runtime.mutate([{ type: "attributes", attributeName: "value", target: {} }]);
   runtime.runMicrotasks();
   runtime.setFrameImage(0, "data:image/jpeg;base64,new");
   runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
-  runtime.fireEvent("htmx:afterSettle");
+  runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk });
   runtime.runMicrotasks();
   assert.deepEqual(
     runtime.nativeMessages.map(({ assetId, image }) => ({ assetId, image })),
