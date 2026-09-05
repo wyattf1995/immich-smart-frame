@@ -30,7 +30,7 @@ _SCREENSHOT_WORD = r"(?:screenshot|screen[ _-]?shot|screen[ _-]?capture)"
 # Require both a screenshot word and a recognizable date/time component.  This
 # avoids hiding ordinary photos named "Screenshot of …" or "… screenshot reference".
 _SCREENSHOT_NAME = re.compile(
-    rf"^(?:{_SCREENSHOT_WORD}[ _.-]+{_DATE_TIME}(?=$|[ _.-])|{_DATE_TIME}[ _.-]+{_SCREENSHOT_WORD}(?=$|[ _.-]))",
+    rf"^(?:{_SCREENSHOT_WORD}[ _.-]+{_DATE_TIME}(?:$|[ _.-])|{_DATE_TIME}[ _.-]+{_SCREENSHOT_WORD}(?:$|[ _.-]))",
     re.IGNORECASE,
 )
 
