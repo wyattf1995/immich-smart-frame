@@ -8,6 +8,23 @@ import java.nio.file.Paths
 
 class FrameWebSurfaceContractTest {
     @Test
+    fun `fragment routing preserves existing document evidence before updating request identity`() {
+        val request = methodBody(source(), "fun request(url: String)")
+        assertContainsInOrder(
+            request,
+            listOf(
+                "val fragmentOnly = loadState.isExactFragmentOnlyRequest(url)",
+                "loadState.recordRequest(url)",
+                "if (fragmentOnly)",
+                "renderedState.recordFragmentOnlyRequest()",
+                "} else {",
+                "renderedState.recordRequest()",
+                "session.loadUri(url)",
+            ),
+        )
+    }
+
+    @Test
     fun `render readiness requires both a successful stop and contentful paint`() {
         val source = source()
         val pageStart = methodBody(source, "override fun onPageStart(")
