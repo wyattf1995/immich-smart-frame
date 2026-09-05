@@ -248,6 +248,14 @@ class FrameOfflineReserve(
     private fun readEntries(expectedScope: String): List<Entry> = runCatching {
         val data = JSONObject(indexFile.readText())
         if (data.optString("scope") != expectedScope) return emptyList()
+        // Earlier captures could pair an HTMX frame with another history ID. Never
+        // reuse those JPEGs; preserve the same-scope hidden policy in scope.json.
+        if (data.optInt("formatVersion", 0) != VERIFIED_PAIR_FORMAT_VERSION) {
+            root.listFiles()?.forEach { file ->
+                if (file.name.startsWith("photo-") || file == indexFile) file.delete()
+            }
+            return emptyList()
+        }
         val values = data.optJSONArray("entries") ?: return emptyList()
         buildList {
             for (index in 0 until values.length()) {
@@ -266,7 +274,8 @@ class FrameOfflineReserve(
         val active = scope ?: return
         val values = JSONArray()
         entries.forEach { values.put(JSONObject().put("assetId", it.assetId).put("capturedAt", it.capturedAt)) }
-        writeAtomically(indexFile, JSONObject().put("scope", active.key).put("entries", values).toString().toByteArray())
+        writeAtomically(indexFile, JSONObject().put("scope", active.key)
+            .put("formatVersion", VERIFIED_PAIR_FORMAT_VERSION).put("entries", values).toString().toByteArray())
     }
 
     private fun writeScope() {
@@ -299,6 +308,7 @@ class FrameOfflineReserve(
     }.getOrDefault(false)
 
     private companion object {
+        const val VERIFIED_PAIR_FORMAT_VERSION = 2
         const val DEFAULT_MAX_PHOTOS = 12
         const val DEFAULT_MAX_BYTES = 24L * 1024L * 1024L
         const val MAX_HIDDEN_ASSETS = 1000
