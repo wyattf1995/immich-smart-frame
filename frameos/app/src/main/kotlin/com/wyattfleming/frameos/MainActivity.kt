@@ -105,6 +105,9 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import kotlin.math.abs
 
+internal fun isNewManualPhotoStepAsset(previousAssetId: String?, observedAssetId: String): Boolean =
+    previousAssetId == null || previousAssetId != observedAssetId
+
 class MainActivity : Activity() {
     private val reducer = FrameReducer { availableModes() }
     private val inputMapper = PhysicalInputMapper()
@@ -178,8 +181,10 @@ class MainActivity : Activity() {
     private var photoProbeFuture: Future<*>? = null
     private var photoDecodeFuture: Future<*>? = null
     private var manualPhotoStepPending = false
+    private var manualPhotoStepPreviousAssetId: String? = null
     private val finishManualPhotoStep = Runnable {
         manualPhotoStepPending = false
+        manualPhotoStepPreviousAssetId = null
         photoBridge.setCaptureEnabled(activityResumed && state.mode == FrameMode.PHOTOS, state.photosPaused)
     }
     private var photosVisibleSince = 0L
@@ -269,7 +274,9 @@ class MainActivity : Activity() {
         photoBridge = com.wyattfleming.frameos.photos.FramePhotoBridge(photoReserve) { photo ->
             handler.post {
                 if (!photoBridge.isCurrentObservation(photo)) return@post
-                if (!activityResumed || state.mode != FrameMode.PHOTOS || (state.photosPaused && !manualPhotoStepPending)) return@post
+                if (!activityResumed || state.mode != FrameMode.PHOTOS ||
+                    (state.photosPaused && (!manualPhotoStepPending || !isNewManualPhotoStepAsset(manualPhotoStepPreviousAssetId, photo.assetId)))
+                ) return@post
                 currentPhotoAssetId = photo.assetId
                 lastPhotoAt = photo.capturedAt
                 if (photoFallbackPolicy.canDismiss(photo.capturedAt, healthyPhotoProbeAt)) {
@@ -1571,6 +1578,7 @@ class MainActivity : Activity() {
         if (state.mode != FrameMode.PHOTOS || !activityResumed) return false
         if (photoFallbackPolicy.isShowing) return showOfflinePhoto(if (forward) 1 else -1, manual = true)
         if (state.photosPaused) {
+            manualPhotoStepPreviousAssetId = currentPhotoAssetId
             manualPhotoStepPending = true
             handler.removeCallbacks(finishManualPhotoStep)
             photoBridge.setCaptureEnabled(activityResumed, false)

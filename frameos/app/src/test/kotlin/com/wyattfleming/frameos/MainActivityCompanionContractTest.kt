@@ -1,6 +1,7 @@
 package com.wyattfleming.frameos
 
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import java.io.File
 
@@ -28,5 +29,11 @@ class MainActivityCompanionContractTest {
         assertTrue(source.contains("if (moved) \"dispatched\" else \"rejected\""))
         assertTrue(source.contains("handler.postDelayed(resumePhotosAfterHold, command.durationSeconds * 1_000L)"))
         assertTrue(source.contains("private val resumePhotosAfterHold"))
+    }
+
+    @Test fun `manual photo step does not complete on its previously observed asset`() {
+        assertFalse(isNewManualPhotoStepAsset("11111111-1111-4111-8111-111111111111", "11111111-1111-4111-8111-111111111111"))
+        assertTrue(isNewManualPhotoStepAsset("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"))
+        assertTrue(isNewManualPhotoStepAsset(null, "22222222-2222-4222-8222-222222222222"))
     }
 }
