@@ -25,12 +25,12 @@ TYPE_SKIP_TAG = {
     "other": "Skip/NonPhoto",
 }
 # The word must be a complete leading or timestamp-prefixed filename component.
+_DATE_TIME = r"\d{4}[-_]?\d{2}[-_]?\d{2}(?:[ _-]?\d{2}[-:.]?\d{2}(?:[-:.]?\d{2})?)?"
+_SCREENSHOT_WORD = r"(?:screenshot|screen[ _-]?shot|screen[ _-]?capture)"
+# Require both a screenshot word and a recognizable date/time component.  This
+# avoids hiding ordinary photos named "Screenshot of …" or "… screenshot reference".
 _SCREENSHOT_NAME = re.compile(
-    r"^(?:"
-    r"(?:screenshot|screen[ _-]?shot|screen[ _-]?capture)(?=$|[ _.-])"
-    r"|(?:\d{4}[-_]?\d{2}[-_]?\d{2}(?:[ _-]?\d{2}[-:.]?\d{2}(?:[-:.]?\d{2})?)?[ _-]+)"
-    r"(?:screenshot|screen[ _-]?shot|screen[ _-]?capture)(?=$|[ _.-])"
-    r")",
+    rf"^(?:{_SCREENSHOT_WORD}[ _.-]+{_DATE_TIME}(?=$|[ _.-])|{_DATE_TIME}[ _.-]+{_SCREENSHOT_WORD}(?=$|[ _.-]))",
     re.IGNORECASE,
 )
 
@@ -133,6 +133,8 @@ def plan_asset_update(
     if image_type in TYPE_SKIP_TAG:
         tags.append(TYPE_SKIP_TAG[image_type])
     desired = _ordered_tags(tags)
+    if image_type == "photograph" and not desired and not caption:
+        raise ClassificationError("VLM photograph had no usable tag or caption")
     existing = set(existing_tag_names)
     description = None
     if caption and (not existing_description or existing_description.startswith("[AI]")):

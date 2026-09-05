@@ -12,6 +12,7 @@ KEY    = os.environ["IMMICH_KEY"]
 MODEL  = os.environ.get("VLM_MODEL", "qwen3-vl:8b-instruct")
 WORK   = os.environ.get("WORK_DIR", "/work")
 DRY    = "--dry-run" in sys.argv
+APPLY  = "--apply" in sys.argv
 def _arg(f, d=None): return sys.argv[sys.argv.index(f)+1] if f in sys.argv else d
 LIMIT    = int(_arg("--limit", "0")) or None
 IDS_FILE = _arg("--ids")
@@ -89,17 +90,17 @@ KW_RE = {tag: re.compile(r"\b(?:" + "|".join(re.escape(k.strip()) for k in kws) 
          for tag, kws in KW.items() if kws}
 def map_tags(free_tags, caption, path):
     hay = " " + " ".join(free_tags).lower() + " || " + (caption or "").lower() + folder_words(path) + " "
-    return [tag for tag, rx in KW_RE.items() if rx.search(hay)][:12]
+    return [tag for tag, rx in KW_RE.items() if rx.search(hay)]
 
 SCHEMA = {"type":"object","properties":{
+    "image_type":{"type":"string","enum":["photograph","screenshot","document","meme","graphic","other"]},
     "tags":{"type":"array","items":{"type":"string"}},"caption":{"type":"string"},
-    "ocr_text":{"type":"array","items":{"type":"string"}},
-    "image_type":{"type":"string","enum":["photograph","screenshot","document","meme","graphic","other"]}},"required":["tags","caption","image_type"]}
-PROMPT = ("Describe this photo. Output: (1) tags = 5-12 concise lowercase nouns/phrases for the "
-          "subjects, animals, plants, objects, scene and setting actually visible; (2) caption = one "
-          "factual sentence, max 18 words; (3) ocr_text = any legible sign/label/landmark text. "
-          "Classify image_type as exactly one of photograph, screenshot, document, meme, graphic, or other. "
-          "Do NOT guess a geographic location. Do not invent people names, dates, or places.")
+    "ocr_text":{"type":"array","items":{"type":"string"}}},"required":["image_type","tags","caption"]}
+PROMPT = ("First classify image_type as exactly one of photograph, screenshot, document, meme, graphic, or other. "
+          "Then output: (1) tags = 5-12 concise lowercase nouns/phrases for the subjects, animals, plants, "
+          "objects, scene and setting actually visible; (2) caption = one factual sentence, max 18 words; "
+          "(3) ocr_text = any legible sign/label/landmark text. Do NOT guess a geographic location. "
+          "Do not invent people names, dates, or places.")
 
 TAGMAP = {}
 def ensure_tags():
@@ -116,9 +117,10 @@ def parse_vlm(txt):
     except Exception:
         m = re.search(r'"tags"\s*:\s*\[(.*?)\]', txt, re.S)
         c = re.search(r'"caption"\s*:\s*"((?:[^"\\]|\\.)*)"', txt)
-        if m and c:
+        kind = re.search(r'"image_type"\s*:\s*"(photograph|screenshot|document|meme|graphic|other)"', txt)
+        if kind and m and c:
             tags = re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(1))
-            return {"tags": tags, "caption": c.group(1), "ocr_text": []}
+            return {"image_type": kind.group(1), "tags": tags, "caption": c.group(1), "ocr_text": []}
         raise
 
 def vlm(asset_id):
@@ -128,7 +130,7 @@ def vlm(asset_id):
     out = json.loads(http("POST", OLLAMA+"/api/generate", payload, {"Content-Type":"application/json"}, timeout=300))
     return parse_vlm(out["response"])
 
-def process(asset_id, original_file_name, path, existing_tag_names, existing_desc):
+def process(asset_id, original_file_name, path, existing_tag_names, existing_desc, *, apply):
     # A strong original filename is the only fast path.  Never pass a UUID or path
     # into filename_skip_tag: false positives would hide real photographs.
     direct = filename_skip_tag(original_file_name)
@@ -140,9 +142,9 @@ def process(asset_id, original_file_name, path, existing_tag_names, existing_des
         existing_description=existing_desc,
         mapped_content_tags=(None if direct else map_tags(p.get("tags", []), (p.get("caption") or "").strip(), path)),
     )
-    if plan.add_tag_names:
+    if apply and plan.add_tag_names:
         im("PUT", "/api/tags/assets", {"tagIds":[TAGMAP[t] for t in plan.add_tag_names], "assetIds":[asset_id]})
-    if plan.description_to_write:
+    if apply and plan.description_to_write:
         im("PUT", "/api/assets", {"ids":[asset_id], "description": plan.description_to_write})
     return plan
 
@@ -155,54 +157,76 @@ def ml_busy():
     except Exception: pass
     return None
 
+def record_success_after_process(asset_id, open_checkpoint, *, original_file_name=None, path="", existing_tag_names=(), existing_desc=""):
+    # A classification/update failure never reaches the checkpoint.  The next
+    # guarded run can retry it rather than treating an incomplete response done.
+    try:
+        plan = process(asset_id, original_file_name, path, existing_tag_names, existing_desc, apply=APPLY)
+    except Exception:
+        return False
+    if APPLY and open_checkpoint is not None:
+        open_checkpoint.write(asset_id + "\n"); open_checkpoint.flush()
+    return True
+
+def asset_fields(asset):
+    return (asset.get("originalFileName"), asset.get("originalPath", ""),
+            [tag.get("value") for tag in asset.get("tags", [])],
+            (asset.get("exifInfo") or {}).get("description") or "")
+
 def main():
-    ensure_tags()
-    if DRY:
-        ids = [l.strip() for l in open(IDS_FILE) if l.strip()]
-        log(f"DRY-RUN over {len(ids)} assets")
+    if DRY and APPLY:
+        log("invalid mode combination"); return 2
+    if not DRY and not APPLY:
+        log("explicit --apply is required for writes"); return 2
+    if APPLY:
+        ensure_tags()
+    if IDS_FILE:
+        ids = [line.strip() for line in open(IDS_FILE) if line.strip()]
+        log(f"ID mode over {len(ids)} assets")
         for i, aid in enumerate(ids, 1):
             try:
-                a = im("GET", f"/api/assets/{aid}")
-                plan = process(aid, a.get("originalFileName"), a.get("originalPath",""), [t.get("value") for t in a.get("tags", [])], (a.get("exifInfo") or {}).get("description") or "")
-                log(f"[{i}] completed policy plan; {len(plan.add_tag_names)} additive tags")
-            except Exception as e:
+                asset = im("GET", f"/api/assets/{aid}")
+                success = record_success_after_process(aid, None, original_file_name=asset_fields(asset)[0], path=asset_fields(asset)[1], existing_tag_names=asset_fields(asset)[2], existing_desc=asset_fields(asset)[3])
+                log(f"[{i}] {'completed' if success else 'classification failed'}")
+            except Exception:
                 log(f"[{i}] classification failed")
-        log("DRY-RUN complete"); return
-    # FULL
+        log("ID mode complete"); return 0
+    if DRY:
+        log("--dry-run requires --ids"); return 2
     if os.path.exists(LOCK):
-        try: os.kill(int(open(LOCK).read()), 0); log("already running; exit"); return
+        try: os.kill(int(open(LOCK).read()), 0); log("already running; exit"); return 0
         except Exception: pass
     open(LOCK,"w").write(str(os.getpid()))
-    done = set(l.strip() for l in open(CKPT)) if os.path.exists(CKPT) else set()
+    done = set(line.strip() for line in open(CKPT)) if os.path.exists(CKPT) else set()
     log(f"FULL start — {len(done)} already done"); ck = open(CKPT,"a"); ok=err=n=0; page=1; stop=False
     while not stop:
         try:
             res = im("POST","/api/search/metadata",{"page":page,"size":1000,"withExif":True,"type":"IMAGE"})
-        except Exception as e:
-            log(f"page {page} fetch failed ({e}); retry in 30s"); time.sleep(30); continue
+        except Exception:
+            log(f"page {page} fetch failed; retry in 30s"); time.sleep(30); continue
         items = (res.get("assets") or {}).get("items",[])
         if not items: break
-        for a in items:
-            aid = a["id"]
+        for asset in items:
+            aid = asset["id"]
             if aid in done: continue
             if LIMIT and n >= LIMIT: stop=True; break
             b = ml_busy()
             while b: log(f"Immich ML busy ({b}); wait 90s"); time.sleep(90); b = ml_busy()
-            try:
-                process(aid, a.get("originalFileName"), a.get("originalPath",""), [t.get("value") for t in a.get("tags", [])], (a.get("exifInfo") or {}).get("description") or ""); ok+=1
+            original_file_name, path, existing_tags, existing_desc = asset_fields(asset)
+            if record_success_after_process(aid, ck, original_file_name=original_file_name, path=path, existing_tag_names=existing_tags, existing_desc=existing_desc):
+                ok += 1; done.add(aid)
                 if ok % 100 == 0: log(f"progress: {ok} tagged, {err} err (page {page})")
-            except Exception as e:
-                err+=1; log("ERR classification or update failed")
-                n+=1
-                continue
-            ck.write(aid+"\n"); ck.flush(); done.add(aid); n+=1
+            else:
+                err += 1; log("ERR classification or update failed")
+            n += 1
             if n % 500 == 0:
-                try: im("PUT","/api/jobs/sidecar",{"command":"empty"})   # discard held SidecarWrite jobs
+                try: im("PUT","/api/jobs/sidecar",{"command":"empty"})
                 except Exception: pass
         page += 1
     log(f"FULL done — {ok} tagged, {err} err")
     try: os.remove(LOCK)
     except OSError: pass
+    return 0
 
 if __name__ == "__main__":
     main()
