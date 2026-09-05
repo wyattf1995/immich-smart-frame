@@ -21,10 +21,15 @@ FRESH = "\n".join((
     "INFO: every reported audio source is HEALTHY",
     "INFO: audio health fresh (7s <= 120s)",
     "INFO: birdnet-go RestartCount=0",
+    "INFO: nest-audio-bridge RestartCount=0",
+    "INFO: disk 4096 KiB available on /mnt/user",
 ))
 STALE = "\n".join((
     "INFO: every reported audio source is HEALTHY",
     "CRITICAL: audio health is stale (181s exceeds 120s)",
+    "INFO: birdnet-go RestartCount=0",
+    "INFO: nest-audio-bridge RestartCount=0",
+    "INFO: disk 4096 KiB available on /mnt/user",
 ))
 INSPECT_OK = "true|healthy|false|2\n"
 
@@ -85,6 +90,23 @@ class PublisherTests(unittest.TestCase):
         self.assertFalse(payload["attributes"]["audioHealthy"])
         self.assertIsNone(payload["attributes"]["audioLastAt"])
 
+    def test_malformed_extra_watchdog_line_is_unknown_never_healthy(self):
+        responses = command_results(Completed(0, FRESH + "\nINFO: private unexpected detail"))
+        with patch.object(publisher, "bounded_run", side_effect=lambda *a, **k: next(responses)):
+            payload = publisher.collect_payload("/watchdog", now_ms=1_000_000)
+        self.assertEqual(payload["state"], "unknown")
+        self.assertFalse(payload["attributes"]["audioHealthy"])
+
+    def test_invalid_or_contradictory_freshness_is_unknown(self):
+        too_old = FRESH.replace("7s <= 120s", "121s <= 120s")
+        contradictory = FRESH + "\nCRITICAL: audio health is stale (181s exceeds 120s)"
+        for report in (too_old, contradictory):
+            with self.subTest(report=report):
+                responses = command_results(Completed(0, report))
+                with patch.object(publisher, "bounded_run", side_effect=lambda *a, **k: next(responses)):
+                    payload = publisher.collect_payload("/watchdog", now_ms=1_000_000)
+                self.assertEqual(payload["state"], "unknown")
+
     def test_failed_inspect_is_unknown_and_never_marks_container_healthy(self):
         responses = command_results(containers=[Completed(0, INSPECT_OK), Completed(1, "private daemon detail"), Completed(0, INSPECT_OK)])
         with patch.object(publisher, "bounded_run", side_effect=lambda *a, **k: next(responses)):
@@ -113,8 +135,22 @@ class PublisherTests(unittest.TestCase):
                 publisher.read_token(token)
         self.assertNotIn("do-not-disclose", str(raised.exception))
 
+    def test_invalid_webhook_id_is_rejected_without_returning_its_value(self):
+        with tempfile.TemporaryDirectory() as directory:
+            webhook = Path(directory) / "webhook"
+            webhook.write_text("not-a-webhook-id")
+            webhook.chmod(0o600)
+            with self.assertRaises(publisher.WebhookError) as raised:
+                publisher.read_webhook_id(webhook)
+        self.assertNotIn("not-a-webhook-id", str(raised.exception))
+
     def test_oversized_subprocess_output_is_reaped_and_unknown(self):
         code, output = publisher.bounded_run([sys.executable, "-c", "import sys; sys.stdout.write('x' * 8193)"], 5, 8192)
+        self.assertIsNone(output)
+        self.assertIsNotNone(code)
+
+    def test_term_ignoring_subprocess_is_killed_within_the_deadline_budget(self):
+        code, output = publisher.bounded_run([sys.executable, "-c", "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"], 1, 8192)
         self.assertIsNone(output)
         self.assertIsNotNone(code)
 
@@ -178,6 +214,50 @@ class PublisherTests(unittest.TestCase):
             redirect.shutdown(); target.shutdown()
             redirect.server_close(); target.server_close()
         self.assertEqual(target_requests, [])
+
+    def test_webhook_uses_no_authorization_header_and_refuses_redirects(self):
+        target_requests = []
+        webhook_headers = []
+
+        class Target(BaseHTTPRequestHandler):
+            def do_POST(self):
+                target_requests.append(dict(self.headers))
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        target = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+        threading.Thread(target=target.serve_forever, daemon=True).start()
+
+        class Redirect(BaseHTTPRequestHandler):
+            def do_POST(self):
+                webhook_headers.append(dict(self.headers))
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{target.server_port}/other-origin")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        redirect = ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+        threading.Thread(target=redirect.serve_forever, daemon=True).start()
+        webhook_id = "a" * 64
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                webhook = Path(directory) / "webhook"
+                webhook.write_text(webhook_id)
+                webhook.chmod(0o600)
+                with self.assertRaises(publisher.PublishError) as raised:
+                    publisher.publish_webhook(f"http://127.0.0.1:{redirect.server_port}", webhook, {"state": "unknown", "attributes": {}})
+                if isinstance(raised.exception.__cause__, HTTPError):
+                    raised.exception.__cause__.close()
+        finally:
+            redirect.shutdown(); target.shutdown()
+            redirect.server_close(); target.server_close()
+        self.assertEqual(target_requests, [])
+        self.assertNotIn("Authorization", webhook_headers[0])
 
     def test_stdin_evidence_uses_the_same_conservative_parser(self):
         payload = publisher.payload_from_evidence({
