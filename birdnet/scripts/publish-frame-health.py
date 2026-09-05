@@ -64,22 +64,31 @@ NO_REDIRECT_OPENER = build_opener(RefuseRedirect())
 
 
 def stop_process_group(process: subprocess.Popen[bytes]) -> None:
+    group_signals_available = True
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except PermissionError:
+        group_signals_available = False
         process.terminate()
     except ProcessLookupError:
-        return
+        pass
     try:
         process.wait(timeout=2)
     except subprocess.TimeoutExpired:
-        try:
+        pass
+    # The leader may exit on TERM while a forked descendant ignores it. Always
+    # send KILL to the session after the grace period, even when wait succeeded.
+    try:
+        if group_signals_available:
             os.killpg(process.pid, signal.SIGKILL)
-        except PermissionError:
+        else:
             process.kill()
-        except ProcessLookupError:
-            return
+    except (PermissionError, ProcessLookupError):
+        pass
+    try:
         process.wait()
+    except ChildProcessError:
+        pass
 
 
 def bounded_run(arguments: list[str], timeout: int, limit: int) -> tuple[int | None, str | None]:
