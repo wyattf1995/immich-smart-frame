@@ -170,8 +170,10 @@ class PublisherTests(unittest.TestCase):
                 token = Path(directory) / "token"
                 token.write_text("do-not-forward")
                 token.chmod(0o600)
-                with self.assertRaises(publisher.PublishError):
+                with self.assertRaises(publisher.PublishError) as raised:
                     publisher.publish(f"http://127.0.0.1:{redirect.server_port}", token, {"state": "unknown", "attributes": {}})
+                if isinstance(raised.exception.__cause__, HTTPError):
+                    raised.exception.__cause__.close()
         finally:
             redirect.shutdown(); target.shutdown()
             redirect.server_close(); target.server_close()
