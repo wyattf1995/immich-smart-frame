@@ -1,0 +1,72 @@
+diff --git a/frontend/src/ts/kiosk.ts b/frontend/src/ts/kiosk.ts
+index 407ff69..f740d0a 100644
+--- a/frontend/src/ts/kiosk.ts
++++ b/frontend/src/ts/kiosk.ts
+@@ -24,6 +24,7 @@ import {
+     pausePolling,
+     recoverPollingIfVisible,
+     resumePolling,
++    scheduleAutoRetry,
+     startPolling,
+     stopPolling,
+     togglePolling,
+@@ -696,6 +697,7 @@ export {
+     releaseRequestLock,
+     setRequestLock,
+     sleepMode,
++    scheduleAutoRetry,
+     startPolling,
+     stopPolling,
+     triggerNewAsset,
+diff --git a/frontend/src/ts/polling.ts b/frontend/src/ts/polling.ts
+index 16dacef..dcda76b 100644
+--- a/frontend/src/ts/polling.ts
++++ b/frontend/src/ts/polling.ts
+@@ -113,6 +113,13 @@ class PollingController {
+         htmx.trigger(this.kioskElement as HTMLElement, "kiosk-new-asset");
+     };
+ 
++    /** Schedules an automatic retry without overriding a later user or request pause. */
++    scheduleAutoRetry = () => {
++        setTimeout(() => {
++            if (!this.isPaused) this.triggerNewAsset();
++        }, 5000);
++    };
++
+     /**
+      * Handles video end event
+      */
+@@ -405,6 +412,7 @@ export const stopPolling = () => pollingController.stopPolling();
+ export const nextAsset = () => pollingController.nextAsset();
+ export const resumePolling = (hideOverlay?: boolean) =>
+     pollingController.resumePolling(hideOverlay);
++export const scheduleAutoRetry = () => pollingController.scheduleAutoRetry();
+ export const togglePolling = (hideOverlay?: boolean) =>
+     pollingController.togglePolling(hideOverlay);
+ export const videoHandler = (id: string) => pollingController.videoHandler(id);
+diff --git a/internal/templates/partials/error.templ b/internal/templates/partials/error.templ
+index 36d4c52..cb93868 100644
+--- a/internal/templates/partials/error.templ
++++ b/internal/templates/partials/error.templ
+@@ -13,7 +13,7 @@ templ Error(data ErrorData) {
+ 	<div
+ 		class="frame frame-error"
+ 		if data.Retry {
+-			hx-on:htmx:load="setTimeout(function() { kiosk.triggerNewAsset(); }, 5000);"
++			hx-on:htmx:load="kiosk.scheduleAutoRetry();"
+ 		}
+ 	>
+ 		<div class="error-container">
+diff --git a/internal/templates/partials/message.templ b/internal/templates/partials/message.templ
+index 6764e15..4fde565 100644
+--- a/internal/templates/partials/message.templ
++++ b/internal/templates/partials/message.templ
+@@ -10,7 +10,7 @@ templ Message(message MessageData) {
+ 	<div
+ 		class="frame frame-message"
+ 		if message.IsDownloading {
+-			hx-on:htmx:load="setTimeout(function() { kiosk.triggerNewAsset(); }, 5000);"
++			hx-on:htmx:load="kiosk.scheduleAutoRetry();"
+ 		}
+ 	>
+ 		<div class="message-container">
