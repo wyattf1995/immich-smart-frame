@@ -36,6 +36,7 @@ exit 0
 EOF
 cat >"$tmp/bin/timeout" <<'EOF'
 #!/usr/bin/env bash
+if [[ "$1" == "-k" ]]; then shift 2; fi
 shift
 exec "$@"
 EOF
