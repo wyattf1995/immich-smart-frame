@@ -3,8 +3,9 @@ import importlib.util
 import io
 import json
 from pathlib import Path
-import stat
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -56,7 +57,7 @@ class PublisherTests(unittest.TestCase):
             token = Path(directory) / "token"
             token.write_text("private-token")
             token.chmod(0o600)
-            with patch.object(publisher.subprocess, "run", side_effect=run), patch.object(publisher, "urlopen", side_effect=urlopen):
+            with patch.object(publisher.subprocess, "run", side_effect=run), patch.object(publisher.NO_REDIRECT_OPENER, "open", side_effect=urlopen):
                 payload = publisher.collect_payload("/watchdog", now_ms=1_000_000)
                 publisher.publish("http://ha.local", token, payload)
 
@@ -106,10 +107,58 @@ class PublisherTests(unittest.TestCase):
             token.write_text("do-not-disclose")
             token.chmod(0o600)
             error = HTTPError("http://ha.local/api/states/sensor.frame_server_health", 503, "unavailable", None, io.BytesIO(b"private response"))
-            with patch.object(publisher, "urlopen", side_effect=error):
+            with patch.object(publisher.NO_REDIRECT_OPENER, "open", side_effect=error):
                 with self.assertRaises(publisher.PublishError) as raised:
                     publisher.publish("http://ha.local", token, {"state": "unknown", "attributes": {}})
+            error.close()
         self.assertNotIn("do-not-disclose", str(raised.exception))
+
+    def test_state_url_accepts_only_a_bare_origin(self):
+        self.assertEqual(publisher.state_url("https://ha.local"), "https://ha.local/api/states/sensor.frame_server_health")
+        for value in ("https://ha.local/path", "https://ha.local/?query", "https://ha.local/#fragment", "https://user:pass@ha.local", "https://ha.local:bad"):
+            with self.subTest(value=value):
+                with self.assertRaises(publisher.PublishError):
+                    publisher.state_url(value)
+
+    def test_redirect_never_reaches_another_origin_or_receives_a_token(self):
+        target_requests = []
+
+        class Target(BaseHTTPRequestHandler):
+            def do_POST(self):
+                target_requests.append(self.headers.get("Authorization"))
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        target = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+        target_thread = threading.Thread(target=target.serve_forever, daemon=True)
+        target_thread.start()
+
+        class Redirect(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{target.server_port}/other-origin")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        redirect = ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+        redirect_thread = threading.Thread(target=redirect.serve_forever, daemon=True)
+        redirect_thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                token = Path(directory) / "token"
+                token.write_text("do-not-forward")
+                token.chmod(0o600)
+                with self.assertRaises(publisher.PublishError):
+                    publisher.publish(f"http://127.0.0.1:{redirect.server_port}", token, {"state": "unknown", "attributes": {}})
+        finally:
+            redirect.shutdown(); target.shutdown()
+            redirect.server_close(); target.server_close()
+        self.assertEqual(target_requests, [])
 
 
 if __name__ == "__main__":
