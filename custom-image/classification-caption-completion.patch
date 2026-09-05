@@ -1,0 +1,12 @@
+diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
+index 3eec736..75005bc 100644
+--- a/internal/immich/immich_helpers.go
++++ b/internal/immich/immich_helpers.go
+@@ -1259 +1259,6 @@ func (a *Asset) hasValidClassification() bool {
+-	if !strings.HasPrefix(strings.TrimSpace(a.ExifInfo.Description), "[AI]") {
++	description := strings.TrimSpace(a.ExifInfo.Description)
++	if !strings.HasPrefix(description, "[AI]") || !strings.HasSuffix(description, "[/AI]") {
++		return false
++	}
++	caption := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(description, "[AI]"), "[/AI]"))
++	if caption == "" {
