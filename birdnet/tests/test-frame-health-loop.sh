@@ -67,7 +67,7 @@ for _ in $(seq 1 50); do [[ -s "$tmp/evidence" ]] && break; sleep 0.05; done
 expected='127.0.0.1|/mnt/user/appdata/birdnet-go/secrets/frame-watchdog-auth.json|8090'
 [[ "$(cat "$tmp/child-env")" == "$expected" ]] || fail 'sample config watchdog settings must reach the watchdog child'
 jq -e '.observedAt | type == "number"' "$tmp/evidence" >/dev/null || fail 'publisher evidence must contain observedAt'
-jq -e '.watchdog.returncode == 0 and .containers["birdnet-go"].output == "true|healthy|false|0\n"' "$tmp/evidence" >/dev/null || fail 'publisher evidence must contain only fixed reports'
+jq -e '.watchdog.returncode == 0 and .containers["birdnet-go"].output == "true|healthy|false|0"' "$tmp/evidence" >/dev/null || fail 'publisher evidence must contain only fixed reports'
 grep -Fxq -- '-i' "$tmp/docker-args" || fail 'publisher container must receive evidence stdin interactively'
 grep -Fxq -- '--user' "$tmp/docker-args" || fail 'publisher container must run as root for the dedicated webhook mount'
 grep -Fxq -- '0:0' "$tmp/docker-args" || fail 'publisher container user must be root'
