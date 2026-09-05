@@ -14,6 +14,7 @@ let rejectedRetries = 0;
 let queued = false;
 let retryTimer = 0;
 let desiredPlaybackPaused = null;
+let pauseSnapshotNonce = null;
 let playbackPort = null;
 let portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
 let portRetryTimer = 0;
@@ -75,26 +76,29 @@ function capture() {
   if (!ASSET_ID.test(assetId) || !source.startsWith(prefix)) return;
   const base64 = source.slice(prefix.length);
   if (!base64 || base64.length > MAX_BASE64_CHARS) return;
+  const snapshotNonce = desiredPlaybackPaused ? pauseSnapshotNonce : null;
+  // A paused document may send only the host-issued one-shot snapshot, never ordinary capture.
+  if (desiredPlaybackPaused && !snapshotNonce) return;
   const fingerprint = `${assetId}:${base64.length}:${base64.slice(0, 24)}`;
-  if (fingerprint === lastFingerprint || fingerprint === inFlightFingerprint) return;
-  inFlightFingerprint = fingerprint;
-  browser.runtime.sendNativeMessage("frame_photo_bridge", {
-    type: "loaded-photo",
-    assetId,
-    image: base64,
-  }).then((response) => {
+  const captureFingerprint = snapshotNonce ? `${fingerprint}:${snapshotNonce}` : fingerprint;
+  if ((!snapshotNonce && fingerprint === lastFingerprint) || captureFingerprint === inFlightFingerprint) return;
+  inFlightFingerprint = captureFingerprint;
+  const message = { type: "loaded-photo", assetId, image: base64 };
+  if (snapshotNonce) message.snapshotNonce = snapshotNonce;
+  browser.runtime.sendNativeMessage("frame_photo_bridge", message).then((response) => {
     inFlightFingerprint = "";
     if (response && response.accepted) {
       lastFingerprint = fingerprint;
+      if (snapshotNonce === pauseSnapshotNonce) pauseSnapshotNonce = null;
       rejectedFingerprint = "";
       rejectedRetries = 0;
       portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
       return;
     }
-    retryRejectedCapture(fingerprint);
+    retryRejectedCapture(captureFingerprint);
   }).catch(() => {
     inFlightFingerprint = "";
-    retryRejectedCapture(fingerprint);
+    retryRejectedCapture(captureFingerprint);
   });
 }
 
@@ -196,6 +200,7 @@ function handlePlaybackCommand(command) {
   portRetryDelayMs = INITIAL_PORT_RETRY_DELAY_MS;
   if (command.type === "pause" && typeof command.paused === "boolean") {
     desiredPlaybackPaused = command.paused;
+    pauseSnapshotNonce = command.paused && typeof command.snapshotNonce === "string" ? command.snapshotNonce : null;
     setPollingPaused(command.paused);
     if (command.paused) scheduleCapture();
   } else if (command.type === "step" && typeof command.forward === "boolean") {
