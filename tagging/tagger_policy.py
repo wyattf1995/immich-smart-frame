@@ -182,15 +182,16 @@ def main():
         ensure_tags()
     if IDS_FILE:
         ids = [line.strip() for line in open(IDS_FILE) if line.strip()]
-        log(f"ID mode over {len(ids)} assets")
+        log(f"ID mode over {len(ids)} assets"); failed = 0
         for i, aid in enumerate(ids, 1):
             try:
                 asset = im("GET", f"/api/assets/{aid}")
                 success = record_success_after_process(aid, None, original_file_name=asset_fields(asset)[0], path=asset_fields(asset)[1], existing_tag_names=asset_fields(asset)[2], existing_desc=asset_fields(asset)[3])
+                if not success: failed += 1
                 log(f"[{i}] {'completed' if success else 'classification failed'}")
             except Exception:
-                log(f"[{i}] classification failed")
-        log("ID mode complete"); return 0
+                failed += 1; log(f"[{i}] classification failed")
+        log("ID mode complete"); return 1 if failed else 0
     if DRY:
         log("--dry-run requires --ids"); return 2
     if os.path.exists(LOCK):
@@ -226,7 +227,7 @@ def main():
     log(f"FULL done — {ok} tagged, {err} err")
     try: os.remove(LOCK)
     except OSError: pass
-    return 0
+    return 1 if err else 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
