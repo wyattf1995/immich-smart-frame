@@ -27,6 +27,22 @@ class CompanionTests(unittest.TestCase):
         with self.assertRaises(module.FrameError) as e:self.store.event('main',event)
         self.assertEqual(e.exception.status,429)
         self.clock+=121000;self.assertEqual(self.poll()['events'],[])
+
+    def test_max_event_ttl_is_bounded_when_clock_advances_between_reads(self):
+        self.store.settings('main',{'eventOverlays':True})
+
+        class AdvancingClock:
+            def __init__(self, value):
+                self.value = value
+
+            def __call__(self):
+                current = self.value
+                self.value += 1
+                return current
+
+        self.store.clock = AdvancingClock(self.clock)
+        event = self.store.event('main', {'type':'calendar','text':'Maximum duration','expiresInSeconds':300})
+        self.assertEqual(event['expiresAt'] - event['issuedAt'], 300_000)
     def test_events_never_accept_unreviewed_birds_or_html(self):
         self.store.settings('main',{'eventOverlays':True})
         for event in [{'type':'model_candidate','text':'bird','expiresInSeconds':120},{'type':'reviewed_bird','text':'<script>bad</script>','expiresInSeconds':120},{'type':'calendar','text':'x'*101,'expiresInSeconds':120},{'type':'calendar','text':'event','expiresInSeconds':3600}]:
@@ -44,6 +60,22 @@ class CompanionTests(unittest.TestCase):
         self.clock+=61000
         self.assertEqual(self.poll()['commands'],[])
         self.assertEqual(self.store.state()['devices'][0]['commands'][0]['status'],'expired')
+
+    def test_command_ttl_is_bounded_when_clock_advances_between_reads(self):
+        self.poll()
+
+        class AdvancingClock:
+            def __init__(self, value):
+                self.value = value
+
+            def __call__(self):
+                current = self.value
+                self.value += 1
+                return current
+
+        self.store.clock = AdvancingClock(self.clock)
+        command = self.store.command('main', {'type':'photo_next'})
+        self.assertEqual(command['expiresAt'] - command['issuedAt'], 60_000)
     def test_ack_is_device_bound_and_terminal(self):
         self.poll(); c=self.store.command('main',{'type':'show_mode','mode':'weather'})
         self.poll(acks=[{'id':c['id'],'status':'applied','message':'complete'}]); self.poll(acks=[{'id':c['id'],'status':'failed','message':'later'}])

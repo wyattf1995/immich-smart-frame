@@ -170,7 +170,8 @@ class FrameStore:
             if kind=='set_profile':
                 updated=settings_patch(json.loads(row['settings']),{'profile':payload['profile']},self.profiles)
                 db.execute('UPDATE devices SET settings=?,revision=revision+1 WHERE id=?',(json.dumps(updated),device))
-            command = dict(payload, id=str(uuid.uuid4()),issuedAt=self.clock(),expiresAt=self.clock()+60000)
+            issued_at = self.clock()
+            command = dict(payload, id=str(uuid.uuid4()),issuedAt=issued_at,expiresAt=issued_at+60000)
             db.execute('INSERT INTO commands(id,device,payload,issued,expires) VALUES(?,?,?,?,?)', (command['id'],device,json.dumps(command),command['issuedAt'],command['expiresAt']))
             return command
 
@@ -190,7 +191,8 @@ class FrameStore:
             if not json.loads(row['settings']).get('eventOverlays'): raise FrameError('Event overlays are disabled for this frame',409)
             recent=db.execute('SELECT issued FROM events WHERE device=? ORDER BY issued DESC LIMIT 1',(device,)).fetchone()
             if recent and self.clock()-recent['issued']<900000: raise FrameError('Frame overlays are limited to one every 15 minutes',429)
-            event={'id':str(uuid.uuid4()),'type':kind,'text':message.strip(),'issuedAt':self.clock(),'expiresAt':self.clock()+seconds*1000}
+            issued_at = self.clock()
+            event={'id':str(uuid.uuid4()),'type':kind,'text':message.strip(),'issuedAt':issued_at,'expiresAt':issued_at+seconds*1000}
             db.execute('INSERT INTO events VALUES(?,?,?,?,?)',(event['id'],device,json.dumps(event),event['issuedAt'],event['expiresAt']))
             db.execute('DELETE FROM events WHERE expires < ?',(self.clock()-86400000,))
             return event
