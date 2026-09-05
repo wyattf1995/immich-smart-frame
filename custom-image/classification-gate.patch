@@ -1,0 +1,117 @@
+diff --git a/config.schema.json b/config.schema.json
+index e634d13..f71e8cc 100644
+--- a/config.schema.json
++++ b/config.schema.json
+@@ -671,0 +672,5 @@
++        "require_ai_caption": {
++          "type": "boolean",
++          "default": false,
++          "description": "Reject assets without an [AI] caption and strongly named screenshots."
++        },
+diff --git a/internal/config/config.go b/internal/config/config.go
+index b67b7c1..76fd917 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -141,0 +142,3 @@ type KioskSettings struct {
++	// RequireAICaption rejects unclassified and strongly named screenshot assets.
++	RequireAICaption bool `json:"requireAICaption" yaml:"require_ai_caption" mapstructure:"require_ai_caption" default:"false"`
++
+@@ -587,0 +591 @@ func bindEnvironmentVariables(v *viper.Viper) error {
++		{"kiosk.require_ai_caption", "KIOSK_REQUIRE_AI_CAPTION"},
+diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
+index 2cfd5a9..3eec736 100644
+--- a/internal/immich/immich_helpers.go
++++ b/internal/immich/immich_helpers.go
+@@ -15,0 +16 @@ import (
++	"regexp"
+@@ -564 +565 @@ func (a *Asset) mergeAssetInfo(additionalInfo Asset) error {
+-// AssetInfo fetches the image information from Immich
++// AssetInfo fetches the image information from Immich, using the bounded API cache.
+@@ -565,0 +567,10 @@ func (a *Asset) AssetInfo(requestID, deviceID string) error {
++	return a.assetInfo(requestID, deviceID, true)
++}
++
++// AssetInfoFresh fetches current metadata without the API cache and replaces stale
++// tag and description fields before a history target is rendered.
++func (a *Asset) AssetInfoFresh(requestID, deviceID string) error {
++	return a.assetInfo(requestID, deviceID, false)
++}
++
++func (a *Asset) assetInfo(requestID, deviceID string, useCache bool) error {
+@@ -579 +590,4 @@ func (a *Asset) AssetInfo(requestID, deviceID string) error {
+-	immichAPICall := withImmichAPICache(a.immichAPICall, requestID, deviceID, a.requestConfig, immichAsset)
++	immichAPICall := a.immichAPICall
++	if useCache {
++		immichAPICall = withImmichAPICache(a.immichAPICall, requestID, deviceID, a.requestConfig, immichAsset)
++	}
+@@ -592 +606,15 @@ func (a *Asset) AssetInfo(requestID, deviceID string) error {
+-	return a.mergeAssetInfo(immichAsset)
++	if useCache {
++		return a.mergeAssetInfo(immichAsset)
++	}
++
++	previous := *a
++	*a = immichAsset
++	a.ctx = previous.ctx
++	a.requestConfig = previous.requestConfig
++	a.mu = previous.mu
++	a.DeviceID = previous.DeviceID
++	a.Bucket = previous.Bucket
++	a.BucketID = previous.BucketID
++	a.MemoryTitle = previous.MemoryTitle
++	a.RatioWanted = previous.RatioWanted
++	return nil
+@@ -816,0 +845,20 @@ func (a *Asset) isValidAsset(requestID, deviceID string, allowedTypes []AssetTyp
++// RevalidateHistoryAsset obtains uncached metadata before rendering an explicit
++// history target. It never substitutes another asset when the original target
++// has become ineligible.
++func (a *Asset) RevalidateHistoryAsset(requestID, deviceID string) error {
++	if err := a.AssetInfoFresh(requestID, deviceID); err != nil {
++		return fmt.Errorf("refresh history metadata: %w", err)
++	}
++	a.AddRatio()
++	if !a.hasValidBasicProperties(AllAssetTypes, "") ||
++		!a.hasValidFilterDate() ||
++		!a.hasValidPartners() ||
++		!a.hasValidFilterExcludeFaces(requestID, deviceID) ||
++		!a.hasValidAlbums(requestID, deviceID) ||
++		!a.hasValidPeople(requestID, deviceID) ||
++		!a.hasValidLoadedTags() {
++		return errors.New("history asset is no longer eligible")
++	}
++	return nil
++}
++
+@@ -1196,0 +1245 @@ func (a *Asset) hasValidTags(requestID, deviceID string) bool {
++		return false
+@@ -1200,0 +1250,14 @@ func (a *Asset) hasValidTags(requestID, deviceID string) bool {
++	return a.hasValidLoadedTags()
++}
++
++var strongScreenshotFilename = regexp.MustCompile(`(?i)^(?:(?:screenshot|screen[ _-]?shot|screen[ _-]?capture)[ _.-]+[0-9]{4}[-_]?[0-9]{2}[-_]?[0-9]{2}(?:[ _-]?[0-9]{2}[-:.]?[0-9]{2}(?:[-:.]?[0-9]{2})?)?(?:$|[ _.-])|[0-9]{4}[-_]?[0-9]{2}[-_]?[0-9]{2}(?:[ _-]?[0-9]{2}[-:.]?[0-9]{2}(?:[-:.]?[0-9]{2})?)?[ _.-]+(?:screenshot|screen[ _-]?shot|screen[ _-]?capture)(?:$|[ _.-]))`)
++
++func (a *Asset) hasValidClassification() bool {
++	if !a.requestConfig.Kiosk.RequireAICaption {
++		return true
++	}
++	if !strings.HasPrefix(strings.TrimSpace(a.ExifInfo.Description), "[AI]") {
++		return false
++	}
++	return !strongScreenshotFilename.MatchString(strings.TrimSpace(a.OriginalFileName))
++}
+@@ -1202 +1265,2 @@ func (a *Asset) hasValidTags(requestID, deviceID string) bool {
+-	if a.containsTag(kiosk.TagSkip) {
++func (a *Asset) hasValidLoadedTags() bool {
++	if !a.hasValidClassification() || a.containsTag(kiosk.TagSkip) {
+diff --git a/internal/routes/routes_previous_asset.go b/internal/routes/routes_previous_asset.go
+index 8fc4a3b..d939783 100644
+--- a/internal/routes/routes_previous_asset.go
++++ b/internal/routes/routes_previous_asset.go
+@@ -237,2 +237,2 @@ func getHistoryAsset(ctx context.Context, requestConfig config.Config, requestID
+-		if assetInfoErr := asset.AssetInfo(requestID, deviceID); assetInfoErr != nil {
+-			log.Error(fmt.Errorf("get asset info: %w", assetInfoErr))
++		if assetInfoErr := asset.RevalidateHistoryAsset(requestID, deviceID); assetInfoErr != nil {
++			return fmt.Errorf("revalidating history asset: %w", assetInfoErr)
+@@ -241,2 +240,0 @@ func getHistoryAsset(ctx context.Context, requestConfig config.Config, requestID
+-		asset.AddRatio()
+-

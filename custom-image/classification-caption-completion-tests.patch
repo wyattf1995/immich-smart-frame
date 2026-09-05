@@ -1,0 +1,27 @@
+diff --git a/internal/immich/immich_classification_gate_test.go b/internal/immich/immich_classification_gate_test.go
+index 9656430..1b5964e 100644
+--- a/internal/immich/immich_classification_gate_test.go
++++ b/internal/immich/immich_classification_gate_test.go
+@@ -42,0 +43,22 @@ func TestHasValidTagsFailsClosedWhenAssetMetadataCannotBeRead(t *testing.T) {
++
++func TestClassificationGateRequiresCompleteNonemptyAICaption(t *testing.T) {
++	cfg := config.Config{Kiosk: config.KioskSettings{RequireAICaption: true}}
++	for _, testCase := range []struct {
++		name        string
++		description string
++		want        bool
++	}{
++		{name: "complete marker", description: "  [AI] A family at the beach [/AI]  ", want: true},
++		{name: "marker only", description: "[AI]", want: false},
++		{name: "empty marker body", description: "[AI]   [/AI]", want: false},
++		{name: "unclosed marker", description: "[AI] A family at the beach", want: false},
++		{name: "trailing text after close", description: "[AI] A family at the beach [/AI] extra", want: false},
++	} {
++		t.Run(testCase.name, func(t *testing.T) {
++			asset := New(context.Background(), cfg)
++			asset.ExifInfo.Description = testCase.description
++			asset.OriginalFileName = "IMG_1001.jpg"
++			require.Equal(t, testCase.want, asset.hasValidClassification())
++		})
++	}
++}
