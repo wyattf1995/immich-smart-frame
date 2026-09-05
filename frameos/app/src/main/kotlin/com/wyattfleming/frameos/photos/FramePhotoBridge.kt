@@ -2,6 +2,7 @@ package com.wyattfleming.frameos.photos
 
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
@@ -114,6 +115,7 @@ class FramePhotoBridge(
                 if (isCurrentSession(session) && installed != null) {
                     extension = installed
                     session.webExtensionController.setMessageDelegate(installed, delegate, NATIVE_APP)
+                    Log.i(TAG, "Frame Photos extension ready id=${installed.id} version=${installed.metaData.version}")
                 }
             }
         }, { _ -> })
@@ -359,6 +361,7 @@ class FramePhotoBridge(
     }
 
     companion object {
+        private const val TAG = "FramePhotoBridge"
         const val MAX_BASE64_CHARS = 4 * 1024 * 1024
         const val EXTENSION_LOCATION = "resource://android/assets/frame-photo-bridge/"
         const val EXTENSION_ID = "frame-photo-bridge@wyattfleming.com"
