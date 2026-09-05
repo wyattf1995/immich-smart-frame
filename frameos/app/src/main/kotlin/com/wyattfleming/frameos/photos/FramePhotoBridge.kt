@@ -114,6 +114,7 @@ class FramePhotoBridge(
     }
 
     /** Installs the APK-bundled extension and attaches its message delegate to this Photos session. */
+    @Synchronized
     fun attach(
         runtime: GeckoRuntime,
         session: GeckoSession,
@@ -122,8 +123,8 @@ class FramePhotoBridge(
         onReady: (Boolean) -> Unit = {},
     ): Boolean {
         if (!configure(session, photosUrl, profile)) return false
-        val expectedAttachmentEpoch = synchronized(this) { attachmentEpoch.current() }
-        val expectedScopeKey = synchronized(this) { configuredScope?.key } ?: return false
+        val expectedAttachmentEpoch = attachmentEpoch.current()
+        val expectedScopeKey = configuredScope?.key ?: return false
         runtime.webExtensionController.ensureBuiltIn(EXTENSION_LOCATION, EXTENSION_ID).accept({ installed ->
             Handler(Looper.getMainLooper()).post {
                 if (!isCurrentAttachment(session, expectedAttachmentEpoch, expectedScopeKey)) return@post

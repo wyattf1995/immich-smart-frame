@@ -187,15 +187,16 @@ class FrameWebSurface(
                     val active = label != "Photos" ||
                         (photosContentActive && this === displayedManagedSession() && displayedSurfaceVisible())
                     attachPhotoBridge()
-                    if (label == "Photos") {
-                        photoBridge?.setPlaybackPaused(photosPlaybackPaused)
-                        photoBridge?.setCaptureEnabled(active, photosPlaybackPaused)
-                    }
+                    if (label == "Photos") restorePhotoBridgeState()
                     // Preserve Photos pause/lifecycle ownership when reopening a crashed session.
                     session.setActive(active)
                     session.setFocused(false)
                 }
                 if (label == "Photos" && photoBridge != null && !photoLoadGate.isReady()) {
+                    if (photoLoadGate.isFailed()) {
+                        attachPhotoBridge()
+                        restorePhotoBridgeState()
+                    }
                     if (photoLoadGate.isFailed()) {
                         reportUnavailable(this)
                         return false
@@ -226,6 +227,13 @@ class FrameWebSurface(
             } else if (!attached) {
                 onPhotoBridgeReady(attachedSession, attachmentEpoch, ready = false)
             }
+        }
+
+        private fun restorePhotoBridgeState() {
+            if (label != "Photos") return
+            val active = photosContentActive && this === displayedManagedSession() && displayedSurfaceVisible()
+            photoBridge?.setPlaybackPaused(photosPlaybackPaused)
+            photoBridge?.setCaptureEnabled(active, photosPlaybackPaused)
         }
 
         private fun onPhotoBridgeReady(observedSession: GeckoSession, attachmentEpoch: Long, ready: Boolean) {
