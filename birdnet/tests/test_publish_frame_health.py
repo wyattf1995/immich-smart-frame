@@ -154,6 +154,26 @@ class PublisherTests(unittest.TestCase):
         self.assertIsNone(output)
         self.assertIsNotNone(code)
 
+    def test_forked_term_ignoring_child_is_killed_after_leader_exits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            child_pid = Path(directory) / "child-pid"
+            program = (
+                "import os,signal,time,pathlib; "
+                "pid=os.fork(); "
+                "(signal.signal(signal.SIGTERM, signal.SIG_IGN), pathlib.Path(%r).write_text(str(os.getpid())), time.sleep(30)) if pid == 0 else time.sleep(30)"
+            ) % str(child_pid)
+            code, output = publisher.bounded_run([sys.executable, "-c", program], 1, 8192)
+            self.assertIsNone(output)
+            self.assertIsNotNone(code)
+            for _ in range(20):
+                if child_pid.exists():
+                    break
+                time.sleep(0.05)
+            self.assertTrue(child_pid.exists())
+            pid = int(child_pid.read_text())
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
+
     def test_http_failure_is_reported_without_a_token(self):
         with tempfile.TemporaryDirectory() as directory:
             token = Path(directory) / "token"
