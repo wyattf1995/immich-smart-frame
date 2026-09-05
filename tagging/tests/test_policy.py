@@ -27,7 +27,7 @@ class VlmPolicyTests(unittest.TestCase):
     def test_skip_tags_survive_content_cap(self):
         plan = plan_asset_update(
             original_file_name='IMG_0001.jpg',
-            vlm={'tags': [f'content-{n}' for n in range(20)], 'caption': 'A photo.', 'image_type': 'screenshot'},
+            vlm={'tags': ['backyard', 'garden', 'living room', 'kitchen', 'aquarium', 'forest', 'redwood', 'beach', 'coast', 'ocean', 'tide pool', 'lake', 'river', 'waterfall', 'mountain', 'desert', 'canyon', 'snow', 'cityscape', 'street'], 'caption': 'A photo.', 'image_type': 'screenshot'},
             existing_tag_names=(),
             existing_description='',
         )
