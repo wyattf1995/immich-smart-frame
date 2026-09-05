@@ -43,6 +43,62 @@ template:
           {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
           {% set value = device.get('status', {}).get('lastWeatherAt') %}
           {{ (value / 1000) | timestamp_local if value is not none else 'unknown' }}
+      - name: Frame Last Visible Render
+        device_class: timestamp
+        availability: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('lastPaintAt') %}
+          {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+          {% set updated_ms = (as_timestamp(states.sensor.frame_companion.last_updated, 0) * 1000) | int(0) %}
+          {% set server_ms = state_attr('sensor.frame_companion', 'serverTime') | int(0) %}
+          {% set seen_ms = device.get('lastSeenAt', 0) | int(0) %}
+          {{ is_state('sensor.frame_companion', 'online')
+             and device.get('online', false)
+             and value is number and 0 <= value <= now_ms
+             and 0 <= now_ms - updated_ms <= 90000
+             and 0 <= now_ms - server_ms <= 90000
+             and 0 <= server_ms - seen_ms <= 90000 }}
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('lastPaintAt') %}
+          {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+          {{ (value / 1000) | timestamp_local if value is number and 0 <= value <= now_ms else 'unknown' }}
+      - name: Frame Recovery Count
+        availability: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('recoveryCount') %}
+          {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+          {% set updated_ms = (as_timestamp(states.sensor.frame_companion.last_updated, 0) * 1000) | int(0) %}
+          {% set server_ms = state_attr('sensor.frame_companion', 'serverTime') | int(0) %}
+          {% set seen_ms = device.get('lastSeenAt', 0) | int(0) %}
+          {{ is_state('sensor.frame_companion', 'online')
+             and device.get('online', false)
+             and value is number and value >= 0
+             and 0 <= now_ms - updated_ms <= 90000
+             and 0 <= now_ms - server_ms <= 90000
+             and 0 <= server_ms - seen_ms <= 90000 }}
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('recoveryCount') %}
+          {{ value if value is number and value >= 0 else 'unknown' }}
+      - name: Frame Last Failure
+        availability: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('lastError') %}
+          {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+          {% set updated_ms = (as_timestamp(states.sensor.frame_companion.last_updated, 0) * 1000) | int(0) %}
+          {% set server_ms = state_attr('sensor.frame_companion', 'serverTime') | int(0) %}
+          {% set seen_ms = device.get('lastSeenAt', 0) | int(0) %}
+          {{ is_state('sensor.frame_companion', 'online')
+             and device.get('online', false)
+             and value is string
+             and 0 <= now_ms - updated_ms <= 90000
+             and 0 <= now_ms - server_ms <= 90000
+             and 0 <= server_ms - seen_ms <= 90000 }}
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('lastError') %}
+          {{ value if value is string and value else 'none' }}
       - name: Frame Reserve Count
         state: >-
           {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
