@@ -23,7 +23,7 @@ class MainActivityCompanionContractTest {
 
     @Test fun `photo commands dispatch while paused and bounded holds resume after their duration`() {
         assertTrue(source.contains("manualPhotoStepPending = true"))
-        assertTrue(source.contains("photoBridge.setCaptureEnabled(activityResumed, false)"))
+        assertFalse(source.contains("photoBridge.setCaptureEnabled(activityResumed, false)"))
         assertTrue(source.contains("if (moved) handler.postDelayed(finishManualPhotoStep, 8_000L) else finishManualPhotoStep.run()"))
         assertTrue(source.contains("photoBridge.setCaptureEnabled(activityResumed && state.mode == FrameMode.PHOTOS, state.photosPaused)"))
         assertTrue(source.contains("if (moved) \"dispatched\" else \"rejected\""))

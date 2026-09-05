@@ -167,6 +167,7 @@ class FrameOfflineReserveTest {
         val step = port.commands.last()
         assertEquals("step", step.getString("type"))
         val stepNonce = step.getString("snapshotNonce")
+        assertFalse(bridge.accept(loadedPhotoMessage(), sender))
         assertFalse(bridge.accept(loadedPhotoMessage().put("snapshotNonce", pauseNonce), sender))
         assertTrue(bridge.accept(loadedPhotoMessage().put("snapshotNonce", stepNonce), sender))
         assertFalse(bridge.accept(loadedPhotoMessage().put("snapshotNonce", stepNonce), sender))

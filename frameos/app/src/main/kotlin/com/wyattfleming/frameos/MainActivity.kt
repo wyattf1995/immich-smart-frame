@@ -1585,7 +1585,6 @@ class MainActivity : Activity() {
             manualPhotoStepPreviousAssetId = currentPhotoAssetId
             manualPhotoStepPending = true
             handler.removeCallbacks(finishManualPhotoStep)
-            photoBridge.setCaptureEnabled(activityResumed, false)
         }
         val moved = webSurface?.movePhoto(forward) == true
         if (state.photosPaused) {
