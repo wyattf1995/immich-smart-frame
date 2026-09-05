@@ -13,8 +13,17 @@ changes will still be called out explicitly.
 
 - FrameOS pause and resume commands keep the web slideshow toolbar hidden,
   including repeated pause commands, while preserving native Next/Previous
-  actions and paused-photo capture. FrameOS 0.2.7 packages extension 1.0.3 so
-  installed GeckoView sessions receive the updated bridge.
+  actions and paused-photo capture. FrameOS 0.2.8 packages extension 1.0.4,
+  registers its photo listeners at document start, and waits for the native
+  extension delegate before loading Photos. This keeps initial and overlapping
+  slideshow responses inside the capture fence, including a pause during startup.
+- Home/Calendar fragment navigation preserves the current wrapper document's
+  load and paint evidence. Full navigation and paint resets retain their existing
+  qualification checks; changing a fragment no longer leaves a rendered document
+  permanently marked unrendered.
+- Companion 0.3.3 derives each command/event expiry from its single issuance
+  timestamp. Clock ticks between two reads can no longer create lifetimes one
+  millisecond beyond the frame's accepted maximum.
 
 ### Removed
 

@@ -63,6 +63,13 @@ signals. Missing values mean unknown, not healthy. The remote also shows the app
 version, recovery count, offline asset count, command acknowledgements, and settings
 revision. A configured parents preset does not mean a physical frame is provisioned.
 
+`lastPaintAt` reports when FrameOS recognizes a displayed, paint-qualified native
+surface or web document. Returning to a qualified warm document can refresh it
+without a new full-page load. Home/Calendar fragment switches reuse that document;
+the wrapper separately checks its embedded route's readiness. This timestamp is
+not a measurement of target-route pixel latency. `lastPhotoAt` remains the
+independent accepted-photo signal.
+
 ## Optional event notes
 
 When a frame has `eventOverlays: true`, an operator may POST `/api/event` with

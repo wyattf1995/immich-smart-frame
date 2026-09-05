@@ -40,7 +40,8 @@ the repository tests and was also exercised on an Android emulator.
 
 The optional Birds configuration, six-view ordering, URL policy, disposable
 session lifecycle, and shell routing are covered by local unit and contract
-tests. They have not been installed or visually verified on a physical Lenovo.
+tests. Verify the configured Birds page and both gesture directions on each
+physical deployment; a configuration example alone does not establish that result.
 
 OEM gesture directions are still hardware input, not Android touch gestures.
 They can change with frame rotation, firmware state, and the input device
@@ -94,6 +95,17 @@ debug-only activity extras, while the `android.permission.DUMP`-protected
 receiver remains available to the trusted shell router. Installing a newer APK
 with `-r` and the same signing certificate preserves configuration and encrypted
 sessions.
+
+Photos waits for its bundled extension and native delegate before the first page
+load. The content script observes HTMX transactions from document start, while
+body-dependent playback and capture wait for DOM readiness. A failed registration
+uses the existing bounded recovery path; stale registration callbacks cannot load
+a hidden or disposed session.
+
+Home and Calendar share a wrapper document and change its fragment. FrameOS keeps
+that document's existing load/paint evidence across those switches. Full requests,
+crashes and paint resets retain their normal invalidation rules; the wrapper's
+embedded-route readiness remains separate from native document paint.
 
 Deploy the two local pages to Home Assistant's `/config/www/` directory so they
 are available as `/local/frameos-panel.html` and `/local/frameos-oauth.html`.
