@@ -20,6 +20,7 @@ class FramePhotoBridgeExtensionContractTest {
             permissions,
         )
         assertEquals(FramePhotoBridge.EXTENSION_ID, manifest.getJSONObject("browser_specific_settings").getJSONObject("gecko").getString("id"))
+        assertEquals("document_start", manifest.getJSONArray("content_scripts").getJSONObject(0).getString("run_at"))
         assertFalse(manifest.has("background"))
     }
 
