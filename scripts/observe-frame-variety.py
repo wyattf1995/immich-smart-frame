@@ -22,6 +22,9 @@ MIN_SAMPLE_SECONDS = 1.0
 MAX_SAMPLE_SECONDS = 60.0
 DEFAULT_STALE_SECONDS = 180
 MAX_STALE_SECONDS = 3600
+# Match the companion's online state: a device is present for 90 seconds after poll.
+DEVICE_ONLINE_MILLIS = 90_000
+_MISSING = object()
 
 
 def _integer(value: Any) -> int | None:
@@ -53,7 +56,9 @@ class VarietyAggregate:
             "ignoredNonPhotos": 0,
             "ignoredPaused": 0,
             "ignoredOffline": 0,
+            "ignoredDeviceOffline": 0,
             "ignoredStale": 0,
+            "ignoredFutureTimestamp": 0,
             "ignoredSameAsset": 0,
             "observations": 0,
             "uniqueObservations": 0,
@@ -63,8 +68,13 @@ class VarietyAggregate:
     def read_failed(self) -> None:
         self._counts["readFailures"] += 1
 
-    def accept(self, device: Any, status: Any, now_millis: int) -> None:
+    def accept(self, device: Any, status: Any, now_millis: int, *, seen_at: Any = _MISSING) -> None:
         if not isinstance(device, str) or not isinstance(status, dict):
+            self._counts["invalidRows"] += 1
+            return
+        # The default exists for pure aggregation tests; production always supplies the DB field.
+        seen = now_millis if seen_at is _MISSING else _integer(seen_at)
+        if seen is None:
             self._counts["invalidRows"] += 1
             return
         if status.get("mode") != "photos":
@@ -80,6 +90,12 @@ class VarietyAggregate:
         photo_at = _integer(status.get("lastPhotoAt"))
         if not isinstance(asset_id, str) or not asset_id or photo_at is None or photo_at < 0:
             self._counts["invalidRows"] += 1
+            return
+        if photo_at > now_millis or seen > now_millis:
+            self._counts["ignoredFutureTimestamp"] += 1
+            return
+        if now_millis - seen > DEVICE_ONLINE_MILLIS:
+            self._counts["ignoredDeviceOffline"] += 1
             return
         if photo_at < now_millis - self._stale_millis:
             self._counts["ignoredStale"] += 1
@@ -114,12 +130,15 @@ class VarietyAggregate:
             "durationSeconds": duration_seconds,
             "sampleMilliseconds": int(sample_seconds * 1000),
             "staleMilliseconds": self._stale_millis,
+            "deviceOnlineMilliseconds": DEVICE_ONLINE_MILLIS,
             "readFailures": self._counts["readFailures"],
             "invalidRows": self._counts["invalidRows"],
             "ignoredNonPhotos": self._counts["ignoredNonPhotos"],
             "ignoredPaused": self._counts["ignoredPaused"],
             "ignoredOffline": self._counts["ignoredOffline"],
+            "ignoredDeviceOffline": self._counts["ignoredDeviceOffline"],
             "ignoredStale": self._counts["ignoredStale"],
+            "ignoredFutureTimestamp": self._counts["ignoredFutureTimestamp"],
             "ignoredSameAsset": self._counts["ignoredSameAsset"],
             "observations": observations,
             "uniqueObservations": unique,
@@ -132,20 +151,20 @@ class VarietyAggregate:
         }
 
 
-def read_status_rows(database: Path) -> list[tuple[str, dict[str, Any]]]:
+def read_status_rows(database: Path) -> list[tuple[str, dict[str, Any], Any]]:
     """Read the companion's latest status snapshots without opening a write transaction."""
     uri = database.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(uri, uri=True, timeout=0) as connection:
         connection.execute("PRAGMA query_only = ON")
         connection.execute("PRAGMA busy_timeout = 0")
-        rows = connection.execute("SELECT id, status FROM devices").fetchall()
-    parsed: list[tuple[str, dict[str, Any]]] = []
-    for device, raw_status in rows:
+        rows = connection.execute("SELECT id, status, seen FROM devices").fetchall()
+    parsed: list[tuple[str, dict[str, Any], Any]] = []
+    for device, raw_status, seen in rows:
         try:
             status = json.loads(raw_status)
         except (TypeError, ValueError):
             status = None
-        parsed.append((device, status))
+        parsed.append((device, status, seen))
     return parsed
 
 
@@ -199,8 +218,8 @@ def main() -> int:
             aggregate.read_failed()
         else:
             now_millis = int(time.time() * 1000)
-            for device, status in rows:
-                aggregate.accept(device, status, now_millis)
+            for device, status, seen_at in rows:
+                aggregate.accept(device, status, now_millis, seen_at=seen_at)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break

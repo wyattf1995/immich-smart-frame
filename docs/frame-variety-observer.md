@@ -22,11 +22,15 @@ python3 scripts/observe-frame-variety.py /path/to/state.db \
 The output is one JSON object whose values are numeric aggregates only. It
 contains no device labels, profiles, asset IDs, identifier hashes, raw status,
 or per-event timestamps. Sequence boundaries are retained internally per
-(device, profile), so an asset visible on two frames or profiles is not treated
-as a repeat across those separate presentation sequences.
+(device, profile). The uniqueness count is therefore the sum of distinct assets
+within each device/profile sequence, not a global distinct-asset count; an asset
+visible on two frames or profiles is not treated as a repeat across those
+separate presentation sequences.
 
 `observations` counts only a changed asset ID while the latest companion status
-is online, unpaused, in Photos, and fresh. `uniqueRatioPpm` is the fraction of
+is online, unpaused, in Photos, and fresh. Online uses the companion
+`lastSeenAt` rule (a poll no more than 90 seconds old); future photo or device
+timestamps are rejected. `uniqueRatioPpm` is the fraction of
 those observed changes that were unique within their sequence, scaled by one
 million. Repeat distances are the number of observed changed-asset events since
 the prior occurrence in the same sequence. `ignoredSameAsset` records receipt
