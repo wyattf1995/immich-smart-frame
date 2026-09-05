@@ -170,7 +170,8 @@ class FrameStore:
             if kind=='set_profile':
                 updated=settings_patch(json.loads(row['settings']),{'profile':payload['profile']},self.profiles)
                 db.execute('UPDATE devices SET settings=?,revision=revision+1 WHERE id=?',(json.dumps(updated),device))
-            command = dict(payload, id=str(uuid.uuid4()),issuedAt=self.clock(),expiresAt=self.clock()+60000)
+            issued_at = self.clock()
+            command = dict(payload, id=str(uuid.uuid4()),issuedAt=issued_at,expiresAt=issued_at+60000)
             db.execute('INSERT INTO commands(id,device,payload,issued,expires) VALUES(?,?,?,?,?)', (command['id'],device,json.dumps(command),command['issuedAt'],command['expiresAt']))
             return command
 
