@@ -8,6 +8,10 @@ DATA_DIR="${BIRDNET_DATA_DIR:-/mnt/user/appdata/birdnet-go/data}"
 MAX_AGE_SECONDS="${BIRDNET_AUDIO_MAX_AGE_SECONDS:-120}"
 HEALTH_URL="http://${BIRDNET_BIND_IP}:${WEB_PORT}/api/v2/health/audio"
 AUTH_FILE="${BIRDNET_WATCHDOG_AUTH_FILE:-}"
+AUTH_LOGIN_MAX_BYTES=16384
+AUTH_CALLBACK_HEADER_MAX_BYTES=8192
+AUTH_HEALTH_MAX_BYTES=65536
+AUTH_CALLBACK_MAX_BYTES=2048
 
 failed=0
 
@@ -122,27 +126,40 @@ require_command docker || true
 require_command df || true
 
 authenticated_health() {
-  local clientid password login callback headers cookie mode
+  local login callback headers cookie mode owner current_uid callback_pattern cookie_pattern
+  callback_pattern='^/api/v2/auth/callback\?[A-Za-z0-9._~%=&/-]+$'
+  cookie_pattern='^_gothic_session=[A-Za-z0-9._~%+=:@|/-]+$'
   [[ -r "$AUTH_FILE" ]] || return 1
   mode=$(stat -c '%a' "$AUTH_FILE" 2>/dev/null || stat -f '%Lp' "$AUTH_FILE" 2>/dev/null) || return 1
   [[ "$mode" == "600" ]] || return 1
-  clientid=$(jq -er '.clientid | strings | select(length != 0)' "$AUTH_FILE") || return 1
-  password=$(jq -er '.password | strings | select(length != 0)' "$AUTH_FILE") || return 1
-  [[ "$clientid$password" != *$'\r'* && "$clientid$password" != *$'\n'* ]] || return 1
-  login=$(jq -nc --arg username "$clientid" --arg password "$password" --arg redirectUrl "/" '{username:$username,password:$password,redirectUrl:$redirectUrl}')
-  callback=$(printf '%s' "$login" | curl --fail --silent --show-error --connect-timeout 3 --max-time 8 --header 'Content-Type: application/json' --data-binary @- "http://${BIRDNET_BIND_IP}:${WEB_PORT}/api/v2/auth/login" | jq -er 'select(.success == true) | .redirectUrl | strings') || return 1
-  [[ "$callback" =~ ^/api/v2/auth/callback\? ]] && [[ "$callback" != *$'\r'* && "$callback" != *$'\n'* ]] || return 1
-  headers=$(printf 'url = "http://%s:%s%s"\n' "$BIRDNET_BIND_IP" "$WEB_PORT" "$callback" | curl --config - --fail --silent --show-error --connect-timeout 3 --max-time 8 -D - -o /dev/null) || return 1
-  cookie=$(printf '%s\n' "$headers" | awk -F': ' 'tolower($1) == "set-cookie" { sub(/;.*/, "", $2); print $2; exit }')
-  [[ "$cookie" == *=* && "$cookie" != *$'\r'* && "$cookie" != *$'\n'* ]] || return 1
-  # curl --config keeps the /api/v2/health/audio callback credential out of argv.
-  printf 'header = "Cookie: %s"\nurl = "%s"\n' "$cookie" "$HEALTH_URL" | curl --config - --fail --silent --show-error --connect-timeout 3 --max-time 8
+  owner=$(stat -c '%u' "$AUTH_FILE" 2>/dev/null || stat -f '%u' "$AUTH_FILE" 2>/dev/null) || return 1
+  current_uid=$(id -u) || return 1
+  [[ "$owner" == "$current_uid" || "$owner" == "0" ]] || return 1
+  # Read the credential JSON as jq input so neither value enters a process argv.
+  login=$(jq -ce '
+    def credential: type == "string" and length != 0 and (test("[\\r\\n]") | not);
+    if (.clientid | credential) and (.password | credential)
+    then {username: .clientid, password: .password, redirectUrl: "/"}
+    else error("invalid watchdog credentials") end
+  ' "$AUTH_FILE") || return 1
+  callback=$(printf '%s' "$login" | curl --fail --silent --show-error --connect-timeout 3 --max-time 8 --max-filesize "$AUTH_LOGIN_MAX_BYTES" --header 'Content-Type: application/json' --data-binary @- "http://${BIRDNET_BIND_IP}:${WEB_PORT}/api/v2/auth/login" | jq -er 'select(.success == true) | .redirectUrl | strings') || return 1
+  [[ ${#callback} -le "$AUTH_CALLBACK_MAX_BYTES" ]] || return 1
+  [[ "$callback" =~ $callback_pattern ]] || return 1
+  # The strict callback grammar keeps this stdin-only curl config free of quotes,
+  # escapes, CRLF, and alternate origins.
+  headers=$(printf 'url = "http://%s:%s%s"\n' "$BIRDNET_BIND_IP" "$WEB_PORT" "$callback" | curl --config - --fail --silent --show-error --connect-timeout 3 --max-time 8 --max-filesize "$AUTH_CALLBACK_HEADER_MAX_BYTES" -D - -o /dev/null) || return 1
+  [[ ${#headers} -le "$AUTH_CALLBACK_HEADER_MAX_BYTES" ]] || return 1
+  cookie=$(printf '%s\n' "$headers" | awk 'tolower($0) ~ /^set-cookie:[[:space:]]*_gothic_session=/ { sub(/^[^:]*:[[:space:]]*/, ""); sub(/;.*/, ""); print; exit }')
+  [[ ${#cookie} -le 4096 && "$cookie" =~ $cookie_pattern ]] || return 1
+  # curl --config sends /api/v2/health/audio without exposing the session
+  # credential in argv or persistent jars.
+  printf 'header = "Cookie: %s"\nurl = "%s"\n' "$cookie" "$HEALTH_URL" | curl --config - --fail --silent --show-error --connect-timeout 3 --max-time 8 --max-filesize "$AUTH_HEALTH_MAX_BYTES"
 }
 
 if [[ -n "$AUTH_FILE" ]]; then
   health_json=$(authenticated_health) || health_json=""
 else
-  health_json=$(curl --fail --silent --show-error --connect-timeout 3 --max-time 8 "$HEALTH_URL") || health_json=""
+  health_json=$(curl --fail --silent --show-error --connect-timeout 3 --max-time 8 --max-filesize "$AUTH_HEALTH_MAX_BYTES" "$HEALTH_URL") || health_json=""
 fi
 if [[ -n "$health_json" ]]; then # /api/v2/health/audio
   if printf '%s' "$health_json" | sources_are_healthy >/dev/null; then

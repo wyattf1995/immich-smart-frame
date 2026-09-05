@@ -290,7 +290,7 @@ bash ./scripts/birdnet-watchdog.sh
 
 When BirdNET-Go administration authentication also protects the audio-health
 endpoint, keep the normal direct request disabled and supply an optional
-root-owned mode-`0600` JSON file outside this repository through
+mode-`0600` JSON file outside this repository through
 `BIRDNET_WATCHDOG_AUTH_FILE`. Its schema is `{"clientid":"...","password":"..."}`;
 use the configured BirdNET-Go browser client credentials and do not place their
 values in a User Script, shell history, or this document. For example:
@@ -309,6 +309,8 @@ The login creates a short-lived BirdNET-Go server session and has the same
 binary authentication scope as the configured client; the watchdog itself still
 does not change configuration, detections, containers, or files. A missing,
 unreadable, malformed, mode-insecure, or rejected credential file fails closed.
+The file must be owned by the watchdog's effective user or by root; use a
+root-owned file when the User Script runs as root.
 Without `BIRDNET_WATCHDOG_AUTH_FILE`, the watchdog retains its unauthenticated
 request behavior; an authenticated deployment will then report the existing
 endpoint-unavailable alert. Do not work around authentication by widening the
