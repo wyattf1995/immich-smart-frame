@@ -119,7 +119,15 @@ function loadScript({ connectNative, historyValues = [], frames, push = false } 
     frameAnimations(index) { return frameList[index].animations; },
     frame(index) { return frameList[index]; },
     mutate(records) { observers.find((observer) => observer.target === context.document.documentElement).callback(records); },
-    fireEvent(type) { listeners.filter(([eventType]) => eventType === type).forEach(([, listener]) => listener({ type })); },
+    fireEvent(type, detail = {}) { listeners.filter(([eventType]) => eventType === type).forEach(([, listener]) => listener({ type, detail })); },
+    setHistory(values) {
+      history.splice(0, history.length, ...values.map((value) => ({ value })));
+    },
+    setFrameImage(index, source) {
+      const image = frameList[index].images[0];
+      image.currentSrc = source;
+      image.src = source;
+    },
   };
 }
 
@@ -269,4 +277,29 @@ test("capture ignores progress bar RAF styles but keeps Kiosk visibility mutatio
   assert.equal(runtime.pendingMicrotasks(), 0);
   runtime.mutate([{ type: "attributes", attributeName: "style", target: runtime.frame(0) }]);
   assert.equal(runtime.pendingMicrotasks(), 1);
+});
+
+test("HTMX transaction gating never pairs a new history id with the old frame", () => {
+  const oldId = "11111111-1111-4111-8111-111111111111";
+  const newId = "22222222-2222-4222-8222-222222222222";
+  const runtime = loadScript({
+    historyValues: [`*${oldId}:old`],
+    frames: [{ images: ["data:image/jpeg;base64,old"] }],
+  });
+  runtime.runMicrotasks();
+  runtime.fireEvent("htmx:beforeRequest");
+  runtime.setHistory([`${oldId}:old`, `*${newId}:new`]);
+  runtime.mutate([{ type: "attributes", attributeName: "value", target: {} }]);
+  runtime.runMicrotasks();
+  runtime.setFrameImage(0, "data:image/jpeg;base64,new");
+  runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
+  runtime.fireEvent("htmx:afterSettle");
+  runtime.runMicrotasks();
+  assert.deepEqual(
+    runtime.nativeMessages.map(({ assetId, image }) => ({ assetId, image })),
+    [
+      { assetId: oldId, image: "old" },
+      { assetId: newId, image: "new" },
+    ],
+  );
 });
