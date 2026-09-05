@@ -1,0 +1,128 @@
+diff --git a/frontend/tests/htmx.mock.ts b/frontend/tests/htmx.mock.ts
+index 9d358e4..7488a2f 100644
+--- a/frontend/tests/htmx.mock.ts
++++ b/frontend/tests/htmx.mock.ts
+@@ -1,3 +1,5 @@
++const triggers: Array<{ element: HTMLElement; event: string }> = [];
++
+ const htmx = {
+     addClass(element: HTMLElement, className: string) {
+         element.classList.add(className);
+@@ -8,7 +10,17 @@ const htmx = {
+     removeClass(element: HTMLElement, className: string) {
+         element.classList.remove(className);
+     },
+-    trigger() {},
++    trigger(element: HTMLElement, event: string) {
++        triggers.push({ element, event });
++    },
+ };
+ 
++export function resetTriggers() {
++    triggers.length = 0;
++}
++
++export function triggerCount() {
++    return triggers.length;
++}
++
+ export default htmx;
+diff --git a/frontend/tests/paused-retry.test.ts b/frontend/tests/paused-retry.test.ts
+new file mode 100644
+index 0000000..84904ca
+--- /dev/null
++++ b/frontend/tests/paused-retry.test.ts
+@@ -0,0 +1,93 @@
++import assert from "node:assert/strict";
++import fs from "node:fs";
++import path from "node:path";
++import test from "node:test";
++
++import { resetTriggers, triggerCount } from "./htmx.mock.ts";
++
++class FakeClassList {
++    private readonly values = new Set<string>();
++
++    add(...classNames: string[]) {
++        for (const className of classNames) this.values.add(className);
++    }
++
++    contains(className: string) {
++        return this.values.has(className);
++    }
++
++    remove(...classNames: string[]) {
++        for (const className of classNames) this.values.delete(className);
++    }
++}
++
++test("automatic retry checks the current paused state when its timer fires", async () => {
++    let nextFrameId = 1;
++    const timers: Array<{ callback: () => void; delay: number }> = [];
++    const body = { classList: new FakeClassList() };
++    Object.defineProperties(globalThis, {
++        cancelAnimationFrame: { configurable: true, value: () => {} },
++        document: {
++            configurable: true,
++            value: { body, getElementById: () => null, visibilityState: "visible" },
++        },
++        requestAnimationFrame: { configurable: true, value: () => nextFrameId++ },
++        setTimeout: {
++            configurable: true,
++            value: (callback: () => void, delay: number) => {
++                timers.push({ callback, delay });
++                return timers.length;
++            },
++        },
++    });
++
++    const {
++        initPolling,
++        pausePolling,
++        resumePolling,
++        scheduleAutoRetry,
++        triggerNewAsset,
++    } = await import("../src/ts/polling.ts");
++
++    const kiosk = { classList: new FakeClassList() } as unknown as HTMLElement;
++    const menu = { classList: new FakeClassList() } as unknown as HTMLElement;
++    initPolling(45_000, kiosk, menu);
++    resetTriggers();
++
++    scheduleAutoRetry();
++    const pauseAfterSchedule = timers.shift();
++    assert.equal(pauseAfterSchedule?.delay, 5000);
++    pausePolling(true);
++    pauseAfterSchedule?.callback();
++    assert.equal(triggerCount(), 0, "pause after scheduling blocks the retry");
++
++    resumePolling();
++    scheduleAutoRetry();
++    timers.shift()?.callback();
++    assert.equal(triggerCount(), 1, "unpaused retry advances exactly once");
++
++    pausePolling(false);
++    scheduleAutoRetry();
++    timers.shift()?.callback();
++    assert.equal(triggerCount(), 1, "manual request pause blocks a queued retry");
++
++    resumePolling();
++    scheduleAutoRetry();
++    timers.shift()?.callback();
++    assert.equal(triggerCount(), 2, "resumed polling permits a later retry");
++
++    pausePolling(true);
++    triggerNewAsset();
++    assert.equal(triggerCount(), 3, "explicit trigger behavior remains unchanged");
++});
++
++test("automatic retry templates call only the pause-safe kiosk entrypoint", () => {
++    for (const filename of ["error.templ", "message.templ"]) {
++        const source = fs.readFileSync(
++            path.join(process.cwd(), "../internal/templates/partials", filename),
++            "utf8",
++        );
++        assert.match(source, /kiosk\.scheduleAutoRetry\(\)/, filename);
++        assert.doesNotMatch(source, /kiosk\.triggerNewAsset\(\)/, filename);
++    }
++});

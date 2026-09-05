@@ -1,0 +1,316 @@
+diff --git a/internal/routes/routes_asset.go b/internal/routes/routes_asset.go
+index 118bd38..0f750ea 100644
+--- a/internal/routes/routes_asset.go
++++ b/internal/routes/routes_asset.go
+@@ -64,7 +64,8 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 
+ 		requestConfig := requestData.RequestConfig
+ 		requestID := requestData.RequestID
+-		deviceID := requestData.DeviceID
++		deviceID := framePreferenceDevice(c.QueryParam("frame_id"), requestData.DeviceID)
++		requestData.DeviceID = deviceID
+ 		if err := validateOptimizedClientDimensions(requestConfig); err != nil {
+ 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+ 		}
+@@ -91,10 +92,13 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 		// get and use prefetch data (if found)
+ 		if requestConfig.Kiosk.PreFetch {
+ 			if cachedViewData, found := fromCache(requestCtx.URL.String(), deviceID, requestConfig.SelectedUser, requestConfig.Duration, requestConfig.CacheDuration); found {
+-				scheduleAssetPrefetch(com, requestData, requestCtx)
+-				webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, cachedViewData)
++				if frameViewDataVisible(deviceID, cachedViewData) {
++					scheduleAssetPrefetch(com, requestData, requestCtx)
++					webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, cachedViewData)
+ 
+-				return renderCachedViewData(c, cachedViewData, &requestConfig, requestID, deviceID, com.Secret())
++					return renderCachedViewData(c, cachedViewData, &requestConfig, requestID, deviceID, com.Secret())
++				}
++				log.Debug(requestID, "deviceID", deviceID, "discarded hidden prefetched asset")
+ 			}
+ 			log.Debug(requestID, "deviceID", deviceID, "cache miss for new image")
+ 		}
+diff --git a/internal/routes/routes_asset_helpers.go b/internal/routes/routes_asset_helpers.go
+index 6ecdd64..b0f6778 100644
+--- a/internal/routes/routes_asset_helpers.go
++++ b/internal/routes/routes_asset_helpers.go
+@@ -405,7 +405,7 @@ func processAsset(ctx context.Context, asset *immich.Asset, requestConfig config
+ 		return nil, assetsErr
+ 	}
+ 
+-	for range maxProcessAssetRetries {
++	for attempt := range maxProcessAssetRetries {
+ 		if err := checkCanceled(ctx); err != nil {
+ 			return nil, err
+ 		}
+@@ -419,6 +419,13 @@ func processAsset(ctx context.Context, asset *immich.Asset, requestConfig config
+ 		if err != nil {
+ 			continue
+ 		}
++		if !frameSelectionAllowed(deviceID, asset.ID, attempt) {
++			continue
++		}
++		// Record the selected Immich UUID after retrieval, so the same photo is
++		// avoided even when another curation source later yields it. The shared
++		// path covers foreground, prefetch, and offline prewarm selection.
++		frameRecentAssets.remember(deviceID, asset.ID)
+ 
+ 		//  At this point immichAsset could be a video or an image
+ 		if requestConfig.ShowVideos && asset.Type == immich.VideoType {
+@@ -619,7 +626,7 @@ func processViewImageDataWithContext(ctx context.Context, requestConfig config.C
+ 	// Initialize request metadata
+ 	metadata := requestMetadata{
+ 		requestID: utils.ColorizeRequestID(c.ResponseHeader.Get(echo.HeaderXRequestID)),
+-		deviceID:  c.RequestHeader.Get("kiosk-device-id"),
++		deviceID:  framePreferenceDevice(c.URL.Query().Get("frame_id"), c.RequestHeader.Get("kiosk-device-id")),
+ 		urlString: c.URL.String(),
+ 	}
+ 
+diff --git a/internal/routes/routes_offline.go b/internal/routes/routes_offline.go
+index d20c186..1e20463 100644
+--- a/internal/routes/routes_offline.go
++++ b/internal/routes/routes_offline.go
+@@ -156,7 +156,7 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 		}
+ 
+ 		requestID := requestData.RequestID
+-		deviceID := requestData.DeviceID
++		deviceID := framePreferenceDevice(c.QueryParam("frame_id"), requestData.DeviceID)
+ 
+ 		requestConfig := baseConfig.Snapshot()
+ 		requestConfig.History = requestData.RequestConfig.History
+@@ -240,6 +240,10 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 				log.Error("OfflineMode: loadMsgpackZstd", "picked", picked, "err", loadMsgpackErr)
+ 				continue
+ 			}
++			if !frameViewDataVisible(deviceID, viewData) {
++				log.Debug(requestID, "deviceID", deviceID, "discarded hidden offline asset")
++				continue
++			}
+ 
+ 			viewData.KioskVersion = KioskVersion
+ 			viewData.RequestID = requestID
+diff --git a/internal/routes/routes_preferences.go b/internal/routes/routes_preferences.go
+new file mode 100644
+index 0000000..f6da841
+--- /dev/null
++++ b/internal/routes/routes_preferences.go
+@@ -0,0 +1,219 @@
++package routes
++
++import (
++	"encoding/json"
++	"fmt"
++	"io"
++	"math/rand/v2"
++	"os"
++	"regexp"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/google/uuid"
++)
++
++const (
++	framePreferencesFileEnv  = "FRAME_PREFERENCES_FILE"
++	framePreferencesVersion  = 1
++	framePreferenceReloadAge = 5 * time.Second
++	maxPreferenceDevices     = 64
++	maxPreferencesPerDevice  = 5000
++	maxPreferenceFileBytes   = 2 << 20
++	frameRecentAssetLimit    = 24
++	finalSelectionAttempt    = maxProcessAssetRetries - 1
++)
++
++var frameDeviceIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
++
++type assetPreference string
++
++const (
++	preferenceMore assetPreference = "more"
++	preferenceLess assetPreference = "less"
++	preferenceHide assetPreference = "hide"
++)
++
++type framePreferencePolicy struct {
++	Assets map[string]assetPreference `json:"assets"`
++}
++
++type framePreferences struct {
++	Version   int                              `json:"version"`
++	UpdatedAt int64                            `json:"updatedAt"`
++	Devices   map[string]framePreferencePolicy `json:"devices"`
++}
++
++type framePreferenceStore struct {
++	mu       sync.Mutex
++	path     string
++	loadedAt time.Time
++	prefs    framePreferences
++}
++
++var preferencesStore framePreferenceStore
++
++func loadFramePreferences(path string, _ time.Time) (framePreferences, error) {
++	file, err := os.Open(path)
++	if err != nil {
++		return framePreferences{}, err
++	}
++	defer file.Close()
++	data, err := io.ReadAll(io.LimitReader(file, maxPreferenceFileBytes+1))
++	if err != nil {
++		return framePreferences{}, err
++	}
++	if len(data) > maxPreferenceFileBytes {
++		return framePreferences{}, fmt.Errorf("frame preferences exceed %d bytes", maxPreferenceFileBytes)
++	}
++	var prefs framePreferences
++	if err := json.Unmarshal(data, &prefs); err != nil {
++		return framePreferences{}, fmt.Errorf("parse frame preferences: %w", err)
++	}
++	if prefs.Version != framePreferencesVersion {
++		return framePreferences{}, fmt.Errorf("unsupported frame preferences version %d", prefs.Version)
++	}
++	if len(prefs.Devices) > maxPreferenceDevices {
++		return framePreferences{}, fmt.Errorf("frame preferences exceed %d devices", maxPreferenceDevices)
++	}
++	for deviceID, policy := range prefs.Devices {
++		if !validFrameDeviceID(deviceID) {
++			return framePreferences{}, fmt.Errorf("invalid frame preference device %q", deviceID)
++		}
++		if len(policy.Assets) > maxPreferencesPerDevice {
++			return framePreferences{}, fmt.Errorf("frame preference device %q exceeds %d assets", deviceID, maxPreferencesPerDevice)
++		}
++		for assetID, preference := range policy.Assets {
++			if _, err := uuid.Parse(assetID); err != nil {
++				return framePreferences{}, fmt.Errorf("invalid frame preference asset %q", assetID)
++			}
++			if preference != preferenceMore && preference != preferenceLess && preference != preferenceHide {
++				return framePreferences{}, fmt.Errorf("invalid frame preference %q", preference)
++			}
++		}
++	}
++	return prefs, nil
++}
++
++func currentFramePreferences(now time.Time) framePreferences {
++	path := strings.TrimSpace(os.Getenv(framePreferencesFileEnv))
++	preferencesStore.mu.Lock()
++	defer preferencesStore.mu.Unlock()
++	if path == "" {
++		preferencesStore.path = ""
++		preferencesStore.loadedAt = now
++		preferencesStore.prefs = framePreferences{Version: framePreferencesVersion, Devices: map[string]framePreferencePolicy{}}
++		return framePreferences{Version: framePreferencesVersion, Devices: map[string]framePreferencePolicy{}}
++	}
++	if preferencesStore.path == path && now.Sub(preferencesStore.loadedAt) < framePreferenceReloadAge {
++		return preferencesStore.prefs
++	}
++	prefs, err := loadFramePreferences(path, now)
++	preferencesStore.path = path
++	preferencesStore.loadedAt = now
++	if err != nil {
++		// Atomic replacement can briefly expose an incomplete file. Continue with
++		// the last valid policy; no asset is mutated and the next bounded poll
++		// retries the replacement.
++		return preferencesStore.prefs
++	}
++	preferencesStore.prefs = prefs
++	return prefs
++}
++
++func validFrameDeviceID(value string) bool {
++	return frameDeviceIDPattern.MatchString(value)
++}
++
++func framePreferenceDevice(frameID, fallback string) string {
++	if validFrameDeviceID(frameID) {
++		return frameID
++	}
++	if validFrameDeviceID(fallback) {
++		return fallback
++	}
++	return "default"
++}
++
++func (p framePreferencePolicy) allows(assetID string, recent map[string]struct{}, attempt int, intn func(int) int) bool {
++	preference := p.Assets[assetID]
++	if preference == preferenceHide {
++		return false
++	}
++	if attempt < finalSelectionAttempt {
++		if _, seen := recent[assetID]; seen {
++			return false
++		}
++		if len(p.Assets) > 0 {
++			switch preference {
++			case preferenceMore:
++				return true
++			case preferenceLess:
++				return intn(4) == 0
++			default:
++				// A neutral asset remains selectable, but a preferred asset is
++				// twice as likely to survive this bounded selection round.
++				return intn(2) == 0
++			}
++		}
++	}
++	return true
++}
++
++func framePreferencePolicyFor(deviceID string) framePreferencePolicy {
++	prefs := currentFramePreferences(time.Now())
++	return prefs.Devices[deviceID]
++}
++
++func frameAssetVisible(deviceID, assetID string) bool {
++	return framePreferencePolicyFor(deviceID).Assets[assetID] != preferenceHide
++}
++
++func frameViewDataVisible(deviceID string, viewData common.ViewData) bool {
++	for _, asset := range viewData.Assets {
++		if !frameAssetVisible(deviceID, asset.ImmichAsset.ID) {
++			return false
++		}
++	}
++	return true
++}
++
++func framePreferenceRandomInt(n int) int { return rand.IntN(n) }
++
++type recentFrameAssets struct {
++	mu      sync.Mutex
++	devices map[string][]string
++}
++
++var frameRecentAssets = recentFrameAssets{devices: map[string][]string{}}
++
++func (r *recentFrameAssets) contains(deviceID, assetID string) bool {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	for _, prior := range r.devices[deviceID] {
++		if prior == assetID {
++			return true
++		}
++	}
++	return false
++}
++
++func (r *recentFrameAssets) remember(deviceID, assetID string) {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	items := append([]string{assetID}, r.devices[deviceID]...)
++	if len(items) > frameRecentAssetLimit {
++		items = items[:frameRecentAssetLimit]
++	}
++	r.devices[deviceID] = items
++}
++
++func frameSelectionAllowed(deviceID, assetID string, attempt int) bool {
++	recent := map[string]struct{}{}
++	if frameRecentAssets.contains(deviceID, assetID) {
++		recent[assetID] = struct{}{}
++	}
++	return framePreferencePolicyFor(deviceID).allows(assetID, recent, attempt, framePreferenceRandomInt)
++}

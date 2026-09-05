@@ -21,7 +21,7 @@
       "constraintMode": 1,
       "flags": 0,
       "id": 0,
-      "isEnabled": true,
+      "isEnabled": false,
       "trigger": {
         "extras": [],
         "flags": 0,
@@ -57,7 +57,7 @@
       "constraintMode": 1,
       "flags": 0,
       "id": 0,
-      "isEnabled": true,
+      "isEnabled": false,
       "trigger": {
         "extras": [],
         "flags": 0,

@@ -14,6 +14,20 @@ fi
 
 required_files=(
   .env.example
+  birdnet/.env.example
+  birdnet/config/config.yaml
+  birdnet/docker-compose.yaml
+  birdnet/OPERATIONS.md
+  birdnet/nest-audio-bridge/Dockerfile
+  birdnet/nest-audio-bridge/go2rtc.yaml
+  birdnet/nest-audio-bridge/patches/0001-test-hass-current-webrtc-api.patch
+  birdnet/nest-audio-bridge/patches/0002-fix-hass-current-webrtc-api.patch
+  birdnet/home-assistant/birdnet-phone-alerts.yaml.example
+  birdnet/home-assistant/birdnet-webhook-provider.yaml.example
+  birdnet/tests/test-birdnet-alerts.sh
+  birdnet/tests/test-birdnet-compose.sh
+  birdnet/tests/test-frame-view.sh
+  birdnet/tests/test-nest-audio-bridge.sh
   LICENSE
   README.md
   SECURITY.md
@@ -36,6 +50,16 @@ required_files=(
   custom-image/date-pool-hardening.patch
   custom-image/date-pool-hardening-tests.patch
   custom-image/fully-kiosk-dpr.patch
+  custom-image/history-render-memory-tests.patch
+  custom-image/history-render-memory.patch
+  custom-image/history-display-bounds-tests.patch
+  custom-image/history-display-bounds.patch
+  custom-image/classification-gate-tests.patch
+  custom-image/classification-gate.patch
+  custom-image/classification-caption-completion-tests.patch
+  custom-image/classification-caption-completion.patch
+  custom-image/paused-retry-tests.patch
+  custom-image/paused-retry.patch
   custom-image/offline-cache-hardening.patch
   custom-image/offline-cache-tests.patch
   custom-image/offline-mutation-hardening.patch
@@ -114,6 +138,21 @@ fi
 ./scripts/validate-ci.sh
 
 ./scripts/test-frame-mode-router.sh
+
+./birdnet/tests/test-birdnet-compose.sh
+
+./birdnet/tests/test-birdnet-alerts.sh
+
+./birdnet/tests/test-frame-view.sh
+
+./birdnet/tests/test-nest-audio-bridge.sh
+
+node birdnet/tests/test-audio-freshness.mjs
+python3 -m unittest discover -s companion/tests
+python3 -B -m unittest scripts/tests/test_observe_frame_variety.py
+ruby scripts/test-kiosk-log-settings.rb
+ruby companion/home-assistant/test_validate.rb
+ruby companion/home-assistant/test_morning_scene.rb
 
 ./scripts/test-check-frame-readiness.sh
 

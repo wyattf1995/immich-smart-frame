@@ -1,0 +1,163 @@
+--- a/internal/routes/routes_history_render_memory_test.go
++++ b/internal/routes/routes_history_render_memory_test.go
+@@ -0,0 +1,160 @@
++package routes
++
++import (
++	"context"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/labstack/echo/v5"
++	"github.com/stretchr/testify/require"
++)
++
++func TestHistoryRenderUsesDerivativeForUnadmittedOriginals(t *testing.T) {
++	for _, testCase := range []struct {
++		name          string
++		width, height int
++	}{
++		{name: "oversized original", width: 5000, height: 3400},
++		{name: "unknown original dimensions"},
++	} {
++		t.Run(testCase.name, func(t *testing.T) {
++			asset := testImageAsset("history-asset")
++			asset.ExifInfo.ExifImageWidth = testCase.width
++			asset.ExifInfo.ExifImageHeight = testCase.height
++			var requestedSize string
++			var usedEditedDerivative bool
++			server := historyRenderTestServer(t, asset, func(r *http.Request) {
++				requestedSize = r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
++				usedEditedDerivative = r.URL.Query().Get("edited") == "true"
++			})
++			defer server.Close()
++
++			config := newHistoryRenderTestConfig(server.URL)
++			rec := invokeHistoryRender(t, config)
++			require.Equal(t, http.StatusOK, rec.Code)
++			require.Equal(t, "thumbnail", requestedSize)
++			require.True(t, usedEditedDerivative, "unadmitted originals must use Immich's edited derivative")
++			require.Contains(t, rec.Body.String(), "Main image", "history preview must still render")
++		})
++	}
++}
++
++func TestHistoryRenderKeepsSmallAdmittedOriginal(t *testing.T) {
++	asset := testImageAsset("history-asset")
++	asset.ExifInfo.ExifImageWidth = 1920
++	asset.ExifInfo.ExifImageHeight = 1080
++	var requestedSize string
++	var usedEditedDerivative bool
++	server := historyRenderTestServer(t, asset, func(r *http.Request) {
++		requestedSize = r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
++		usedEditedDerivative = r.URL.Query().Get("edited") == "true"
++	})
++	defer server.Close()
++
++	rec := invokeHistoryRender(t, newHistoryRenderTestConfig(server.URL))
++	require.Equal(t, http.StatusOK, rec.Code)
++	require.Equal(t, "original", requestedSize)
++	require.False(t, usedEditedDerivative, "admitted originals must keep their full-quality source")
++	require.Contains(t, rec.Body.String(), "Main image")
++}
++
++func TestHistoryRenderSerializesAndCancelsAtSharedGate(t *testing.T) {
++	asset := testImageAsset("history-asset")
++	previewStarted := make(chan struct{})
++	releasePreview := make(chan struct{})
++	var releaseOnce sync.Once
++	release := func() { releaseOnce.Do(func() { close(releasePreview) }) }
++	secondPreviewStarted := make(chan struct{})
++	var previews atomic.Int32
++	server := historyRenderTestServer(t, asset, func(r *http.Request) {
++		if previews.Add(1) == 1 {
++			close(previewStarted)
++			<-releasePreview
++			return
++		}
++		close(secondPreviewStarted)
++	})
++	defer server.Close()
++	defer release()
++
++	cfg := newHistoryRenderTestConfig(server.URL)
++	firstDone := make(chan *httptest.ResponseRecorder, 1)
++	go func() { firstDone <- invokeHistoryRenderWithoutAssertions(cfg, context.Background()) }()
++	<-previewStarted
++
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	secondDone := make(chan *httptest.ResponseRecorder, 1)
++	go func() { secondDone <- invokeHistoryRenderWithoutAssertions(cfg, ctx) }()
++
++	select {
++	case <-secondPreviewStarted:
++		t.Fatal("second history render bypassed the shared image-work gate")
++	case <-secondDone:
++		t.Fatal("second history render completed while the shared image-work gate was held")
++	case <-time.After(40 * time.Millisecond):
++	}
++
++	cancel()
++	select {
++	case <-secondDone:
++	case <-time.After(requestCancellationBudget):
++		t.Fatal("history render did not cancel while waiting for the shared image-work gate")
++	}
++
++	release()
++	first := <-firstDone
++	require.Equal(t, http.StatusOK, first.Code)
++	require.Equal(t, int32(1), previews.Load(), "cancelled history work must not enter image decode")
++}
++
++func newHistoryRenderTestConfig(immichURL string) *config.Config {
++	cfg := newCancellationTestConfig(immichURL)
++	cfg.UseOriginalImage = true
++	cfg.Kiosk.DisableURLQueries = true
++	return cfg
++}
++
++func historyRenderTestServer(t *testing.T, asset immich.Asset, onPreview func(*http.Request)) *httptest.Server {
++	t.Helper()
++	preview := mustEncodeJPEG(t)
++	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch r.URL.Path {
++		case "/api/assets/history-asset":
++			w.Header().Set("Content-Type", echo.MIMEApplicationJSON)
++			require.NoError(t, json.NewEncoder(w).Encode(asset))
++		case "/api/assets/history-asset/thumbnail", "/api/assets/history-asset/original":
++			onPreview(r)
++			w.Header().Set("Content-Type", "image/jpeg")
++			_, err := w.Write(preview)
++			require.NoError(t, err)
++		default:
++			t.Errorf("unexpected history-render request path %q", r.URL.Path)
++			http.Error(w, "unexpected test route", http.StatusNotFound)
++		}
++	}))
++}
++
++func invokeHistoryRender(t *testing.T, cfg *config.Config) *httptest.ResponseRecorder {
++	t.Helper()
++	rec := invokeHistoryRenderWithoutAssertions(cfg, context.Background())
++	return rec
++}
++
++func invokeHistoryRenderWithoutAssertions(cfg *config.Config, ctx context.Context) *httptest.ResponseRecorder {
++	req := httptest.NewRequest(http.MethodPost, "/asset/previous?history=history-asset:&history=*current:", nil).WithContext(ctx)
++	req.Header.Set("kiosk-device-id", "history-render-test")
++	rec := httptest.NewRecorder()
++	c := echo.New().NewContext(req, rec)
++	_ = PreviousHistoryAsset(cfg, common.New())(c)
++	return rec
++}

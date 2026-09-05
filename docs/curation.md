@@ -71,6 +71,20 @@ behaviors bound repetition:
   hour before picking a photo inside it, so a thousand-frame burst afternoon
   carries no more weight per pick than a single photo from another day.
 
+Frame selection also keeps its own bounded history: the last 24 accepted
+assets per frame. `FRAME_CAPTURE_BURST_SECONDS` defaults to `300`, rejecting a
+different photo captured within that window of a recent selection; set it to
+`0` to disable that capture-time check. Assets with no `localDateTime` remain
+eligible. `FRAME_CROSS_FRAME_REPEAT_SUPPRESSION=true` additionally rejects the
+last 24 selected asset IDs across frames. Both repeat checks relax only on the
+final bounded selection attempt; a `hide` preference is never relaxed.
+
+The authenticated aggregate metrics endpoint reports
+`date_pool_widenings_total` and `date_pool_last_effective_days`. These describe
+process-wide date-pool widening only; they contain no frame, request, asset,
+or user identifiers. The first is a cumulative count, and the second is the
+window used by the most recent eligible `last-N` refill.
+
 `cache_duration` (seconds) extends both the backend cache and the date pool
 TTL; an hour keeps recently served photos out of the immediate remix.
 
@@ -117,19 +131,33 @@ cache expiry; each candidate is removed before evaluation. Keep
 The accept/reject decision is stable for an asset within one slide request, so
 selection retries cannot repeatedly re-roll a rejected candidate.
 
-## Positive sources versus fresh untagged photos
+## Hold imported photos until classification
 
-A tag/person-only profile excludes an untagged archive straggler by
-construction. A date source intentionally admits any asset in its time window
-that passes global exclusions. That is useful when ingestion is faster than
-tagging, but it is a tradeoff: an untagged recent document can appear.
+Set `kiosk.require_ai_caption: true` (or `KIOSK_REQUIRE_AI_CAPTION=true`) when
+using the [tagging pipeline](../tagging/RUNBOOK.md). The default is `false` for
+libraries without this pipeline. This setting cannot be overridden by a URL.
 
-Practical options:
+With it enabled, every fresh source requires a complete, nonempty
+`[AI] … [/AI]` description and rejects conservative timestamped screenshot
+filenames. Keep `Skip/**` in `excluded_tags` to reject classified screenshots,
+documents, memes, graphics, and other non-photo material. Metadata failures
+reject the candidate. A caption records prior processing; it is not a guarantee
+that an older classifier correctly identified non-photo content.
 
-- use date sources for freshness and keep the windows narrow;
-- maintain hard exclusion tags for known junk classes;
-- omit date sources when strict positive-source eligibility matters more;
-- add a separate recent profile and select it only on chosen displays.
+Previous/Next history fetches fresh metadata and rechecks the exact target.
+A target that has since become excluded returns an error; history does not
+silently substitute another photo. Enabling the gate changes the NAS offline
+pool scope, preventing earlier pool entries from being served. Device reserves
+are separate: after a bulk exclusion change, cycle the authenticated frame
+profile to another profile and back, verifying fresh photo acknowledgements
+and reserve refill. This preserves the final profile while removing stale
+on-device photos. No ROM reboot is needed.
+
+Classification backlogs stay off the frame until processing completes. Photos
+with human descriptions that the tagger correctly preserves may remain held
+if they lack the required AI marker. Broad date sources still provide archive
+coverage among eligible photos. With the gate disabled, those same date sources
+can admit unclassified imports before exclusion tags exist.
 
 ## Qwen example
 

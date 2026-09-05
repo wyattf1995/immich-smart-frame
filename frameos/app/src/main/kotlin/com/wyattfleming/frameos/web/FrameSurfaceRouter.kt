@@ -10,12 +10,15 @@ enum class FrameWebSlot(
     PHOTOS(isPersistent = true, canPreload = false),
     HOME_ASSISTANT(isPersistent = true, canPreload = true),
     CAMERAS(isPersistent = false, canPreload = false),
+    BIRDS(isPersistent = false, canPreload = false),
 }
 
 sealed interface FrameSurfaceTarget {
     data class Web(val slot: FrameWebSlot, val url: String) : FrameSurfaceTarget
 
     data object NativeWeather : FrameSurfaceTarget
+
+    data class Unavailable(val mode: FrameMode) : FrameSurfaceTarget
 }
 
 class FrameSurfaceRouter(configuration: FrameConfiguration) {
@@ -24,6 +27,7 @@ class FrameSurfaceRouter(configuration: FrameConfiguration) {
         homeAssistantUrl = configuration.homeAssistantUrl,
         version = WRAPPER_VERSION,
     )
+    private val birdsUrl = configuration.birdsUrl
 
     fun target(mode: FrameMode): FrameSurfaceTarget = when (mode) {
         FrameMode.PHOTOS -> FrameSurfaceTarget.Web(FrameWebSlot.PHOTOS, photosUrl)
@@ -36,6 +40,8 @@ class FrameSurfaceRouter(configuration: FrameConfiguration) {
             slot = FrameWebSlot.CAMERAS,
             url = requireNotNull(HomeAssistantRoute.urlFor(homeAssistantWrapperUrl, mode)),
         )
+        FrameMode.BIRDS -> birdsUrl?.let { url -> FrameSurfaceTarget.Web(FrameWebSlot.BIRDS, url) }
+            ?: FrameSurfaceTarget.Unavailable(FrameMode.BIRDS)
     }
 
     fun calendarPreloadTarget(): FrameSurfaceTarget.Web = target(FrameMode.CALENDAR) as FrameSurfaceTarget.Web

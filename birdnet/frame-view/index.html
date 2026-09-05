@@ -1,0 +1,2942 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a1712" />
+    <title>Birds Around Us</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --background: #08130f;
+        --panel: rgba(17, 36, 29, 0.92);
+        --panel-strong: rgba(21, 45, 36, 0.98);
+        --line: rgba(183, 221, 197, 0.16);
+        --text: #f3f7f4;
+        --muted: #a8bdb1;
+        --green: #69d59a;
+        --green-soft: rgba(105, 213, 154, 0.14);
+        --amber: #f1bd65;
+        --amber-soft: rgba(241, 189, 101, 0.14);
+        --red: #ff8d80;
+        --red-soft: rgba(255, 141, 128, 0.14);
+        --shadow: 0 24px 72px rgba(0, 0, 0, 0.3);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--background);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      body::before {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        content: "";
+        pointer-events: none;
+        background:
+          radial-gradient(circle at 16% 8%, rgba(75, 151, 107, 0.2), transparent 32%),
+          radial-gradient(circle at 92% 92%, rgba(39, 92, 68, 0.2), transparent 34%),
+          linear-gradient(145deg, #0a1812 0%, #07110e 58%, #0b1a14 100%);
+      }
+
+      .frame {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        gap: clamp(14px, 1.4vh, 20px);
+        width: 100%;
+        height: 100vh;
+        padding: clamp(26px, 3.2vh, 42px) clamp(32px, 3.4vw, 64px) clamp(22px, 2.7vh, 34px);
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-width: 0;
+      }
+
+      .title-group {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        gap: 18px;
+      }
+
+      .mark {
+        display: grid;
+        width: 62px;
+        height: 62px;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 1px solid rgba(132, 220, 169, 0.3);
+        border-radius: 20px;
+        background: linear-gradient(145deg, rgba(105, 213, 154, 0.22), rgba(105, 213, 154, 0.07));
+        box-shadow: inset 0 1px rgba(255, 255, 255, 0.08);
+      }
+
+      .mark svg {
+        width: 37px;
+        height: 37px;
+        fill: none;
+        stroke: var(--green);
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-width: 1.8;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(34px, 2.5vw, 48px);
+        font-weight: 650;
+        letter-spacing: -0.035em;
+        line-height: 1;
+      }
+
+      .subtitle {
+        margin-top: 7px;
+        color: var(--muted);
+        font-size: clamp(15px, 1.05vw, 20px);
+      }
+
+      .topbar-right {
+        display: flex;
+        align-items: center;
+        gap: clamp(18px, 2.2vw, 36px);
+      }
+
+      .metric {
+        min-width: 104px;
+        text-align: right;
+      }
+
+      .metric-value {
+        display: block;
+        font-size: clamp(26px, 2vw, 38px);
+        font-variant-numeric: tabular-nums;
+        font-weight: 630;
+        letter-spacing: -0.03em;
+        line-height: 1;
+      }
+
+      .metric-label {
+        display: block;
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: clamp(13px, 0.9vw, 17px);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .status {
+        display: flex;
+        min-width: 250px;
+        align-items: center;
+        gap: 12px;
+        padding: 15px 18px;
+        border: 1px solid rgba(105, 213, 154, 0.28);
+        border-radius: 18px;
+        background: var(--green-soft);
+      }
+
+      .status[data-tone="amber"] {
+        border-color: rgba(241, 189, 101, 0.28);
+        background: var(--amber-soft);
+      }
+
+      .status[data-tone="red"] {
+        border-color: rgba(255, 141, 128, 0.28);
+        background: var(--red-soft);
+      }
+
+      .status-dot {
+        width: 12px;
+        height: 12px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: var(--green);
+        box-shadow: 0 0 0 7px rgba(105, 213, 154, 0.1);
+      }
+
+      .status[data-tone="amber"] .status-dot {
+        background: var(--amber);
+        box-shadow: 0 0 0 7px rgba(241, 189, 101, 0.1);
+      }
+
+      .status[data-tone="red"] .status-dot {
+        background: var(--red);
+        box-shadow: 0 0 0 7px rgba(255, 141, 128, 0.1);
+      }
+
+      .status-copy {
+        min-width: 0;
+      }
+
+      .status-title {
+        overflow: hidden;
+        font-size: clamp(16px, 1.1vw, 21px);
+        font-weight: 620;
+        line-height: 1.1;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .status-detail {
+        display: block;
+        overflow: hidden;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: clamp(12px, 0.82vw, 15px);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .content {
+        display: grid;
+        min-height: 0;
+        grid-template-columns: minmax(0, 1.03fr) minmax(0, 0.97fr);
+        gap: clamp(18px, 1.7vw, 30px);
+      }
+
+      .card {
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: clamp(24px, 2vw, 34px);
+        background: linear-gradient(150deg, var(--panel-strong), var(--panel));
+        box-shadow: var(--shadow), inset 0 1px rgba(255, 255, 255, 0.045);
+      }
+
+      .hero {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) auto;
+      }
+
+      .hero-media {
+        position: relative;
+        min-height: 0;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 50% 45%, rgba(105, 213, 154, 0.12), transparent 37%),
+          linear-gradient(145deg, #132b21, #0d2119);
+      }
+
+      .hero-media::after {
+        position: absolute;
+        inset: auto 0 0;
+        height: 45%;
+        content: "";
+        pointer-events: none;
+        background: linear-gradient(transparent, rgba(7, 17, 14, 0.78));
+      }
+
+      .hero-image {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        object-position: center;
+      }
+
+      .hero-badge {
+        position: absolute;
+        z-index: 2;
+        top: 24px;
+        left: 24px;
+        padding: 9px 13px;
+        border: 1px solid rgba(255, 255, 255, 0.17);
+        border-radius: 999px;
+        background: rgba(5, 15, 11, 0.62);
+        backdrop-filter: blur(12px);
+        color: rgba(255, 255, 255, 0.88);
+        font-size: 14px;
+        font-weight: 650;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+
+      .image-fallback {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: rgba(169, 209, 185, 0.58);
+      }
+
+      .image-fallback svg {
+        width: min(35%, 220px);
+        height: auto;
+        fill: none;
+        stroke: currentColor;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-width: 1.45;
+      }
+
+      .image-fallback span {
+        position: absolute;
+        bottom: 26px;
+        font-size: 14px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .hero-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 20px;
+        padding: clamp(22px, 2.5vh, 32px) clamp(24px, 2.3vw, 38px);
+      }
+
+      .hero-kicker {
+        margin-bottom: 8px;
+        color: var(--green);
+        font-size: clamp(13px, 0.92vw, 17px);
+        font-weight: 680;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .hero-name {
+        overflow: hidden;
+        font-size: clamp(34px, 2.7vw, 52px);
+        font-weight: 660;
+        letter-spacing: -0.045em;
+        line-height: 1.03;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .hero-scientific {
+        overflow: hidden;
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: clamp(16px, 1.15vw, 22px);
+        font-style: italic;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .hero-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 18px;
+        margin-top: 16px;
+        color: #c5d5cc;
+        font-size: clamp(14px, 1vw, 18px);
+      }
+
+      .hero-meta span + span::before {
+        margin-right: 18px;
+        color: #587063;
+        content: "•";
+      }
+
+      .hero-credit {
+        overflow: hidden;
+        max-width: 100%;
+        margin-top: 13px;
+        color: #849a8e;
+        font-size: clamp(11px, 0.74vw, 14px);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .confidence {
+        align-self: center;
+        min-width: 110px;
+        text-align: right;
+      }
+
+      .confidence-value {
+        display: block;
+        color: var(--green);
+        font-size: clamp(34px, 2.65vw, 50px);
+        font-variant-numeric: tabular-nums;
+        font-weight: 650;
+        letter-spacing: -0.04em;
+        line-height: 1;
+      }
+
+      .confidence-label {
+        display: block;
+        margin-top: 7px;
+        color: var(--muted);
+        font-size: 13px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+      }
+
+      .side {
+        display: grid;
+        min-height: 0;
+        grid-template-rows: repeat(2, minmax(0, 1fr));
+        gap: clamp(18px, 1.7vh, 24px);
+      }
+
+      .section-card {
+        display: grid;
+        min-height: 0;
+        grid-template-rows: auto minmax(0, 1fr);
+        padding: clamp(20px, 2.2vh, 28px);
+      }
+
+      .recent-section {
+        grid-template-rows: auto minmax(0, 1fr) auto;
+      }
+
+      .section-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: clamp(14px, 1.5vh, 20px);
+      }
+
+      .section-title {
+        font-size: clamp(22px, 1.55vw, 30px);
+        font-weight: 640;
+        letter-spacing: -0.025em;
+      }
+
+      .section-note {
+        color: var(--muted);
+        font-size: clamp(12px, 0.82vw, 15px);
+      }
+
+      .review-tools {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .review-filter {
+        display: inline-flex;
+        flex: 0 0 auto;
+        gap: 3px;
+        padding: 3px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .review-button {
+        min-height: 24px;
+        padding: 3px 6px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font: inherit;
+        font-size: 10px;
+      }
+
+      .review-button[aria-pressed="true"] {
+        background: var(--green-soft);
+        color: var(--text);
+      }
+
+      .control-hint {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: clamp(10px, 0.72vw, 12px);
+        line-height: 1.2;
+      }
+
+      .period-switcher {
+        display: flex;
+        align-items: center;
+        flex: 0 0 auto;
+        gap: 3px;
+        padding: 3px;
+        border: 1px solid rgba(176, 217, 191, 0.14);
+        border-radius: 999px;
+        background: rgba(6, 18, 13, 0.48);
+      }
+
+      .period-button {
+        min-width: 0;
+        min-height: 28px;
+        padding: 4px 9px;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font: inherit;
+        font-size: clamp(10px, 0.7vw, 13px);
+        font-weight: 650;
+        line-height: 1;
+        white-space: nowrap;
+      }
+
+      .period-button[aria-pressed="true"] {
+        background: var(--green-soft);
+        color: var(--green);
+        box-shadow: inset 0 0 0 1px rgba(105, 213, 154, 0.2);
+      }
+
+      .period-button:focus-visible {
+        outline: 2px solid var(--amber);
+        outline-offset: 2px;
+      }
+
+      .species-grid {
+        display: grid;
+        min-height: 0;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-rows: repeat(3, minmax(0, 1fr));
+        gap: clamp(10px, 1vh, 14px);
+      }
+
+      .species-card {
+        display: grid;
+        min-width: 0;
+        min-height: 0;
+        grid-template-columns: clamp(60px, 5.2vw, 92px) minmax(0, 1fr) auto;
+        align-items: center;
+        gap: clamp(11px, 1vw, 16px);
+        padding: 8px 12px 8px 8px;
+        border: 1px solid rgba(176, 217, 191, 0.12);
+        border-radius: 18px;
+        background: rgba(7, 20, 15, 0.42);
+      }
+
+      .thumb {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        min-height: 58px;
+        overflow: hidden;
+        border-radius: 14px;
+        background: #173126;
+      }
+
+      .thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .thumb-fallback {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: #789987;
+        font-size: clamp(24px, 2vw, 36px);
+      }
+
+      .species-copy {
+        min-width: 0;
+      }
+
+      .species-name {
+        overflow: hidden;
+        font-size: clamp(15px, 1.05vw, 20px);
+        font-weight: 620;
+        line-height: 1.15;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .species-meta {
+        overflow: hidden;
+        margin-top: 5px;
+        color: var(--muted);
+        font-size: clamp(11px, 0.77vw, 14px);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .species-count {
+        min-width: 30px;
+        color: #cae4d5;
+        font-size: clamp(18px, 1.3vw, 25px);
+        font-variant-numeric: tabular-nums;
+        font-weight: 630;
+        text-align: right;
+      }
+
+      .recent-list {
+        display: grid;
+        min-height: 0;
+        grid-template-rows: repeat(4, minmax(0, 1fr));
+        gap: clamp(8px, 0.85vh, 12px);
+      }
+
+      .recent-row {
+        display: grid;
+        min-width: 0;
+        min-height: 0;
+        grid-template-columns: clamp(48px, 3.8vw, 66px) minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 14px;
+        padding: 6px 11px 6px 6px;
+        border-radius: 15px;
+        background: rgba(8, 22, 17, 0.42);
+      }
+
+      .recent-row .thumb {
+        min-height: 42px;
+      }
+
+      .recent-name {
+        overflow: hidden;
+        font-size: clamp(14px, 1vw, 19px);
+        font-weight: 610;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .recent-detail {
+        overflow: hidden;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: clamp(11px, 0.75vw, 14px);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .recent-time {
+        color: #c8dacf;
+        font-size: clamp(13px, 0.9vw, 17px);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      .empty-panel {
+        display: grid;
+        height: 100%;
+        min-height: 0;
+        place-items: center;
+        padding: 24px;
+        text-align: center;
+      }
+
+      .empty-panel svg {
+        width: 58px;
+        height: 58px;
+        margin-bottom: 12px;
+        fill: none;
+        stroke: #6a947d;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-width: 1.6;
+      }
+
+      .empty-title {
+        font-size: clamp(18px, 1.25vw, 24px);
+        font-weight: 620;
+      }
+
+      .empty-copy {
+        max-width: 430px;
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: clamp(13px, 0.88vw, 16px);
+        line-height: 1.45;
+      }
+
+      .footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-height: 22px;
+        color: #72877b;
+        font-size: clamp(11px, 0.72vw, 14px);
+      }
+
+      .footer span:last-child {
+        text-align: right;
+      }
+
+      .ambient-context {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 14px;
+        margin-top: 15px;
+        padding-top: 14px;
+        border-top: 1px solid var(--line);
+      }
+
+      .insight-copy {
+        color: #c5d5cc;
+        font-size: clamp(12px, 0.88vw, 16px);
+        line-height: 1.35;
+      }
+
+      .activity-strip {
+        display: flex;
+        height: 28px;
+        align-items: end;
+        gap: 2px;
+      }
+
+      .activity-strip span {
+        width: 4px;
+        min-height: 3px;
+        border-radius: 4px 4px 1px 1px;
+        background: rgba(105, 213, 154, 0.38);
+      }
+
+      .activity-strip span[data-active="true"] {
+        background: var(--green);
+      }
+
+      .ambient-meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .ambient-stat {
+        min-width: 0;
+        padding: 8px 10px;
+        border: 1px solid rgba(176, 217, 191, 0.12);
+        border-radius: 12px;
+        background: rgba(7, 20, 15, 0.35);
+      }
+
+      .ambient-stat strong,
+      .ambient-stat span {
+        display: block;
+      }
+
+      .ambient-stat strong {
+        overflow: hidden;
+        color: #d8eadf;
+        font-size: clamp(13px, 0.95vw, 17px);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .ambient-stat span {
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: clamp(9px, 0.68vw, 12px);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .audio-meter {
+        display: flex;
+        min-width: 138px;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .audio-meter-track {
+        width: 62px;
+        height: 6px;
+        overflow: hidden;
+        border-radius: 99px;
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .audio-meter-level {
+        display: block;
+        width: 0%;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--green);
+        transition: width 280ms ease-out;
+      }
+
+      .novelty-badge {
+        display: block;
+        overflow: hidden;
+        max-width: 100%;
+        margin-top: 3px;
+        color: var(--amber);
+        font-size: clamp(8px, 0.64vw, 11px);
+        font-weight: 700;
+        letter-spacing: 0.045em;
+        text-overflow: ellipsis;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .detection-detail {
+        display: grid;
+        grid-column: 1 / -1;
+        grid-template-columns: clamp(48px, 3.8vw, 66px) minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 14px;
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 15px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        font: inherit;
+        text-align: left;
+      }
+
+      .detection-detail:focus-visible,
+      .dialog-close:focus-visible {
+        outline: 3px solid var(--amber);
+        outline-offset: 2px;
+      }
+
+      .detection-alert {
+        margin-top: 9px;
+        color: var(--amber);
+        font-size: clamp(10px, 0.72vw, 13px);
+      }
+
+      dialog {
+        width: min(660px, calc(100vw - 48px));
+        max-height: min(680px, calc(100vh - 48px));
+        padding: 0;
+        overflow: auto;
+        border: 1px solid rgba(183, 221, 197, 0.28);
+        border-radius: 24px;
+        background: #10251b;
+        color: var(--text);
+        box-shadow: 0 32px 110px rgba(0, 0, 0, 0.62);
+      }
+
+      dialog::backdrop {
+        background: rgba(2, 8, 5, 0.78);
+      }
+
+      .dialog-body {
+        display: grid;
+        gap: 16px;
+        padding: 24px;
+      }
+
+      .dialog-topline {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 18px;
+      }
+
+      .dialog-close {
+        min-width: 40px;
+        min-height: 40px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.06);
+        color: inherit;
+        cursor: pointer;
+        font: inherit;
+      }
+
+      .detail-spectrogram {
+        width: 100%;
+        min-height: 120px;
+        border-radius: 14px;
+        background: rgba(4, 14, 9, 0.52);
+        object-fit: contain;
+      }
+
+      :root[data-night="true"] {
+        --background: #05080d;
+        --panel: rgba(13, 21, 28, 0.94);
+        --panel-strong: rgba(15, 28, 36, 0.99);
+        --green: #76b9d5;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      @media (max-height: 1100px) {
+        .frame {
+          gap: 14px;
+          padding-top: 26px;
+          padding-bottom: 22px;
+        }
+
+        .mark {
+          width: 54px;
+          height: 54px;
+          border-radius: 17px;
+        }
+
+        .mark svg {
+          width: 32px;
+          height: 32px;
+        }
+
+        .status {
+          padding-top: 12px;
+          padding-bottom: 12px;
+        }
+
+        .section-card {
+          padding-top: 18px;
+          padding-bottom: 18px;
+        }
+
+        .section-header {
+          margin-bottom: 12px;
+        }
+
+        .hero-body {
+          padding-top: 18px;
+          padding-bottom: 20px;
+        }
+
+        .hero-meta {
+          margin-top: 12px;
+        }
+
+        .hero-credit {
+          margin-top: 9px;
+        }
+      }
+
+      @media (max-width: 1350px) {
+        .topbar-right .metric {
+          display: none;
+        }
+
+        .content {
+          grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+        }
+
+        .species-card {
+          grid-template-columns: 64px minmax(0, 1fr) auto;
+        }
+      }
+
+      /* Medium-height desktop windows have less vertical room than the roomy
+         base cards but do not enter the FrameOS breakpoint below. Compact the
+         two side panels without changing the page flow or kiosk dimensions. */
+      @media (min-width: 1101px) and (max-height: 800px), (min-width: 601px) and (min-height: 651px) and (max-height: 800px) {
+        .section-card {
+          padding: 14px 16px;
+        }
+
+        .section-header {
+          margin-bottom: 8px;
+        }
+
+        .period-switcher {
+          padding: 2px;
+        }
+
+        .period-button {
+          min-height: 22px;
+          padding: 3px 7px;
+          font-size: 10px;
+        }
+
+        .species-grid {
+          gap: 8px 10px;
+        }
+
+        .species-card {
+          grid-template-columns: 52px minmax(0, 1fr) auto;
+          gap: 9px;
+          padding: 4px 8px 4px 4px;
+          border-radius: 12px;
+        }
+
+        .thumb {
+          min-height: 38px;
+          border-radius: 10px;
+        }
+
+        .species-name {
+          font-size: 15px;
+        }
+
+        .species-meta {
+          margin-top: 2px;
+          font-size: 11px;
+        }
+
+        .novelty-badge {
+          margin-top: 2px;
+          font-size: 9px;
+          line-height: 1.1;
+        }
+
+        .species-count {
+          min-width: 24px;
+          font-size: 18px;
+        }
+
+        .recent-list {
+          gap: 6px;
+        }
+
+        .recent-row {
+          grid-template-columns: 42px minmax(0, 1fr) auto;
+          gap: 10px;
+          padding: 3px 8px 3px 3px;
+          border-radius: 11px;
+        }
+
+        .detection-detail {
+          grid-template-columns: 42px minmax(0, 1fr) auto;
+          gap: 10px;
+          height: 100%;
+          min-height: 0;
+        }
+
+        .recent-row .thumb {
+          min-height: 0;
+        }
+
+        .recent-name {
+          font-size: 14px;
+          line-height: 1.1;
+        }
+
+        .recent-detail {
+          margin-top: 1px;
+          font-size: 11px;
+        }
+
+        .recent-time {
+          font-size: 12px;
+        }
+      }
+
+      /* The period selector is taller than the former note. At desktop widths
+         with FrameOS-height windows, tighten the optional third species line
+         so a full six-card grid remains contained. */
+      @media (min-width: 1101px) and (max-height: 650px) {
+        .species-name {
+          font-size: 14px;
+          line-height: 1.1;
+        }
+
+        .species-meta {
+          font-size: 10px;
+          line-height: 1.1;
+        }
+
+        .novelty-badge {
+          margin-top: 1px;
+          font-size: 8px;
+          line-height: 1;
+        }
+      }
+
+      /* Android exposes the 1920x1080 panel as roughly 960x540 CSS pixels at
+         its native 320 dpi. Keep every fixed kiosk region inside that viewport
+         without changing the panel's physical resolution or system density. */
+      @media (max-width: 1100px) and (max-height: 650px) {
+        .frame {
+          gap: 10px;
+          padding: 18px 28px 14px;
+        }
+
+        .title-group {
+          gap: 13px;
+        }
+
+        .mark {
+          width: 44px;
+          height: 44px;
+          border-radius: 14px;
+        }
+
+        .mark svg {
+          width: 27px;
+          height: 27px;
+        }
+
+        h1 {
+          font-size: 30px;
+        }
+
+        .subtitle {
+          margin-top: 4px;
+          font-size: 13px;
+        }
+
+        .status {
+          min-width: 300px;
+          gap: 10px;
+          padding: 10px 14px;
+          border-radius: 14px;
+        }
+
+        .status-dot {
+          width: 10px;
+          height: 10px;
+        }
+
+        .status-title {
+          font-size: 14px;
+        }
+
+        .status-detail {
+          margin-top: 3px;
+          font-size: 11px;
+        }
+
+        .content {
+          gap: 12px;
+        }
+
+        .card {
+          border-radius: 20px;
+        }
+
+        .hero-badge {
+          top: 14px;
+          left: 14px;
+          padding: 6px 10px;
+          font-size: 10px;
+        }
+
+        .image-fallback svg {
+          width: min(30%, 150px);
+        }
+
+        .image-fallback span {
+          bottom: 14px;
+          font-size: 10px;
+        }
+
+        .hero-body {
+          gap: 10px;
+          padding: 12px 16px;
+        }
+
+        .hero-kicker {
+          margin-bottom: 4px;
+          font-size: 11px;
+        }
+
+        .hero-name {
+          font-size: 26px;
+        }
+
+        .hero-scientific {
+          margin-top: 4px;
+          font-size: 13px;
+        }
+
+        .hero-meta {
+          gap: 4px 10px;
+          margin-top: 7px;
+          font-size: 11px;
+        }
+
+        .hero-meta span + span::before {
+          margin-right: 10px;
+        }
+
+        .hero-credit {
+          margin-top: 6px;
+          font-size: 9px;
+        }
+
+        .ambient-context {
+          gap: 9px;
+          margin-top: 8px;
+          padding-top: 8px;
+        }
+
+        .insight-copy {
+          font-size: 9px;
+        }
+
+        .activity-strip {
+          height: 19px;
+        }
+
+        .activity-strip span {
+          width: 3px;
+        }
+
+        .ambient-meta {
+          gap: 5px;
+          margin-top: 6px;
+        }
+
+        .ambient-stat {
+          padding: 4px 6px;
+          border-radius: 8px;
+        }
+
+        .ambient-stat strong {
+          font-size: 10px;
+        }
+
+        .ambient-stat span,
+        .audio-meter,
+        .novelty-badge,
+        .detection-alert {
+          font-size: 8px;
+        }
+
+        .confidence {
+          min-width: 70px;
+        }
+
+        .confidence-value {
+          font-size: 28px;
+        }
+
+        .confidence-label {
+          margin-top: 4px;
+          font-size: 9px;
+        }
+
+        .side {
+          grid-template-rows: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+
+        .section-card {
+          padding: 10px 12px;
+        }
+
+        .section-header {
+          gap: 10px;
+          margin-bottom: 6px;
+        }
+
+        .period-switcher {
+          gap: 2px;
+          padding: 1px;
+        }
+
+        .period-button {
+          min-height: 18px;
+          padding: 2px 5px;
+          font-size: 8px;
+        }
+
+        .section-title {
+          font-size: 18px;
+        }
+
+        .section-note {
+          font-size: 10px;
+        }
+
+        .species-grid {
+          gap: 6px;
+        }
+
+        .species-card {
+          grid-template-columns: 46px minmax(0, 1fr) auto;
+          gap: 7px;
+          padding: 4px 7px 4px 4px;
+          border-radius: 10px;
+        }
+
+        .thumb {
+          min-height: 32px;
+          border-radius: 8px;
+        }
+
+        .thumb-fallback {
+          font-size: 18px;
+        }
+
+        .species-name {
+          font-size: 13px;
+        }
+
+        .species-meta {
+          margin-top: 2px;
+          font-size: 9px;
+        }
+
+        .species-count {
+          min-width: 20px;
+          font-size: 15px;
+        }
+
+        .recent-list {
+          gap: 4px;
+        }
+
+        .recent-row {
+          gap: 7px;
+          padding: 2px 6px 2px 2px;
+          border-radius: 8px;
+        }
+
+        .detection-detail {
+          grid-template-columns: 32px minmax(0, 1fr) auto;
+          gap: 7px;
+        }
+
+        .recent-row .thumb {
+          min-height: 26px;
+        }
+
+        .recent-name {
+          font-size: 12px;
+        }
+
+        .recent-detail,
+        .recent-time {
+          font-size: 9px;
+        }
+
+        .empty-panel {
+          padding: 6px;
+        }
+
+        .empty-panel svg {
+          width: 32px;
+          height: 32px;
+          margin-bottom: 4px;
+        }
+
+        .empty-title {
+          font-size: 15px;
+        }
+
+        .empty-copy {
+          display: none;
+        }
+
+        .footer {
+          min-height: 16px;
+          font-size: 9px;
+        }
+
+        .footer span:last-child {
+          display: none;
+        }
+      }
+
+      /* Browser zoom can expose a landscape viewport shorter than FrameOS.
+         Preserve complete two-line detection rows and let that browser scroll;
+         the 960x540 frame stays in the fixed kiosk layout above. */
+      @media (min-width: 601px) and (max-height: 539px) {
+        html,
+        body {
+          height: auto;
+          min-height: 100%;
+          overflow-x: hidden;
+          overflow-y: auto;
+        }
+
+        .frame {
+          height: auto;
+          min-height: 100dvh;
+        }
+
+        .content {
+          min-height: 420px;
+        }
+
+        .recent-list {
+          grid-template-rows: repeat(4, minmax(35px, 1fr));
+        }
+      }
+
+      /* Phone browsers need room to scroll through the complete dashboard.
+         Keep this separate from the short landscape FrameOS breakpoint above:
+         it only applies to narrow portrait and handheld layouts. */
+      @media (max-width: 600px) {
+        html,
+        body {
+          height: auto;
+          min-height: 100%;
+          overflow-x: hidden;
+          overflow-y: auto;
+        }
+
+        .frame {
+          display: block;
+          min-height: 100dvh;
+          height: auto;
+          padding: 20px 16px 24px;
+        }
+
+        .topbar {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 16px;
+        }
+
+        .title-group {
+          align-items: flex-start;
+          gap: 12px;
+        }
+
+        .mark {
+          width: 48px;
+          height: 48px;
+          border-radius: 15px;
+        }
+
+        .mark svg {
+          width: 29px;
+          height: 29px;
+        }
+
+        h1 {
+          font-size: 32px;
+          line-height: 1.05;
+        }
+
+        .subtitle {
+          margin-top: 5px;
+          font-size: 14px;
+          line-height: 1.35;
+        }
+
+        .topbar-right {
+          display: block;
+          width: 100%;
+        }
+
+        .status {
+          width: 100%;
+          min-width: 0;
+          align-items: flex-start;
+          padding: 13px 14px;
+          border-radius: 16px;
+        }
+
+        .status-dot {
+          margin-top: 5px;
+        }
+
+        .content {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 16px;
+          margin-top: 16px;
+        }
+
+        .card {
+          min-height: auto;
+          overflow: visible;
+          border-radius: 22px;
+        }
+
+        .hero {
+          grid-template-rows: auto auto;
+        }
+
+        .hero-media {
+          aspect-ratio: 16 / 10;
+        }
+
+        .hero-badge {
+          top: 14px;
+          left: 14px;
+          font-size: 11px;
+        }
+
+        .hero-body {
+          gap: 12px;
+          padding: 18px;
+        }
+
+        .hero-kicker {
+          font-size: 12px;
+        }
+
+        .hero-name {
+          font-size: 30px;
+        }
+
+        .hero-scientific {
+          font-size: 16px;
+        }
+
+        .hero-meta {
+          gap: 5px 12px;
+          margin-top: 12px;
+          font-size: 13px;
+        }
+
+        .hero-meta span + span::before {
+          margin-right: 12px;
+        }
+
+        .hero-credit {
+          margin-top: 9px;
+          font-size: 11px;
+        }
+
+        .confidence {
+          min-width: 72px;
+        }
+
+        .confidence-value {
+          font-size: 32px;
+        }
+
+        .confidence-label {
+          font-size: 10px;
+        }
+
+        .ambient-context {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 12px;
+          margin-top: 12px;
+          padding-top: 12px;
+        }
+
+        .audio-meter {
+          min-width: 0;
+        }
+
+        .side {
+          grid-template-rows: none;
+          gap: 16px;
+        }
+
+        .section-card {
+          display: block;
+          padding: 18px;
+        }
+
+        .section-header {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 4px;
+          margin-bottom: 14px;
+        }
+
+        .period-switcher {
+          width: 100%;
+          padding: 3px;
+        }
+
+        .period-button {
+          min-height: 34px;
+          flex: 1 1 0;
+          font-size: 12px;
+        }
+
+        .section-title {
+          font-size: 24px;
+        }
+
+        .section-note {
+          font-size: 13px;
+        }
+
+        .species-grid {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-rows: none;
+          gap: 10px;
+        }
+
+        .species-card {
+          grid-template-columns: 68px minmax(0, 1fr) auto;
+          min-height: 76px;
+          gap: 12px;
+          padding: 7px 10px 7px 7px;
+        }
+
+        .thumb {
+          min-height: 60px;
+        }
+
+        .species-name {
+          font-size: 16px;
+        }
+
+        .species-meta {
+          font-size: 12px;
+        }
+
+        .species-count {
+          font-size: 21px;
+        }
+
+        .recent-list {
+          grid-template-rows: none;
+          gap: 8px;
+        }
+
+        .recent-row {
+          min-height: 64px;
+          gap: 10px;
+          padding: 5px 9px 5px 5px;
+        }
+
+        .recent-row .thumb {
+          min-height: 52px;
+        }
+
+        .detection-detail {
+          grid-template-columns: 52px minmax(0, 1fr) auto;
+          gap: 10px;
+        }
+
+        .recent-name {
+          font-size: 15px;
+        }
+
+        .recent-detail,
+        .recent-time {
+          font-size: 12px;
+        }
+
+        .status-title,
+        .status-detail,
+        .hero-name,
+        .hero-scientific,
+        .hero-credit,
+        .species-name,
+        .species-meta,
+        .recent-name,
+        .recent-detail,
+        .recent-time,
+        .section-note,
+        .novelty-badge {
+          overflow: visible;
+          text-overflow: clip;
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+
+        .footer {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 6px;
+          margin-top: 16px;
+        }
+
+        .footer span:last-child {
+          text-align: left;
+        }
+
+        dialog {
+          width: calc(100vw - 32px);
+          max-height: calc(100dvh - 32px);
+        }
+      }
+
+      @media (prefers-reduced-motion: no-preference) {
+        .status[data-tone="green"] .status-dot {
+          animation: breathe 3.2s ease-in-out infinite;
+        }
+
+        @keyframes breathe {
+          0%,
+          100% {
+            box-shadow: 0 0 0 6px rgba(105, 213, 154, 0.08);
+          }
+          50% {
+            box-shadow: 0 0 0 10px rgba(105, 213, 154, 0.02);
+          }
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="frame">
+      <header class="topbar">
+        <div class="title-group">
+          <div class="mark" aria-hidden="true">
+            <svg viewBox="0 0 48 48">
+              <path d="M10 35c8-1 11-8 12-14 4 4 9 6 16 5-2 8-8 13-16 13-5 0-9-1-12-4Z" />
+              <path d="M22 21c1-7 6-11 12-11 1 4 3 7 6 9-5 1-9 3-12 7" />
+              <path d="m11 35-4 4m15 0-1 4m6-5 2 4" />
+              <circle cx="32.5" cy="15" r="1" />
+            </svg>
+          </div>
+          <div>
+            <h1>Birds around us</h1>
+            <p class="subtitle" id="todayLabel">Listening at home</p>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <div class="metric">
+            <span class="metric-value" id="speciesCount">0</span>
+            <span class="metric-label" id="speciesMetricLabel">species today</span>
+          </div>
+          <div class="metric">
+            <span class="metric-value" id="callCount">0</span>
+            <span class="metric-label" id="callMetricLabel">calls today</span>
+          </div>
+          <div class="metric">
+            <span class="metric-value" id="lifeListCount">—</span>
+            <span class="metric-label">recorded species</span>
+          </div>
+          <div class="status" id="status" data-tone="amber" aria-live="polite">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span class="status-copy">
+              <span class="status-title" id="statusTitle">Checking bird detector</span>
+              <span class="status-detail" id="statusDetail">Connecting to BirdNET-Go…</span>
+            </span>
+          </div>
+        </div>
+      </header>
+
+      <main class="content">
+        <section class="card hero" aria-labelledby="heroName">
+          <div class="hero-media">
+            <span class="hero-badge" id="heroBadge">Latest model candidate</span>
+            <img class="hero-image" id="heroImage" alt="" hidden />
+            <div class="image-fallback" id="heroFallback">
+              <svg viewBox="0 0 120 100" aria-hidden="true">
+                <path d="M23 70c22-2 32-22 34-42 11 13 27 20 49 18-5 25-24 40-49 40-14 0-26-5-34-16Z" />
+                <path d="M57 28C61 10 74 3 91 5c2 10 8 19 17 25-14 2-25 8-34 18" />
+                <path d="M25 70 12 82m45 4-3 11m21-12 7 11" />
+                <circle cx="87" cy="17" r="2" />
+              </svg>
+              <span id="fallbackLabel">Photo unavailable</span>
+            </div>
+          </div>
+          <div class="hero-body">
+            <div>
+              <p class="hero-kicker" id="heroKicker">BirdNET-Go is ready</p>
+              <h2 class="hero-name" id="heroName">Checking for bird sounds…</h2>
+              <p class="hero-scientific" id="heroScientific">Recent detections will appear here</p>
+              <p class="hero-meta" id="heroMeta"></p>
+              <p class="hero-credit" id="heroCredit">Bird reference images and model classifications via BirdNET-Go</p>
+              <p class="detection-alert" id="detectionAlert" hidden aria-live="polite"></p>
+              <div class="ambient-context">
+                <div>
+                  <p class="insight-copy" id="insightCopy">Morning and evening birds are expected today as the station listens.</p>
+                  <div class="ambient-meta">
+                    <div class="ambient-stat"><strong id="periodLabel">Today</strong><span>ambient view</span></div>
+                    <div class="ambient-stat"><strong id="streakValue">—</strong><span>listening streak</span></div>
+                  </div>
+                </div>
+                <div>
+                  <div class="audio-meter" aria-label="Rolling audio meter and freshness">
+                    <span class="audio-meter-track" aria-hidden="true"><span class="audio-meter-level" id="audioMeterLevel"></span></span>
+                    <span id="audioFreshness">Audio freshness checking</span>
+                  </div>
+                  <div class="activity-strip" id="activityStrip" aria-label="24-hour activity strip"></div>
+                </div>
+              </div>
+            </div>
+            <div class="confidence" id="confidence" hidden>
+              <span class="confidence-value" id="confidenceValue">—</span>
+              <span class="confidence-label">confidence</span>
+            </div>
+          </div>
+        </section>
+
+        <aside class="side">
+          <section class="card section-card" aria-labelledby="speciesTitle">
+            <div class="section-header">
+              <h2 class="section-title" id="speciesTitle">Detected today</h2>
+              <div class="period-switcher" role="group" aria-label="Species period">
+                <button class="period-button" type="button" data-species-period="today" aria-pressed="true">Today</button>
+                <button class="period-button" type="button" data-species-period="7-days" aria-pressed="false">7 Days</button>
+                <button class="period-button" type="button" data-species-period="30-days" aria-pressed="false">30 Days</button>
+              </div>
+            </div>
+            <div class="species-grid" id="speciesGrid"></div>
+          </section>
+
+          <section class="card section-card recent-section" aria-labelledby="recentTitle">
+            <div class="section-header">
+              <h2 class="section-title" id="recentTitle">Recent model results</h2>
+              <div class="review-tools">
+                <span class="section-note" id="recentNote">Waiting for detections</span>
+                <div class="review-filter" role="group" aria-label="Review model results">
+                  <button class="review-button" type="button" data-review-filter="all" aria-pressed="true">All</button>
+                  <button class="review-button" type="button" data-review-filter="needs-review" aria-pressed="false">Needs review</button>
+                  <button class="review-button" type="button" data-review-filter="reviewed" aria-pressed="false">Reviewed</button>
+                </div>
+              </div>
+            </div>
+            <div class="recent-list" id="recentList"></div>
+            <p class="control-hint">Volume +/− selects · Star opens details</p>
+          </section>
+        </aside>
+      </main>
+
+      <footer class="footer">
+        <span id="updatedLabel">Live data from BirdNET-Go</span>
+        <span>Model results · review audio before trusting · clips retained for 30 days.</span>
+      </footer>
+    </div>
+
+    <dialog id="detectionDialog" aria-labelledby="detailName">
+      <div class="dialog-body">
+        <div class="dialog-topline">
+          <div>
+            <p class="hero-kicker">Detection detail</p>
+            <h2 class="section-title" id="detailName">Detection</h2>
+            <p class="hero-scientific" id="detailScientific"></p>
+          </div>
+          <button class="dialog-close" id="dialogClose" type="button" aria-label="Close detection detail">Close</button>
+        </div>
+        <p class="section-note" id="detailMeta">Audio is only loaded after you open this detail.</p>
+        <audio id="detailAudio" controls preload="none"></audio>
+        <img class="detail-spectrogram" id="detailSpectrogram" alt="Detection spectrogram" hidden />
+        <p class="section-note">Clips are retained for 30 days when recording is enabled. Missing clips are not recovered or recreated by this display.</p>
+      </div>
+    </dialog>
+
+    <script>
+      (() => {
+        "use strict";
+
+        const API_TIMEOUT_MS = 7000;
+        const FAST_POLL_INTERVAL_MS = 30000;
+        const ANALYTICS_REFRESH_INTERVAL_MS = 300000;
+        const DETECTION_FALLBACK_INTERVAL_MS = 60000;
+        const IMAGE_RETRY_MS = 60000;
+        const AUDIO_LEVEL_STALE_MS = 25000;
+        const AUDIO_DELAYED_AFTER_MS = 45000;
+        const AUDIO_OFFLINE_AFTER_MS = 120000;
+        const SPECIES_PERIODS = ["today", "7-days", "30-days"];
+        const MAX_SPECIES = 6;
+        const MAX_RECENT = 4;
+
+        const els = {
+          todayLabel: document.getElementById("todayLabel"),
+          speciesCount: document.getElementById("speciesCount"),
+          callCount: document.getElementById("callCount"),
+          speciesMetricLabel: document.getElementById("speciesMetricLabel"),
+          callMetricLabel: document.getElementById("callMetricLabel"),
+          status: document.getElementById("status"),
+          statusTitle: document.getElementById("statusTitle"),
+          statusDetail: document.getElementById("statusDetail"),
+          heroBadge: document.getElementById("heroBadge"),
+          heroImage: document.getElementById("heroImage"),
+          heroFallback: document.getElementById("heroFallback"),
+          fallbackLabel: document.getElementById("fallbackLabel"),
+          heroKicker: document.getElementById("heroKicker"),
+          heroName: document.getElementById("heroName"),
+          heroScientific: document.getElementById("heroScientific"),
+          heroMeta: document.getElementById("heroMeta"),
+          heroCredit: document.getElementById("heroCredit"),
+          confidence: document.getElementById("confidence"),
+          confidenceValue: document.getElementById("confidenceValue"),
+          speciesTitle: document.getElementById("speciesTitle"),
+          speciesGrid: document.getElementById("speciesGrid"),
+          periodButtons: [...document.querySelectorAll("[data-species-period]")],
+          reviewButtons: [...document.querySelectorAll("[data-review-filter]")],
+          recentList: document.getElementById("recentList"),
+          recentNote: document.getElementById("recentNote"),
+          updatedLabel: document.getElementById("updatedLabel"),
+          lifeListCount: document.getElementById("lifeListCount"),
+          periodLabel: document.getElementById("periodLabel"),
+          streakValue: document.getElementById("streakValue"),
+          insightCopy: document.getElementById("insightCopy"),
+          activityStrip: document.getElementById("activityStrip"),
+          audioMeterLevel: document.getElementById("audioMeterLevel"),
+          audioFreshness: document.getElementById("audioFreshness"),
+          detectionDialog: document.getElementById("detectionDialog"),
+          dialogClose: document.getElementById("dialogClose"),
+          detailName: document.getElementById("detailName"),
+          detailScientific: document.getElementById("detailScientific"),
+          detailMeta: document.getElementById("detailMeta"),
+          detailAudio: document.getElementById("detailAudio"),
+          detailSpectrogram: document.getElementById("detailSpectrogram"),
+          detectionAlert: document.getElementById("detectionAlert"),
+        };
+
+        const state = {
+          health: null,
+          apiOnline: null,
+          configuredSources: [],
+          audioKnown: false,
+          audioError: false,
+          audioLevelsActive: false,
+          dataError: false,
+          summary: [],
+          dailySummary: [],
+          rangeSummaries: { "7-days": null, "30-days": null },
+          rangeLoadingPeriod: "",
+          reviewFilter: "all",
+          kpis: null,
+          expectedInsight: null,
+          hourly: Array(24).fill(0),
+          weather: null,
+          speciesPeriod: "today",
+          audioLevel: 0,
+          audioSamples: [],
+          audioLastAt: null,
+          audioSourceObservedAt: null,
+          recent: [],
+          lastUpdatedAt: null,
+          attributionSpecies: "",
+          attribution: null,
+          renderKeys: { hero: "", species: "", recent: "" },
+        };
+
+        let refreshPromise = null;
+        let analyticsPromise = null;
+        let fastTimer = null;
+        let analyticsTimer = null;
+        let detectionFallbackTimer = null;
+        let clockTimer = null;
+        let detectionStream = null;
+        let audioStream = null;
+        let refreshDebounce = null;
+        let attributionRetry = null;
+        let audioFreshnessTimer = null;
+        let disposed = false;
+        let activeGeneration = 0;
+        const imageRetryAfter = new Map();
+        const imageRetryTimers = new WeakMap();
+        const activeFetchControllers = new Set();
+
+        function updateClock() {
+          const now = new Date();
+          const date = new Intl.DateTimeFormat(undefined, {
+            weekday: "long",
+            month: "long",
+            day: "numeric",
+          }).format(now);
+          const time = new Intl.DateTimeFormat(undefined, {
+            hour: "numeric",
+            minute: "2-digit",
+          }).format(now);
+          els.todayLabel.textContent = `${date} · ${time}`;
+          applyNightMode();
+          renderAudioHealth();
+          render();
+        }
+
+        function isoDate(daysAgo = 0) {
+          const date = new Date();
+          date.setHours(12, 0, 0, 0);
+          date.setDate(date.getDate() - daysAgo);
+          return date.toISOString().slice(0, 10);
+        }
+
+        function periodTitle(period = state.speciesPeriod) {
+          return { today: "Today", "7-days": "7 Days", "30-days": "30 Days" }[period] || "Today";
+        }
+
+        function periodHeading(period = state.speciesPeriod) {
+          return { today: "Detected today", "7-days": "Detected · 7 days", "30-days": "Detected · 30 days" }[period] || "Detected today";
+        }
+
+        function isRangePeriod(period = state.speciesPeriod) {
+          return period === "7-days" || period === "30-days";
+        }
+
+        function periodRange(period) {
+          const end = isoDate();
+          const days = period === "30-days" ? 29 : period === "7-days" ? 6 : 0;
+          return { start: isoDate(days), end };
+        }
+
+        function summaryItems(payload) {
+          if (Array.isArray(payload)) return payload.filter(item => item && typeof item === "object");
+          if (payload && Array.isArray(payload.species)) return payload.species.filter(item => item && typeof item === "object");
+          return [];
+        }
+
+        function setSpeciesPeriod(period) {
+          if (!SPECIES_PERIODS.includes(period)) return;
+          state.speciesPeriod = period;
+          const cachedRange = isRangePeriod(period) ? state.rangeSummaries[period] : null;
+          state.summary = isRangePeriod(period) ? (cachedRange || []) : state.dailySummary;
+          state.rangeLoadingPeriod = isRangePeriod(period) && cachedRange === null ? period : "";
+          state.renderKeys.species = "";
+          render();
+          if (isRangePeriod(period)) refreshRange(period);
+        }
+
+        function applyNightMode() {
+          const minutes = new Date().getHours() * 60 + new Date().getMinutes();
+          const daily = state.weather && state.weather.daily;
+          const sunrise = minutesFromTime(daily && daily.sunrise);
+          const sunset = minutesFromTime(daily && daily.sunset);
+          const hasSunTimes = Number.isFinite(sunrise) && Number.isFinite(sunset);
+          const nightMode = hasSunTimes ? minutes < sunrise || minutes >= sunset : minutes < 6 * 60 || minutes >= 20 * 60;
+          document.documentElement.dataset.night = String(nightMode);
+        }
+
+        function minutesFromTime(value) {
+          if (typeof value === "number" && Number.isFinite(value)) return value;
+          if (typeof value !== "string") return Number.NaN;
+          const localTime = value.match(/(?:T|^)(\d{1,2}):(\d{2})/);
+          if (!localTime) return Number.NaN;
+          return Number(localTime[1]) * 60 + Number(localTime[2]);
+        }
+
+        function renderAudioHealth() {
+          const age = state.audioLastAt ? Math.max(0, Math.round((Date.now() - state.audioLastAt.getTime()) / 1000)) : null;
+          els.audioMeterLevel.style.width = `${Math.round(Math.max(0, Math.min(1, state.audioLevel)) * 100)}%`;
+          els.audioFreshness.textContent = age === null ? "Audio freshness checking" : age <= 5 ? "Audio fresh now" : `Audio last heard ${age}s ago`;
+        }
+
+        function validAudioLevels(payload) {
+          const raw = payload && payload.levels && typeof payload.levels === "object"
+            ? Object.values(payload.levels) : [payload && payload.level];
+          return raw.map(entry => typeof entry === "object" && entry ? entry.level : entry)
+            .filter(value => (typeof value === "number" || typeof value === "string") && value !== "" && String(value).trim() !== "")
+            .map(Number).filter(Number.isFinite).map(level => Math.max(0, Math.min(100, level)));
+        }
+
+        function audioFreshnessState() {
+          if (!state.audioKnown || state.configuredSources.length === 0) return "offline";
+          const lastObserved = state.audioLastAt;
+          if (!lastObserved) {
+            const startupAge = state.audioSourceObservedAt
+              ? Math.max(0, Date.now() - state.audioSourceObservedAt.getTime())
+              : 0;
+            return startupAge <= AUDIO_OFFLINE_AFTER_MS ? "starting" : "offline";
+          }
+          const age = Math.max(0, Date.now() - lastObserved.getTime());
+          if (age <= AUDIO_DELAYED_AFTER_MS) return "fresh";
+          if (age <= AUDIO_OFFLINE_AFTER_MS) return "delayed";
+          return "offline";
+        }
+
+        async function fetchJson(path) {
+          if (disposed) throw new Error("Page is no longer active");
+          const controller = new AbortController();
+          activeFetchControllers.add(controller);
+          const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+          try {
+            const response = await fetch(path, {
+              cache: "no-store",
+              credentials: "same-origin",
+              signal: controller.signal,
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.json();
+          } finally {
+            window.clearTimeout(timeout);
+            activeFetchControllers.delete(controller);
+          }
+        }
+
+        function abortActiveFetches() {
+          activeFetchControllers.forEach(controller => controller.abort());
+          activeFetchControllers.clear();
+        }
+
+        function sourceName(source) {
+          if (!source || typeof source !== "object") return "Audio source connected";
+          return source.displayName || source.display_name || source.name || source.id || source.source_id || "Audio source connected";
+        }
+
+        function configuredSourceList(payload) {
+          if (!payload || !Array.isArray(payload.sources)) return [];
+          return payload.sources.filter(source => source && typeof source === "object");
+        }
+
+        function sourceState(source) {
+          return source && typeof source.state === "string" ? source.state.toLowerCase() : "unknown";
+        }
+
+        function verificationStatus(detection) {
+          const value = detection && typeof detection.verified === "string"
+            ? detection.verified.trim().toLowerCase()
+            : "";
+          if (value === "correct") {
+            return { key: "confirmed", label: "Marked correct", shortLabel: "Marked correct" };
+          }
+          if (value === "false_positive") {
+            return { key: "rejected", label: "Marked false positive", shortLabel: "False positive" };
+          }
+          return { key: "candidate", label: "Model candidate · needs review", shortLabel: "Candidate" };
+        }
+
+        function latestDisplayDetection(detections) {
+          if (!Array.isArray(detections)) return null;
+          return detections.find(detection => verificationStatus(detection).key !== "rejected") || null;
+        }
+
+        function latestDetection() {
+          return latestDisplayDetection(state.recent);
+        }
+
+        function candidateDetections() {
+          return state.recent.filter(detection => verificationStatus(detection).key === "candidate");
+        }
+
+        function reviewedDetections() {
+          return state.recent.filter(detection => verificationStatus(detection).key !== "candidate");
+        }
+
+        function reviewDetections() {
+          if (state.reviewFilter === "needs-review") return candidateDetections();
+          if (state.reviewFilter === "reviewed") return reviewedDetections();
+          return state.recent;
+        }
+
+        function setReviewFilter(filter) {
+          if (!["all", "needs-review", "reviewed"].includes(filter)) return;
+          state.reviewFilter = filter;
+          state.renderKeys.recent = "";
+          render();
+        }
+
+        function setStatus(title, detail, tone) {
+          els.status.dataset.tone = tone;
+          els.statusTitle.textContent = title;
+          els.statusDetail.textContent = detail;
+        }
+
+        function statusFromState() {
+          if (state.apiOnline === false) {
+            return {
+              title: "Bird detector unavailable",
+              detail: state.lastUpdatedAt ? "Showing the last successful update" : "Trying again automatically",
+              tone: "red",
+            };
+          }
+          if (state.dataError) {
+            return {
+              title: "Bird detector unavailable",
+              detail: "Detection data is temporarily unavailable",
+              tone: "red",
+            };
+          }
+          const freshness = audioFreshnessState();
+          if (state.audioKnown && state.configuredSources.length === 0) {
+            return {
+              title: "Waiting for a microphone",
+              detail: "BirdNET-Go is online, but it has no audio source",
+              tone: "amber",
+            };
+          }
+          if (freshness === "fresh") {
+            const runningSource = state.configuredSources.find(source => sourceState(source) === "running");
+            return {
+              title: "Listening now",
+              detail: runningSource ? sourceName(runningSource) : "Live audio levels received",
+              tone: "green",
+            };
+          }
+          if (freshness === "delayed") {
+            return {
+              title: "Audio delayed",
+              detail: "The microphone is configured, but recent audio has not arrived",
+              tone: "amber",
+            };
+          }
+          const runningSource = state.configuredSources.find(source => sourceState(source) === "running");
+          const failedSource = state.configuredSources.find(source =>
+            ["error", "failed", "escalated", "alarmed", "stopped"].includes(sourceState(source))
+          );
+          if (failedSource) {
+            return {
+              title: "Microphone needs attention",
+              detail: `${sourceName(failedSource)} · ${sourceState(failedSource)}`,
+              tone: "red",
+            };
+          }
+          if (freshness === "offline" && state.audioKnown) {
+            return {
+              title: "Microphone offline",
+              detail: runningSource ? `${sourceName(runningSource)} has not delivered recent audio` : "No recent audio has arrived",
+              tone: "red",
+            };
+          }
+          if (state.configuredSources.length > 0) {
+            return {
+              title: "Starting microphone",
+              detail: sourceName(state.configuredSources[0]),
+              tone: "amber",
+            };
+          }
+          if (state.audioError) {
+            return {
+              title: "Audio status unavailable",
+              detail: "Detection data is online; checking the microphone again",
+              tone: "amber",
+            };
+          }
+          return {
+            title: "Checking bird detector",
+            detail: "Connecting to BirdNET-Go…",
+            tone: "amber",
+          };
+        }
+
+        function clearChildren(element) {
+          while (element.firstChild) element.removeChild(element.firstChild);
+        }
+
+        function formatTime(detection) {
+          if (detection && typeof detection.timestamp === "string") {
+            const parsed = new Date(detection.timestamp);
+            if (!Number.isNaN(parsed.getTime())) {
+              return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(parsed);
+            }
+          }
+          if (detection && typeof detection.time === "string" && detection.time.length >= 5) {
+            const pieces = detection.time.slice(0, 5).split(":").map(Number);
+            const local = new Date();
+            local.setHours(pieces[0], pieces[1], 0, 0);
+            return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(local);
+          }
+          return "Just now";
+        }
+
+        function formatLastHeard(value) {
+          if (typeof value !== "string") return "";
+          const parsed = new Date(value);
+          if (!Number.isNaN(parsed.getTime())) {
+            return new Intl.DateTimeFormat(undefined, {
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            }).format(parsed);
+          }
+          return formatTime({ time: value });
+        }
+
+        function confidencePercent(value) {
+          const number = Number(value);
+          if (!Number.isFinite(number)) return null;
+          return Math.max(0, Math.min(100, Math.round(number * 100)));
+        }
+
+        function speciesImageUrl(scientificName) {
+          return `/api/v2/media/species-image?name=${encodeURIComponent(scientificName)}`;
+        }
+
+        function attachImage(img, fallback, scientificName, alt, eager = false) {
+          window.clearTimeout(imageRetryTimers.get(img));
+          imageRetryTimers.delete(img);
+          img.onload = null;
+          img.onerror = null;
+          img.dataset.species = scientificName || "";
+          img.hidden = true;
+          fallback.hidden = false;
+          img.alt = alt;
+          img.loading = eager ? "eager" : "lazy";
+          img.decoding = "async";
+          if (!scientificName) return;
+          const retryAt = imageRetryAfter.get(scientificName) || 0;
+          if (retryAt > Date.now()) {
+            retrySpeciesImage(img, fallback, scientificName, alt, eager, retryAt - Date.now());
+            return;
+          }
+
+          img.onload = () => {
+            img.hidden = false;
+            fallback.hidden = true;
+            imageRetryAfter.delete(scientificName);
+          };
+          img.onerror = () => {
+            img.hidden = true;
+            fallback.hidden = false;
+            const nextRetry = Date.now() + IMAGE_RETRY_MS;
+            imageRetryAfter.set(scientificName, nextRetry);
+            retrySpeciesImage(img, fallback, scientificName, alt, eager, IMAGE_RETRY_MS);
+          };
+          img.removeAttribute("src");
+          img.src = speciesImageUrl(scientificName);
+        }
+
+        function retrySpeciesImage(img, fallback, scientificName, alt, eager, delay) {
+          window.clearTimeout(imageRetryTimers.get(img));
+          const timer = window.setTimeout(() => {
+            imageRetryTimers.delete(img);
+            if (disposed || document.hidden || !img.isConnected || img.dataset.species !== scientificName) return;
+            imageRetryAfter.delete(scientificName);
+            attachImage(img, fallback, scientificName, alt, eager);
+          }, Math.max(250, delay));
+          imageRetryTimers.set(img, timer);
+        }
+
+        function retryDeferredImages() {
+          document.querySelectorAll("img[data-species]").forEach(img => {
+            const scientificName = img.dataset.species;
+            if (!scientificName || !img.hidden) return;
+            const fallback = img === els.heroImage ? els.heroFallback : img.nextElementSibling;
+            if (!fallback) return;
+            const retryAt = imageRetryAfter.get(scientificName) || 0;
+            const delay = Math.max(0, retryAt - Date.now());
+            retrySpeciesImage(img, fallback, scientificName, img.alt, img === els.heroImage, delay);
+          });
+        }
+
+        function fallbackGlyph() {
+          const fallback = document.createElement("span");
+          fallback.className = "thumb-fallback";
+          fallback.textContent = "♩";
+          fallback.setAttribute("role", "img");
+          fallback.setAttribute("aria-label", "Bird photo unavailable");
+          return fallback;
+        }
+
+        function createThumb(scientificName, commonName) {
+          const wrap = document.createElement("div");
+          wrap.className = "thumb";
+          const img = document.createElement("img");
+          const fallback = fallbackGlyph();
+          wrap.append(img, fallback);
+          attachImage(img, fallback, scientificName, `${commonName} species reference`, true);
+          return wrap;
+        }
+
+        function emptyPanel(title, copy) {
+          const panel = document.createElement("div");
+          panel.className = "empty-panel";
+          panel.innerHTML = `
+            <div>
+              <svg viewBox="0 0 48 48" aria-hidden="true">
+                <path d="M9 35c9-1 13-9 14-17 5 5 11 8 19 6-2 10-9 16-19 16-6 0-11-2-14-5Z"></path>
+                <path d="M23 18c2-8 7-12 14-12 1 5 3 8 7 11-6 1-10 4-14 8"></path>
+                <path d="m10 35-5 5m18 0-1 5m8-6 3 5"></path>
+              </svg>
+              <p class="empty-title"></p>
+              <p class="empty-copy"></p>
+            </div>`;
+          panel.querySelector(".empty-title").textContent = title;
+          panel.querySelector(".empty-copy").textContent = copy;
+          return panel;
+        }
+
+        function renderHero() {
+          const detection = latestDetection();
+          els.heroImage.onload = null;
+          els.heroImage.onerror = null;
+          els.heroImage.removeAttribute("src");
+          els.heroImage.hidden = true;
+          els.heroFallback.hidden = false;
+          els.heroCredit.textContent = "Bird reference images and model classifications via BirdNET-Go";
+          clearChildren(els.heroMeta);
+          els.detectionAlert.hidden = true;
+          els.detectionAlert.removeAttribute("data-verification");
+
+          if (!detection) {
+            state.attributionSpecies = "";
+            state.attribution = null;
+            window.clearTimeout(attributionRetry);
+            els.heroBadge.textContent = "Listening station";
+            els.confidence.hidden = true;
+            els.fallbackLabel.textContent = "Photo unavailable";
+            if (state.apiOnline === false || state.dataError) {
+              els.heroKicker.textContent = "Connection interrupted";
+              els.heroName.textContent = "Bird detector unavailable";
+              els.heroScientific.textContent = "We’ll reconnect automatically";
+            } else if (state.audioKnown && state.configuredSources.length === 0) {
+              els.heroKicker.textContent = "Detector online";
+              els.heroName.textContent = "Waiting for a microphone";
+              els.heroScientific.textContent = "Connect an audio source to start identifying birds";
+            } else if (audioFreshnessState() === "delayed" || audioFreshnessState() === "offline") {
+              els.heroKicker.textContent = "Audio needs attention";
+              els.heroName.textContent = audioFreshnessState() === "delayed" ? "Audio delayed" : "Microphone offline";
+              els.heroScientific.textContent = "Waiting for recent audio before identifying birds";
+            } else {
+              els.heroKicker.textContent = "Listening now";
+              els.heroName.textContent = "No birds heard yet";
+              els.heroScientific.textContent = "The first model candidate will appear here";
+            }
+            return;
+          }
+
+          const commonName = detection.commonName || "Unknown bird";
+          const scientificName = detection.scientificName || "";
+          const confidence = confidencePercent(detection.confidence);
+          const source = detection.source && sourceName(detection.source);
+          const verification = verificationStatus(detection);
+          const heroKind = verification.key === "confirmed" ? "marked-correct result" : "model candidate";
+          els.heroBadge.textContent = state.dataError ? `Last known ${heroKind}` : `Latest ${heroKind}`;
+          els.heroKicker.textContent = `Heard ${formatTime(detection)}`;
+          els.heroName.textContent = commonName;
+          els.heroScientific.textContent = scientificName || "Species name unavailable";
+          els.fallbackLabel.textContent = "Photo unavailable";
+          attachImage(els.heroImage, els.heroFallback, scientificName, commonName, true);
+
+          const heard = document.createElement("span");
+          heard.textContent = `Heard ${formatTime(detection)}`;
+          els.heroMeta.appendChild(heard);
+          if (source) {
+            const sourceNode = document.createElement("span");
+            sourceNode.textContent = source;
+            els.heroMeta.appendChild(sourceNode);
+          }
+          if (confidence === null) {
+            els.confidence.hidden = true;
+          } else {
+            els.confidence.hidden = false;
+            els.confidenceValue.textContent = `${confidence}%`;
+          }
+          const rare = detection.rare === true || detection.isRare === true || detection.rarity === "rare";
+          const notices = [verification.label];
+          if (rare) notices.push("Rare model flag");
+          if (confidence !== null && confidence >= 95) notices.push("High-confidence model result");
+          els.detectionAlert.dataset.verification = verification.key;
+          els.detectionAlert.textContent = notices.join(" · ");
+          els.detectionAlert.hidden = false;
+          loadAttribution(scientificName);
+        }
+
+        async function loadAttribution(scientificName) {
+          if (!scientificName || disposed || document.hidden) return;
+          if (state.attributionSpecies === scientificName && state.attribution) {
+            renderAttribution(state.attribution);
+            return;
+          }
+          state.attributionSpecies = scientificName;
+          state.attribution = null;
+          window.clearTimeout(attributionRetry);
+          try {
+            const info = await fetchJson(`/api/v2/media/species-image/info?name=${encodeURIComponent(scientificName)}`);
+            if (state.attributionSpecies !== scientificName) return;
+            state.attribution = info;
+            renderAttribution(info);
+          } catch (_error) {
+            if (disposed || document.hidden || state.attributionSpecies !== scientificName) return;
+            els.heroCredit.textContent = "Species photo resolving via BirdNET-Go";
+            attributionRetry = window.setTimeout(() => loadAttribution(scientificName), IMAGE_RETRY_MS);
+          }
+        }
+
+        function renderAttribution(info) {
+          const parts = [];
+          if (info && info.authorName) parts.push(`Photo: ${info.authorName}`);
+          if (info && info.licenseName) parts.push(info.licenseName);
+          if (info && info.sourceProvider) parts.push(`via ${info.sourceProvider}`);
+          els.heroCredit.textContent = parts.length > 0 ? parts.join(" · ") : "Species photo via BirdNET-Go";
+        }
+
+        function noveltyReason(item) {
+          // These describe the model's stored records, not confirmed bird sightings.
+          if (!item || typeof item !== "object") return "";
+          if (item.is_new_species === true) return "First recorded";
+          if (item.is_new_this_year === true) return "Recorded this year";
+          if (item.is_new_this_season === true) return "Recorded this season";
+          const firstSeenDays = Number(item.days_since_first_seen);
+          const lastSeenDays = Number(item.days_since_last_seen);
+          if (Number.isFinite(lastSeenDays) && lastSeenDays >= 14 && !(Number.isFinite(firstSeenDays) && firstSeenDays <= 0)) {
+            return "Infrequent detection";
+          }
+          return "";
+        }
+
+        function renderAmbientSummary() {
+          els.periodLabel.textContent = periodTitle();
+          const kpis = state.kpis || {};
+          const lifeList = Number(kpis.lifetime_species);
+          els.lifeListCount.textContent = Number.isFinite(lifeList) ? String(lifeList) : "—";
+          const streak = Number(kpis.detection_streak && kpis.detection_streak.days);
+          els.streakValue.textContent = Number.isFinite(streak) ? `${streak} day${streak === 1 ? "" : "s"}` : "Building";
+          const expected = state.expectedInsight && Array.isArray(state.expectedInsight.species)
+            ? state.expectedInsight.species.filter(item => item && typeof item === "object")
+            : [];
+          const hour = new Date().getHours();
+          if (expected.length === 0) {
+            els.insightCopy.textContent = "Morning and evening expectations are building history.";
+          } else {
+            const morning = expected[0];
+            const evening = expected[1] || morning;
+            const name = hour < 11 ? morning.common_name : evening.common_name;
+            const years = Number(hour < 11 ? morning.years_seen : evening.years_seen);
+            const lastSeen = hour < 11 ? morning.last_seen_date : evening.last_seen_date;
+            const period = hour < 11 ? "Morning" : "Evening";
+            els.insightCopy.textContent = `${period}: ${name || "a familiar species"} is expected today${Number.isFinite(years) ? ` from ${years} year${years === 1 ? "" : "s"} of history` : ""}${lastSeen ? `; last recorded ${lastSeen}` : ""}.`;
+          }
+          clearChildren(els.activityStrip);
+          const maximum = Math.max(1, ...state.hourly);
+          state.hourly.slice(0, 24).forEach((count, hourIndex) => {
+            const bar = document.createElement("span");
+            const value = Math.max(0, Number(count) || 0);
+            bar.style.height = `${Math.max(3, Math.round((value / maximum) * 100))}%`;
+            bar.dataset.active = String(hourIndex === new Date().getHours());
+            bar.title = `${hourIndex}:00 · ${value} detections`;
+            els.activityStrip.appendChild(bar);
+          });
+          renderAudioHealth();
+        }
+
+        function renderSpecies() {
+          els.speciesTitle.textContent = periodHeading();
+          els.periodButtons.forEach(button => {
+            button.setAttribute("aria-pressed", String(button.dataset.speciesPeriod === state.speciesPeriod));
+          });
+          clearChildren(els.speciesGrid);
+          const species = state.summary.slice(0, MAX_SPECIES);
+          if (species.length === 0) {
+            const loading = state.rangeLoadingPeriod === state.speciesPeriod;
+            const title = loading
+              ? `Loading ${periodTitle().toLowerCase()}`
+              : state.apiOnline === false || state.dataError
+                ? "Bird detector unavailable"
+                : "No birds heard yet";
+            const copy = loading
+              ? "Fetching the most active species for this period."
+              : state.audioKnown && state.configuredSources.length === 0
+                ? "Detected species will appear after a microphone is connected."
+                : "Model-detected species and reference photos will fill this space.";
+            const empty = emptyPanel(title, copy);
+            empty.style.gridColumn = "1 / -1";
+            empty.style.gridRow = "1 / -1";
+            els.speciesGrid.appendChild(empty);
+            return;
+          }
+
+          species.forEach(item => {
+            const card = document.createElement("article");
+            card.className = "species-card";
+            const commonName = item.common_name || "Unknown bird";
+            const scientificName = item.scientific_name || "";
+            const copy = document.createElement("div");
+            copy.className = "species-copy";
+            const name = document.createElement("h3");
+            name.className = "species-name";
+            name.textContent = commonName;
+            const meta = document.createElement("p");
+            meta.className = "species-meta";
+            const lastHeard = item.last_heard || item.latest_heard;
+            meta.textContent = lastHeard ? `Last heard ${formatLastHeard(lastHeard)}` : scientificName;
+            copy.append(name, meta);
+            const novelty = noveltyReason(item);
+            if (novelty) {
+              const badge = document.createElement("span");
+              badge.className = "novelty-badge";
+              badge.textContent = novelty;
+              badge.setAttribute("aria-label", `Novelty: ${novelty}`);
+              copy.appendChild(badge);
+            }
+            const count = document.createElement("span");
+            count.className = "species-count";
+            count.textContent = String(Number(item.count) || 0);
+            count.setAttribute("aria-label", `${count.textContent} detections`);
+            card.append(createThumb(scientificName, commonName), copy, count);
+            els.speciesGrid.appendChild(card);
+          });
+        }
+
+        function renderRecent() {
+          clearChildren(els.recentList);
+          const candidates = candidateDetections();
+          const reviewed = reviewedDetections();
+          const detections = reviewDetections().slice(0, MAX_RECENT);
+          els.reviewButtons.forEach(button => {
+            button.setAttribute("aria-pressed", String(button.dataset.reviewFilter === state.reviewFilter));
+          });
+          els.recentNote.textContent = state.dataError
+            ? "Showing last update"
+            : `${candidates.length} Needs review · ${reviewed.length} reviewed`;
+          if (detections.length === 0) {
+            if (state.apiOnline === false || state.dataError) {
+              els.recentList.appendChild(
+                emptyPanel("Bird detector unavailable", "Recent detection data will return automatically.")
+              );
+              return;
+            }
+            const copy = state.reviewFilter === "needs-review"
+              ? "No unreviewed model candidates are in these recent results."
+              : state.reviewFilter === "reviewed"
+                ? "No recent records have been marked correct or false positive."
+                : state.audioKnown && state.configuredSources.length === 0
+              ? "Waiting for a microphone before detection can begin."
+              : "The latest four calls will appear here.";
+            const title = state.reviewFilter === "all" ? "No birds heard yet"
+              : state.reviewFilter === "reviewed" ? "No reviewed results" : "No candidates waiting";
+            els.recentList.appendChild(emptyPanel(title, copy));
+            return;
+          }
+
+          detections.forEach(detection => {
+            const row = document.createElement("article");
+            row.className = "recent-row";
+            const button = document.createElement("button");
+            button.className = "detection-detail";
+            button.type = "button";
+            const commonName = detection.commonName || "Unknown bird";
+            const scientificName = detection.scientificName || "";
+            const copy = document.createElement("div");
+            copy.className = "species-copy";
+            const name = document.createElement("h3");
+            name.className = "recent-name";
+            name.textContent = commonName;
+            const detail = document.createElement("p");
+            detail.className = "recent-detail";
+            const confidence = confidencePercent(detection.confidence);
+            const verification = verificationStatus(detection);
+            row.dataset.verification = verification.key;
+            detail.textContent = confidence === null
+              ? verification.shortLabel
+              : `${confidence}% confidence · ${verification.shortLabel}`;
+            copy.append(name, detail);
+            const time = document.createElement("time");
+            time.className = "recent-time";
+            time.textContent = formatTime(detection);
+            button.append(createThumb(scientificName, commonName), copy, time);
+            const detailConfidence = confidencePercent(detection.confidence);
+            button.setAttribute("aria-label", `Open detection detail for ${commonName}, ${verification.label}${detailConfidence === null ? "" : `, ${detailConfidence}% confidence`}`);
+            button.addEventListener("click", () => openDetectionDetail(detection));
+            row.appendChild(button);
+            els.recentList.appendChild(row);
+          });
+        }
+
+        function detectionId(detection) {
+          const id = Number(detection && detection.id);
+          return Number.isSafeInteger(id) && id >= 0 ? id : null;
+        }
+
+        function openDetectionDetail(detection) {
+          const id = detectionId(detection);
+          const commonName = detection.commonName || "Unknown bird";
+          const verification = verificationStatus(detection);
+          els.detailName.textContent = commonName;
+          els.detailScientific.textContent = detection.scientificName || "Species name unavailable";
+          els.detailMeta.textContent = id === null
+            ? `${verification.label}. This legacy detection has no numeric ID, so media is unavailable.`
+            : `${verification.label}. Heard ${formatTime(detection)}. Audio and spectrogram are read-only media for detection #${id}.`;
+          els.detailAudio.pause();
+          els.detailAudio.removeAttribute("src");
+          els.detailAudio.load();
+          els.detailSpectrogram.hidden = true;
+          els.detailSpectrogram.removeAttribute("src");
+          if (id !== null) {
+            els.detailAudio.src = `/api/v2/audio/${id}`;
+            els.detailSpectrogram.src = `/api/v2/spectrogram/${id}`;
+            els.detailSpectrogram.hidden = false;
+          }
+          if (typeof els.detectionDialog.showModal === "function") els.detectionDialog.showModal();
+        }
+
+        function render() {
+          const status = statusFromState();
+          setStatus(status.title, status.detail, status.tone);
+          const summaryCount = state.summary.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+          const kpiCount = Number(state.kpis && state.kpis.today_detections);
+          const rangePeriod = isRangePeriod();
+          const count = !rangePeriod && Number.isFinite(kpiCount) ? kpiCount : summaryCount;
+          const metricPeriod = state.speciesPeriod === "today" ? "today" : periodTitle().toLowerCase();
+          els.speciesCount.textContent = String(state.summary.length);
+          els.callCount.textContent = String(count);
+          els.speciesMetricLabel.textContent = `species detected ${metricPeriod}`;
+          els.callMetricLabel.textContent = `detections ${metricPeriod}`;
+          renderAmbientSummary();
+          if (state.lastUpdatedAt) {
+            const updated = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" })
+              .format(state.lastUpdatedAt);
+            els.updatedLabel.textContent = state.dataError
+              ? `Last complete update ${updated} · Data may be stale`
+              : `Updated ${updated} · Live data from BirdNET-Go`;
+          } else {
+            els.updatedLabel.textContent = "Live data from BirdNET-Go";
+          }
+          const detection = latestDetection();
+          const heroKey = detection
+            ? JSON.stringify([detection.id, detection.timestamp, detection.time, detection.confidence, detection.verified, state.dataError])
+            : JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length, state.audioLevelsActive, audioFreshnessState()]);
+          const speciesKey = state.summary.length > 0
+            ? JSON.stringify([state.dataError, state.summary.slice(0, MAX_SPECIES).map(item => [item.scientific_name, item.count, item.last_heard || item.latest_heard])])
+            : JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length]);
+          const recentKey = state.recent.length > 0
+            ? JSON.stringify([state.dataError, state.reviewFilter, state.recent.map(item => [item.id, item.timestamp, item.time, item.confidence, item.verified])])
+            : JSON.stringify(["empty", state.reviewFilter, state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length]);
+
+          if (heroKey !== state.renderKeys.hero) {
+            state.renderKeys.hero = heroKey;
+            renderHero();
+          }
+          if (speciesKey !== state.renderKeys.species) {
+            state.renderKeys.species = speciesKey;
+            renderSpecies();
+          }
+          if (recentKey !== state.renderKeys.recent) {
+            state.renderKeys.recent = recentKey;
+            renderRecent();
+          }
+        }
+
+        function normalizeHourly(payload) {
+          const values = Array.isArray(payload) ? payload : payload && (payload.hours || payload.data || payload.hourly);
+          if (!Array.isArray(values)) return Array(24).fill(0);
+          const hourly = Array(24).fill(0);
+          values.forEach((item, index) => {
+            const hour = Number(item && (item.hour ?? item.hour_of_day ?? item.time)) || index;
+            const rawCount = item && typeof item === "object" ? (item.count ?? item.detections ?? item.value) : item;
+            const count = Number(rawCount) || 0;
+            if (Number.isInteger(hour) && hour >= 0 && hour < 24) hourly[hour] = count;
+          });
+          return hourly;
+        }
+
+        async function refreshRange(period = state.speciesPeriod) {
+          if (disposed || document.hidden || !isRangePeriod(period)) return;
+          const requestedPeriod = period;
+          const generation = activeGeneration;
+          const { start, end } = periodRange(requestedPeriod);
+          try {
+            const result = await fetchJson(`/api/v2/analytics/species/summary?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`);
+            if (disposed || document.hidden || generation !== activeGeneration) return;
+            state.rangeSummaries[requestedPeriod] = summaryItems(result);
+            if (state.speciesPeriod !== requestedPeriod) return;
+            state.rangeLoadingPeriod = "";
+            state.summary = state.rangeSummaries[requestedPeriod];
+            state.renderKeys.species = "";
+            render();
+          } catch (_error) {
+            if (disposed || document.hidden || generation !== activeGeneration) return;
+            if (state.speciesPeriod !== requestedPeriod) return;
+            state.rangeLoadingPeriod = "";
+            state.renderKeys.species = "";
+            render();
+          }
+        }
+
+        async function refreshFast() {
+          if (disposed || document.hidden) return;
+          if (refreshPromise) return refreshPromise;
+          refreshPromise = (async () => {
+            const generation = activeGeneration;
+            const results = await Promise.allSettled([
+              fetchJson("/api/v2/health"),
+              fetchJson("/api/v2/streams/sources"),
+              fetchJson("/api/v2/detections/recent?limit=10"),
+            ]);
+            if (disposed || document.hidden || generation !== activeGeneration) return;
+            const health = results[0];
+            if (health.status === "fulfilled") {
+              state.health = health.value;
+              state.apiOnline = true;
+            } else {
+              state.apiOnline = false;
+            }
+            const audio = results[1];
+            if (audio.status === "fulfilled") {
+              const hadSources = state.configuredSources.length > 0;
+              state.configuredSources = configuredSourceList(audio.value);
+              if (state.configuredSources.length > 0 && !hadSources) state.audioSourceObservedAt = new Date();
+              if (state.configuredSources.length === 0) state.audioSourceObservedAt = null;
+              state.audioKnown = true;
+              state.audioError = false;
+            } else {
+              state.configuredSources = [];
+              state.audioSourceObservedAt = null;
+              state.audioKnown = false;
+              state.audioError = true;
+              state.audioLevelsActive = false;
+            }
+            const recent = results[2];
+            const recentReady = recent.status === "fulfilled" && Array.isArray(recent.value);
+            if (recentReady) {
+              const ids = new Set();
+              state.recent = recent.value.filter(item => {
+                if (!item || typeof item !== "object") return false;
+                const key = item.id ?? [item.timestamp, item.time, item.scientificName, item.confidence].join("|");
+                if (ids.has(key)) return false;
+                ids.add(key);
+                return true;
+              });
+            }
+            state.dataError = !recentReady;
+            if (recentReady) state.lastUpdatedAt = new Date();
+            render();
+          })().finally(() => {
+            refreshPromise = null;
+          });
+          return refreshPromise;
+        }
+
+        async function refreshAnalytics() {
+          if (disposed || document.hidden) return;
+          if (analyticsPromise) return analyticsPromise;
+          analyticsPromise = (async () => {
+            const generation = activeGeneration;
+            const results = await Promise.allSettled([
+              fetchJson("/api/v2/analytics/species/daily"),
+              fetchJson("/api/v2/dashboard/kpis"),
+              fetchJson(`/api/v2/analytics/time/distribution/hourly?start_date=${encodeURIComponent(isoDate())}&end_date=${encodeURIComponent(isoDate())}`),
+              fetchJson("/api/v2/insights/expected-today"),
+              fetchJson("/api/v2/weather/latest"),
+            ]);
+            if (disposed || document.hidden || generation !== activeGeneration) return;
+            const summary = results[0];
+            const summaryReady = summary.status === "fulfilled" && summaryItems(summary.value).length >= 0;
+            if (summaryReady) {
+              state.dailySummary = summaryItems(summary.value);
+              if (!isRangePeriod()) state.summary = state.dailySummary;
+            }
+            const kpis = results[1];
+            if (kpis.status === "fulfilled" && kpis.value && typeof kpis.value === "object") {
+              state.kpis = kpis.value;
+            }
+            const hourly = results[2];
+            if (hourly.status === "fulfilled") state.hourly = normalizeHourly(hourly.value);
+            const expected = results[3];
+            if (expected.status === "fulfilled" && expected.value && typeof expected.value === "object") {
+              state.expectedInsight = expected.value;
+            }
+            const weather = results[4];
+            if (weather.status === "fulfilled" && weather.value && typeof weather.value === "object") state.weather = weather.value;
+            if (isRangePeriod()) refreshRange(state.speciesPeriod);
+            render();
+          })().finally(() => {
+            analyticsPromise = null;
+          });
+          return analyticsPromise;
+        }
+
+        function invalidateDetectionData() {
+          state.rangeSummaries = { "7-days": null, "30-days": null };
+          if (isRangePeriod()) state.rangeLoadingPeriod = state.speciesPeriod;
+        }
+
+        function scheduleRefresh() {
+          if (disposed || document.hidden) return;
+          window.clearTimeout(refreshDebounce);
+          refreshDebounce = window.setTimeout(() => {
+            invalidateDetectionData();
+            refreshFast();
+          }, 450);
+        }
+
+        function stopLiveStreams() {
+          if (detectionStream) detectionStream.close();
+          if (audioStream) audioStream.close();
+          detectionStream = null;
+          audioStream = null;
+          window.clearTimeout(audioFreshnessTimer);
+          audioFreshnessTimer = null;
+          state.audioLevelsActive = false;
+        }
+
+        function startLiveStreams() {
+          stopLiveStreams();
+          if (disposed || document.hidden) return;
+          detectionStream = new EventSource("/api/v2/detections/stream");
+          detectionStream.onmessage = scheduleRefresh;
+          detectionStream.addEventListener("detection", scheduleRefresh);
+          audioStream = new EventSource("/api/v2/streams/audio-level");
+          const handleAudioLevel = event => {
+            try {
+              const payload = JSON.parse(event.data);
+              const levelValues = validAudioLevels(payload);
+              state.audioLevelsActive = levelValues.some(level => level > 0);
+              if (levelValues.length > 0) {
+                state.audioLastAt = new Date();
+                state.audioSamples.push(...levelValues);
+                state.audioSamples = state.audioSamples.slice(-12);
+                state.audioLevel = state.audioSamples.reduce((sum, level) => sum + level, 0) / state.audioSamples.length / 100;
+                state.audioKnown = true;
+                state.audioError = false;
+                window.clearTimeout(audioFreshnessTimer);
+                audioFreshnessTimer = window.setTimeout(() => {
+                  state.audioLevelsActive = false;
+                  render();
+                }, AUDIO_LEVEL_STALE_MS);
+              }
+              render();
+            } catch (_error) {
+              // Invalid stream events are not evidence that audio is arriving.
+            }
+          };
+          audioStream.onmessage = handleAudioLevel;
+          audioStream.addEventListener("audio-level", handleAudioLevel);
+          audioStream.onerror = () => {
+            window.clearTimeout(audioFreshnessTimer);
+            state.audioLevelsActive = false;
+            render();
+          };
+        }
+
+        function startTimers() {
+          window.clearInterval(fastTimer);
+          window.clearInterval(analyticsTimer);
+          window.clearInterval(detectionFallbackTimer);
+          window.clearInterval(clockTimer);
+          fastTimer = window.setInterval(() => {
+            if (!document.hidden) refreshFast();
+          }, FAST_POLL_INTERVAL_MS);
+          analyticsTimer = window.setInterval(() => {
+            if (!document.hidden) refreshAnalytics();
+          }, ANALYTICS_REFRESH_INTERVAL_MS);
+          detectionFallbackTimer = window.setInterval(() => {
+            if (!document.hidden) refreshFast();
+          }, DETECTION_FALLBACK_INTERVAL_MS);
+          clockTimer = window.setInterval(() => {
+            if (!document.hidden && !disposed) updateClock();
+          }, 30000);
+        }
+
+        function pausePageActivity() {
+          activeGeneration += 1;
+          stopLiveStreams();
+          abortActiveFetches();
+          window.clearTimeout(refreshDebounce);
+          window.clearTimeout(attributionRetry);
+          refreshDebounce = null;
+          attributionRetry = null;
+        }
+
+        function disposePage() {
+          if (disposed) return;
+          disposed = true;
+          pausePageActivity();
+          window.clearInterval(fastTimer);
+          window.clearInterval(analyticsTimer);
+          window.clearInterval(detectionFallbackTimer);
+          window.clearInterval(clockTimer);
+          fastTimer = null;
+          analyticsTimer = null;
+          detectionFallbackTimer = null;
+          clockTimer = null;
+        }
+
+        document.addEventListener("visibilitychange", () => {
+          if (document.hidden) {
+            pausePageActivity();
+          } else {
+            updateClock();
+            refreshFast();
+            refreshAnalytics();
+            startLiveStreams();
+            retryDeferredImages();
+            if (state.attributionSpecies && !state.attribution) {
+              loadAttribution(state.attributionSpecies);
+            }
+          }
+        });
+        window.addEventListener("pagehide", disposePage);
+        window.addEventListener("beforeunload", disposePage);
+        els.periodButtons.forEach(button => {
+          button.addEventListener("click", () => setSpeciesPeriod(button.dataset.speciesPeriod));
+        });
+        els.reviewButtons.forEach(button => {
+          button.addEventListener("click", () => setReviewFilter(button.dataset.reviewFilter));
+        });
+        els.dialogClose.addEventListener("click", () => els.detectionDialog.close());
+        els.detectionDialog.addEventListener("close", () => {
+          els.detailAudio.pause();
+          els.detailAudio.removeAttribute("src");
+          els.detailAudio.load();
+          els.detailSpectrogram.removeAttribute("src");
+        });
+        updateClock();
+        render();
+        refreshFast();
+        refreshAnalytics();
+        startLiveStreams();
+        startTimers();
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,373 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+COMPOSE_FILE="$ROOT_DIR/docker-compose.yaml"
+ENV_FILE="$ROOT_DIR/.env.example"
+VIEW_FILE="$ROOT_DIR/frame-view/index.html"
+NGINX_FILE="$ROOT_DIR/frame-view/nginx.conf"
+
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
+
+for required_file in "$COMPOSE_FILE" "$ENV_FILE" "$VIEW_FILE" "$NGINX_FILE"; do
+  [[ -f "$required_file" ]] || fail "missing required frame-view file: $required_file"
+done
+
+# The frame view is a separate least-privilege service. Keep the analyzer image
+# immutable and proxy only its public read endpoints on one same-origin page.
+grep -Fq 'birdnet-frame-view:' "$COMPOSE_FILE" || fail 'Compose must define the frame-view service'
+grep -Eq 'ghcr[.]io/nginx/nginx-unprivileged:1[.]31[.]3-alpine3[.]24@sha256:[0-9a-f]{64}' "$COMPOSE_FILE" || \
+  fail 'frame-view image must pin the reviewed NGINX release manifest'
+grep -Fq 'FRAME_VIEW_PORT:-8091' "$COMPOSE_FILE" || fail 'frame-view must use the reserved LAN port'
+grep -Fq '${BIRDNET_FRAME_VIEW_DIR:-/mnt/user/appdata/birdnet-go/frame-view}/index.html:/usr/share/nginx/html/index.html:ro' "$COMPOSE_FILE" || \
+  fail 'frame view HTML must come from readable appdata and be mounted read-only'
+grep -Fq '${BIRDNET_FRAME_VIEW_DIR:-/mnt/user/appdata/birdnet-go/frame-view}/nginx.conf:/etc/nginx/conf.d/default.conf:ro' "$COMPOSE_FILE" || \
+  fail 'frame view proxy configuration must come from readable appdata and be mounted read-only'
+grep -Fq 'read_only: true' "$COMPOSE_FILE" || fail 'frame-view root filesystem must be read-only'
+grep -Fq 'no-new-privileges:true' "$COMPOSE_FILE" || fail 'frame-view must set no-new-privileges'
+grep -Fq 'cap_drop:' "$COMPOSE_FILE" || fail 'frame-view must explicitly drop Linux capabilities'
+grep -Fq 'FRAME_VIEW_PORT=8091' "$ENV_FILE" || fail 'sample env must reserve the frame-view port'
+grep -Fq 'BIRDNET_FRAME_VIEW_DIR=/mnt/user/appdata/birdnet-go/frame-view' "$ENV_FILE" || \
+  fail 'sample env must keep runtime frame assets off the FAT boot filesystem'
+
+# Relative upstream URLs keep browser traffic same-origin and avoid embedding
+# credentials, private addresses, or deployment-specific hostnames in the page.
+grep -Fq 'proxy_pass http://birdnet-go:8080;' "$NGINX_FILE" || fail 'NGINX must proxy to BirdNET-Go by service name'
+grep -Fq 'location /api/' "$NGINX_FILE" || fail 'NGINX must expose the BirdNET public API path'
+grep -Fq 'proxy_buffering off;' "$NGINX_FILE" || fail 'SSE proxying must disable response buffering'
+grep -Fq 'proxy_set_header Authorization "";' "$NGINX_FILE" || fail 'frame proxy must strip authorization credentials'
+grep -Fq 'proxy_set_header Cookie "";' "$NGINX_FILE" || fail 'frame proxy must strip browser credentials'
+grep -Fq 'location = /healthz' "$NGINX_FILE" || fail 'frame-view must provide an isolated health endpoint'
+grep -Fq "default-src 'none'" "$NGINX_FILE" || fail 'frame-view must send a restrictive content security policy'
+! grep -Eq '192[.]168[.]|token=|password=|username=' "$VIEW_FILE" || \
+  fail 'frame view must not contain private hosts or URL credentials'
+
+# The display contract intentionally uses BirdNET-Go's public v2 API. Keep the
+# surface bounded: one daily summary, recent detections, two SSE streams, and
+# on-demand attributed images for the visible species only.
+grep -Fq '/api/v2/analytics/species/daily' "$VIEW_FILE" || fail 'frame view must load today species summary'
+grep -Fq '/api/v2/detections/recent' "$VIEW_FILE" || fail 'frame view must load recent detections'
+grep -Fq '/api/v2/detections/stream' "$VIEW_FILE" || fail 'frame view must refresh on live detections'
+grep -Fq 'addEventListener("detection"' "$VIEW_FILE" || fail 'frame view must consume BirdNET named detection events'
+grep -Fq '/api/v2/streams/sources' "$VIEW_FILE" || fail 'frame view must inspect public audio source state'
+grep -Fq '/api/v2/streams/audio-level' "$VIEW_FILE" || fail 'frame view must distinguish active and missing audio'
+grep -Fq '/api/v2/media/species-image?name=' "$VIEW_FILE" || fail 'frame view must show real species images'
+grep -Fq '/api/v2/media/species-image/info?name=' "$VIEW_FILE" || fail 'hero image must expose provider attribution'
+
+for state_copy in 'Listening' 'Waiting for a microphone' 'No birds heard yet' 'Bird detector unavailable'; do
+  grep -Fq "$state_copy" "$VIEW_FILE" || fail "missing explicit kiosk state: $state_copy"
+done
+
+grep -Fq 'aria-live="polite"' "$VIEW_FILE" || fail 'status changes must be announced accessibly'
+grep -Fq 'visibilitychange' "$VIEW_FILE" || fail 'hidden pages must release live streams'
+grep -Fq 'overflow: hidden' "$VIEW_FILE" || fail 'kiosk view must not expose a scrollbar'
+grep -Fq '@media (max-height: 1100px)' "$VIEW_FILE" || fail 'layout must explicitly fit the 1920x1080 frame'
+grep -Fq '@media (max-width: 1100px) and (max-height: 650px)' "$VIEW_FILE" || \
+  fail 'layout must account for the frame 320-dpi CSS viewport'
+
+# A wide browser shows up to four two-line recent detections. Give that panel
+# the same vertical share as Today's species. Do not hide overflow on the base
+# row: at fractional browser zoom that masks the confidence line instead of
+# making room for it.
+desktop_side_css=$(awk '
+  /^[[:space:]]*[.]side[[:space:]]*\{/ { active = 1 }
+  active { print }
+  active && /^[[:space:]]*}/ { exit }
+' "$VIEW_FILE")
+recent_row_css=$(awk '
+  /^[[:space:]]*[.]recent-row[[:space:]]*\{/ { active = 1 }
+  active { print }
+  active && /^[[:space:]]*}/ { exit }
+' "$VIEW_FILE")
+grep -Fq 'grid-template-rows: repeat(2, minmax(0, 1fr));' <<<"$desktop_side_css" || \
+  fail 'wide dashboard must split species and recent panels evenly'
+if grep -Fq 'overflow: hidden;' <<<"$recent_row_css"; then
+  fail 'recent rows must not clip their confidence line at fractional zoom'
+fi
+
+# A zoomed desktop can have a shorter effective CSS viewport than FrameOS.
+# Let that document scroll and reserve enough height for four complete recent
+# rows, while keeping the 960x540 frame in the fixed kiosk breakpoint above.
+short_desktop_css=$(awk '
+  /@media \(min-width: 601px\) and \(max-height: 539px\)/ { active = 1 }
+  active {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (depth == 0) exit
+  }
+' "$VIEW_FILE")
+
+[[ -n "$short_desktop_css" ]] || \
+  fail 'frame view must scroll short desktops below the frame 540px height'
+grep -Fq 'overflow-y: auto;' <<<"$short_desktop_css" || \
+  fail 'zoomed short desktop must allow vertical scrolling'
+grep -Fq 'min-height: 420px;' <<<"$short_desktop_css" || \
+  fail 'zoomed short desktop must reserve enough dashboard content height'
+grep -Fq 'grid-template-rows: repeat(4, minmax(35px, 1fr));' <<<"$short_desktop_css" || \
+  fail 'zoomed short desktop must preserve all four two-line recent rows'
+
+# The recorded-first badge is a dedicated third line in each species card.
+# An inline-block contributes an additional baseline line box, which makes the
+# thumbnail and badge escape the compact 960x540 card even when the text fits.
+novelty_badge_css=$(awk '
+  /^[[:space:]]*[.]novelty-badge[[:space:]]*\{/ { active = 1 }
+  active { print }
+  active && /^[[:space:]]*}/ { exit }
+' "$VIEW_FILE")
+grep -Fq 'display: block;' <<<"$novelty_badge_css" || \
+  fail 'species novelty badges must not add inline baseline overflow'
+
+# Every recent row wraps its content in a button. The button must use the
+# row's available height, opt out of its intrinsic minimum, and reset the
+# browser's default button padding or its thumbnail can escape the grid row.
+detection_detail_css=$(awk '
+  /^[[:space:]]*[.]detection-detail[[:space:]]*\{/ { active = 1 }
+  active { print }
+  active && /^[[:space:]]*}/ { exit }
+' "$VIEW_FILE")
+grep -Fq 'height: 100%;' <<<"$detection_detail_css" || \
+  fail 'recent detection controls must fill their row'
+grep -Fq 'min-height: 0;' <<<"$detection_detail_css" || \
+  fail 'recent detection controls must shrink inside their row'
+grep -Fq 'padding: 0;' <<<"$detection_detail_css" || \
+  fail 'recent detection controls must reset browser button padding'
+
+# A 1512x711 desktop is taller than the compact FrameOS breakpoint but too
+# short for the roomy base cards: live geometry otherwise gives 56px species
+# rows that need 66px and 41px recent rows that need 55px. Compact only the
+# cards at this middle height, including the nested detection button and thumb.
+middle_height_css=$(awk '
+  /@media \(min-width: 1101px\) and \(max-height: 800px\),/ { active = 1 }
+  active {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (depth == 0) exit
+  }
+' "$VIEW_FILE")
+
+[[ -n "$middle_height_css" ]] || fail 'frame view must define a middle-height desktop layout'
+grep -Fq '(min-width: 601px) and (min-height: 651px) and (max-height: 800px)' \
+  <<<"$middle_height_css" || fail 'middle-height layout must cover the 1100px breakpoint gap'
+grep -Fq '.species-card' <<<"$middle_height_css" || \
+  fail 'middle-height layout must compact species cards'
+grep -Fq '.detection-detail' <<<"$middle_height_css" || \
+  fail 'middle-height layout must size the nested recent-detail control'
+grep -Fq '.recent-row .thumb' <<<"$middle_height_css" || \
+  fail 'middle-height layout must contain recent thumbnails'
+grep -Fq 'height: 100%;' <<<"$middle_height_css" || \
+  fail 'middle-height detection controls must fill their row explicitly'
+grep -Fq 'min-height: 0;' <<<"$middle_height_css" || \
+  fail 'middle-height detection content must be allowed to shrink inside its row'
+
+# Phones need a real document flow instead of the fixed-height kiosk surface.
+# Keep this contract separate from the short-landscape FrameOS breakpoint: a
+# narrow portrait viewport must stack each dashboard panel full-width, remain
+# readable, and permit vertical scrolling without horizontal overflow.
+mobile_css=$(awk '
+  /@media \(max-width: 600px\)/ { active = 1 }
+  active {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (depth == 0) exit
+  }
+' "$VIEW_FILE")
+
+[[ -n "$mobile_css" ]] || fail 'frame view must define a phone layout at 600px or narrower'
+grep -Fq 'overflow-x: hidden;' <<<"$mobile_css" || fail 'phone layout must prevent horizontal overflow'
+grep -Fq 'overflow-y: auto;' <<<"$mobile_css" || fail 'phone layout must allow vertical scrolling'
+grep -Fq 'flex-direction: column;' <<<"$mobile_css" || fail 'phone header must stack cleanly'
+grep -Fq 'grid-template-columns: minmax(0, 1fr);' <<<"$mobile_css" || \
+  fail 'phone layout must use one full-width content column'
+grep -Fq '.species-grid' <<<"$mobile_css" || fail 'phone layout must restack species cards'
+grep -Fq '.recent-list' <<<"$mobile_css" || fail 'phone layout must restack recent detections'
+grep -Fq 'grid-template-rows: none;' <<<"$mobile_css" || \
+  fail 'phone cards must grow with readable text instead of clipping fixed rows'
+grep -Fq 'white-space: normal;' <<<"$mobile_css" || fail 'phone text must be allowed to wrap'
+grep -Fq 'overflow-wrap: anywhere;' <<<"$mobile_css" || fail 'phone text must not overflow narrow cards'
+grep -Fq 'Photo unavailable' "$VIEW_FILE" || fail 'broken images must retain a stable fallback'
+grep -Fq 'retrySpeciesImage' "$VIEW_FILE" || fail 'cold species images must be retried in place'
+
+# Species reference art is displayed inside a fixed hero panel. Preserve the
+# complete source image so birds are not cut off by the panel's aspect ratio.
+hero_image_css=$(sed -n '/^[[:space:]]*\.hero-image[[:space:]]*{/,/^[[:space:]]*}/p' "$VIEW_FILE")
+grep -Fq 'object-fit: contain;' <<<"$hero_image_css" || \
+  fail 'hero species image must preserve the complete image with object-fit: contain'
+
+# attachImage hides images until onload. Thumbnails are visible immediately,
+# so createThumb must request eager loading rather than relying on a hidden
+# image's lazy-load visibility heuristics.
+create_thumb_fn=$(sed -n '/^[[:space:]]*function createThumb(/,/^[[:space:]]*function /p' "$VIEW_FILE")
+grep -Eq 'attachImage\(img, fallback, scientificName, .*\, true\);' <<<"$create_thumb_fn" || \
+  fail 'createThumb must request eager species-image loading'
+
+# Ambient dashboard contract: Today is stable by default and longer windows
+# are viewer-selected. The old timer made the count appear to change at random,
+# especially because every fresh detection restarted it at the daily view.
+grep -Fq 'SPECIES_PERIODS' "$VIEW_FILE" || fail 'frame view must define selectable species periods'
+for species_period in 'today' '7-days' '30-days'; do
+  grep -Fq "data-species-period=\"${species_period}\"" "$VIEW_FILE" || \
+    fail "species period selector must expose ${species_period}"
+done
+grep -Eq 'role="group"[^>]+aria-label="[^"]*[Ss]pecies[^"]*[Pp]eriod' "$VIEW_FILE" || \
+  fail 'species period selector must be an accessible labelled group'
+grep -Fq 'aria-pressed="true"' "$VIEW_FILE" || \
+  fail 'species period selector must expose its selected state'
+grep -Fq 'speciesPeriod: "today"' "$VIEW_FILE" || \
+  fail 'species period selector must default to Today'
+grep -Fq 'speciesTitle.textContent = periodHeading()' "$VIEW_FILE" || \
+  fail 'species heading must describe the selected period'
+! grep -Fq 'ROTATION_INTERVAL_MS' "$VIEW_FILE" || \
+  fail 'species periods must not change on an automatic timer'
+! grep -Fq 'setRotationPeriod("live")' "$VIEW_FILE" || \
+  fail 'new detections must not override the viewer-selected species period'
+
+# A species can be interesting even when it is not the newest detection. These
+# remain model-record labels rather than claims that a bird was truly present.
+grep -Fq 'novelty-badge' "$VIEW_FILE" || fail 'species cards must provide an accessible novelty badge'
+for novelty_copy in 'First recorded' 'Recorded this year' 'Recorded this season' 'Infrequent detection'; do
+  grep -Fq "$novelty_copy" "$VIEW_FILE" || fail "missing model-record novelty copy: ${novelty_copy}"
+done
+
+# BirdNET classifications are candidates until an operator marks the upstream
+# record. Preserve false-positive rows as evidence, but never let one remain the
+# hero or silently call confidence confirmation.
+grep -Fq 'function verificationStatus(detection)' "$VIEW_FILE" || \
+  fail 'frame view must normalize upstream review status'
+for verification_value in 'correct' 'false_positive'; do
+  grep -Fq "$verification_value" "$VIEW_FILE" || fail "missing upstream verification state: ${verification_value}"
+done
+for verification_copy in 'Model candidate · needs review' 'Marked correct' 'Marked false positive'; do
+  grep -Fq "$verification_copy" "$VIEW_FILE" || fail "missing honest verification copy: ${verification_copy}"
+done
+grep -Fq 'latestDisplayDetection(state.recent)' "$VIEW_FILE" || \
+  fail 'hero must select a non-rejected display detection'
+grep -Fq 'return state.recent;' "$VIEW_FILE" || \
+  fail 'all-results review filter must retain raw candidates and rejected evidence'
+grep -Fq 'detection.verified' "$VIEW_FILE" || fail 'hero render key must react to review changes'
+grep -Fq 'item.verified' "$VIEW_FILE" || fail 'recent render key must react to review changes'
+! grep -Fq 'High-confidence visitor' "$VIEW_FILE" || \
+  fail 'model confidence must not be described as a confirmed visitor'
+grep -Fq '>recorded species<' "$VIEW_FILE" || \
+  fail 'opaque upstream lifetime KPI must be labelled as recorded, not confirmed'
+grep -Fq 'Recent model results' "$VIEW_FILE" || fail 'recent panel must include candidates and false-positive evidence'
+
+# Detection details are deliberately user-initiated: audio is available with
+# native controls, a spectrogram is represented, and no media may autoplay on
+# a wall display.
+grep -Fq 'detection-detail' "$VIEW_FILE" || fail 'detections must expose a detail view'
+grep -Eq '<button|role="button"' "$VIEW_FILE" || fail 'detection detail must be keyboard/tap reachable'
+grep -Fq 'aria-label' "$VIEW_FILE" || fail 'detection detail controls must be labelled accessibly'
+grep -Eq "<audio[^>]+controls|controls[^>]+<audio|[.]controls[[:space:]]*=[[:space:]]*true|setAttribute\\([\"']controls" "$VIEW_FILE" || \
+  fail 'detection detail must expose audio with native controls'
+grep -Fq 'spectrogram' "$VIEW_FILE" || fail 'detection detail must expose a spectrogram'
+! grep -Eiq '<audio[^>]*autoplay|[.]autoplay[[:space:]]*=' "$VIEW_FILE" || \
+  fail 'detection audio must never autoplay'
+
+# The ambient page should provide context for both ends of the day and show
+# the compact activity history without turning into a second admin console.
+for insight_copy in 'morning' 'evening' 'expected today'; do
+  grep -Eiq "$insight_copy" "$VIEW_FILE" || fail "missing ${insight_copy} bird insight"
+done
+grep -Eiq 'activity[-_ ]?strip|24[-_ ]hour' "$VIEW_FILE" || \
+  fail 'frame view must show a compact 24-hour activity strip'
+
+# Audio health is a rolling signal, not a one-time connection result. The UI
+# must expose both the meter and freshness timestamp/age to the viewer.
+grep -Eiq 'audio[-_ ]?meter' "$VIEW_FILE" || fail 'frame view must expose a rolling live audio meter'
+grep -Eiq 'audio[^[:cntrl:]]*(fresh|last|age)|(fresh|last|age)[^[:cntrl:]]*audio' "$VIEW_FILE" || \
+  fail 'frame view must expose live audio freshness'
+
+# Long-term value belongs in read-only KPIs: recorded species and an explicit
+# listening streak, in addition to the existing detection counters.
+grep -Fq 'lifetime_species' "$VIEW_FILE" || fail 'frame view must expose the upstream recorded-species KPI'
+grep -Eiq 'streak' "$VIEW_FILE" || fail 'frame view must expose a listening streak KPI'
+
+# Rare/high-confidence candidate notices are presentation-only. They may be announced
+# in the page, but must not create a notification permission flow or a write
+# endpoint.
+grep -Fq 'detection-alert' "$VIEW_FILE" || fail 'frame view must present detection alerts in the page'
+grep -Eiq 'rare' "$VIEW_FILE" || fail 'frame view must present rare visitor alerts'
+grep -Eiq 'high[-_ ]confidence' "$VIEW_FILE" || fail 'frame view must present high-confidence alerts'
+! grep -Fq 'Notification.requestPermission' "$VIEW_FILE" || \
+  fail 'rare/high-confidence alerts must not request notification permission'
+
+# Kiosk lighting follows the time of day and reports recovery state explicitly.
+grep -Eiq 'night[-_ ]?mode|dim[-_ ]?mode|data-night' "$VIEW_FILE" || \
+  fail 'frame view must provide automatic night/dim mode'
+grep -Eiq 'stale|offline' "$VIEW_FILE" || fail 'frame view must explain stale/offline data'
+grep -Eiq 'clip[^[:cntrl:]]*(retain|retention|kept)|(retain|retention|kept)[^[:cntrl:]]*clip' "$VIEW_FILE" || \
+  fail 'frame view must state audio clip retention'
+
+# The sidecar is a narrow, unauthenticated read-only facade. Every proxied
+# API location must allow GET only, while no write or authentication surface is
+# made public. This protects the enhancements from accidentally widening the
+# kiosk's network authority.
+grep -Fq 'limit_except GET' "$NGINX_FILE" || fail 'frame API proxy must allow only GET'
+grep -Fq 'location /api/ {' "$NGINX_FILE" || fail 'frame API proxy must retain a fail-closed API fallback'
+grep -Fq 'return 404;' "$NGINX_FILE" || fail 'unknown frame API paths must fail closed'
+! grep -Eiq 'location[^#]*(/auth|/login|/settings|/config|/token|/users)' "$NGINX_FILE" || \
+  fail 'frame proxy must not expose auth or configuration endpoints'
+! grep -Eiq '(^|[^[:alpha:]])(POST|PUT|PATCH|DELETE)([^[:alpha:]]|$)' "$NGINX_FILE" || \
+  fail 'frame proxy must not expose write methods'
+grep -Eiq "credentials[[:space:]]*:[[:space:]]*['\"]same-origin" "$VIEW_FILE" || \
+  fail 'frame view must send cached Basic Auth only to its same-origin API'
+! grep -Eiq "credentials[[:space:]]*:[[:space:]]*['\"]include|Notification[.]requestPermission" "$VIEW_FILE" || \
+  fail 'frame view must not send browser credentials cross-origin or request notification permission'
+
+# Audio source state alone is not proof that live audio is arriving. The kiosk
+# must make the latest audio evidence authoritative: a source that remains
+# "running" after its meter goes stale must not retain the green Listening
+# state. Keep the slow host watchdog separate; this is the local display truth.
+grep -Fq 'function audioFreshnessState()' "$VIEW_FILE" || \
+  fail 'frame view must derive an explicit audio freshness state'
+for freshness_copy in 'Listening now' 'Audio delayed' 'Microphone offline'; do
+  grep -Fq "$freshness_copy" "$VIEW_FILE" || fail "missing authoritative audio state: ${freshness_copy}"
+done
+grep -Fq 'AUDIO_DELAYED_AFTER_MS' "$VIEW_FILE" || \
+  fail 'frame view must bound delayed-audio status by a named freshness threshold'
+audio_status_fn=$(sed -n '/^[[:space:]]*function statusFromState(/,/^[[:space:]]*function /p' "$VIEW_FILE")
+grep -Fq 'audioFreshnessState()' <<<"$audio_status_fn" || \
+  fail 'main status must use freshness rather than source state alone'
+
+# Keep detection freshness prompt without re-running slow analytics every 15
+# seconds. Fast source/recent state has its own cadence; aggregates have an
+# explicit longer cache interval and live detection events only invalidate the
+# data that can actually have changed.
+for poll_contract in 'FAST_POLL_INTERVAL_MS' 'ANALYTICS_REFRESH_INTERVAL_MS' 'refreshFast' 'refreshAnalytics' 'invalidateDetectionData'; do
+  grep -Fq "$poll_contract" "$VIEW_FILE" || fail "missing adaptive refresh contract: ${poll_contract}"
+done
+grep -Fq 'fetchJson("/api/v2/detections/recent?limit=10")' "$VIEW_FILE" || \
+  fail 'fast refresh must retain recent-detection updates'
+grep -Fq 'fetchJson("/api/v2/weather/latest")' "$VIEW_FILE" || \
+  fail 'slow analytics refresh must retain weather-driven night mode'
+! grep -Eq '(^|[^A-Z_])POLL_INTERVAL_MS([^A-Z_]|$)' "$VIEW_FILE" || \
+  fail 'one uniform 15-second polling interval must not return'
+
+# Review is an intentional read-only flow. Counts must distinguish candidates
+# from records marked correct without turning historic candidate data into a
+# life list. The filter may only lead into the existing on-demand detail dialog;
+# it must not add a public review/mutation route to the NGINX facade.
+for review_contract in 'Needs review' 'Marked correct' 'reviewFilter' 'candidateDetections' 'reviewedDetections' 'Review model results'; do
+  grep -Fq "$review_contract" "$VIEW_FILE" || fail "missing review-queue contract: ${review_contract}"
+done
+grep -Fq 'openDetectionDetail(detection)' "$VIEW_FILE" || \
+  fail 'review queue must use the existing on-demand read-only detail flow'
+! grep -Eiq 'location[^#]*(/review|/verify|/admin|/settings)' "$NGINX_FILE" || \
+  fail 'review queue must not widen the public proxy to review or admin routes'
+
+# The no-touch frame maps volume keys to Tab/Shift+Tab and Star to Enter. A
+# compact, visible cue makes these existing controls discoverable without
+# creating a competing navigation path.
+grep -Fq 'Volume +/− selects · Star opens details' "$VIEW_FILE" || \
+  fail 'Birds view must expose the contextual physical-control hint'
+
+printf 'PASS: BirdNET frame-view contract\n'

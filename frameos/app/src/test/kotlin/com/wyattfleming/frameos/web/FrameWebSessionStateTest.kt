@@ -30,6 +30,38 @@ class FrameWebSessionStateTest {
     }
 
     @Test
+    fun `only an exact fragment route change preserves document progress`() {
+        val state = FrameWebSessionState()
+        val home = "https://home-assistant.example.invalid/local/frameos-panel.html?v=1#home"
+
+        state.recordRequest(home)
+
+        assertTrue(
+            state.isExactFragmentOnlyRequest(
+                "https://home-assistant.example.invalid/local/frameos-panel.html?v=1#calendar",
+            ),
+        )
+        assertFalse(state.isExactFragmentOnlyRequest(home))
+        assertFalse(
+            state.isExactFragmentOnlyRequest(
+                "https://home-assistant.example.invalid/local/frameos-panel.html?v=2#calendar",
+            ),
+        )
+        assertFalse(
+            state.isExactFragmentOnlyRequest(
+                "https://home-assistant.example.invalid/local/other-panel.html?v=1#calendar",
+            ),
+        )
+
+        state.recordFailure()
+        assertTrue(
+            state.isExactFragmentOnlyRequest(
+                "https://home-assistant.example.invalid/local/frameos-panel.html?v=1#calendar",
+            ),
+        )
+    }
+
+    @Test
     fun `retains the approved request for crash recovery and records a successful surface`() {
         val state = FrameWebSessionState()
         val url = "https://home-assistant.example.invalid/local/frameos-panel.html#home"

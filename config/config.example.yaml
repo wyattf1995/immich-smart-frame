@@ -63,6 +63,8 @@ offline_mode:
   expiration_hours: 168
 
 kiosk:
+  # Enable only with the companion tagging pipeline; holds unclassified imports.
+  require_ai_caption: false
   port: 3000
   behind_proxy: false
   disable_url_queries: false

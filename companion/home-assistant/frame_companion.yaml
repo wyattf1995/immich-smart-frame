@@ -1,0 +1,286 @@
+# Include as a Home Assistant package. URLs and bearer credential remain in secrets.yaml.
+rest:
+  - resource: !secret frame_companion_state_url
+    method: GET
+    headers: {Authorization: !secret frame_companion_authorization}
+    timeout: 8
+    scan_interval: 30
+    sensor:
+      - name: Frame Companion
+        unique_id: frame_companion_state
+        value_template: >-
+          {% set device = (value_json.devices | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {{ 'online' if device.online | default(false) else 'offline' }}
+        json_attributes: [devices, profiles, serverTime]
+
+input_boolean:
+  frame_morning_scene_enabled:
+    name: Frame morning scene enabled
+    icon: mdi:weather-sunset-up
+    initial: false
+
+input_datetime:
+  frame_morning_scene_time:
+    has_date: false
+    has_time: true
+
+input_select:
+  frame_morning_scene_choice:
+    name: Frame morning scene
+    options: [weather, weather_then_calendar]
+
+template:
+  - sensor:
+      - name: Frame Last Photo
+        device_class: timestamp
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('lastPhotoAt') %}
+          {{ (value / 1000) | timestamp_local if value is not none else 'unknown' }}
+      - name: Frame Last Weather
+        device_class: timestamp
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('lastWeatherAt') %}
+          {{ (value / 1000) | timestamp_local if value is not none else 'unknown' }}
+      - name: Frame Last Visible Render
+        device_class: timestamp
+        availability: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('lastPaintAt') %}
+          {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+          {% set updated_ms = (as_timestamp(states.sensor.frame_companion.last_updated, 0) * 1000) | int(0) %}
+          {% set server_ms = state_attr('sensor.frame_companion', 'serverTime') | int(0) %}
+          {% set seen_ms = device.get('lastSeenAt', 0) | int(0) %}
+          {{ is_state('sensor.frame_companion', 'online')
+             and device.get('online', false)
+             and value is number and 0 <= value <= now_ms
+             and 0 <= now_ms - updated_ms <= 90000
+             and 0 <= now_ms - server_ms <= 90000
+             and 0 <= server_ms - seen_ms <= 90000 }}
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('lastPaintAt') %}
+          {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+          {{ (value / 1000) | timestamp_local if value is number and 0 <= value <= now_ms else 'unknown' }}
+      - name: Frame Recovery Count
+        availability: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('recoveryCount') %}
+          {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+          {% set updated_ms = (as_timestamp(states.sensor.frame_companion.last_updated, 0) * 1000) | int(0) %}
+          {% set server_ms = state_attr('sensor.frame_companion', 'serverTime') | int(0) %}
+          {% set seen_ms = device.get('lastSeenAt', 0) | int(0) %}
+          {{ is_state('sensor.frame_companion', 'online')
+             and device.get('online', false)
+             and value is number and value >= 0
+             and 0 <= now_ms - updated_ms <= 90000
+             and 0 <= now_ms - server_ms <= 90000
+             and 0 <= server_ms - seen_ms <= 90000 }}
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('recoveryCount') %}
+          {{ value if value is number and value >= 0 else 'unknown' }}
+      - name: Frame Last Failure
+        availability: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('lastError') %}
+          {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+          {% set updated_ms = (as_timestamp(states.sensor.frame_companion.last_updated, 0) * 1000) | int(0) %}
+          {% set server_ms = state_attr('sensor.frame_companion', 'serverTime') | int(0) %}
+          {% set seen_ms = device.get('lastSeenAt', 0) | int(0) %}
+          {{ is_state('sensor.frame_companion', 'online')
+             and device.get('online', false)
+             and value is string
+             and 0 <= now_ms - updated_ms <= 90000
+             and 0 <= now_ms - server_ms <= 90000
+             and 0 <= server_ms - seen_ms <= 90000 }}
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('lastError') %}
+          {{ value if value is string and value else ('none' if value is string else 'unknown') }}
+      - name: Frame Reserve Count
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('offlineAssets') %}
+          {{ value if value is not none else 'unknown' }}
+      - name: Frame Version
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set value = device.get('status', {}).get('appVersion') %}
+          {{ value if value is not none else 'unknown' }}
+      - name: Frame Command Acknowledgement
+        state: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set commands = device.get('commands') | default([{}], true) %}
+          {{ commands[0].get('status') | default('unknown', true) }}
+
+rest_command:
+  postframecommand:
+    url: !secret frame_companion_command_url
+    method: POST
+    headers: {Authorization: !secret frame_companion_authorization}
+    content_type: application/json
+    timeout: 8
+    payload: "{{ payload | to_json }}"
+  postframeevent:
+    url: !secret frame_companion_event_url
+    method: POST
+    headers: {Authorization: !secret frame_companion_authorization}
+    content_type: application/json
+    timeout: 8
+    payload: "{{ payload | to_json }}"
+
+script:
+  frame_next:
+    alias: Frame next photo
+    sequence: [{action: rest_command.postframecommand, data: {payload: {deviceId: main, command: {type: photo_next}}}}]
+  frame_previous:
+    alias: Frame previous photo
+    sequence: [{action: rest_command.postframecommand, data: {payload: {deviceId: main, command: {type: photo_previous}}}}]
+  frame_pause:
+    alias: Frame pause
+    sequence: [{action: rest_command.postframecommand, data: {payload: {deviceId: main, command: {type: photo_pause}}}}]
+  frame_resume:
+    alias: Frame resume
+    sequence: [{action: rest_command.postframecommand, data: {payload: {deviceId: main, command: {type: photo_resume}}}}]
+  frame_hold_600:
+    alias: Frame hold for ten minutes
+    sequence: [{action: rest_command.postframecommand, data: {payload: {deviceId: main, command: {type: photo_hold, durationSeconds: 600}}}}]
+  frame_show_mode:
+    alias: Frame show mode
+    fields: {mode: {required: true, selector: {select: {options: [photos, home, weather, birds, cameras, calendar]}}}}
+    sequence:
+      - condition: template
+        value_template: "{{ mode in ['photos', 'home', 'weather', 'birds', 'cameras', 'calendar'] }}"
+      - action: rest_command.postframecommand
+        data: {payload: {deviceId: main, command: {type: show_mode, mode: "{{ mode }}"}}}
+  frame_select_profile:
+    alias: Frame select photo profile
+    fields: {profile: {required: true, selector: {select: {options: [balanced, family, photography]}}}}
+    sequence:
+      - condition: template
+        value_template: "{{ profile in ['balanced', 'family', 'photography'] }}"
+      - action: rest_command.postframecommand
+        data: {payload: {deviceId: main, command: {type: set_profile, profile: "{{ profile }}"}}}
+  frame_event_calendar:
+    alias: Frame calendar event
+    sequence: [{action: rest_command.postframeevent, data: {payload: {deviceId: main, event: {type: calendar, text: "Calendar reminder", expiresInSeconds: 120}}}}]
+  frame_event_reviewed_bird:
+    alias: Frame reviewed bird event
+    sequence: [{action: rest_command.postframeevent, data: {payload: {deviceId: main, event: {type: reviewed_bird, text: "Reviewed bird", expiresInSeconds: 120}}}}]
+
+automation:
+  - id: frame_morning_scene
+    alias: Frame morning scene
+    description: >-
+      Opt-in five-minute Weather scene, optionally followed by Calendar. It only
+      runs from a freshly reported online, active Photos view and stops without
+      forcing a return when the reported view changes.
+    mode: single
+    triggers:
+      - trigger: time
+        at: input_datetime.frame_morning_scene_time
+    conditions:
+      - condition: state
+        entity_id: input_boolean.frame_morning_scene_enabled
+        state: "on"
+    actions:
+      - action: homeassistant.update_entity
+        target: {entity_id: sensor.frame_companion}
+      - condition: template
+        value_template: >-
+          {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+          {% set status = device.get('status', {}) %}
+          {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+          {% set updated_ms = (as_timestamp(states.sensor.frame_companion.last_updated, 0) * 1000) | int(0) %}
+          {% set server_ms = state_attr('sensor.frame_companion', 'serverTime') | int(0) %}
+          {% set seen_ms = device.get('lastSeenAt', 0) | int(0) %}
+          {{ is_state('input_boolean.frame_morning_scene_enabled', 'on')
+             and is_state('sensor.frame_companion', 'online')
+             and 0 <= now_ms - updated_ms <= 15000
+             and 0 <= now_ms - server_ms <= 15000
+             and 0 <= server_ms - seen_ms <= 15000
+             and device.get('online', false)
+             and status.get('mode') == 'photos'
+             and not status.get('photosPaused', false)
+             and not status.get('offline', false) }}
+      - action: rest_command.postframecommand
+        data: {payload: {deviceId: main, command: {type: show_mode, mode: weather}}}
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: input_select.frame_morning_scene_choice
+                state: weather
+            sequence:
+              - delay: "00:05:00"
+              - action: homeassistant.update_entity
+                target: {entity_id: sensor.frame_companion}
+              - condition: template
+                value_template: >-
+                  {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+                  {% set status = device.get('status', {}) %}
+                  {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+                  {% set updated_ms = (as_timestamp(states.sensor.frame_companion.last_updated, 0) * 1000) | int(0) %}
+                  {% set server_ms = state_attr('sensor.frame_companion', 'serverTime') | int(0) %}
+                  {% set seen_ms = device.get('lastSeenAt', 0) | int(0) %}
+                  {{ is_state('input_boolean.frame_morning_scene_enabled', 'on')
+                     and is_state('sensor.frame_companion', 'online')
+                     and 0 <= now_ms - updated_ms <= 15000
+                     and 0 <= now_ms - server_ms <= 15000
+                     and 0 <= server_ms - seen_ms <= 15000
+                     and device.get('online', false)
+                     and status.get('mode') == 'weather'
+                     and not status.get('photosPaused', false)
+                     and not status.get('offline', false) }}
+              - action: rest_command.postframecommand
+                data: {payload: {deviceId: main, command: {type: show_mode, mode: photos}}}
+          - conditions:
+              - condition: state
+                entity_id: input_select.frame_morning_scene_choice
+                state: weather_then_calendar
+            sequence:
+              - delay: "00:02:30"
+              - action: homeassistant.update_entity
+                target: {entity_id: sensor.frame_companion}
+              - condition: template
+                value_template: >-
+                  {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+                  {% set status = device.get('status', {}) %}
+                  {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+                  {% set updated_ms = (as_timestamp(states.sensor.frame_companion.last_updated, 0) * 1000) | int(0) %}
+                  {% set server_ms = state_attr('sensor.frame_companion', 'serverTime') | int(0) %}
+                  {% set seen_ms = device.get('lastSeenAt', 0) | int(0) %}
+                  {{ is_state('input_boolean.frame_morning_scene_enabled', 'on')
+                     and is_state('sensor.frame_companion', 'online')
+                     and 0 <= now_ms - updated_ms <= 15000
+                     and 0 <= now_ms - server_ms <= 15000
+                     and 0 <= server_ms - seen_ms <= 15000
+                     and device.get('online', false)
+                     and status.get('mode') == 'weather'
+                     and not status.get('photosPaused', false)
+                     and not status.get('offline', false) }}
+              - action: rest_command.postframecommand
+                data: {payload: {deviceId: main, command: {type: show_mode, mode: calendar}}}
+              - delay: "00:02:30"
+              - action: homeassistant.update_entity
+                target: {entity_id: sensor.frame_companion}
+              - condition: template
+                value_template: >-
+                  {% set device = (state_attr('sensor.frame_companion', 'devices') | default([], true) | selectattr('id', 'eq', 'main') | list | first | default({})) %}
+                  {% set status = device.get('status', {}) %}
+                  {% set now_ms = (as_timestamp(now()) * 1000) | int(0) %}
+                  {% set updated_ms = (as_timestamp(states.sensor.frame_companion.last_updated, 0) * 1000) | int(0) %}
+                  {% set server_ms = state_attr('sensor.frame_companion', 'serverTime') | int(0) %}
+                  {% set seen_ms = device.get('lastSeenAt', 0) | int(0) %}
+                  {{ is_state('input_boolean.frame_morning_scene_enabled', 'on')
+                     and is_state('sensor.frame_companion', 'online')
+                     and 0 <= now_ms - updated_ms <= 15000
+                     and 0 <= now_ms - server_ms <= 15000
+                     and 0 <= server_ms - seen_ms <= 15000
+                     and device.get('online', false)
+                     and status.get('mode') == 'calendar'
+                     and not status.get('photosPaused', false)
+                     and not status.get('offline', false) }}
+              - action: rest_command.postframecommand
+                data: {payload: {deviceId: main, command: {type: show_mode, mode: photos}}}

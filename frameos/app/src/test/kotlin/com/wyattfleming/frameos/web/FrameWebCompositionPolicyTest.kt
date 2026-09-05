@@ -18,6 +18,15 @@ class FrameWebCompositionPolicyTest {
     }
 
     @Test
+    fun `Birds does not cold start Calendar behind its disposable dashboard`() {
+        val plan = FrameWebCompositionPolicy.forMode(FrameMode.BIRDS)
+
+        assertEquals(FrameWebForeground.PRIMARY, plan.foreground)
+        assertTrue(plan.retainHomeAssistantSurface)
+        assertFalse(plan.warmCalendarInBackground)
+    }
+
+    @Test
     fun `home and calendar foreground the persistent HA surface`() {
         listOf(FrameMode.HOME, FrameMode.CALENDAR).forEach { mode ->
             val plan = FrameWebCompositionPolicy.forMode(mode)
@@ -37,6 +46,10 @@ class FrameWebCompositionPolicyTest {
         assertEquals(
             FrameWebForeground.PRIMARY,
             FrameWebCompositionPolicy.forMode(FrameMode.CAMERAS).foreground,
+        )
+        assertEquals(
+            FrameWebForeground.PRIMARY,
+            FrameWebCompositionPolicy.forMode(FrameMode.BIRDS).foreground,
         )
         assertEquals(
             FrameWebForeground.NATIVE_WEATHER,

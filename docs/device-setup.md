@@ -112,11 +112,28 @@ On the tested frame, a failed Bluetooth-mouse pairing left SystemUI retrying
 the bond continuously and starved the browser. Turning Bluetooth off stopped
 the loop immediately. Prefer the OTG mouse for recovery.
 
-### Disable MediaTek DuraSpeed if services are suppressed
+### Configure MediaTek DuraSpeed if services are suppressed
 
 If Android repeatedly logs `bringUpServiceLocked, suppress to start service!`
-while the browser waits for its foreground service, disable DuraSpeed on this
-dedicated, always-powered kiosk:
+while the browser or FrameOS waits for background work, either disable DuraSpeed
+on this dedicated, always-powered kiosk or leave it enabled and explicitly allow
+each required application in the firmware's hidden per-app list. FrameOS must be
+listed as `com.wyattfleming.frameos`; an exemption for Fully or Key Mapper does
+not carry over. The repository's readiness sampler accepts either safe state and
+does not change it.
+
+On the tested firmware, the supported command below adds FrameOS to
+`PlatformWhitelist`; a package selected through the hidden Settings screen can
+appear in `AppWhitelist`. Verify the exact package in either list:
+
+```sh
+adb -s FRAME_IP:5555 shell dumpsys duraspeed addwhitelist \
+  com.wyattfleming.frameos
+adb -s FRAME_IP:5555 shell dumpsys duraspeed status
+adb -s FRAME_IP:5555 shell dumpsys duraspeed config
+```
+
+The legacy Fully-only recovery sequence disables DuraSpeed globally:
 
 ```sh
 adb -s FRAME_IP:5555 shell settings put global setting.duraspeed.enabled 0

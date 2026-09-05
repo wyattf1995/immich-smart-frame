@@ -329,6 +329,11 @@ unless actual_mappings == expected_mappings
   fail_validation("Key Mapper actions no longer encode Volume Down=Tab, Volume Up=Shift+Tab, star=Enter")
 end
 
+expected_enabled_states = [false, false, true]
+unless keymaps.map { |keymap| keymap["isEnabled"] } == expected_enabled_states
+  fail_validation("legacy Key Mapper volume rules must stay disabled while FrameOS owns volume input")
+end
+
 uids = keymapper.to_s.scan(/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}/i)
 unless uids.length == uids.uniq.length && uids.all? { |uid| uid.match?(/\A[0-9a-f-]{36}\z/i) }
   fail_validation("Key Mapper UUIDs must be valid and unique")

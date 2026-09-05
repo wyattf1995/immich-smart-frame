@@ -47,8 +47,13 @@ read-only readiness sampler after rollout and from the host scheduler:
 ```
 
 It invokes Kiosk's local `--livecheck` and dependency-aware `--readycheck`
-separately. Add the optional array, Home Assistant, and ADB hooks described in
-[Resilience operations](resilience-operations.md) for a full-stack sample.
+separately. Add the optional array and Home Assistant hooks described in
+[Resilience operations](resilience-operations.md), and use `--adb DEVICE_SERIAL`
+when device access is available for a full-stack sample. The ADB sample is
+read-only and verifies that FrameOS is running and resumed, input
+accessibility is not suppressed by UI automation, `SYSTEM_ALERT_WINDOW` is
+still allowed, and Lenovo DuraSpeed is either globally disabled or explicitly
+allows `com.wyattfleming.frameos`.
 
 If the deployment also uses FrameOS, stage the signed release APK and router
 separately. Verify the APK signature and install it with `adb install -r` using

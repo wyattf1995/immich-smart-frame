@@ -1,0 +1,141 @@
+--- a/internal/config/config_classification_gate_test.go
++++ b/internal/config/config_classification_gate_test.go
+@@ -0,0 +1,21 @@
++package config
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"testing"
++
++	"github.com/labstack/echo/v5"
++	"github.com/stretchr/testify/require"
++)
++
++func TestRequireAICaptionDefaultsOffAndCannotBeURLOverridden(t *testing.T) {
++	cfg := New()
++	require.False(t, cfg.Kiosk.RequireAICaption)
++
++	req := httptest.NewRequest(http.MethodGet, "/?require_ai_caption=true", nil)
++	rec := httptest.NewRecorder()
++	echoContext := echo.New().NewContext(req, rec)
++	require.NoError(t, cfg.ConfigWithOverrides(echoContext.QueryParams(), echoContext))
++	require.False(t, cfg.Kiosk.RequireAICaption)
++}
+--- a/internal/immich/immich_classification_gate_test.go
++++ b/internal/immich/immich_classification_gate_test.go
+@@ -0,0 +1,42 @@
++package immich
++
++import (
++	"context"
++	"testing"
++
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/stretchr/testify/require"
++)
++
++func TestClassificationGateRequiresAICaptionAndRejectsStrongScreenshotNames(t *testing.T) {
++	cfg := config.Config{Kiosk: config.KioskSettings{RequireAICaption: true}}
++	for _, testCase := range []struct {
++		name        string
++		description string
++		filename    string
++		want        bool
++	}{
++		{name: "classified photograph", description: "[AI] A family at the beach [/AI]", filename: "IMG_1001.jpg", want: true},
++		{name: "missing caption", filename: "IMG_1001.jpg", want: false},
++		{name: "human caption does not satisfy AI gate", description: "Family at the beach", filename: "IMG_1001.jpg", want: false},
++		{name: "screenshot underscore date", description: "[AI] A screenshot [/AI]", filename: "Screenshot_2026-09-05.png", want: false},
++		{name: "screen shot spaced date", description: "[AI] A screenshot [/AI]", filename: "Screen Shot 2026-09-05 at 10.22.13.png", want: false},
++		{name: "screen capture compact date", description: "[AI] A screenshot [/AI]", filename: "ScreenCapture 20260905-151144.jpg", want: false},
++		{name: "timestamp-prefixed screenshot", description: "[AI] A screenshot [/AI]", filename: "2026-09-05_10-22-13 Screenshot.png", want: false},
++		{name: "natural language screenshot name is not inferred", description: "[AI] Photograph [/AI]", filename: "Screenshot of birthday.jpg", want: true},
++		{name: "embedded screenshot term is not inferred", description: "[AI] Photograph [/AI]", filename: "vacation_screenshot_reference.jpg", want: true},
++	} {
++		t.Run(testCase.name, func(t *testing.T) {
++			asset := New(context.Background(), cfg)
++			asset.ExifInfo.Description = testCase.description
++			asset.OriginalFileName = testCase.filename
++			require.Equal(t, testCase.want, asset.hasValidClassification())
++		})
++	}
++}
++
++func TestHasValidTagsFailsClosedWhenAssetMetadataCannotBeRead(t *testing.T) {
++	asset := New(context.Background(), config.Config{ImmichURL: "://invalid"})
++	asset.ID = "asset"
++	require.False(t, asset.hasValidTags("request", "device"))
++}
+--- a/internal/routes/routes_classification_gate_test.go
++++ b/internal/routes/routes_classification_gate_test.go
+@@ -0,0 +1,69 @@
++package routes
++
++import (
++	"context"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"sync/atomic"
++	"testing"
++
++	"github.com/damongolding/immich-kiosk/internal/cache"
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/labstack/echo/v5"
++	"github.com/stretchr/testify/require"
++)
++
++func TestHistoryRejectsFreshlySkippedAssetInsteadOfCachedMetadata(t *testing.T) {
++	cached := testImageAsset("history-asset")
++	cached.ExifInfo.Description = "[AI] A classified photo [/AI]"
++	fresh := cached
++	fresh.Tags = []immich.Tag{{Value: "Skip/Screenshot"}}
++
++	var metadataRequests atomic.Int32
++	var previewRequests atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch r.URL.Path {
++		case "/api/assets/history-asset":
++			metadataRequests.Add(1)
++			w.Header().Set("Content-Type", echo.MIMEApplicationJSON)
++			require.NoError(t, json.NewEncoder(w).Encode(fresh))
++		case "/api/assets/history-asset/thumbnail", "/api/assets/history-asset/original":
++			previewRequests.Add(1)
++			http.Error(w, "history must reject before preview", http.StatusInternalServerError)
++		default:
++			t.Fatalf("unexpected classification history route %q", r.URL.Path)
++		}
++	}))
++	defer server.Close()
++
++	cfg := newHistoryRenderTestConfig(server.URL)
++	cfg.Kiosk.Cache = true
++	cfg.Kiosk.RequireAICaption = true
++	cfg.ExcludedTags = []string{"Skip/**"}
++
++	cache.Initialize()
++	cache.Flush()
++	cachedBody, err := json.Marshal(cached)
++	require.NoError(t, err)
++	cache.Set(cache.APICacheKey(server.URL+"/api/assets/history-asset", "classification-history", cfg.SelectedUser), cachedBody, cfg.Duration, cfg.CacheDuration)
++
++	req := httptest.NewRequest(http.MethodPost, "/asset/previous?history=history-asset:&history=*current:", nil).WithContext(context.Background())
++	req.Header.Set("kiosk-device-id", "classification-history")
++	rec := httptest.NewRecorder()
++	err = PreviousHistoryAsset(cfg, common.New())(echo.New().NewContext(req, rec))
++	require.NoError(t, err)
++	require.Equal(t, http.StatusOK, rec.Code)
++	require.Positive(t, metadataRequests.Load(), "history must bypass cached metadata before rendering")
++	require.Zero(t, previewRequests.Load(), "rejected history target must not fetch another asset or preview")
++	require.NotContains(t, rec.Body.String(), "Main image")
++}
++
++func TestOfflineScopeChangesWhenClassificationGateIsEnabled(t *testing.T) {
++	cfg := *newCancellationTestConfig("http://immich.test")
++	before := offlineCacheScope(cfg, "classification-offline")
++	cfg.Kiosk.RequireAICaption = true
++	after := offlineCacheScope(cfg, "classification-offline")
++	require.NotEqual(t, before, after, "enabling the gate must invalidate an offline pool created without it")
++}

@@ -1,0 +1,93 @@
+diff --git a/internal/routes/render_memory_regression_test.go b/internal/routes/render_memory_regression_test.go
+new file mode 100644
+index 0000000..f874261
+--- /dev/null
++++ b/internal/routes/render_memory_regression_test.go
+@@ -0,0 +1,87 @@
++package routes
++
++import (
++	"context"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/stretchr/testify/require"
++)
++
++func TestImageWorkGateAdmitsOnlyOneRenderer(t *testing.T) {
++	gate := newImageWorkGate(1)
++	entered := make(chan struct{})
++	release := make(chan struct{})
++	firstDone := make(chan error, 1)
++	go func() {
++		firstDone <- gate.withWork(context.Background(), func() error {
++			close(entered)
++			<-release
++			return nil
++		})
++	}()
++	<-entered
++
++	secondEntered := make(chan struct{})
++	secondDone := make(chan error, 1)
++	go func() {
++		secondDone <- gate.withWork(context.Background(), func() error {
++			close(secondEntered)
++			return nil
++		})
++	}()
++
++	select {
++	case <-secondEntered:
++		t.Fatal("second renderer bypassed image-work admission")
++	case <-time.After(25 * time.Millisecond):
++	}
++	close(release)
++	require.NoError(t, <-firstDone)
++	require.NoError(t, <-secondDone)
++	<-secondEntered
++}
++
++func TestOptimizedClientDimensionsCapRenderBuffers(t *testing.T) {
++	err := validateOptimizedClientDimensions(config.Config{OptimizeImages: true, ClientData: config.ClientData{Width: 7680, Height: 4320}})
++	require.ErrorIs(t, err, ErrClientPixelsExceeded)
++	require.NoError(t, validateOptimizedClientDimensions(config.Config{OptimizeImages: true, ClientData: config.ClientData{Width: 3840, Height: 2160}}))
++}
++
++func TestOriginalDecodeIsLimitedBySourcePixels(t *testing.T) {
++	large := immich.Asset{ExifInfo: immich.ExifInfo{ExifImageWidth: 6000, ExifImageHeight: 4000}}
++	require.False(t, shouldFetchOriginal(&large), "24MP source must use Immich's preview path")
++
++	overDecodeBudget := immich.Asset{ExifInfo: immich.ExifInfo{ExifImageWidth: 5000, ExifImageHeight: 3400}}
++	require.False(t, shouldFetchOriginal(&overDecodeBudget), "17MP source must use Immich's preview path")
++	require.False(t, shouldFetchOriginal(&immich.Asset{}), "unknown source dimensions must use Immich's preview path")
++
++	frameSized := immich.Asset{ExifInfo: immich.ExifInfo{ExifImageWidth: 1920, ExifImageHeight: 1080}}
++	require.True(t, shouldFetchOriginal(&frameSized))
++}
++
++func TestImageWorkGateCancelsWhileWaiting(t *testing.T) {
++	gate := newImageWorkGate(1)
++	gate.tokens <- struct{}{}
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	require.ErrorIs(t, gate.withWork(ctx, func() error { return nil }), context.Canceled)
++	<-gate.tokens
++}
++
++func TestImageWorkGateDoesNotLeakTokens(t *testing.T) {
++	gate := newImageWorkGate(1)
++	var wg sync.WaitGroup
++	for range 8 {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			require.NoError(t, gate.withWork(context.Background(), func() error { return nil }))
++		}()
++	}
++	wg.Wait()
++	require.Len(t, gate.tokens, 0)
++}

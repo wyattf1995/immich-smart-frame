@@ -28,6 +28,7 @@ data class WeatherPresentation(
     val hourly: List<WeatherForecastItem> = emptyList(),
     val emptyMessage: String? = null,
     val authenticationRequired: Boolean = false,
+    val freshDataEpochMillis: Long? = null,
 )
 
 class WeatherPresenter(
@@ -75,6 +76,7 @@ class WeatherPresenter(
                 else -> "Updated $updateTime"
             },
             authenticationRequired = authenticationRequired,
+            freshDataEpochMillis = current.updatedAtEpochMillis.takeIf { !stale && it > 0L },
             metrics = buildList {
                 (current.apparentTemperature ?: nearestHourly?.apparentTemperature)?.let {
                     add(WeatherMetric("Feels like", formatTemperature(it, current.temperatureUnit)))

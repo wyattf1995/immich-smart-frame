@@ -15,6 +15,24 @@ class PhysicalInputMapperTest {
     }
 
     @Test
+    fun `local dpad bridge navigates when firmware reserves gesture key codes`() {
+        assertEquals(
+            FrameIntent.NextMode,
+            mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_DPAD_RIGHT, scanCode = 0),
+        )
+        assertEquals(
+            FrameIntent.PreviousMode,
+            mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_DPAD_LEFT, scanCode = 0),
+        )
+    }
+
+    @Test
+    fun `lenovo vendor gesture key codes navigate without a scan code bridge`() {
+        assertEquals(FrameIntent.NextMode, mapper.mapKeyDown(keyCode = 291, scanCode = 0))
+        assertEquals(FrameIntent.PreviousMode, mapper.mapKeyDown(keyCode = 292, scanCode = 0))
+    }
+
+    @Test
     fun `star is contextual and long star goes directly home`() {
         assertEquals(
             FrameIntent.PrimaryAction,
@@ -27,15 +45,9 @@ class PhysicalInputMapperTest {
     }
 
     @Test
-    fun `volume buttons control display brightness rather than navigation`() {
-        assertEquals(
-            FrameIntent.BrightnessUp,
-            mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_VOLUME_UP, scanCode = 115),
-        )
-        assertEquals(
-            FrameIntent.BrightnessDown,
-            mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_VOLUME_DOWN, scanCode = 114),
-        )
+    fun `volume buttons remain reserved for contextual view controls`() {
+        assertNull(mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_VOLUME_UP, scanCode = 115))
+        assertNull(mapper.mapKeyDown(keyCode = KeyEvent.KEYCODE_VOLUME_DOWN, scanCode = 114))
     }
 
     @Test

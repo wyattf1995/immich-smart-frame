@@ -38,7 +38,7 @@ class HomeAssistantOAuthClientDeadlineTest {
         )
 
         val token = client.validAccessToken(
-            WeatherRequestDeadline(startNanos = System.nanoTime(), timeoutMillis = 250L),
+            WeatherRequestDeadline(startNanos = 0L, timeoutMillis = 250L, clockNanos = { 0L }),
         )
 
         assertNull(token)

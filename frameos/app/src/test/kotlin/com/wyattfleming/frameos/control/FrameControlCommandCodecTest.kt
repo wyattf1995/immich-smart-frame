@@ -18,6 +18,10 @@ class FrameControlCommandCodecTest {
             FrameControlCommand.Show(FrameMode.WEATHER),
             codec.decode(command = null, mode = "weather"),
         )
+        assertEquals(
+            FrameControlCommand.Show(FrameMode.BIRDS),
+            codec.decode(command = null, mode = "birds"),
+        )
 
         assertNull(codec.decode(command = "launch-shell", mode = null))
         assertNull(codec.decode(command = null, mode = "settings"))

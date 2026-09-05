@@ -1,0 +1,18 @@
+{
+  "publicOrigin": "https://frame.example.com",
+  "operatorUsername": "frame",
+  "operatorPassword": "REPLACE_WITH_UNIQUE_RANDOM_PASSWORD",
+  "operatorToken": "REPLACE_WITH_DISTINCT_RANDOM_OPERATOR_TOKEN",
+  "profiles": ["balanced", "family", "photography"],
+  "devices": {
+    "main": {
+      "label": "Living room",
+      "token": "REPLACE_WITH_UNIQUE_RANDOM_DEVICE_TOKEN"
+    },
+    "parents": {
+      "label": "Parents",
+      "token": "REPLACE_WITH_ANOTHER_RANDOM_DEVICE_TOKEN",
+      "settings": {"modeOrder": ["photos", "weather"]}
+    }
+  }
+}

@@ -181,6 +181,7 @@ chmod +x "$fake_bin"/*
 
 config="$tmp_dir/router.conf"
 frameos_config="$tmp_dir/frameos-router.conf"
+frameos_birds_config="$tmp_dir/frameos-birds-router.conf"
 state="$tmp_dir/state"
 lock="$tmp_dir/router.lock"
 log="$tmp_dir/commands.log"
@@ -207,6 +208,20 @@ FIREFOX_PACKAGE=org.mozilla.firefox
 FRAMEOS_PACKAGE=com.wyattfleming.frameos
 FRAMEOS_ACTIVITY=com.wyattfleming.frameos/.MainActivity
 FRAMEOS_RECEIVER=com.wyattfleming.frameos/.control.FrameControlReceiver
+EOF
+
+cat > "$frameos_birds_config" <<EOF
+STATE_FILE=$state
+LOCK_DIR=$lock
+HOME_URL=https://home.test.invalid/lovelace/home
+CAMERAS_URL=https://home.test.invalid/lovelace/cameras
+CALENDAR_URL=https://home.test.invalid/lovelace/calendar
+FULLY_ACTIVITY=de.ozerov.fully/.FullyActivity
+FIREFOX_PACKAGE=org.mozilla.firefox
+FRAMEOS_PACKAGE=com.wyattfleming.frameos
+FRAMEOS_ACTIVITY=com.wyattfleming.frameos/.MainActivity
+FRAMEOS_RECEIVER=com.wyattfleming.frameos/.control.FrameControlReceiver
+FRAMEOS_BIRDS_ENABLED=1
 EOF
 
 run_router() {
@@ -244,6 +259,17 @@ run_frameos_router() {
       >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
   else
     FRAME_ROUTER_PROC_ROOT="$proc_root" FRAME_ROUTER_LOG="$log" FRAME_ROUTER_FIREFOX_STARTED="$firefox_started" PATH="$fake_bin:$PATH" "$router_shell" "$router" "$1" "$frameos_config" \
+      >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
+  fi
+}
+
+run_frameos_birds_router() {
+  rm -f "$firefox_started"
+  if [[ "$1" == show ]]; then
+    FRAME_ROUTER_PROC_ROOT="$proc_root" FRAME_ROUTER_LOG="$log" FRAME_ROUTER_FIREFOX_STARTED="$firefox_started" PATH="$fake_bin:$PATH" "$router_shell" "$router" show "$2" "$frameos_birds_config" \
+      >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
+  else
+    FRAME_ROUTER_PROC_ROOT="$proc_root" FRAME_ROUTER_LOG="$log" FRAME_ROUTER_FIREFOX_STARTED="$firefox_started" PATH="$fake_bin:$PATH" "$router_shell" "$router" "$1" "$frameos_birds_config" \
       >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
   fi
 }
@@ -322,6 +348,35 @@ assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL 
   'FrameOS direct Weather must use the protected receiver'
 assert_file_not_contains 'dumpsys' "$log" \
   'FrameOS direct show must not inspect the current foreground mode'
+
+: > "$log"
+printf 'weather\n' > "$state"
+FRAME_ROUTER_FOREGROUND=frameos run_frameos_birds_router next
+assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL -n com.wyattfleming.frameos/.control.FrameControlReceiver --es frameos.mode BIRDS' "$log" \
+  'Bird-enabled FrameOS next must advance Weather to Birds'
+assert_eq birds "$(tr -d '\r\n' < "$state")" 'Bird-enabled FrameOS next must persist Birds'
+
+: > "$log"
+FRAME_ROUTER_FOREGROUND=frameos run_frameos_birds_router next
+assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL -n com.wyattfleming.frameos/.control.FrameControlReceiver --es frameos.mode CAMERAS' "$log" \
+  'Bird-enabled FrameOS next must advance Birds to Cameras'
+
+: > "$log"
+printf 'cameras\n' > "$state"
+FRAME_ROUTER_FOREGROUND=frameos run_frameos_birds_router prev
+assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL -n com.wyattfleming.frameos/.control.FrameControlReceiver --es frameos.mode BIRDS' "$log" \
+  'Bird-enabled FrameOS prev must return Cameras to Birds'
+
+: > "$log"
+FRAME_ROUTER_FOREGROUND=frameos run_frameos_birds_router show birds
+assert_file_contains 'am broadcast --user 0 -a com.wyattfleming.frameos.CONTROL -n com.wyattfleming.frameos/.control.FrameControlReceiver --es frameos.mode BIRDS' "$log" \
+  'Bird-enabled FrameOS direct show must use the protected receiver'
+
+printf 'home\n' > "$state"
+run_router_expect_failure show birds "$frameos_config"
+assert_file_contains 'Birds mode is not enabled' "$tmp_dir/stderr" \
+  'Birds must be rejected explicitly when its FrameOS feature flag is disabled'
+assert_eq home "$(tr -d '\r\n' < "$state")" 'disabled Birds must not change the saved mode'
 
 : > "$log"
 printf 'photos\n' > "$state"

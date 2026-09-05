@@ -26,6 +26,13 @@ previously hidden asset from remaining in the kiosk pool after a kiosk-side
 mutation. Changes made directly in Immich or by another kiosk device require a
 normal pool expiration or an explicit `/cache/flush` request.
 
+The aggregate metrics endpoint also reports `cache_lock_wait_p95_ns` and
+`cache_lock_hold_p95_ns`, plus `cache_lock_samples_total`. They are p95 upper
+bounds from fixed power-of-two nanosecond histograms over cache-mutex
+acquisitions. The values contain no cache keys, payloads, or callers; they
+measure contention and critical-section duration without changing cache
+locking behavior.
+
 ## Offline volume provisioning and upgrade migration
 
 The bind mount is intentionally writable by the image's non-root runtime user

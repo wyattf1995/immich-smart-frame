@@ -1,0 +1,44 @@
+package com.wyattfleming.frameos
+
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
+import org.junit.Test
+import java.io.File
+
+class MainActivityCompanionContractTest {
+    private val source = File("src/main/kotlin/com/wyattfleming/frameos/MainActivity.kt").readText()
+
+    @Test fun `poll responses are discarded after lifecycle or credential changes`() {
+        assertTrue(source.contains("private var companionPollGeneration"))
+        assertTrue(source.contains("invalidateCompanionPoll()"))
+        assertTrue(source.contains("generation != companionPollGeneration"))
+        assertTrue(source.contains("FrameCompanionCredentialsStore(this).read() != credentials"))
+    }
+
+    @Test fun `pause keeps the visible Gecko surface active and controls the slideshow separately`() {
+        assertTrue(source.contains("webSurface?.setContentActive(activityResumed)"))
+        assertTrue(source.contains("webSurface?.setPhotosPaused(next.photosPaused)"))
+        org.junit.Assert.assertFalse(source.contains("setContentActive(activityResumed && !next.photosPaused)"))
+    }
+
+    @Test fun `photo commands dispatch while paused and bounded holds resume after their duration`() {
+        assertTrue(source.contains("manualPhotoStepPending = true"))
+        assertFalse(source.contains("photoBridge.setCaptureEnabled(activityResumed, false)"))
+        assertTrue(source.contains("if (moved) handler.postDelayed(finishManualPhotoStep, 8_000L) else finishManualPhotoStep.run()"))
+        assertTrue(source.contains("photoBridge.setCaptureEnabled(activityResumed && state.mode == FrameMode.PHOTOS, state.photosPaused)"))
+        assertTrue(source.contains("if (moved) \"dispatched\" else \"rejected\""))
+        assertTrue(source.contains("handler.postDelayed(resumePhotosAfterHold, command.durationSeconds * 1_000L)"))
+        assertTrue(source.contains("private val resumePhotosAfterHold"))
+    }
+
+    @Test fun `paused remote state accepts only a bridge authorized snapshot`() {
+        assertTrue(source.contains("photo.pauseSnapshotNonce == null"))
+        assertTrue(source.contains("photoBridge.setCaptureEnabled(true, true)"))
+    }
+
+    @Test fun `manual photo step does not complete on its previously observed asset`() {
+        assertFalse(isNewManualPhotoStepAsset("11111111-1111-4111-8111-111111111111", "11111111-1111-4111-8111-111111111111"))
+        assertTrue(isNewManualPhotoStepAsset("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"))
+        assertTrue(isNewManualPhotoStepAsset(null, "22222222-2222-4222-8222-222222222222"))
+    }
+}

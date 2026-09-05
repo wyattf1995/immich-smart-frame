@@ -94,4 +94,34 @@ class FrameConfigurationTest {
             )
         }
     }
+
+    @Test
+    fun `Birds URL is optional for upgrades and rejects embedded secrets`() {
+        val legacy = FrameConfiguration.from(
+            photosUrl = "https://photos.example.invalid/",
+            homeAssistantUrl = "https://home.example.invalid/",
+        )
+        assertNull(legacy?.birdsUrl)
+
+        val configured = FrameConfiguration.from(
+            photosUrl = "https://photos.example.invalid/",
+            homeAssistantUrl = "https://home.example.invalid/",
+            birdsUrl = "http://birdnet.example.invalid:8080/",
+        )
+        assertEquals("http://birdnet.example.invalid:8080/", configured?.birdsUrl)
+
+        listOf(
+            "https://birdnet.example.invalid/?token=secret",
+            "https://user:password@birdnet.example.invalid/",
+            "javascript:alert(1)",
+        ).forEach { invalid ->
+            assertNull(
+                FrameConfiguration.from(
+                    photosUrl = "https://photos.example.invalid/",
+                    homeAssistantUrl = "https://home.example.invalid/",
+                    birdsUrl = invalid,
+                ),
+            )
+        }
+    }
 }

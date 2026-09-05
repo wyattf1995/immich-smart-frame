@@ -15,7 +15,7 @@ class ContextualInputMapper {
             return when (mode) {
                 FrameMode.PHOTOS -> ContextualFrameAction.PhotoStep(forward = !shiftPressed)
                 FrameMode.WEATHER -> ContextualFrameAction.WeatherPageStep(forward = !shiftPressed)
-                FrameMode.HOME, FrameMode.CAMERAS, FrameMode.CALENDAR ->
+                FrameMode.HOME, FrameMode.CAMERAS, FrameMode.CALENDAR, FrameMode.BIRDS ->
                     ContextualFrameAction.ForwardToWeb(KeyEvent.KEYCODE_TAB)
             }
         }
@@ -40,6 +40,6 @@ class ContextualInputMapper {
     }
 
     private companion object {
-        val HOME_ASSISTANT_MODES = setOf(FrameMode.HOME, FrameMode.CAMERAS, FrameMode.CALENDAR)
+        val HOME_ASSISTANT_MODES = setOf(FrameMode.HOME, FrameMode.CAMERAS, FrameMode.CALENDAR, FrameMode.BIRDS)
     }
 }

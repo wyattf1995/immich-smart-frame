@@ -196,21 +196,25 @@ server-side recording actions.
 
 ## Contextual physical-key navigation
 
-The example Key Mapper export emits standard keyboard events. FrameOS assigns
-them by active view:
+FrameOS owns the two volume buttons directly and assigns them by active view.
+Keep any legacy Key Mapper volume-to-key rules disabled; otherwise one physical
+press can be delivered twice. Volume Up consistently means forward/next, and
+Volume Down means back/previous:
 
-| Physical input | Photos | Weather | Home / Cameras / Calendar |
+| Physical input | Photos | Weather | Home / Birds / Cameras / Calendar |
 | --- | --- | --- | --- |
-| Volume Down | Next photo | Next hourly page | `Tab` |
-| Volume Up | Previous photo | Previous hourly page | `Shift+Tab` |
+| Volume Up (+) | Next photo | Next hourly page | `Tab` |
+| Volume Down (-) | Previous photo | Previous hourly page | `Shift+Tab` |
 | Star, observed as scan code 255 | Play/pause | Connect when needed | `Enter` |
 | Long raw Star, without remapping | Home | Home | Home |
 
-Back up the existing Key Mapper configuration, import the example with
-**Append**, and review every rule before enabling it. On the tested calendar,
-keyboard focus traversed Today, Previous, Next, Month, Day, then List (7 days).
-The supplied profile maps Star to Enter and does not claim a separate physical
-long-press action.
+FrameOS treats a held volume key as one press, clears incomplete input when the
+activity loses focus, and reserves pressing both buttons together for restoring
+automatic brightness. On the tested calendar, keyboard focus traversed Today,
+Previous, Next, Month, Day, then List (7 days). Back up the existing Key Mapper
+configuration before changing it. The supplied legacy profile maps Star to
+Enter and does not claim a separate physical long-press action; review every
+rule before enabling or appending it.
 
 The star button may already have a recovery mapping used to approve Android's
 USB-debugging prompt. A second global scan-code-255 rule can interact with that

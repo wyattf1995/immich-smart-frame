@@ -103,6 +103,10 @@ cp .env.example .env
 cp config/config.example.yaml config/config.yaml
 install -d -m 700 secrets
 install -m 600 /dev/null secrets/immich_api_key
+openssl rand -hex 32 > secrets/kiosk_metrics_token
+chmod 600 secrets/kiosk_metrics_token
+chown 65532:65532 secrets/kiosk_metrics_token
+install -d -m 755 frame-preferences
 install -d -m 700 -o 65532 -g 65532 offline-assets
 ./scripts/check-offline-assets-permissions.sh
 ${EDITOR:-vi} secrets/immich_api_key
@@ -112,7 +116,9 @@ chmod 600 .env
 Edit `.env` and set at least `IMMICH_URL` and `TZ`. Neither `.env`, the active
 configuration, nor `secrets/` is tracked by Git. Paste only the API-key value
 into the secret file—without quotes—and save it. This editor-based flow keeps
-the key out of shell history.
+the key out of shell history. The separate metrics token protects aggregate
+renderer diagnostics; keep it private too. For phone controls, quiet hours,
+and reversible per-frame photo choices, see [Frame remote](companion/README.md).
 
 Build and start the service:
 
@@ -252,14 +258,38 @@ FrameOS can host the slideshow and Home Assistant in one full-screen Android
 app built for the no-touch Lenovo frame. It keeps separate warm Gecko sessions
 for Photos and Home Assistant, adds a native cached Weather view with subtle
 condition-driven animation, and routes Home, Cameras, and Calendar through one
-same-origin iframe without browser chrome or repeated tab loads.
+same-origin wrapper without browser chrome or repeated tab loads. An optional
+Birds view opens a separately hosted BirdNET-Go frame page in a disposable,
+non-preloaded Gecko session so its live resources are released on exit.
 
 The [Home Assistant wall-panel guide](docs/home-assistant-wall-panel.md)
 includes the privacy-safe dashboard and local wrapper. The protected
 [FrameOS router](docs/frame-mode-router.md) turns two repeatable OEM gestures
-into the circular Photos/Home/Weather/Cameras/Calendar control and documents
+into the circular Photos/Home/Weather/Birds/Cameras/Calendar control when Birds
+is configured, while preserving the original five-view cycle for existing
+installations. It documents
 contextual volume/star behavior, deployment, verification, and legacy
 Fully-plus-Firefox rollback. Home Assistant remains optional for the slideshow.
+
+The separate [BirdNET-Go package](birdnet/OPERATIONS.md) pins a stable upstream
+container, keeps mutable state on Unraid appdata, keeps its administration
+dashboard on an explicitly selected LAN address, and starts with no audio source
+or embedded credential. Its recent and summary views show compact species
+images through BirdNET-Go's attributed AviCommons/Wikimedia provider pipeline. A dependable
+deployment still prefers a local RTSP or USB microphone. An opt-in, isolated
+Nest audio bridge can instead reuse one Home Assistant camera session, route
+its native Opus track into BirdNET's own decoder, and feed the detector
+without exposing a new LAN port. That cloud path remains provisional until it
+passes the documented audio probe and renewal soak.
+
+The package also includes a small, read-only
+[frame view](birdnet/frame-view/index.html) served by an unprivileged NGINX
+sidecar. It replaces the administration-heavy dashboard on the frame with a
+fixed kiosk layout for the latest model candidate, detected-species aggregates,
+recent model results, species photos and attribution, plus explicit audio and
+offline states. Exact BirdNET-Go review states distinguish unreviewed candidates,
+records marked correct, and records marked false positive; model confidence
+alone is never presented as confirmation.
 
 ## Validation
 
@@ -275,11 +305,13 @@ and the patched Go tests. `scripts/deployment-input-snapshot.sh` creates and
 verifies a protected, versioned snapshot of the ignored environment, active
 config, API-key file, and offline assets before an upgrade or rollback.
 `scripts/check-frame-readiness.sh` is a read-only, cron-friendly monitor hook;
-it reports Kiosk liveness and dependency readiness separately and never restarts
-a service. This repository has no GitHub Actions workflows: repository Actions
-are disabled, and all validation and release gates run locally. The local
-validator rejects workflow files and Dependabot version-update configuration
-because both can launch GitHub-hosted jobs. Use `./scripts/validate.sh --static`
+it reports Kiosk liveness and dependency readiness separately, verifies the
+FrameOS overlay and Lenovo DuraSpeed survival policy when ADB is requested, and
+never restarts a service or changes a device setting. This repository has no
+GitHub Actions workflows: repository Actions are disabled, and all validation
+and release gates run locally. The local validator rejects workflow files and
+Dependabot version-update configuration because both can launch GitHub-hosted
+jobs. Use `./scripts/validate.sh --static`
 to skip the Docker image build.
 The offline bind mount is private writable state for the image's non-root
 UID/GID 65532; rerun `scripts/check-offline-assets-permissions.sh` after moving

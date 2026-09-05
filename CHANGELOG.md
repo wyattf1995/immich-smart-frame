@@ -9,6 +9,22 @@ changes will still be called out explicitly.
 
 ## [Unreleased]
 
+### Fixed
+
+- FrameOS pause and resume commands keep the web slideshow toolbar hidden,
+  including repeated pause commands, while preserving native Next/Previous
+  actions and paused-photo capture. FrameOS 0.2.8 packages extension 1.0.4,
+  registers its photo listeners at document start, and waits for the native
+  extension delegate before loading Photos. This keeps initial and overlapping
+  slideshow responses inside the capture fence, including a pause during startup.
+- Home/Calendar fragment navigation preserves the current wrapper document's
+  load and paint evidence. Full navigation and paint resets retain their existing
+  qualification checks; changing a fragment no longer leaves a rendered document
+  permanently marked unrendered.
+- Companion 0.3.3 derives each command/event expiry from its single issuance
+  timestamp. Clock ticks between two reads can no longer create lifetimes one
+  millisecond beyond the frame's accepted maximum.
+
 ### Removed
 
 - Removed the inert GitHub Actions validation and release workflows and all
@@ -18,6 +34,15 @@ changes will still be called out explicitly.
 
 ### Added
 
+- Added an optional sixth FrameOS Birds mode backed by a safe configured
+  BirdNET-Go URL. Existing stored configurations retain the five-view cycle;
+  configured Birds sessions are disposable and never preloaded.
+- Added a pinned, LAN-bound BirdNET-Go Unraid package with appdata persistence,
+  no committed audio credentials, attributed bird-species thumbnails, local
+  validation, and backup/rollback notes.
+- Added an opt-in Nest-to-BirdNET audio bridge that keeps Home Assistant's
+  renewable WebRTC subscription alive, exposes no host port, loads a dedicated
+  HA token from a mounted secret, and serves native Opus to BirdNET's decoder.
 - Lower-left photo dates now stay hidden when a visible album title begins with
   the same full date, month, or year; time-only display and More Info retain
   their existing detail.

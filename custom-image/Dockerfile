@@ -59,6 +59,29 @@ COPY album-name-fresh-slide-tests.patch /tmp/album-name-fresh-slide-tests.patch
 COPY album-name-fresh-slide.patch /tmp/album-name-fresh-slide.patch
 COPY album-date-metadata-tests.patch /tmp/album-date-metadata-tests.patch
 COPY album-date-metadata.patch /tmp/album-date-metadata.patch
+COPY memory-render-tests.patch /tmp/memory-render-tests.patch
+COPY memory-image-bound-tests.patch /tmp/memory-image-bound-tests.patch
+COPY memory-render.patch /tmp/memory-render.patch
+COPY photo-variety-tests.patch /tmp/photo-variety-tests.patch
+COPY photo-variety.patch /tmp/photo-variety.patch
+COPY memory-metrics-tests.patch /tmp/memory-metrics-tests.patch
+COPY memory-metrics.patch /tmp/memory-metrics.patch
+COPY burst-variety-tests.patch /tmp/burst-variety-tests.patch
+COPY burst-variety.patch /tmp/burst-variety.patch
+COPY burst-variety-followup-tests.patch /tmp/burst-variety-followup-tests.patch
+COPY burst-variety-followup.patch /tmp/burst-variety-followup.patch
+COPY cache-lock-telemetry-tests.patch /tmp/cache-lock-telemetry-tests.patch
+COPY cache-lock-telemetry.patch /tmp/cache-lock-telemetry.patch
+COPY history-render-memory-tests.patch /tmp/history-render-memory-tests.patch
+COPY history-render-memory.patch /tmp/history-render-memory.patch
+COPY paused-retry-tests.patch /tmp/paused-retry-tests.patch
+COPY paused-retry.patch /tmp/paused-retry.patch
+COPY history-display-bounds-tests.patch /tmp/history-display-bounds-tests.patch
+COPY history-display-bounds.patch /tmp/history-display-bounds.patch
+COPY classification-gate-tests.patch /tmp/classification-gate-tests.patch
+COPY classification-gate.patch /tmp/classification-gate.patch
+COPY classification-caption-completion-tests.patch /tmp/classification-caption-completion-tests.patch
+COPY classification-caption-completion.patch /tmp/classification-caption-completion.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -158,8 +181,54 @@ RUN cd /src \
 	&& git apply /tmp/album-name-fresh-slide.patch \
 	&& git apply --check /tmp/album-date-metadata-tests.patch \
 	&& git apply /tmp/album-date-metadata-tests.patch \
-	&& git apply --check /tmp/album-date-metadata.patch \
-	&& git apply /tmp/album-date-metadata.patch
+		&& git apply --check /tmp/album-date-metadata.patch \
+		&& git apply /tmp/album-date-metadata.patch \
+		&& git apply --check /tmp/memory-render-tests.patch \
+		&& git apply /tmp/memory-render-tests.patch \
+		&& git apply --check /tmp/memory-image-bound-tests.patch \
+		&& git apply /tmp/memory-image-bound-tests.patch \
+		&& git apply --check /tmp/memory-render.patch \
+		&& git apply /tmp/memory-render.patch \
+		&& git apply --check /tmp/photo-variety-tests.patch \
+		&& git apply /tmp/photo-variety-tests.patch \
+		&& git apply --check /tmp/photo-variety.patch \
+		&& git apply /tmp/photo-variety.patch \
+		&& git apply --check /tmp/memory-metrics-tests.patch \
+		&& git apply /tmp/memory-metrics-tests.patch \
+		&& git apply --check /tmp/memory-metrics.patch \
+		&& git apply /tmp/memory-metrics.patch \
+		&& git apply --check /tmp/burst-variety-tests.patch \
+		&& git apply /tmp/burst-variety-tests.patch \
+		&& git apply --check /tmp/burst-variety.patch \
+		&& git apply /tmp/burst-variety.patch \
+		&& git apply --check /tmp/burst-variety-followup-tests.patch \
+		&& git apply /tmp/burst-variety-followup-tests.patch \
+		&& git apply --check /tmp/burst-variety-followup.patch \
+		&& git apply /tmp/burst-variety-followup.patch \
+		&& git apply --check /tmp/cache-lock-telemetry-tests.patch \
+		&& git apply /tmp/cache-lock-telemetry-tests.patch \
+		&& git apply --check --unidiff-zero /tmp/cache-lock-telemetry.patch \
+		&& git apply --unidiff-zero /tmp/cache-lock-telemetry.patch \
+		&& git apply --check --unidiff-zero /tmp/history-render-memory-tests.patch \
+		&& git apply --unidiff-zero /tmp/history-render-memory-tests.patch \
+		&& git apply --check /tmp/history-render-memory.patch \
+		&& git apply /tmp/history-render-memory.patch \
+		&& git apply --check /tmp/paused-retry-tests.patch \
+		&& git apply /tmp/paused-retry-tests.patch \
+		&& git apply --check /tmp/paused-retry.patch \
+		&& git apply /tmp/paused-retry.patch \
+		&& git apply --check --unidiff-zero /tmp/history-display-bounds-tests.patch \
+		&& git apply --unidiff-zero /tmp/history-display-bounds-tests.patch \
+		&& git apply --check /tmp/history-display-bounds.patch \
+		&& git apply /tmp/history-display-bounds.patch \
+		&& git apply --check --unidiff-zero /tmp/classification-gate-tests.patch \
+		&& git apply --unidiff-zero /tmp/classification-gate-tests.patch \
+		&& git apply --check --unidiff-zero /tmp/classification-gate.patch \
+		&& git apply --unidiff-zero /tmp/classification-gate.patch \
+		&& git apply --check --unidiff-zero /tmp/classification-caption-completion-tests.patch \
+		&& git apply --unidiff-zero /tmp/classification-caption-completion-tests.patch \
+		&& git apply --check --unidiff-zero /tmp/classification-caption-completion.patch \
+		&& git apply --unidiff-zero /tmp/classification-caption-completion.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
@@ -179,6 +248,11 @@ RUN node_modules/.bin/esbuild tests/asset-request-recovery.test.ts \
       --alias:htmx.org=./tests/htmx.mock.ts \
       --outfile=/tmp/polling-recovery.test.mjs \
     && node --test /tmp/polling-recovery.test.mjs \
+    && node_modules/.bin/esbuild tests/paused-retry.test.ts \
+      --bundle --platform=node --format=esm \
+      --alias:htmx.org=./tests/htmx.mock.ts \
+      --outfile=/tmp/paused-retry.test.mjs \
+    && node --test /tmp/paused-retry.test.mjs \
     && node --test tests/browser-cache-contract.test.mjs tests/offline-cache-contract.test.mjs
 RUN task frontend
 

@@ -1,0 +1,159 @@
+--- a/internal/routes/routes_history_display_bounds_test.go
++++ b/internal/routes/routes_history_display_bounds_test.go
+@@ -0,0 +1,156 @@
++package routes
++
++import (
++	"bytes"
++	"context"
++	"encoding/base64"
++	"encoding/json"
++	"image"
++	"image/jpeg"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"regexp"
++	"sync/atomic"
++	"testing"
++
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/labstack/echo/v5"
++	"github.com/stretchr/testify/require"
++)
++
++func TestHistoryDisplayOptimizesPreviousAndForwardHistory(t *testing.T) {
++	for _, testCase := range []struct {
++		name    string
++		target  string
++		handler func(*config.Config, *common.Common) echo.HandlerFunc
++	}{
++		{name: "previous", target: "/asset/previous?history=history-asset:&history=*current:", handler: PreviousHistoryAsset},
++		{name: "forward", target: "/asset/new?history=*current:&history=history-asset:", handler: NewAsset},
++	} {
++		t.Run(testCase.name, func(t *testing.T) {
++			asset := historyDisplayAsset()
++			var originalRequests atomic.Int32
++			server := historyDisplayServer(t, asset, mustEncodeSizedHistoryJPEG(t, 4000, 3000), &originalRequests)
++			defer server.Close()
++
++			cfg := newHistoryDisplayConfig(server.URL, true)
++			rec, err := invokeHistoryDisplay(testCase.handler(cfg, common.New()), testCase.target)
++			require.NoError(t, err)
++			require.Equal(t, http.StatusOK, rec.Code)
++			width, height := renderedHistoryImageDimensions(t, rec.Body.Bytes())
++			require.LessOrEqual(t, width, cfg.ClientData.Width)
++			require.LessOrEqual(t, height, cfg.ClientData.Height)
++			require.Equal(t, int32(1), originalRequests.Load(), "admitted original must remain selected before client-side optimization")
++		})
++	}
++}
++
++func TestHistoryDisplayLeavesOriginalSizeWhenOptimizationDisabled(t *testing.T) {
++	asset := historyDisplayAsset()
++	var originalRequests atomic.Int32
++	server := historyDisplayServer(t, asset, mustEncodeSizedHistoryJPEG(t, 4000, 3000), &originalRequests)
++	defer server.Close()
++
++	cfg := newHistoryDisplayConfig(server.URL, false)
++	rec, err := invokeHistoryDisplay(PreviousHistoryAsset(cfg, common.New()), "/asset/previous?history=history-asset:&history=*current:")
++	require.NoError(t, err)
++	require.Equal(t, http.StatusOK, rec.Code)
++	width, height := renderedHistoryImageDimensions(t, rec.Body.Bytes())
++	require.Equal(t, 4000, width)
++	require.Equal(t, 3000, height)
++	require.Equal(t, int32(1), originalRequests.Load())
++}
++
++func TestHistoryDisplayRejectsInvalidOptimizationDimensionsBeforeFetch(t *testing.T) {
++	asset := historyDisplayAsset()
++	var originalRequests atomic.Int32
++	server := historyDisplayServer(t, asset, mustEncodeSizedHistoryJPEG(t, 4000, 3000), &originalRequests)
++	defer server.Close()
++
++	cfg := newHistoryDisplayConfig(server.URL, true)
++	cfg.ClientData.Width = 0
++	rec, err := invokeHistoryDisplay(PreviousHistoryAsset(cfg, common.New()), "/asset/previous?history=history-asset:&history=*current:")
++	require.Error(t, err)
++	httpErr, ok := err.(*echo.HTTPError)
++	require.True(t, ok)
++	require.Equal(t, http.StatusBadRequest, httpErr.Code)
++	require.Equal(t, http.StatusOK, rec.Code, "handler must fail before writing a history response")
++	require.Zero(t, originalRequests.Load(), "invalid optimized dimensions must reject before any Immich request")
++}
++
++func TestHistoryDisplayOptimizationRemainsInsideImageWorkGateContract(t *testing.T) {
++	source, err := os.ReadFile("routes_previous_asset.go")
++	require.NoError(t, err)
++	historyRenderer := regexp.MustCompile(`(?s)func renderHistoryImage\(.*?\n}\n\n// findHistoryEntry`).FindString(string(source))
++	require.NotEmpty(t, historyRenderer)
++	require.Regexp(t, regexp.MustCompile(`(?s)imageWorkGateGlobal\.withWork\(ctx, func\(\) error \{.*?utils\.OptimizeImage\(.*?return nil`), historyRenderer, "history resize must stay inside the shared decode/render permit")
++}
++
++func historyDisplayAsset() immich.Asset {
++	asset := testImageAsset("history-asset")
++	asset.ExifInfo.ExifImageWidth = 4000
++	asset.ExifInfo.ExifImageHeight = 3000
++	return asset
++}
++
++func newHistoryDisplayConfig(immichURL string, optimize bool) *config.Config {
++	cfg := newHistoryRenderTestConfig(immichURL)
++	cfg.OptimizeImages = optimize
++	cfg.ClientData.Width = 1920
++	cfg.ClientData.Height = 1080
++	cfg.BackgroundBlur = false
++	cfg.ImageFit = "contain"
++	cfg.ImageEffect = "none"
++	return cfg
++}
++
++func historyDisplayServer(t *testing.T, asset immich.Asset, preview []byte, originalRequests *atomic.Int32) *httptest.Server {
++	t.Helper()
++	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch r.URL.Path {
++		case "/api/assets/history-asset":
++			w.Header().Set("Content-Type", echo.MIMEApplicationJSON)
++			require.NoError(t, json.NewEncoder(w).Encode(asset))
++		case "/api/assets/history-asset/original":
++			originalRequests.Add(1)
++			w.Header().Set("Content-Type", "image/jpeg")
++			_, err := w.Write(preview)
++			require.NoError(t, err)
++		default:
++			t.Errorf("unexpected history-display request path %q", r.URL.Path)
++			http.Error(w, "unexpected test route", http.StatusNotFound)
++		}
++	}))
++}
++
++func invokeHistoryDisplay(handler echo.HandlerFunc, target string) (*httptest.ResponseRecorder, error) {
++	req := httptest.NewRequest(http.MethodPost, target, nil).WithContext(context.Background())
++	req.Header.Set("kiosk-device-id", "history-display-test")
++	rec := httptest.NewRecorder()
++	return rec, handler(echo.New().NewContext(req, rec))
++}
++
++func mustEncodeSizedHistoryJPEG(t *testing.T, width, height int) []byte {
++	t.Helper()
++	var out bytes.Buffer
++	require.NoError(t, jpeg.Encode(&out, image.NewGray(image.Rect(0, 0, width, height)), &jpeg.Options{Quality: 75}))
++	return out.Bytes()
++}
++
++func renderedHistoryImageDimensions(t *testing.T, body []byte) (int, int) {
++	t.Helper()
++	alt := bytes.Index(body, []byte(`alt="Main image"`))
++	require.GreaterOrEqual(t, alt, 0)
++	start := bytes.LastIndex(body[:alt], []byte("<img"))
++	require.GreaterOrEqual(t, start, 0)
++	match := regexp.MustCompile(`data:image/jpeg;base64,([A-Za-z0-9+/=]+)`).FindSubmatch(body[start:alt])
++	require.Len(t, match, 2)
++	decoded, err := base64.StdEncoding.DecodeString(string(match[1]))
++	require.NoError(t, err)
++	cfg, _, err := image.DecodeConfig(bytes.NewReader(decoded))
++	require.NoError(t, err)
++	return cfg.Width, cfg.Height
++}

@@ -1,0 +1,79 @@
+diff --git a/main.go b/main.go
+index 21ad449..a5a77cb 100644
+--- a/main.go
++++ b/main.go
+@@ -62,6 +62,33 @@ func init() {
+ 	i18n.LocaleFS = localeFS
+ }
+ 
++func metricsTokenFromFile(filename string) (string, error) {
++	if filename == "" {
++		return "", errors.New("KIOSK_METRICS_TOKEN_FILE is not set")
++	}
++	contents, err := os.ReadFile(filename)
++	if err != nil {
++		return "", fmt.Errorf("reading metrics token file: %w", err)
++	}
++	token := strings.TrimSpace(string(contents))
++	if token == "" {
++		return "", errors.New("metrics token file is empty")
++	}
++	return token, nil
++}
++
++// metricsHandler accepts only an Authorization bearer token. It deliberately
++// does not use the kiosk password or query parameters.
++func metricsHandler(token string) echo.HandlerFunc {
++	return func(c *echo.Context) error {
++		provided := strings.TrimPrefix(c.Request().Header.Get("Authorization"), "Bearer ")
++		if !strings.HasPrefix(c.Request().Header.Get("Authorization"), "Bearer ") || subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
++			return c.NoContent(http.StatusUnauthorized)
++		}
++		return c.JSON(http.StatusOK, routes.RenderMemoryMetrics())
++	}
++}
++
+ // main initializes and starts the Immich Kiosk web server, sets up configuration, middleware, routes, and manages graceful shutdown.
+ func main() {
+ 	if endpoint, ok := checkEndpoint(os.Args[1:]); ok {
+@@ -174,6 +201,11 @@ func main() {
+ 	e.GET("/", routes.Home(baseConfig, c))
+ 
+ 	registerHealthRoutes(e, baseConfig)
++	if metricsToken, metricsErr := metricsTokenFromFile(os.Getenv("KIOSK_METRICS_TOKEN_FILE")); metricsErr != nil {
++		log.Warn("metrics endpoint disabled", "err", metricsErr)
++	} else {
++		e.GET("/metrics", metricsHandler(metricsToken))
++	}
+ 
+ 	if baseConfig.Kiosk.EnableURLBuilder {
+ 		e.GET("/url-builder", routes.URLBuilderPage(baseConfig, c, false))
+diff --git a/internal/routes/routes_render_memory.go b/internal/routes/routes_render_memory.go
+index 229892f..7b20c9d 100644
+--- a/internal/routes/routes_render_memory.go
++++ b/internal/routes/routes_render_memory.go
+@@ -2,6 +2,7 @@ package routes
+ 
+ import (
+ 	"context"
++	"runtime"
+ 	"sync/atomic"
+ 	"time"
+ 
+@@ -13,12 +14,16 @@ import (
+ // RenderMemoryMetrics is intentionally aggregate-only: it exposes no asset,
+ // user, or device identifiers while making cgroup tuning observable.
+ func RenderMemoryMetrics() map[string]int64 {
++	var memory runtime.MemStats
++	runtime.ReadMemStats(&memory)
+ 	return map[string]int64{
+ 		"cache_bytes":                         cache.ByteSize(),
+ 		"cache_evictions_total":               cache.Evictions(),
+ 		"image_work_admissions_total":         imageWorkAdmissions.Load(),
+ 		"image_work_wait_nanoseconds_total":   imageWorkWaitNanos.Load(),
+ 		"image_work_render_nanoseconds_total": imageWorkRenderNanos.Load(),
++		"go_heap_alloc_bytes":                 int64(memory.HeapAlloc),
++		"go_heap_sys_bytes":                   int64(memory.HeapSys),
+ 	}
+ }
+ 

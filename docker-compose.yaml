@@ -25,14 +25,23 @@ services:
       KIOSK_IMMICH_URL: ${IMMICH_URL:?Set IMMICH_URL in .env}
       KIOSK_IMMICH_API_KEY_FILE: /run/secrets/immich_api_key
       KIOSK_LOG_LEVEL: info
+      # Reserve cgroup headroom for one full camera-original decode plus the
+      # optimized slide; Go begins collecting before the 1 GiB hard limit.
+      GOMEMLIMIT: ${KIOSK_GOMEMLIMIT:-800MiB}
+      FRAME_PREFERENCES_FILE: /frame-preferences/preferences.json
+      KIOSK_METRICS_TOKEN_FILE: /run/secrets/kiosk_metrics_token
     ports:
       - "${KIOSK_PORT:-3000}:3000"
     volumes:
       - ${KIOSK_CONFIG_FILE:-./config/config.yaml}:/config/config.yaml:ro
       - ./custom.css:/custom.css:ro
       - ./offline-assets:/offline-assets
+      - ${FRAME_PREFERENCES_DIR:-./frame-preferences}:/frame-preferences:ro
+    group_add:
+      - "${FRAME_PREFERENCES_GID:-10001}"
     secrets:
       - immich_api_key
+      - kiosk_metrics_token
     cap_drop:
       - ALL
     read_only: true
@@ -48,7 +57,17 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    logging:
+      driver: local
+      options:
+        max-size: 50m
+        max-file: "1"
+        # Docker local logging rejects its default compression with one file.
+        compress: "false"
 
 secrets:
   immich_api_key:
     file: ${KIOSK_API_KEY_FILE:-./secrets/immich_api_key}
+
+  kiosk_metrics_token:
+    file: ${KIOSK_METRICS_TOKEN_FILE:-./secrets/kiosk_metrics_token}

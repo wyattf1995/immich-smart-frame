@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.wyattfleming.frameos.config.FrameConfiguration
+import com.wyattfleming.frameos.config.FrameConfigurationPatch
 import com.wyattfleming.frameos.config.FrameConfigurationStore
 import com.wyattfleming.frameos.weather.SharedPreferencesWeatherCache
 
@@ -12,7 +13,8 @@ class FrameControlReceiver : BroadcastReceiver() {
         if (intent.action != FrameControlContract.ACTION_CONTROL) return
 
         val configurationStore = FrameConfigurationStore(context)
-        if (configurationStore.read() == null) {
+        val existingConfiguration = configurationStore.read()
+        if (existingConfiguration == null) {
             val configuration = FrameConfiguration.from(
                 photosUrl = intent.getStringExtra(FrameControlContract.EXTRA_PHOTOS_URL).orEmpty(),
                 homeAssistantUrl = intent.getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_URL).orEmpty(),
@@ -22,10 +24,31 @@ class FrameControlReceiver : BroadcastReceiver() {
                     .ifBlank { DEFAULT_WEATHER_ENTITY_ID },
                 homeAssistantFallbackUrl = intent
                     .getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_FALLBACK_URL),
+                birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
             )
             if (configuration != null) {
                 SharedPreferencesWeatherCache(context).clear()
                 configurationStore.write(configuration)
+            }
+        } else if (intent.hasExtra(FrameControlContract.EXTRA_BIRDS_URL)) {
+            FrameConfigurationPatch.withBirdsUrl(
+                existing = existingConfiguration,
+                birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
+            )?.let(configurationStore::write)
+        }
+        if (intent.hasExtra(FrameControlContract.EXTRA_COMPANION_URL)) {
+            val credentialsWritten = FrameCompanionCredentialsStore(context).write(
+                intent.getStringExtra(FrameControlContract.EXTRA_COMPANION_URL).orEmpty(),
+                intent.getStringExtra(FrameControlContract.EXTRA_COMPANION_TOKEN).orEmpty(),
+                intent.getStringExtra(FrameControlContract.EXTRA_COMPANION_DEVICE_ID).orEmpty(),
+            )
+            if (credentialsWritten) {
+                val experience = com.wyattfleming.frameos.config.FrameExperienceStore(context)
+                experience.write(experience.read().copy(settingsRevision = 0L))
+                configurationStore.read()?.let { existing ->
+                    FramePhotosProfileUrl.withFrameId(existing.photosUrl, intent.getStringExtra(FrameControlContract.EXTRA_COMPANION_DEVICE_ID).orEmpty())
+                        ?.let { photosUrl -> configurationStore.write(existing.copy(photosUrl = photosUrl)) }
+                }
             }
         }
 

@@ -36,7 +36,9 @@ receiver_contracts = [
   "FrameControlCommandCodec",
   "FrameControlStore",
   "FrameConfigurationStore",
+  "FrameConfigurationPatch.withBirdsUrl",
   "FrameControlContract.ACTION_CONTROL",
+  "intent.hasExtra(FrameControlContract.EXTRA_BIRDS_URL)",
 ]
 receiver_contracts.each do |contract|
   abort("FrameOS control receiver missing contract: #{contract}") unless receiver.include?(contract)
