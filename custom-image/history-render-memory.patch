@@ -1,0 +1,122 @@
+--- a/internal/routes/routes_previous_asset.go
++++ b/internal/routes/routes_previous_asset.go
+@@ -6,6 +6,7 @@
+ 	"image/color"
+ 	"net/http"
+ 	"path"
++	"slices"
+ 	"strings"
+ 
+ 	"charm.land/log/v2"
+@@ -240,63 +241,78 @@
+ 			asset.AlbumsThatContainAsset(requestID, deviceID)
+ 		}
+ 
+-		var imgString, imgBlurString string
+-		var dominantColor color.RGBA
+-		var err error
++		rendered := common.ViewImageData{ImmichAsset: asset, User: selectedUser}
++		defer func() { viewData.Assets[prevAssetsID] = rendered }()
+ 
+-		// Populate the viewData.Assets entry for this asset after processing.
+-		defer func() {
+-			viewData.Assets[prevAssetsID] = common.ViewImageData{
+-				ImmichAsset:        asset,
+-				ImageData:          imgString,
+-				ImageBlurData:      imgBlurString,
+-				ImageDominantColor: dominantColor,
+-				User:               selectedUser,
+-			}
+-		}()
++		var renderErr error
++		rendered, renderErr = renderHistoryImage(ctx, &asset, requestConfig, requestID, deviceID, selectedUser)
++		return renderErr
++	}
++}
+ 
+-		// Image processing isn't required for video, audio, or other types.
+-		// If preview fails for an image, return error; for other types, proceed.
+-		imgBytes, _, previewErr := asset.ImagePreview()
++// renderHistoryImage uses the same source-admission and renderer permit as new
++// selections. History preserves its requested asset, but must not decode a camera
++// original that the foreground renderer would reject.
++func renderHistoryImage(ctx context.Context, asset *immich.Asset, requestConfig config.Config, requestID, deviceID, selectedUser string) (common.ViewImageData, error) {
++	rendered := common.ViewImageData{ImmichAsset: *asset, User: selectedUser}
++	err := imageWorkGateGlobal.withWork(ctx, func() error {
++		admittedOriginal := requestConfig.UseOriginalImage
++		if asset.Type == immich.ImageType {
++			admittedOriginal = requestConfig.UseOriginalImage && shouldFetchOriginal(asset)
++		}
++
++		img, previewErr := fetchImagePreview(asset, admittedOriginal, requestID, deviceID, false)
+ 		if previewErr != nil {
+ 			switch asset.Type {
+ 			case immich.ImageType:
+ 				return fmt.Errorf("retrieving asset: %w", previewErr)
+-
+ 			case immich.VideoType, immich.AudioType, immich.OtherType:
+ 				return nil
++			default:
++				return previewErr
+ 			}
+ 		}
+ 
+-		img, mimeType, byteErr := utils.BytesToImage(imgBytes, requestConfig.UseOriginalImage)
+-		if byteErr != nil {
+-			return byteErr
++		img = handleFaceProcessing(img, asset, requestConfig, requestMetadata{requestID: requestID, deviceID: deviceID})
++		if err := ctx.Err(); err != nil {
++			return err
+ 		}
+-
+-		img = handleFaceProcessing(img, &asset, requestConfig, requestMetadata{
+-			requestID: requestID,
+-			deviceID:  deviceID,
+-		})
+-
++		mimeType := kiosk.MimeTypeJpeg
++		if admittedOriginal && slices.Contains(kiosk.SupportedImageMimeTypes, asset.OriginalMimeType) {
++			mimeType = asset.OriginalMimeType
++		}
+ 		imgString, base64Err := imageToBase64(img, mimeType, requestConfig.Kiosk.DebugVerbose, requestID, deviceID, "Converted", false)
+ 		if base64Err != nil {
+ 			return fmt.Errorf("converting image to base64: %w", base64Err)
+ 		}
+-
++		if err := ctx.Err(); err != nil {
++			return err
++		}
+ 		imgBlurString, blurErr := processBlurredImage(ctx, img, asset.Type, requestConfig, requestID, deviceID, false)
+ 		if blurErr != nil {
+ 			return fmt.Errorf("converting blurred image to base64: %w", blurErr)
+ 		}
+-
++		if err := ctx.Err(); err != nil {
++			return err
++		}
++		var dominantColor color.RGBA
+ 		if requestConfig.Theme == kiosk.ThemeBubble {
+-			dominantColor, err = utils.ExtractDominantColor(img)
+-			if err != nil {
+-				return fmt.Errorf("extracting dominant colour: %w", err)
++			var colourErr error
++			dominantColor, colourErr = utils.ExtractDominantColor(img)
++			if colourErr != nil {
++				return fmt.Errorf("extracting dominant colour: %w", colourErr)
+ 			}
+ 		}
+-
++		rendered = common.ViewImageData{
++			ImmichAsset:        *asset,
++			ImageData:          imgString,
++			ImageBlurData:      imgBlurString,
++			ImageDominantColor: dominantColor,
++			User:               selectedUser,
++		}
+ 		return nil
+-	}
++	})
++	return rendered, err
+ }
+ 
+ // findHistoryEntry searches through the history slice to find and return the appropriate
