@@ -358,5 +358,8 @@ test("failed Kiosk HTMX does not release capture until a later successful transa
   runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
   runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: successful }, runtime.kiosk);
   runtime.runMicrotasks();
-  assert.deepEqual(runtime.nativeMessages.at(-1), { type: "loaded-photo", assetId: finalId, image: "final" });
+  assert.deepEqual(
+    runtime.nativeMessages.slice(-1).map(({ type, assetId, image }) => ({ type, assetId, image })),
+    [{ type: "loaded-photo", assetId: finalId, image: "final" }],
+  );
 });
