@@ -50,6 +50,7 @@ required_files=(
   custom-image/date-pool-hardening.patch
   custom-image/date-pool-hardening-tests.patch
   custom-image/fully-kiosk-dpr.patch
+  custom-image/history-render-memory-tests.patch
   custom-image/offline-cache-hardening.patch
   custom-image/offline-cache-tests.patch
   custom-image/offline-mutation-hardening.patch
