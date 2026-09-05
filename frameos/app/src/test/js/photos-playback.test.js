@@ -262,6 +262,31 @@ test("paused snapshot waits for the settled Kiosk pair", () => {
   );
 });
 
+test("paused step spends a new nonce only after its Kiosk response settles", async () => {
+  const oldId = "11111111-1111-4111-8111-111111111111";
+  const newId = "22222222-2222-4222-8222-222222222222";
+  const pauseNonce = "33333333-3333-4333-8333-333333333333";
+  const stepNonce = "44444444-4444-4444-8444-444444444444";
+  const runtime = loadScript({ historyValues: [`*${oldId}:old`], frames: [{ images: ["data:image/jpeg;base64,old"] }] });
+  runtime.port.listener({ type: "pause", paused: true, snapshotNonce: pauseNonce });
+  runtime.runMicrotasks();
+  await Promise.resolve();
+  const request = {};
+  runtime.port.listener({ type: "step", forward: true, snapshotNonce: stepNonce });
+  runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: request });
+  runtime.setHistory([`${oldId}:old`, `*${newId}:new`]);
+  runtime.setFrameImage(0, "data:image/jpeg;base64,new");
+  runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
+  runtime.runMicrotasks();
+  assert.equal(runtime.nativeMessages.length, 1);
+  runtime.fireEvent("htmx:afterSettle", { target: runtime.kiosk, xhr: request }, runtime.kiosk);
+  runtime.runMicrotasks();
+  assert.deepEqual(
+    runtime.nativeMessages.slice(-1).map(({ assetId, image, snapshotNonce }) => ({ assetId, image, snapshotNonce })),
+    [{ assetId: newId, image: "new", snapshotNonce: stepNonce }],
+  );
+});
+
 test("capture retries when the current frame becomes visible after its transition", () => {
   const runtime = loadScript({
     historyValues: ["*22222222-2222-4222-8222-222222222222:current"],
