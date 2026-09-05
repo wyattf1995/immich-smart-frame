@@ -66,3 +66,13 @@ class VlmPolicyTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class CompletionMarkerTests(unittest.TestCase):
+    def test_empty_photograph_without_a_tag_or_caption_fails_closed(self):
+        with self.assertRaises(ClassificationError):
+            plan_asset_update(
+                original_file_name='IMG_0001.jpg',
+                vlm={'tags': [], 'caption': '', 'image_type': 'photograph'},
+                existing_tag_names=(),
+                existing_description='',
+            )

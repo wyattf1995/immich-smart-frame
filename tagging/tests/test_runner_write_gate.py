@@ -46,3 +46,27 @@ class RunnerWriteGateTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class RunnerSchemaAndOrderingTests(unittest.TestCase):
+    def setUp(self):
+        runner.TAGMAP.clear()
+
+    def test_runner_keeps_late_skip_tag_before_content_cap(self):
+        mapped = tuple([f'Content/{n}' for n in range(12)] + ['Skip/Blurry'])
+        runner.TAGMAP.update({tag: f'id-{n}' for n, tag in enumerate(mapped)})
+        response = {'tags': ['anything'], 'caption': 'caption', 'image_type': 'photograph'}
+        with patch.object(runner, 'vlm', return_value=response), patch.object(runner, 'map_tags', return_value=mapped), patch.object(runner, 'im', return_value=None) as request:
+            plan = runner.process('asset-id', 'IMG_0001.jpg', '', (), '', apply=True)
+        self.assertIn('Skip/Blurry', plan.desired_tag_names)
+        self.assertEqual('Skip/Blurry', plan.desired_tag_names[0])
+        self.assertEqual(12, len(plan.desired_tag_names))
+        write = request.call_args_list[0]
+        self.assertEqual('PUT', write.args[0])
+        self.assertIn('id-12', write.args[2]['tagIds'])
+
+    def test_runner_schema_places_image_type_before_ocr_and_salvage_requires_it(self):
+        self.assertLess(list(runner.SCHEMA['properties']).index('image_type'), list(runner.SCHEMA['properties']).index('ocr_text'))
+        recovered = runner.parse_vlm('{"image_type":"screenshot","tags":["screen"],"caption":"A screen"')
+        self.assertEqual('screenshot', recovered['image_type'])
+        with self.assertRaises(Exception):
+            runner.parse_vlm('{"tags":["screen"],"caption":"A screen"')
