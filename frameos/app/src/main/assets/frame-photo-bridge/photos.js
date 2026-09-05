@@ -26,6 +26,7 @@ const settlingKioskRequests = new Set();
 let kioskCaptureReady = false;
 let domReady = false;
 let hasObservedKioskRequest = false;
+let unreadableKioskRequest = false;
 let settledKioskEpoch = 0;
 let pauseSnapshotRequiresSettleEpoch = null;
 let diagnosticReports = 0;
@@ -174,9 +175,30 @@ function kioskHtmxRequest(event, stage = null) {
   return { request, primaryTarget, fields };
 }
 
+function isRecognizableKioskEventTarget(event) {
+  try {
+    return event.target instanceof HTMLElement && event.target.id === "kiosk";
+  } catch (_) {
+    return false;
+  }
+}
+
+function closeForUnreadableKioskRequest(event, fields) {
+  if (!isRecognizableKioskEventTarget(event) || (fields.detailReadable && fields.xhrPresent)) return;
+  // Without the XHR identity, a later settle cannot be paired with this primary swap.
+  hasObservedKioskRequest = true;
+  unreadableKioskRequest = true;
+  kioskCaptureReady = false;
+  pauseSnapshotNonce = null;
+  pauseSnapshotRequiresSettleEpoch = null;
+}
+
 function beginKioskHtmxRequest(event) {
-  const { request } = kioskHtmxRequest(event, "htmx_before");
-  if (!request) return;
+  const { request, fields } = kioskHtmxRequest(event, "htmx_before");
+  if (!request) {
+    closeForUnreadableKioskRequest(event, fields);
+    return;
+  }
   hasObservedKioskRequest = true;
   // Kiosk releases its request lock after swap, before settle; retain only a bounded tail of settle-only responses.
   if (settlingKioskRequests.size >= MAX_SETTLING_KIOSK_REQUESTS) settlingKioskRequests.clear();
@@ -188,7 +210,7 @@ function settleKioskHtmxRequest(event) {
   const { request, primaryTarget } = kioskHtmxRequest(event, "htmx_primary_settle");
   // HTMX settles OOB elements too; only the primary #kiosk target completes its response transaction.
   if (!request || !primaryTarget || !settlingKioskRequests.delete(request)) return;
-  if (settlingKioskRequests.size > 0) return;
+  if (unreadableKioskRequest || settlingKioskRequests.size > 0) return;
   kioskCaptureReady = true;
   settledKioskEpoch += 1;
   scheduleCapture();
