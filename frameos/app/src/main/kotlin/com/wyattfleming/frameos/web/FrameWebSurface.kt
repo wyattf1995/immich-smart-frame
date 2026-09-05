@@ -73,6 +73,7 @@ class FrameWebSurface(
         var lifecycleSuspended = false
         private var traceGeneration = 0L
         private var traceEvents = 0
+        private var tracedCompositeGeneration = -1L
         private val pageLoadWatchdogState = FrameWebPageLoadWatchdogState()
         private var pageLoadWatchdog: Runnable? = null
 
@@ -137,7 +138,10 @@ class FrameWebSurface(
                 }
 
                 override fun onFirstComposite(session: GeckoSession) {
-                    trace("first_composite")
+                    if (tracedCompositeGeneration != traceGeneration) {
+                        tracedCompositeGeneration = traceGeneration
+                        trace("first_composite")
+                    }
                 }
 
                 override fun onPaintStatusReset(session: GeckoSession) {
@@ -777,6 +781,6 @@ class FrameWebSurface(
         const val PHOTO_TAP_MILLIS = 36L
         const val PAGE_LOAD_WATCHDOG_MILLIS = 20_000L
         const val SURFACE_TRACE_TAG = "FrameSurfaceTrace"
-        const val MAX_SURFACE_TRACE_EVENTS = 32
+        const val MAX_SURFACE_TRACE_EVENTS = 128
     }
 }
