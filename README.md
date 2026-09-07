@@ -8,8 +8,11 @@ Immich display with a photo-selection algorithm you control.
 This project keeps the frame deliberately simple: an Android kiosk browser
 ([Fully Kiosk Browser](https://www.fully-kiosk.com/)) renders the slideshow
 while a Docker host runs a pinned, lightly patched build of
-[Immich Kiosk](https://github.com/damongolding/immich-kiosk). It does not
-modify Immich originals, ratings, albums, tags, or sidecars.
+[Immich Kiosk](https://github.com/damongolding/immich-kiosk). The default display and Frame remote
+do not modify Immich originals, ratings, albums, tags, or sidecars. The separately
+documented [optional tagging pipeline](tagging/RUNBOOK.md) is write-capable:
+tag and description changes require an explicit `--apply` operation and its own
+credential and rollout checks. It is not required for the starter slideshow.
 
 > [!IMPORTANT]
 > This is an experimental community project, not a Lenovo, Immich, or Immich
@@ -297,6 +300,7 @@ After setup, run:
 
 ```sh
 ./scripts/validate.sh
+python3 scripts/test-readme-claims.py
 ```
 
 The validator checks public-repository hygiene, configuration/profile weights,
@@ -355,9 +359,15 @@ for the release process and support expectations.
 ## Project status
 
 The core slideshow, native-resolution path, weighted profiles, recency bias,
-exact-date/location metadata, and low-memory performance tuning are working. Known
-future work includes persistent per-display “already shown” history,
-near-duplicate suppression, and a read-only-display-safe rejection workflow.
+exact-date/location metadata, and low-memory performance tuning are working.
+Unreleased main also has bounded, in-process repeat and capture-burst suppression.
+The optional companion adds persistent, reversible per-frame more/less/hide
+choices without modifying Immich assets; these are not features of the older
+v0.1.0 tag. See [curation](docs/curation.md) and [Frame remote](companion/README.md).
+
+Restart-persistent presentation history and visual-similarity detection remain
+future work. Capture-burst suppression uses capture-time proximity, not image
+similarity, and does not eliminate every kind of near duplicate.
 
 ## License and upstream
 
