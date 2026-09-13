@@ -200,7 +200,7 @@ public final class MainActivity extends Activity {
         LinearLayout strip = rowContainer();
         for (TvInputInfo input : inputs) {
             if (input.getType() != TvInputInfo.TYPE_HDMI) continue;
-            CharSequence inputLabel = input.loadLabel(getPackageManager());
+            CharSequence inputLabel = input.loadLabel(this);
             String label = inputLabel == null ? "HDMI input" : inputLabel.toString();
             String id = "input:" + input.getId();
             android.widget.Button tile = TvUi.button(this, label, () -> openInput(input));
