@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <queries>
+        <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LEANBACK_LAUNCHER" /></intent>
+        <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
+        <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.HOME" /></intent>
+        <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="content" /></intent>
+    </queries>
+    <application android:label="Frame TV" android:icon="@drawable/ic_launcher"
+        android:banner="@drawable/tv_banner" android:theme="@style/AppTheme"
+        android:allowBackup="false" android:usesCleartextTraffic="true"
+        android:supportsRtl="true">
+        <activity android:name=".MainActivity" android:exported="true"
+            android:launchMode="singleTask" android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".SetupActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".DashboardActivity" android:exported="false" android:screenOrientation="landscape" />
+    </application>
+</manifest>
