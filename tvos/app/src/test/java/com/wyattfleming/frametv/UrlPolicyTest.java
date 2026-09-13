@@ -40,8 +40,14 @@ public class UrlPolicyTest {
         assertInvalid("https://dashboard.example.com/?token=abc");
         assertInvalid("https://dashboard.example.com/?pass_word=abc");
         assertInvalid("https://dashboard.example.com/?api%5Fkey=abc");
+        assertInvalid("https://dashboard.example.com/?x-api-key=abc");
+        assertInvalid("https://dashboard.example.com/?api_key_id=abc");
+        assertInvalid("https://dashboard.example.com/?key=abc");
         assertInvalid("https://dashboard.example.com/#access_token=abc");
         assertInvalid("https://dashboard.example.com/#%70%61%73%73%77%6f%72%64=abc");
+        assertInvalid("https://dashboard.example.com/#x-api-key=abc");
+        assertInvalid("https://dashboard.example.com/#api_key_id=abc");
+        assertInvalid("https://dashboard.example.com/#key=abc");
     }
 
     @Test
