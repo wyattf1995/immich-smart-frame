@@ -24,7 +24,7 @@ public final class SetupActivity extends Activity {
         int pad = TvUi.dp(this, 42);
         content.setPadding(pad, pad, pad, pad);
         content.addView(TvUi.text(this, "Your home, on TV", 30, TvUi.TEXT));
-        TextView description = TvUi.text(this, "Add your photo and home dashboard addresses. Each is optional. Sign in when you open a dashboard; keep passwords out of its address.", 16, TvUi.MUTED);
+        TextView description = TvUi.text(this, "Add your photo and home dashboard addresses. Each is optional. Use the dashboard’s own sign-in page; sign-in through Google or other external providers isn’t supported yet. Keep passwords out of the address.", 16, TvUi.MUTED);
         description.setPadding(0, TvUi.dp(this, 12), 0, TvUi.dp(this, 18));
         content.addView(description);
         for (Feature feature : Feature.values()) {

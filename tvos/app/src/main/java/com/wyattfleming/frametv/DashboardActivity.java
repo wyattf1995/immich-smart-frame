@@ -70,11 +70,9 @@ public final class DashboardActivity extends Activity {
     }
     @Override public void onPause() {
         active = false;
-        if (web != null) {
-            web.onPause();
-            // Stop dashboard media as soon as another app or Cast takes focus.
-            web.evaluateJavascript("document.querySelectorAll('video,audio').forEach(function(m){m.pause();});", null);
-        }
+        // Destroy the renderer on focus handoff instead of relying on an asynchronous
+        // JavaScript media pause. Also covers embedded media in cross-origin frames.
+        destroyRenderer();
         super.onPause();
     }
     @Override public void onStop() { destroyRenderer(); super.onStop(); }

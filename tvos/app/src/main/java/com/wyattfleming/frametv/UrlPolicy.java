@@ -62,7 +62,7 @@ public final class UrlPolicy {
             catch (Exception e) { return true; }
             key = lower(key).replace("-", "").replace("_", "");
             if (key.contains("token") || key.contains("password") || key.contains("secret")
-                    || key.equals("apikey") || key.equals("authorization") || key.equals("auth")) return true;
+                    || (key.contains("apikey") || key.equals("key")) || key.equals("authorization") || key.equals("auth")) return true;
         }
         return false;
     }
