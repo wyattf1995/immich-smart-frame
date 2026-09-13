@@ -7,6 +7,10 @@ import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.drawable.Drawable;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Rect;
+import android.graphics.drawable.BitmapDrawable;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -57,7 +61,13 @@ public final class AppCatalog implements AutoCloseable {
 
     public void load(Listener listener) {
         worker.execute(() -> {
-            final List<App> apps = discover();
+            List<App> found;
+            try {
+                found = discover();
+            } catch (RuntimeException ignored) {
+                found = Collections.emptyList();
+            }
+            final List<App> apps = found;
             main.post(() -> {
                 if (!closed) listener.onAppsLoaded(apps);
             });
@@ -84,18 +94,44 @@ public final class AppCatalog implements AutoCloseable {
     }
 
     private void collect(PackageManager pm, Intent intent, Map<String, App> unique) {
-        for (ResolveInfo resolve : pm.queryIntentActivities(intent, 0)) {
-            ActivityInfo info = resolve.activityInfo;
-            if (info == null || appContext.getPackageName().equals(info.packageName)) continue;
-            if (unique.containsKey(info.packageName) || unique.size() >= MAX_APPS) continue;
-            CharSequence title = resolve.loadLabel(pm);
-            String label = title == null || title.length() == 0 ? info.packageName : title.toString();
-            // Icon loading is also PackageManager work: keep it on this worker and retain only
-            // the first visible cache window. Text remains an accessible fallback for the rest.
-            Drawable icon = unique.size() < MAX_ICON_CACHE ? resolve.loadIcon(pm) : null;
-            unique.put(info.packageName, new App(info.packageName, label, icon,
-                    new ComponentName(info.packageName, info.name)));
+        List<ResolveInfo> activities;
+        try {
+            activities = pm.queryIntentActivities(intent, 0);
+        } catch (RuntimeException ignored) {
+            return;
         }
+        for (ResolveInfo resolve : activities) {
+            try {
+                ActivityInfo info = resolve.activityInfo;
+                if (info == null || appContext.getPackageName().equals(info.packageName)) continue;
+                if (unique.containsKey(info.packageName) || unique.size() >= MAX_APPS) continue;
+                CharSequence title = resolve.loadLabel(pm);
+                String label = title == null || title.length() == 0 ? info.packageName : title.toString();
+                // Icon loading is PackageManager work. Keep it off-main and retain small, fixed-size art.
+                Drawable icon = unique.size() < MAX_ICON_CACHE ? smallIcon(resolve.loadIcon(pm)) : null;
+                unique.put(info.packageName, new App(info.packageName, label, icon,
+                        new ComponentName(info.packageName, info.name)));
+            } catch (RuntimeException ignored) {
+                // A removed or malformed package must not hide the remaining catalog.
+            }
+        }
+    }
+
+    private Drawable smallIcon(Drawable source) {
+        if (source == null) return null;
+        int size = Math.max(1, Math.round(40 * appContext.getResources().getDisplayMetrics().density));
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        int width = Math.max(1, source.getIntrinsicWidth());
+        int height = Math.max(1, source.getIntrinsicHeight());
+        float scale = Math.min((float) size / width, (float) size / height);
+        int drawWidth = Math.max(1, Math.round(width * scale));
+        int drawHeight = Math.max(1, Math.round(height * scale));
+        int left = (size - drawWidth) / 2;
+        int top = (size - drawHeight) / 2;
+        source.setBounds(new Rect(left, top, left + drawWidth, top + drawHeight));
+        source.draw(canvas);
+        return new BitmapDrawable(appContext.getResources(), bitmap);
     }
 
     @Override public void close() {

@@ -18,15 +18,13 @@ import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.TextClock;
 import android.widget.Toast;
 
-import java.text.DateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -38,7 +36,7 @@ public final class MainActivity extends Activity {
     private final Map<String, View> focusTargets = new LinkedHashMap<>();
     private String focusId;
     private LinearLayout content;
-    private TextView clock;
+    private TextClock clock;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -55,8 +53,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
-        updateClock();
-        if (content != null) content.post(this::restoreFocus);
+        render();
     }
 
     @Override protected void onPause() {
@@ -94,10 +91,14 @@ public final class MainActivity extends Activity {
         TextView title = TvUi.text(this, "Frame TV", 32, TvUi.TEXT);
         title.setContentDescription("Frame TV home");
         masthead.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        clock = TvUi.text(this, "", 19, TvUi.MUTED);
+        clock = new TextClock(this);
+        clock.setTextSize(19);
+        clock.setTextColor(TvUi.MUTED);
+        clock.setFormat12Hour("h:mm a");
+        clock.setFormat24Hour("HH:mm");
+        clock.setContentDescription("Current time");
         masthead.addView(clock);
         content.addView(masthead);
-        updateClock();
 
         List<AppCatalog.App> ordered = orderedApps();
         addAppsRow("Favorites", orderedFavorites(ordered), true);
@@ -106,12 +107,6 @@ public final class MainActivity extends Activity {
         addInputs();
         addUtilities();
         content.post(this::restoreFocus);
-    }
-
-    private void updateClock() {
-        if (clock != null) {
-            clock.setText(DateFormat.getTimeInstance(DateFormat.SHORT, Locale.getDefault()).format(new Date()));
-        }
     }
 
     private List<AppCatalog.App> orderedApps() {
@@ -147,7 +142,7 @@ public final class MainActivity extends Activity {
         HorizontalScrollView scroll = horizontalRow();
         LinearLayout strip = rowContainer();
         for (AppCatalog.App app : row) {
-            String id = "app:" + app.packageName;
+            String id = (favorites ? "favorite:" : "all:") + app.packageName;
             android.widget.Button tile = TvUi.button(this, app.label, () -> launch(app));
             if (app.icon != null) {
                 tile.setCompoundDrawablesWithIntrinsicBounds(app.icon, null, null, null);
@@ -155,8 +150,9 @@ public final class MainActivity extends Activity {
             }
             tile.setTag(id);
             tile.setOnLongClickListener(view -> {
+                boolean wasFavorite = preferences.favorites().contains(app.packageName);
                 preferences.toggleFavorite(app.packageName);
-                focusId = id;
+                focusId = (wasFavorite ? "all:" : "favorite:") + app.packageName;
                 render();
                 return true;
             });
@@ -169,17 +165,16 @@ public final class MainActivity extends Activity {
     }
 
     private void addDashboards() {
-        List<Feature> enabled = new ArrayList<>();
-        for (Feature feature : Feature.values()) if (preferences.configured(feature)) enabled.add(feature);
-        if (enabled.isEmpty()) return;
         addHeading("Home");
         HorizontalScrollView scroll = horizontalRow();
         LinearLayout strip = rowContainer();
-        for (Feature feature : enabled) {
+        for (Feature feature : Feature.values()) {
             String id = "feature:" + feature.name();
-            android.widget.Button tile = TvUi.button(this, feature.title + "\n" + feature.description,
+            boolean configured = preferences.configured(feature);
+            String detail = configured ? feature.description : "Set up " + feature.title;
+            android.widget.Button tile = TvUi.button(this, feature.title + "\n" + detail,
                     () -> openFeature(feature));
-            tile.setContentDescription(feature.title + ". " + feature.description);
+            tile.setContentDescription(feature.title + ". " + detail);
             tile.setTag(id);
             addTile(strip, tile, id);
         }
@@ -219,6 +214,7 @@ public final class MainActivity extends Activity {
         HorizontalScrollView scroll = horizontalRow();
         LinearLayout strip = rowContainer();
         addActionTile(strip, "Configure", "utility:configure", this::configure);
+        addActionTile(strip, "Refresh apps", "utility:refresh", this::refreshApps);
         addActionTile(strip, "TV settings", "utility:settings", this::openSettings);
         addActionTile(strip, "Sony Home", "utility:sony-home", this::openOtherHome);
         scroll.addView(strip);
@@ -267,7 +263,19 @@ public final class MainActivity extends Activity {
     }
 
     private void openFeature(Feature feature) {
+        if (!preferences.configured(feature)) {
+            configure();
+            return;
+        }
         startActivity(new Intent(this, DashboardActivity.class).putExtra("feature", feature.name()));
+    }
+
+    private void refreshApps() {
+        catalog.load(loaded -> {
+            apps.clear();
+            apps.addAll(loaded);
+            render();
+        });
     }
 
     private void openInput(TvInputInfo input) {
