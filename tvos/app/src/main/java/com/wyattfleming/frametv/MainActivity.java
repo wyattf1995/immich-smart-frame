@@ -67,6 +67,12 @@ public final class MainActivity extends Activity {
         super.onDestroy();
     }
 
+    @Override public void onBackPressed() {
+        // A HOME activity must not reveal an old streaming task when Back is pressed at its root.
+        if (isTaskRoot()) { focusId = null; restoreFocus(); }
+        else super.onBackPressed();
+    }
+
     private void buildShell() {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);

@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p validation
 exec > >(tee validation/build.log) 2>&1
+trap 'if [ -f validation/source-proof.log ]; then tail -n 90 validation/source-proof.log; fi' ERR
 printf 'Frame TV isolated NAS validation\n'
 java -version
 python3 tools/verify-source-proof.py
