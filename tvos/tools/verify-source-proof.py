@@ -64,6 +64,13 @@ def make_cross_origin_unsafe(source: bytes) -> bytes:
     return source[:body_start] + unsafe_body + source[body_end:]
 
 
+def make_credential_key_unsafe(source: bytes) -> bytes:
+    old = b"key.contains(\"apikey\") || key.equals(\"key\")"
+    if source.count(old) != 1:
+        raise RuntimeError("the expected credential-key guard was not found exactly once")
+    return source.replace(old, b"key.equals(\"apikey\")")
+
+
 def failing_test_count() -> int:
     count = 0
     for report in RESULTS.glob("TEST-*.xml"):
@@ -72,6 +79,11 @@ def failing_test_count() -> int:
             continue
         count += int(root.attrib.get("failures", "0")) + int(root.attrib.get("errors", "0"))
     return count
+
+
+def log_tail(path: Path, byte_limit: int = 4096) -> str:
+    data = path.read_bytes()[-byte_limit:]
+    return data.decode("utf-8", errors="replace")
 
 
 def combine_logs(paths: tuple[Path, ...], destination: Path) -> None:
@@ -91,7 +103,8 @@ def main() -> int:
     receipt = VALIDATION / "source-proof.json"
     combined_log = VALIDATION / "source-proof.log"
     initial_log = VALIDATION / ("url-policy-source-proof-initial-" + stamp + ".log")
-    negative_log = VALIDATION / ("url-policy-source-proof-negative-" + stamp + ".log")
+    origin_negative_log = VALIDATION / ("url-policy-source-proof-origin-negative-" + stamp + ".log")
+    credential_negative_log = VALIDATION / ("url-policy-source-proof-credential-negative-" + stamp + ".log")
     final_log = VALIDATION / ("url-policy-source-proof-final-" + stamp + ".log")
     outcome = {"timestamp_utc": stamp, "source": str(SOURCE.relative_to(ROOT))}
     original = SOURCE.read_bytes()
@@ -99,15 +112,27 @@ def main() -> int:
     try:
         outcome["initial_full_test_exit"] = run(GRADLE, initial_log)
         if outcome["initial_full_test_exit"] != 0:
-            raise RuntimeError("initial full unit test run was not green")
+            raise RuntimeError("initial full unit test run was not green; tail follows:\n"
+                               + log_tail(initial_log))
 
         SOURCE.write_bytes(make_cross_origin_unsafe(original))
-        outcome["negative_targeted_test_exit"] = run(GRADLE + ["--tests", TEST_CLASS], negative_log)
-        outcome["negative_test_failures"] = failing_test_count()
-        if outcome["negative_targeted_test_exit"] == 0:
+        outcome["origin_negative_targeted_test_exit"] = run(
+                GRADLE + ["--tests", TEST_CLASS], origin_negative_log)
+        outcome["origin_negative_test_failures"] = failing_test_count()
+        if outcome["origin_negative_targeted_test_exit"] == 0:
             raise RuntimeError("unsafe navigation source unexpectedly passed the targeted test")
-        if outcome["negative_test_failures"] < 1:
+        if outcome["origin_negative_test_failures"] < 1:
             raise RuntimeError("negative run did not record an actual UrlPolicyTest failure")
+        SOURCE.write_bytes(original)
+
+        SOURCE.write_bytes(make_credential_key_unsafe(original))
+        outcome["credential_negative_targeted_test_exit"] = run(
+                GRADLE + ["--tests", TEST_CLASS], credential_negative_log)
+        outcome["credential_negative_test_failures"] = failing_test_count()
+        if outcome["credential_negative_targeted_test_exit"] == 0:
+            raise RuntimeError("unsafe credential-key source unexpectedly passed the targeted test")
+        if outcome["credential_negative_test_failures"] < 1:
+            raise RuntimeError("credential negative run did not record an actual UrlPolicyTest failure")
     finally:
         SOURCE.write_bytes(original)
         restored = SOURCE.read_bytes() == original
@@ -115,12 +140,14 @@ def main() -> int:
         outcome["final_full_test_exit"] = run(GRADLE, final_log)
         outcome["passed"] = (
             outcome.get("initial_full_test_exit") == 0
-            and outcome.get("negative_targeted_test_exit") != 0
-            and outcome.get("negative_test_failures", 0) >= 1
+            and outcome.get("origin_negative_targeted_test_exit") != 0
+            and outcome.get("origin_negative_test_failures", 0) >= 1
+            and outcome.get("credential_negative_targeted_test_exit") != 0
+            and outcome.get("credential_negative_test_failures", 0) >= 1
             and restored
             and outcome["final_full_test_exit"] == 0
         )
-        step_logs = (initial_log, negative_log, final_log)
+        step_logs = (initial_log, origin_negative_log, credential_negative_log, final_log)
         combine_logs(step_logs, combined_log)
         outcome["logs"] = [str(path.relative_to(ROOT)) for path in (*step_logs, combined_log)]
         receipt.write_text(json.dumps(outcome, indent=2, sort_keys=True) + "\n", encoding="utf-8")
