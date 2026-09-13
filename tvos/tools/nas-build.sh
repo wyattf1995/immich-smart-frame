@@ -12,7 +12,7 @@ python3 - <<'PY'
 from pathlib import Path
 import hashlib,json,os,zipfile
 root=Path('.')
-apk=root/'app/build/outputs/apk/debug/app-debug.apk'
+apk=root/'app/build/outputs/apk/debug/app-debug-unsigned.apk'
 result={
  'apkSha256':hashlib.sha256(apk.read_bytes()).hexdigest(),
  'apkBytes':apk.stat().st_size,
