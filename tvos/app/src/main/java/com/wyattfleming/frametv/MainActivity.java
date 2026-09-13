@@ -280,7 +280,7 @@ public final class MainActivity extends Activity {
 
     private void openInput(TvInputInfo input) {
         Uri uri = TvContract.buildChannelUriForPassthroughInput(input.getId());
-        Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+        Intent intent = new Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
             startActivity(intent);
         } catch (RuntimeException error) {
@@ -298,14 +298,15 @@ public final class MainActivity extends Activity {
 
     private void openSettings() {
         try {
-            startActivity(new Intent(Settings.ACTION_SETTINGS));
+            startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         } catch (RuntimeException error) {
             Toast.makeText(this, "TV settings aren’t available", Toast.LENGTH_SHORT).show();
         }
     }
 
     private void openOtherHome() {
-        Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);
+        Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
         for (ResolveInfo resolve : getPackageManager().queryIntentActivities(home, 0)) {
             if (resolve.activityInfo == null || getPackageName().equals(resolve.activityInfo.packageName)) continue;
             try {

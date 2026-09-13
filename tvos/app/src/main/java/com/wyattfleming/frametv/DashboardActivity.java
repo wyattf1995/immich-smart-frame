@@ -28,6 +28,7 @@ public final class DashboardActivity extends Activity {
     private WebView web;
     private TextView status;
     private boolean active;
+    private boolean loadFailed;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -100,6 +101,9 @@ public final class DashboardActivity extends Activity {
                 @Override public void onPermissionRequest(PermissionRequest request) { request.deny(); }
             });
             web.setWebViewClient(new WebViewClient() {
+                @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                    if (view == web) { loadFailed = false; status.setText("Loading…"); }
+                }
                 @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                     return blockNavigation(request.getUrl().toString());
                 }
@@ -107,17 +111,24 @@ public final class DashboardActivity extends Activity {
                     return blockNavigation(url);
                 }
                 @Override public void onPageFinished(WebView view, String url) {
-                    if (view == web && active && UrlPolicy.navigationAllowed(address, url)) status.setText("Back returns to Frame TV");
+                    if (view == web && active && !loadFailed && UrlPolicy.navigationAllowed(address, url)) status.setText("Back returns to Frame TV");
                 }
                 @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
                     handler.cancel();
+                    loadFailed = true;
                     status.setText("Secure connection failed. Check the dashboard certificate.");
                 }
                 @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                    if (request.isForMainFrame()) status.setText("Dashboard unavailable. Check its address or network, then reload.");
+                    if (request.isForMainFrame()) {
+                        loadFailed = true;
+                        status.setText("Dashboard unavailable. Check its address or network, then reload.");
+                    }
                 }
                 @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
-                    if (request.isForMainFrame()) status.setText("Dashboard returned an error (" + response.getStatusCode() + ").");
+                    if (request.isForMainFrame()) {
+                        loadFailed = true;
+                        status.setText("Dashboard returned an error (" + response.getStatusCode() + ").");
+                    }
                 }
                 @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
                     if (view == web) {

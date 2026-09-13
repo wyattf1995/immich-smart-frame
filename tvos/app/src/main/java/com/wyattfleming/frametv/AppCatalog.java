@@ -46,7 +46,8 @@ public final class AppCatalog implements AutoCloseable {
         }
 
         public Intent launchIntent() {
-            return new Intent(Intent.ACTION_MAIN).setComponent(component);
+            return new Intent(Intent.ACTION_MAIN).setComponent(component)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
         }
     }
 
