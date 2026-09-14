@@ -119,3 +119,14 @@ preference and caps normal apps' positive filter priorities to zero. See
 This prototype leaves the stock launcher enabled, so launch Frame TV as a normal
 app on this model. Disabling the stock launcher would remove the current Sony
 Home escape and needs a separately designed and verified recovery path.
+
+### Forest home and native forecast (0.3.0 draft)
+
+The home screen uses one still forest-floor photograph, decoded once at bounded
+resolution (1672 × 941, RGB565). A mild vertical shade keeps text readable without
+an animated background or blur pipeline. Original artwork and the built-in image
+generation prompt are in `artwork/`; the packaged JPEG is in `drawable-nodpi/`.
+The compact forecast sits above a scenic gap; home dashboards and the five-column
+streaming favorites occupy the lower shelf. Inputs and system actions follow;
+All apps is the final section. Physical Sony Home behavior remains as documented
+above. Draft build/device validation is pending.

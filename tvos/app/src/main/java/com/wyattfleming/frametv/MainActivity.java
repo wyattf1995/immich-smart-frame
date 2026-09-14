@@ -40,12 +40,14 @@ public final class MainActivity extends Activity {
     private LinearLayout content;
     private ScrollView scroll;
     private TextClock clock;
+    private WeatherWidget weather;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         TvUi.window(this);
         preferences = new TvPreferences(this);
         catalog = new AppCatalog(this);
+        weather = new WeatherWidget(this);
         buildShell();
         catalog.load(loaded -> {
             apps.clear();
@@ -57,16 +59,19 @@ public final class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         render();
+        weather.resume();
     }
 
     @Override protected void onPause() {
         View focused = getCurrentFocus();
         if (focused != null && focused.getTag() instanceof String) focusId = (String) focused.getTag();
+        weather.pause();
         super.onPause();
     }
 
     @Override protected void onDestroy() {
         if (catalog != null) catalog.close();
+        if (weather != null) weather.close();
         super.onDestroy();
     }
 
@@ -82,11 +87,11 @@ public final class MainActivity extends Activity {
         scroll.setClipToPadding(false);
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(TvUi.dp(this, 42), TvUi.dp(this, 26), TvUi.dp(this, 42), TvUi.dp(this, 36));
+        content.setPadding(TvUi.dp(this, 42), TvUi.dp(this, 20), TvUi.dp(this, 42), TvUi.dp(this, 36));
         scroll.addView(content, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         FrameLayout home = new FrameLayout(this);
-        home.setBackground(new HomeBackgroundDrawable());
+        home.setBackground(new HomeBackgroundDrawable(getResources()));
         home.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
         setContentView(home);
         render();
@@ -97,6 +102,13 @@ public final class MainActivity extends Activity {
         content.removeAllViews();
         focusTargets.clear();
 
+        LinearLayout hero = new LinearLayout(this);
+        hero.setOrientation(LinearLayout.VERTICAL);
+        // Leave a scenic interval between the small forecast and the bottom app shelf.
+        int heightDp = Math.round(getResources().getDisplayMetrics().heightPixels
+                / getResources().getDisplayMetrics().density);
+        hero.setMinimumHeight(TvUi.dp(this, Math.max(175, heightDp - 300)));
+        content.addView(hero);
         LinearLayout masthead = new LinearLayout(this);
         masthead.setGravity(Gravity.CENTER_VERTICAL);
         masthead.setOrientation(LinearLayout.HORIZONTAL);
@@ -110,14 +122,18 @@ public final class MainActivity extends Activity {
         clock.setFormat24Hour("HH:mm");
         clock.setContentDescription("Current time");
         masthead.addView(clock);
-        content.addView(masthead);
+        hero.addView(masthead);
+        if (weather.getParent() instanceof ViewGroup) ((ViewGroup) weather.getParent()).removeView(weather);
+        LinearLayout.LayoutParams forecastParams = new LinearLayout.LayoutParams(-1, -2);
+        forecastParams.topMargin = TvUi.dp(this, 12);
+        hero.addView(weather, forecastParams);
 
         List<AppCatalog.App> ordered = orderedApps();
-        addAppsRow("Favorites", orderedFavorites(ordered), true);
         addDashboards();
-        addAppsRow("All apps", ordered, false);
+        addAppsRow("Favorites", orderedFavorites(ordered), true);
         addInputs();
         addUtilities();
+        addAppsRow("All apps", ordered, false);
         content.post(this::restoreFocus);
     }
 
@@ -178,14 +194,14 @@ public final class MainActivity extends Activity {
             tile.setContentDescription(app.label + ". Press Select to open. Hold Select to "
                     + (preferences.favorites().contains(app.packageName) ? "remove favorite" : "add favorite"));
             if (favorites) {
-                addGridTile(strip, tile, id, column, FAVORITE_COLUMNS, 60);
+                addGridTile(strip, tile, id, column, FAVORITE_COLUMNS, 56);
                 column = (column + 1) % FAVORITE_COLUMNS;
             } else addTile(strip, tile, id);
         }
         if (favorites) {
             // Empty cells keep a partially filled final row aligned with the favorites grid.
             while (column > 0 && column < FAVORITE_COLUMNS) {
-                addGridTile(strip, new View(this), null, column++, FAVORITE_COLUMNS, 60);
+                addGridTile(strip, new View(this), null, column++, FAVORITE_COLUMNS, 56);
             }
             for (int i = 0; i < row.size(); i++) {
                 View tile = focusTargets.get("favorite:" + row.get(i).packageName);
@@ -212,7 +228,7 @@ public final class MainActivity extends Activity {
                     () -> openFeature(feature));
             tile.setContentDescription(feature.title + ". " + detail);
             tile.setTag(id);
-            addGridTile(strip, tile, id, column++, Feature.values().length, 70);
+            addGridTile(strip, tile, id, column++, Feature.values().length, 56);
         }
         content.addView(strip);
     }
@@ -264,7 +280,7 @@ public final class MainActivity extends Activity {
 
     private void addHeading(String label) {
         TextView heading = TvUi.text(this, label, 16, TvUi.MUTED);
-        heading.setPadding(0, TvUi.dp(this, 18), 0, TvUi.dp(this, 9));
+        heading.setPadding(0, TvUi.dp(this, 14), 0, TvUi.dp(this, 7));
         content.addView(heading);
     }
 
@@ -371,6 +387,12 @@ public final class MainActivity extends Activity {
 
     private void restoreFocus() {
         View candidate = focusId == null ? null : focusTargets.get(focusId);
+        if (candidate == null) candidate = focusTargets.get("favorite:com.plexapp.android");
+        if (candidate == null) {
+            for (Map.Entry<String, View> entry : focusTargets.entrySet()) {
+                if (entry.getKey().startsWith("favorite:")) { candidate = entry.getValue(); break; }
+            }
+        }
         if (candidate == null && !focusTargets.isEmpty()) candidate = focusTargets.values().iterator().next();
         if (candidate != null) candidate.requestFocus();
     }

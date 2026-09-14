@@ -199,6 +199,7 @@ public final class DashboardActivity extends Activity {
     @Override public boolean onKeyUp(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_MENU) {
             menuRequested = !menuRequested;
+            if (!menuRequested && !loadFailed) status.setVisibility(View.GONE);
             updateControls();
             if (menuRequested) bar.getChildAt(0).requestFocus();
             else if (web != null) web.requestFocus();
@@ -209,6 +210,7 @@ public final class DashboardActivity extends Activity {
     @Override public void onBackPressed() {
         if (menuRequested) {
             menuRequested = false;
+            if (!loadFailed) status.setVisibility(View.GONE);
             updateControls();
             if (web != null) web.requestFocus();
         } else finish();
