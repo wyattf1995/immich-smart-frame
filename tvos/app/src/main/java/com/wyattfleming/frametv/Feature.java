@@ -5,7 +5,8 @@ public enum Feature {
     HOME("Home", "Home controls"),
     WEATHER("Weather", "Your forecast"),
     CAMERAS("Cameras", "Around home"),
-    CALENDAR("Calendar", "Coming up");
+    CALENDAR("Calendar", "Coming up"),
+    BIRDS("Birds", "Recent visitors");
 
     public final String title;
     public final String description;

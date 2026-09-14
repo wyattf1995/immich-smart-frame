@@ -7,6 +7,7 @@ trap 'if [ -f validation/source-proof.log ]; then tail -n 90 validation/source-p
 printf 'Frame TV isolated NAS validation\n'
 java -version
 python3 tools/verify-source-proof.py
+python3 tools/verify-grid-proof.py
 ./gradlew --no-daemon --max-workers=2 :app:assembleDebug :app:lintDebug
 python3 - <<'PY'
 from pathlib import Path

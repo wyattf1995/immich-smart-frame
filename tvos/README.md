@@ -17,7 +17,8 @@ The repository's AGPL-3.0 license applies.
   and translucent cards add atmosphere without a background animation loop.
 - Hold Select on an app to add or remove it from Favorites.
 - Open HDMI inputs exposed by the TV's input service.
-- See all five home cards at once: Photos, Home, Weather, Cameras and Calendar use existing dashboard
+- See all six home cards at once: Photos, Home, Weather, Cameras, Calendar and
+  Birds use existing dashboard
   addresses. Every feature is optional; streaming works before setup.
 - Reach the TV's settings and original home screen from the System row.
 - Select Refresh apps after installing or removing another application.
@@ -50,6 +51,11 @@ These views must already exist. Weather currently opens a configured web page;
 the frame's native cached weather integration is not part of this first build.
 Photos opens an existing Immich Kiosk page. It does not copy the frame's offline
 photo reserve, extensions, gesture controls, or native overlays.
+
+Birds opens the existing read-only Birds Around Us frame viewer. Use its viewer
+address, not the BirdNET administration interface. The viewer and its detector
+health/identification labels remain authoritative; detections are model
+candidates unless independently confirmed. The app needs no BirdNET credential.
 
 Use the dashboard's own sign-in page. Cross-origin navigation, popups, external
 provider sign-in, JS-native bridges, file/content access and ignored TLS errors

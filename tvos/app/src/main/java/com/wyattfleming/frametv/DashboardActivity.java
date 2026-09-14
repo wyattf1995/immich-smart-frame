@@ -47,11 +47,13 @@ public final class DashboardActivity extends Activity {
         LinearLayout bar = new LinearLayout(this);
         bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
         bar.setPadding(TvUi.dp(this, 24), TvUi.dp(this, 6), TvUi.dp(this, 24), TvUi.dp(this, 6));
-        bar.addView(TvUi.button(this, "‹  Frame TV", this::finish));
-        TextView title = TvUi.text(this, feature.title, 20, TvUi.TEXT);
+        bar.addView(TvUi.compactButton(this, "‹  Frame TV", this::finish),
+                new LinearLayout.LayoutParams(TvUi.dp(this, 112), TvUi.dp(this, 40)));
+        TextView title = TvUi.text(this, feature.title, 18, TvUi.TEXT);
         title.setPadding(TvUi.dp(this, 20), 0, 0, 0);
         bar.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        bar.addView(TvUi.button(this, "Reload", this::reload));
+        bar.addView(TvUi.compactButton(this, "Reload", this::reload),
+                new LinearLayout.LayoutParams(TvUi.dp(this, 84), TvUi.dp(this, 40)));
         root.addView(bar);
         status = TvUi.text(this, "Loading…", 14, TvUi.MUTED);
         status.setPadding(TvUi.dp(this, 24), 0, 0, TvUi.dp(this, 6));
@@ -100,7 +102,7 @@ public final class DashboardActivity extends Activity {
             });
             web.setWebViewClient(new WebViewClient() {
                 @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-                    if (view == web) { loadFailed = false; status.setText("Loading…"); }
+                    if (view == web) { loadFailed = false; showStatus("Loading…"); }
                 }
                 @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                     return blockNavigation(request.getUrl().toString());
@@ -109,29 +111,29 @@ public final class DashboardActivity extends Activity {
                     return blockNavigation(url);
                 }
                 @Override public void onPageFinished(WebView view, String url) {
-                    if (view == web && active && !loadFailed && UrlPolicy.navigationAllowed(address, url)) status.setText("Back returns to Frame TV");
+                    if (view == web && active && !loadFailed && UrlPolicy.navigationAllowed(address, url)) status.setVisibility(View.GONE);
                 }
                 @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
                     handler.cancel();
                     loadFailed = true;
-                    status.setText("Secure connection failed. Check the dashboard certificate.");
+                    showStatus("Secure connection failed. Check the dashboard certificate.");
                 }
                 @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                     if (request.isForMainFrame()) {
                         loadFailed = true;
-                        status.setText("Dashboard unavailable. Check its address or network, then reload.");
+                        showStatus("Dashboard unavailable. Check its address or network, then reload.");
                     }
                 }
                 @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
                     if (request.isForMainFrame()) {
                         loadFailed = true;
-                        status.setText("Dashboard returned an error (" + response.getStatusCode() + ").");
+                        showStatus("Dashboard returned an error (" + response.getStatusCode() + ").");
                     }
                 }
                 @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
                     if (view == web) {
                         destroyRenderer();
-                        status.setText("Dashboard closed to recover resources. Select Reload to reopen it.");
+                        showStatus("Dashboard closed to recover resources. Select Reload to reopen it.");
                     }
                     return true;
                 }
@@ -139,17 +141,21 @@ public final class DashboardActivity extends Activity {
             web.setFocusable(true);
             web.setFocusableInTouchMode(true);
             surface.addView(web, new FrameLayout.LayoutParams(-1, -1));
-            status.setText("Loading…");
+            showStatus("Loading…");
             web.loadUrl(address);
         } catch (RuntimeException error) {
             destroyRenderer();
-            status.setText("Android System WebView is unavailable. Update it in Google Play and reopen this view.");
+            showStatus("Android System WebView is unavailable. Update it in Google Play and reopen this view.");
         }
     }
     private boolean blockNavigation(String destination) {
         if (UrlPolicy.navigationAllowed(address, destination)) return false;
-        status.setText("This link leaves your dashboard. Open it on another device.");
+        showStatus("This link leaves your dashboard. Open it on another device.");
         return true;
+    }
+    private void showStatus(String message) {
+        status.setText(message);
+        status.setVisibility(View.VISIBLE);
     }
     private void reload() { destroyRenderer(); createRenderer(); }
     private void destroyRenderer() {
