@@ -11,6 +11,7 @@ readonly report_dir="$root_dir/reports/frame-sync-android"
 readonly log_file="$report_dir/validation.log"
 readonly raw_log_file="$work_dir/validation.raw.log"
 readonly sdk_dir="$work_dir/sdk"
+readonly base_sdk_dir="${ANDROID_SDK_ROOT:?admitted Android SDK root is required}"
 readonly sdk_bootstrap_report="$report_dir/sdk-bootstrap.json"
 readonly transport_manifest="$work_dir/transport-source-manifest.json"
 readonly identity_file="$report_dir/source-identity.json"
@@ -37,7 +38,7 @@ command -v node >/dev/null && command -v python3 >/dev/null && command -v sha256
 }
 
 bootstrap_api37_sdk() {
-  local base_sdk="${ANDROID_SDK_ROOT:?admitted Android SDK root is required}"
+  local base_sdk="$base_sdk_dir"
   local platform_url='https://dl.google.com/android/repository/platform-37.0_r02.zip'
   local platform_sha256='840b23e827f96e64aea4c89a1194aac3dc5f6bad37edb231c5c795d890330e8d'
   local build_tools_url='https://dl.google.com/android/repository/build-tools_r37_linux.zip'
@@ -53,6 +54,7 @@ bootstrap_api37_sdk() {
   cp -a "$base_sdk/licenses" "$sdk_dir/licenses"
   cp -a "$base_sdk/platforms/android-36" "$sdk_dir/platforms/android-36"
   cp -a "$base_sdk/build-tools/36.0.0" "$sdk_dir/build-tools/36.0.0"
+  cp -a "$base_sdk/platform-tools" "$sdk_dir/platform-tools"
   curl --fail --location --silent --show-error --output "$platform_archive" "$platform_url"
   printf '%s  %s\n' "$platform_sha256" "$platform_archive" | sha256sum --check --strict
   curl --fail --location --silent --show-error --output "$build_tools_archive" "$build_tools_url"
@@ -80,12 +82,14 @@ if tools.get('Pkg.Revision') != '37.0.0':
 payload = {
   'baseSdk': str(Path(__import__('os').environ['ANDROID_SDK_ROOT'])),
   'workspaceSdk': str(sdk),
-  'inherited': ['licenses/android-sdk-license', 'platforms/android-36', 'build-tools/36.0.0'],
+  'inherited': ['licenses/android-sdk-license', 'platforms/android-36', 'build-tools/36.0.0', 'platform-tools'],
   'archives': [
     {'url': str(platform_url), 'sha256': str(platform_sha), 'layout': 'platforms/android-37.0', 'sourceProperties': platform},
     {'url': str(tools_url), 'sha256': str(tools_sha), 'layout': 'build-tools/37.0.0', 'sourceProperties': tools},
   ],
   'files': {str(p.relative_to(sdk)): hashlib.sha256(p.read_bytes()).hexdigest() for p in [sdk/'platforms/android-37.0/android.jar', sdk/'build-tools/37.0.0/aapt2']},
+  'platformPayload': {str(p.relative_to(sdk/'platforms/android-37.0')): hashlib.sha256(p.read_bytes()).hexdigest()
+                      for p in sorted((sdk/'platforms/android-37.0').rglob('*')) if p.is_file()},
 }
 report.write_text(json.dumps(payload, indent=2, sort_keys=True)+'\n')
 PY
@@ -230,6 +234,34 @@ printf 'source-negative shared playback reconnect guard failed as expected and r
 run_step frameos-reconnect-guard-green bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest --tests '$parser_test'"
 
 run_step frameos-unit-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 testDebugUnitTest lintDebug assembleRelease"
+# AGP may install an SDK-managed duplicate of the manually extracted API 37.
+# Verify every candidate platform's payload against the reviewed archive, so
+# provenance does not depend on which matching directory AGP selected.
+python3 - "$sdk_dir" "$sdk_bootstrap_report" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
+sdk, report = map(Path, sys.argv[1:])
+payload = json.loads(report.read_text())
+inventory = {}
+for platform in sorted((sdk/'platforms').glob('android-37*')):
+    actual = {str(p.relative_to(platform)): hashlib.sha256(p.read_bytes()).hexdigest()
+              for p in sorted(platform.rglob('*')) if p.is_file()}
+    for relative, expected in payload['platformPayload'].items():
+        if actual.get(relative) != expected:
+            raise SystemExit('installed API 37 payload differs from pinned archive: '+str(platform/relative))
+    inventory[platform.name] = actual
+if not inventory:
+    raise SystemExit('no verified API 37 platform remains after FrameOS build')
+payload['verifiedInstalledPlatforms'] = inventory
+payload['tvSdk'] = payload['baseSdk']
+payload['platformTools'] = {str(p.relative_to(sdk/'platform-tools')): hashlib.sha256(p.read_bytes()).hexdigest()
+                            for p in sorted((sdk/'platform-tools').rglob('*')) if p.is_file()}
+report.write_text(json.dumps(payload, indent=2, sort_keys=True)+'\n')
+PY
+# TV pins API/build-tools 36. Its older lint cannot parse API level "37.0"
+# while enumerating the frame's SDK, even though the TV never targets API 37.
+export ANDROID_SDK_ROOT="$base_sdk_dir"
+export ANDROID_HOME="$base_sdk_dir"
 run_step tvos-unit bash -c "cd '$tvos_dir' && ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest"
 run_step tvos-nas-build bash "$tvos_dir/tools/nas-build.sh"
 
