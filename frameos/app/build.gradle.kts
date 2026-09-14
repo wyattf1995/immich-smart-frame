@@ -11,8 +11,8 @@ android {
         applicationId = "com.wyattfleming.frameos"
         minSdk = 29
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.2.9"
+        versionCode = 2
+        versionName = "0.2.10"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
