@@ -177,7 +177,14 @@ class FrameOfflineReserveTest {
     fun `trusted paused shared settle refreshes one snapshot for the new current asset`() {
         val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-photo-shared-settle-snapshot").toFile(), FixedDecoder())
         val reports = mutableListOf<FramePhotoBridge.PhotoObserved>()
-        val bridge = FramePhotoBridge(reserve, uiPost = { it() }, isMainThread = { true }, onPhotoObserved = reports::add)
+        val sharedStates = mutableListOf<FramePhotoBridge.SharedPlaybackState>()
+        val bridge = FramePhotoBridge(
+            reserve,
+            uiPost = { it() },
+            isMainThread = { true },
+            onPhotoObserved = reports::add,
+            onSharedPlaybackState = sharedStates::add,
+        )
         val session = Any()
         val url = "https://photos.example/kiosk?sync_group=living-room"
         val sender = FramePhotoBridge.Sender(session, url, true, true)
@@ -192,11 +199,13 @@ class FrameOfflineReserveTest {
         assertTrue(bridge.setPlaybackPaused(true))
         val initialNonce = port.commands.last().getString("snapshotNonce")
         assertTrue(bridge.accept(loadedPhotoMessage().put("snapshotNonce", initialNonce), sender))
-        assertTrue(bridge.accept(shared("shared-playback-state", 0, true), sender))
+        assertTrue(bridge.acceptSharedPlayback(shared("shared-playback-state", 0, true), sender))
+        assertEquals(1, sharedStates.size)
 
         val beforeSharedSettle = port.commands.size
-        assertTrue(bridge.accept(shared("shared-photo-settled", 1, true), sender))
+        assertTrue(bridge.acceptSharedPlayback(shared("shared-photo-settled", 1, true), sender))
         assertEquals(beforeSharedSettle + 1, port.commands.size)
+        assertEquals(1, sharedStates.size)
         val refreshedNonce = port.commands.last().getString("snapshotNonce")
         assertFalse(refreshedNonce == initialNonce)
         assertFalse(bridge.accept(loadedPhotoMessage().put("assetId", "22222222-2222-4222-8222-222222222222"), sender))
@@ -206,14 +215,15 @@ class FrameOfflineReserveTest {
         assertEquals("22222222-2222-4222-8222-222222222222", reports.last().assetId)
         assertTrue(bridge.isCurrentObservation(reports.last()))
 
-        assertFalse(bridge.accept(shared("shared-photo-settled", 1, true), sender))
+        assertFalse(bridge.acceptSharedPlayback(shared("shared-photo-settled", 1, true), sender))
         assertEquals(beforeSharedSettle + 1, port.commands.size)
-        assertFalse(bridge.accept(shared("shared-photo-settled", 2, true), FramePhotoBridge.Sender(Any(), url, true, true)))
+        assertFalse(bridge.acceptSharedPlayback(shared("shared-photo-settled", 2, true), FramePhotoBridge.Sender(Any(), url, true, true)))
         assertEquals(beforeSharedSettle + 1, port.commands.size)
-        assertTrue(bridge.accept(shared("shared-photo-settled", 2, false), sender))
+        assertTrue(bridge.acceptSharedPlayback(shared("shared-photo-settled", 2, false), sender))
+        assertEquals(2, sharedStates.size)
         assertEquals(beforeSharedSettle + 1, port.commands.size)
         bridge.setCaptureEnabled(false, true)
-        assertTrue(bridge.accept(shared("shared-photo-settled", 3, true), sender))
+        assertTrue(bridge.acceptSharedPlayback(shared("shared-photo-settled", 3, true), sender))
         assertEquals(beforeSharedSettle + 1, port.commands.size)
     }
 
