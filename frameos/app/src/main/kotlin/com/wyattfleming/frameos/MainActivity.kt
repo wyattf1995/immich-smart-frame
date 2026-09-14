@@ -72,6 +72,7 @@ import com.wyattfleming.frameos.control.FrameCompanionResponseDecoder
 import com.wyattfleming.frameos.control.FrameCompanionEventDecoder
 import com.wyattfleming.frameos.control.FrameCompanionEventStore
 import com.wyattfleming.frameos.control.FramePhotosProfileUrl
+import com.wyattfleming.frameos.photos.FrameSharedPlaybackMetadata
 import com.wyattfleming.frameos.control.FrameRemoteSettings
 import com.wyattfleming.frameos.security.FrameExternalControlPolicy
 import com.wyattfleming.frameos.diagnostics.FrameDiagnosticStore
@@ -223,7 +224,7 @@ class MainActivity : Activity() {
         }
     }
     private val refreshPhotoFreshness = Runnable { checkPhotoFreshness() }
-    private val rotateOfflinePhoto = Runnable { showOfflinePhoto(step = 1) }
+    private val rotateOfflinePhoto = Runnable { if (!sharedPlaybackConfigured()) showOfflinePhoto(step = 1) }
     private val refreshVisibleWeather = Runnable { refreshWeather() }
     private val preloadCalendar = Runnable {
         if (!FrameWebCompositionPolicy.forMode(state.mode).warmCalendarInBackground || !activityResumed) {
@@ -271,7 +272,7 @@ class MainActivity : Activity() {
         experienceStore = FrameExperienceStore(this)
         diagnosticStore = FrameDiagnosticStore(this)
         photoReserve = com.wyattfleming.frameos.photos.FrameOfflineReserve(java.io.File(filesDir, "frame-offline-reserve"))
-        photoBridge = com.wyattfleming.frameos.photos.FramePhotoBridge(photoReserve) { photo ->
+        photoBridge = com.wyattfleming.frameos.photos.FramePhotoBridge(photoReserve, onPhotoObserved = { photo ->
             handler.post {
                 if (!photoBridge.isCurrentObservation(photo)) return@post
                 if (!activityResumed || state.mode != FrameMode.PHOTOS ||
@@ -289,7 +290,13 @@ class MainActivity : Activity() {
                     finishManualPhotoStep.run()
                 }
             }
-        }
+        }, onSharedPlaybackState = { shared ->
+            handler.post {
+                if (!sharedPlaybackConfigured() || state.photosPaused == shared.paused) return@post
+                state = state.copy(photosPaused = shared.paused)
+                render(state, announce = false)
+            }
+        })
         experienceSettings = experienceStore.read()
         controlStore = FrameControlStore(this)
         val savedConfiguration = configurationStore.read()
@@ -889,7 +896,7 @@ class MainActivity : Activity() {
                     webSurface?.setContentActive(activityResumed)
                     webSurface?.setPhotosPaused(next.photosPaused)
                     root.requestFocus()
-                    if (photoFallbackPolicy.isShowing) showOfflinePhoto(manual = true)
+                    if (photoFallbackPolicy.isShowing && !sharedPlaybackConfigured()) showOfflinePhoto(manual = true)
                     schedulePhotoFreshness()
                 }
                 FrameWebSlot.HOME_ASSISTANT, FrameWebSlot.CAMERAS -> {
@@ -1580,7 +1587,7 @@ class MainActivity : Activity() {
 
     private fun movePhoto(forward: Boolean): Boolean {
         if (state.mode != FrameMode.PHOTOS || !activityResumed) return false
-        if (photoFallbackPolicy.isShowing) return showOfflinePhoto(if (forward) 1 else -1, manual = true)
+        if (photoFallbackPolicy.isShowing) return if (sharedPlaybackConfigured()) false else showOfflinePhoto(if (forward) 1 else -1, manual = true)
         if (state.photosPaused) {
             manualPhotoStepPreviousAssetId = currentPhotoAssetId
             manualPhotoStepPending = true
@@ -1595,6 +1602,7 @@ class MainActivity : Activity() {
 
     private fun showOfflinePhoto(step: Int = 0, manual: Boolean = false): Boolean {
         if (!activityResumed || state.mode != FrameMode.PHOTOS || (state.photosPaused && !manual)) return false
+        if (sharedPlaybackConfigured() && step != 0) return false
         val entries = photoReserve.entries()
         if (entries.isEmpty()) { hideOfflinePhoto(); return false }
         fallbackIndex = Math.floorMod(fallbackIndex + step, entries.size)
@@ -1620,7 +1628,7 @@ class MainActivity : Activity() {
                 offlinePhoto.visibility = View.VISIBLE
                 hideWebRecovery()
                 showHud("Offline photos · reconnecting")
-                if (!state.photosPaused) handler.postDelayed(rotateOfflinePhoto, OFFLINE_PHOTO_ROTATION_MILLIS)
+                if (!state.photosPaused && !sharedPlaybackConfigured()) handler.postDelayed(rotateOfflinePhoto, OFFLINE_PHOTO_ROTATION_MILLIS)
             }
         }
         return true
@@ -1663,7 +1671,7 @@ class MainActivity : Activity() {
         if (active && !photosWereActive) photosVisibleSince = System.currentTimeMillis()
         photosWereActive = active
         if (active && !photoProbeInFlight) handler.postDelayed(refreshPhotoFreshness, PHOTO_FRESHNESS_CHECK_MILLIS)
-        if (!active) handler.removeCallbacks(rotateOfflinePhoto)
+        if (!active || sharedPlaybackConfigured()) handler.removeCallbacks(rotateOfflinePhoto)
     }
 
     private fun checkPhotoFreshness() {
@@ -1702,7 +1710,7 @@ class MainActivity : Activity() {
                 }
                 healthyPhotoProbeAt = completedAt.takeIf { reachable }
                 if (reachable) photoFallbackPolicy.recordReachable()
-                else if (photoFallbackPolicy.recordFailure(true, photoReserve.latest() != null) && offlinePhoto.visibility != View.VISIBLE) showOfflinePhoto()
+                else if (!sharedPlaybackConfigured() && photoFallbackPolicy.recordFailure(true, photoReserve.latest() != null) && offlinePhoto.visibility != View.VISIBLE) showOfflinePhoto()
                 if (reachable && photoFallbackPolicy.shouldRecover(lastPhotoAt, photosVisibleSince, System.currentTimeMillis(), true, false)) {
                     diagnosticStore.recordRecovery("Photos data stale")
                     webSurface?.refreshPhotos()
@@ -1711,6 +1719,8 @@ class MainActivity : Activity() {
             }
         }
     }
+
+    private fun sharedPlaybackConfigured(): Boolean = FrameSharedPlaybackMetadata.configuredGroup(configuration?.photosUrl) != null
 
     private fun applyBrightness(percent: Int?) {
         val attributes = window.attributes
