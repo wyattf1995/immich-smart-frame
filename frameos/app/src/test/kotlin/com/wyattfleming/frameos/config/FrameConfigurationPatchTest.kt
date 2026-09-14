@@ -92,11 +92,15 @@ class FrameConfigurationPatchTest {
         val malformedGroup = existing.copy(photosUrl = "https://photos.example.invalid/?sync_group=bad%")
         val duplicateGroup = existing.copy(photosUrl = "https://photos.example.invalid/?sync_group=one&sync_group=two")
         val duplicateFrame = existing.copy(photosUrl = "https://photos.example.invalid/?frame_id=a&frame_id=b")
+        val encodedDuplicateGroup = existing.copy(photosUrl = "https://photos.example.invalid/?sync%5Fgroup=one&sync_group=two")
+        val encodedDuplicateFrame = existing.copy(photosUrl = "https://photos.example.invalid/?frame%5Fid=a&frame_id=b")
 
         assertTrue(FrameConfigurationPatch.withPhotosSyncGroup(existing, "A") is FrameConfigurationPatch.SyncGroupResult.Invalid)
         assertTrue(FrameConfigurationPatch.withPhotosSyncGroup(existing, "a".repeat(49)) is FrameConfigurationPatch.SyncGroupResult.Invalid)
         assertTrue(FrameConfigurationPatch.withPhotosSyncGroup(malformedGroup, "living-room") is FrameConfigurationPatch.SyncGroupResult.Invalid)
         assertTrue(FrameConfigurationPatch.withPhotosSyncGroup(duplicateGroup, "living-room") is FrameConfigurationPatch.SyncGroupResult.Invalid)
         assertTrue(FrameConfigurationPatch.withPhotosSyncGroup(duplicateFrame, "living-room") is FrameConfigurationPatch.SyncGroupResult.Invalid)
+        assertTrue(FrameConfigurationPatch.withPhotosSyncGroup(encodedDuplicateGroup, "living-room") is FrameConfigurationPatch.SyncGroupResult.Invalid)
+        assertTrue(FrameConfigurationPatch.withPhotosSyncGroup(encodedDuplicateFrame, "living-room") is FrameConfigurationPatch.SyncGroupResult.Invalid)
     }
 }

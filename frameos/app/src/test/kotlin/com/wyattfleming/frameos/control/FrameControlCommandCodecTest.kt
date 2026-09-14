@@ -42,9 +42,14 @@ class FrameControlCommandCodecTest {
             FrameControlContract.PhotosSyncGroupCommand.Set("living-room"),
             FrameControlContract.photosSyncGroupCommand(hasSyncGroup = true, syncGroup = "living-room", querySyncGroup = false),
         )
+        // A wrong-typed/null extra must never turn into an unintended removal.
+        assertEquals(
+            FrameControlContract.PhotosSyncGroupCommand.Invalid,
+            FrameControlContract.photosSyncGroupCommand(hasSyncGroup = true, syncGroup = null, querySyncGroup = false),
+        )
         assertEquals(
             FrameControlContract.PhotosSyncGroupCommand.Set(""),
-            FrameControlContract.photosSyncGroupCommand(hasSyncGroup = true, syncGroup = null, querySyncGroup = false),
+            FrameControlContract.photosSyncGroupCommand(hasSyncGroup = true, syncGroup = "", querySyncGroup = false),
         )
         assertEquals(
             FrameControlContract.PhotosSyncGroupCommand.Query,
