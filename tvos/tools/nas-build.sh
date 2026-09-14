@@ -8,6 +8,16 @@ printf 'Frame TV isolated NAS validation\n'
 java -version
 python3 tools/verify-source-proof.py
 python3 tools/verify-grid-proof.py
+python3 tools/verify-weather-proof.py
+python3 - <<'PY'
+import json
+from pathlib import Path
+for name in ('source-proof.json', 'grid-proof.json', 'weather-proof.json'):
+    data = json.loads((Path('validation') / name).read_text())
+    if data.get('passed') is not True or data.get('source_restored_exactly') is not True:
+        raise SystemExit('proof receipt did not pass and restore source: ' + name)
+print('all source-proof receipts passed and restored exact source')
+PY
 ./gradlew --no-daemon --max-workers=2 :app:assembleDebug :app:lintDebug
 python3 - <<'PY'
 from pathlib import Path
