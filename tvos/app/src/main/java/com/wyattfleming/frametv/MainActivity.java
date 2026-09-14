@@ -375,11 +375,23 @@ public final class MainActivity extends Activity {
         int state;
         try { state = getPackageManager().getComponentEnabledSetting(stock); }
         catch (IllegalArgumentException missing) { state = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT; }
+        int packageState;
+        try { packageState = getPackageManager().getApplicationEnabledSetting(stock.getPackageName()); }
+        catch (IllegalArgumentException missing) { packageState = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT; }
         if (state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-                || state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) {
+                || state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
+                || packageState == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                || packageState == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) {
             new android.app.AlertDialog.Builder(this).setTitle("Frame TV is your homepage")
-                    .setMessage("To bring back Sony Home, run Restore Sony Home.command from your Mac’s Desktop. TV settings are still available here.")
-                    .setPositiveButton("TV settings", (dialog, which) -> openSettings())
+                    .setMessage("Open Sony Home settings, choose Enable, then press Home. Your original homepage and its data are kept. You can also run Restore Sony Home.command from your Mac’s Desktop.")
+                    .setPositiveButton("Sony Home settings", (dialog, which) -> {
+                        try {
+                            startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.parse("package:" + stock.getPackageName())));
+                        } catch (RuntimeException unavailable) {
+                            openSettings();
+                        }
+                    })
                     .setNegativeButton("Close", null).show();
             return;
         }
