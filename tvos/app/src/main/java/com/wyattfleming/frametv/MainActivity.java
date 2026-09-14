@@ -77,7 +77,11 @@ public final class MainActivity extends Activity {
 
     @Override public void onBackPressed() {
         // A HOME activity must not reveal an old streaming task when Back is pressed at its root.
-        if (isTaskRoot()) { focusId = null; restoreFocus(); scroll.scrollTo(0, 0); }
+        if (isTaskRoot()) {
+            focusId = "weather:configure";
+            restoreFocus();
+            scroll.scrollTo(0, 0);
+        }
         else super.onBackPressed();
     }
 
@@ -127,6 +131,7 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams forecastParams = new LinearLayout.LayoutParams(-1, -2);
         forecastParams.topMargin = TvUi.dp(this, 12);
         hero.addView(weather, forecastParams);
+        focusTargets.put("weather:configure", weather);
 
         List<AppCatalog.App> ordered = orderedApps();
         addDashboards();
