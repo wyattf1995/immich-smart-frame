@@ -186,6 +186,13 @@ public final class MainActivity extends Activity {
             while (column > 0 && column < 6) {
                 addGridTile(strip, new View(this), null, column++, 6, 60);
             }
+            for (int i = 0; i < row.size(); i++) {
+                View tile = focusTargets.get("favorite:" + row.get(i).packageName);
+                int up = FavoriteGridNavigation.verticalNeighbor(i, row.size(), 6, -1);
+                int down = FavoriteGridNavigation.verticalNeighbor(i, row.size(), 6, 1);
+                if (up >= 0) tile.setNextFocusUpId(focusTargets.get("favorite:" + row.get(up).packageName).getId());
+                if (down >= 0) tile.setNextFocusDownId(focusTargets.get("favorite:" + row.get(down).packageName).getId());
+            }
         } else {
             scroll.addView(strip);
             content.addView(scroll);
@@ -285,7 +292,10 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, TvUi.dp(this, height), 1);
         params.setMargins(0, 0, column == columns - 1 ? 0 : TvUi.dp(this, 10), 0);
         row.addView(tile, params);
-        if (id != null) focusTargets.put(id, tile);
+        if (id != null) {
+            tile.setId(View.generateViewId());
+            focusTargets.put(id, tile);
+        }
     }
 
     private void launch(AppCatalog.App app) {
