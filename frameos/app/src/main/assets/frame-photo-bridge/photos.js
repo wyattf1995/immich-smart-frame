@@ -9,6 +9,7 @@ const MAX_PORT_RETRY_DELAY_MS = 60000;
 const MAX_SETTLING_KIOSK_REQUESTS = 4;
 const MAX_DIAGNOSTICS_PER_PAGE = 16;
 const MAX_DIAGNOSTIC_EPOCH = 4096;
+const SHARED_SCALAR = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 let lastFingerprint = "";
 let inFlightFingerprint = "";
 let rejectedFingerprint = "";
@@ -28,6 +29,7 @@ let domReady = false;
 let hasObservedKioskRequest = false;
 let unreadableKioskRequest = false;
 let settledKioskEpoch = 0;
+let sharedPlaybackEpoch = 0;
 let pauseSnapshotRequiresSettleEpoch = null;
 let diagnosticReports = 0;
 const firstDiagnosticStages = new Set();
@@ -216,6 +218,51 @@ function settleKioskHtmxRequest(event) {
   scheduleCapture();
 }
 
+function sharedPlaybackPayload(event, requireSettled) {
+  const kiosk = document.querySelector("#kiosk");
+  if (!(kiosk instanceof HTMLElement) || event.target !== kiosk) return null;
+  const sessionId = kiosk.dataset.sharedPlaybackSession;
+  const slideId = kiosk.dataset.sharedPlaybackSlide;
+  const paused = event.detail && event.detail.sharedPlaybackPaused;
+  if (!SHARED_SCALAR.test(sessionId || "") || !SHARED_SCALAR.test(slideId || "") || typeof paused !== "boolean") return null;
+  if (requireSettled) {
+    // This is a DOM pair validation only. It does not pretend an HTMX request settled.
+    const histories = Array.from(document.querySelectorAll("#kiosk-history input[name='history']"))
+      .filter((history) => typeof history.value === "string" && history.value.startsWith("*"));
+    const frame = currentFrame();
+    const image = frame && Array.from(frame.querySelectorAll("img[alt='Main image']"))
+      .find((candidate) => candidate instanceof HTMLImageElement && candidate.complete && candidate.naturalWidth > 0 && candidate.naturalHeight > 0 && isVisible(candidate));
+    if (histories.length !== 1 || !/^\*[a-f0-9-]{36}:[^:]*$/i.test(histories[0].value) || !image) return null;
+  }
+  return { sessionId, slideId, paused };
+}
+
+function reportSharedPlayback(type, payload) {
+  browser.runtime.sendNativeMessage("frame_photo_bridge", {
+    type, sessionId: payload.sessionId, slideId: payload.slideId, paused: payload.paused, epoch: sharedPlaybackEpoch,
+  }).catch(() => {});
+}
+
+function sharedPlaybackState(event) {
+  const payload = sharedPlaybackPayload(event, false);
+  if (!payload) return;
+  // Server state wins over a delayed native mutation observer command.
+  desiredPlaybackPaused = payload.paused;
+  setPollingPaused(payload.paused);
+  reportSharedPlayback("shared-playback-state", payload);
+}
+
+function sharedPhotoSettled(event) {
+  const payload = sharedPlaybackPayload(event, true);
+  if (!payload) return;
+  sharedPlaybackEpoch = Math.min(sharedPlaybackEpoch + 1, MAX_DIAGNOSTIC_EPOCH);
+  settledKioskEpoch += 1;
+  desiredPlaybackPaused = payload.paused;
+  setPollingPaused(payload.paused);
+  reportSharedPlayback("shared-photo-settled", payload);
+  scheduleCapture();
+}
+
 function failKioskHtmxRequest(event, inspected = null) {
   const { request } = inspected || kioskHtmxRequest(event, "htmx_error");
   if (!request || !settlingKioskRequests.delete(request)) return;
@@ -337,6 +384,8 @@ document.addEventListener("htmx:sendError", failKioskHtmxRequest, true);
 document.addEventListener("htmx:sendAbort", failKioskHtmxRequest, true);
 document.addEventListener("htmx:timeout", failKioskHtmxRequest, true);
 document.addEventListener("htmx:afterRequest", skipNoSwapKioskRequest, true);
+document.addEventListener("frame:shared-playback-state", sharedPlaybackState, true);
+document.addEventListener("frame:shared-photo-settled", sharedPhotoSettled, true);
 
 function initializeDomCapture() {
   if (domReady) return;

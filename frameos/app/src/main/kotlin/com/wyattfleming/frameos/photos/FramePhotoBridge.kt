@@ -29,6 +29,7 @@ class FramePhotoBridge(
     private val isMainThread: () -> Boolean = { Looper.myLooper() === Looper.getMainLooper() },
     private val diagnosticLog: (String) -> Unit = { message -> Log.i(TAG, message) },
     private val onPhotoObserved: (PhotoObserved) -> Unit = {},
+    private val onSharedPlaybackState: (SharedPlaybackState) -> Unit = {},
 ) {
     data class Sender(val session: Any, val url: String, val topLevel: Boolean, val contentScript: Boolean)
     /** A session-bound content-script port used only for the Photos playback controls. */
@@ -45,6 +46,7 @@ class FramePhotoBridge(
         internal val scopeKey: String,
         internal val pauseSnapshotNonce: String?,
     )
+    data class SharedPlaybackState(val sessionId: String, val slideId: String, val paused: Boolean, val epoch: Long)
 
     @Volatile private var configuredSession: Any? = null
     @Volatile private var configuredScope: FramePhotoScope? = null
@@ -52,6 +54,9 @@ class FramePhotoBridge(
     private var extension: WebExtension? = null
     @Volatile private var captureEnabled = false
     @Volatile private var generation = 0L
+    private var sharedPlaybackSession: String? = null
+    private var sharedPlaybackEpoch = -1L
+    private var sharedPlaybackPaused: Boolean? = null
     private var playbackPort: PlaybackPort? = null
     @Volatile private var desiredPlaybackPaused = false
     @Volatile private var photosVisible = false
@@ -91,6 +96,9 @@ class FramePhotoBridge(
         configuredSession = session
         configuredScope = requested
         diagnosticCounts.clear()
+        sharedPlaybackSession = null
+        sharedPlaybackEpoch = -1L
+        sharedPlaybackPaused = null
         photosVisible = false
         captureEnabled = false
         return true
@@ -285,6 +293,32 @@ class FramePhotoBridge(
         return reportIfCurrent(capture)
     }
 
+    /** Accepts only ordered shared-state events from this exact configured content script. */
+    @Synchronized
+    internal fun acceptSharedPlayback(message: Any, sender: Sender): Boolean {
+        val scope = configuredScope ?: return false
+        if (!isTrustedSender(scope, sender) || FrameSharedPlaybackMetadata.configuredGroup(scope.photosUrl) == null) return false
+        val value = message as? JSONObject ?: return false
+        val type = value.optString("type")
+        if (type != SHARED_STATE_TYPE && type != SHARED_SETTLED_TYPE) return false
+        val sessionId = value.opt("sessionId") as? String ?: return false
+        val slideId = value.opt("slideId") as? String ?: return false
+        val paused = value.opt("paused") as? Boolean ?: return false
+        val epoch = value.opt("epoch") as? Number ?: return false
+        if (!SHARED_SCALAR.matches(sessionId) || !SHARED_SCALAR.matches(slideId) || !boundedWholeNumber(epoch, MAX_DIAGNOSTIC_EPOCH)) return false
+        val epochValue = epoch.toLong()
+        if (type == SHARED_SETTLED_TYPE) {
+            if (sharedPlaybackSession != null && sharedPlaybackSession != sessionId) return false
+            if (epochValue <= sharedPlaybackEpoch) return false
+            sharedPlaybackSession = sessionId
+            sharedPlaybackEpoch = epochValue
+        } else if (sharedPlaybackSession != sessionId || epochValue < sharedPlaybackEpoch) return false
+        if (sharedPlaybackPaused == paused && type == SHARED_STATE_TYPE) return true
+        sharedPlaybackPaused = paused
+        onSharedPlaybackState(SharedPlaybackState(sessionId, slideId, paused, epochValue))
+        return true
+    }
+
     /** Accepts only scalar diagnostics from the same configured Photos content script. */
     @Synchronized
     internal fun acceptDiagnostic(message: Any, sender: Sender): Boolean {
@@ -418,6 +452,9 @@ class FramePhotoBridge(
             if ((message as? JSONObject)?.optString("type") == DIAGNOSTIC_TYPE) {
                 return GeckoResult.fromValue(JSONObject().put("accepted", acceptDiagnostic(message, trustedSender)))
             }
+            if ((message as? JSONObject)?.optString("type") in setOf(SHARED_STATE_TYPE, SHARED_SETTLED_TYPE)) {
+                return GeckoResult.fromValue(JSONObject().put("accepted", acceptSharedPlayback(message, trustedSender)))
+            }
             val capture = captureFrom(
                 message,
                 trustedSender,
@@ -445,9 +482,12 @@ class FramePhotoBridge(
         private const val MESSAGE_TYPE = "loaded-photo"
         private const val PAUSE_SNAPSHOT_NONCE = "snapshotNonce"
         private const val DIAGNOSTIC_TYPE = "bridge-diagnostic"
+        private const val SHARED_STATE_TYPE = "shared-playback-state"
+        private const val SHARED_SETTLED_TYPE = "shared-photo-settled"
         private const val MAX_DIAGNOSTICS_PER_SESSION = 32
         private const val MAX_DIAGNOSTIC_EPOCH = 4096L
         private const val MAX_DIAGNOSTIC_TRACKED_COUNT = 4L
         private val DIAGNOSTIC_STAGES = setOf("pause", "step", "htmx_before", "htmx_primary_settle", "htmx_error")
+        private val SHARED_SCALAR = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
     }
 }
