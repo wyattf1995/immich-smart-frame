@@ -39,5 +39,30 @@ class FrameSharedPlaybackMetadataTest {
         assertEquals(false, observed.last().paused)
     }
 
+    @Test fun `newer settled session replaces restarted server while stale session stays rejected`() {
+        val reserve = FrameOfflineReserve(Files.createTempDirectory("frame-shared-restart").toFile(), FixedDecoder())
+        val observed = mutableListOf<FramePhotoBridge.SharedPlaybackState>()
+        val bridge = FramePhotoBridge(reserve, onSharedPlaybackState = observed::add)
+        val session = Any()
+        val url = "https://photos.example/kiosk?sync_group=living-room"
+        val sender = FramePhotoBridge.Sender(session, url, true, true)
+        assertTrue(bridge.configure(session, url, "family"))
+        fun message(type: String, serverSession: String, epoch: Int, paused: Boolean) = JSONObject()
+            .put("type", type).put("sessionId", serverSession).put("slideId", "slide-1")
+            .put("paused", paused).put("epoch", epoch)
+
+        assertTrue(bridge.acceptSharedPlayback(message("shared-playback-state", "old-server", 0, true), sender))
+        assertTrue(bridge.acceptSharedPlayback(message("shared-photo-settled", "old-server", 1, true), sender))
+        assertEquals(1, observed.size)
+
+        assertTrue(bridge.acceptSharedPlayback(message("shared-photo-settled", "new-server", 2, false), sender))
+        assertEquals(2, observed.size)
+        assertEquals(false, observed.last().paused)
+        assertFalse(bridge.acceptSharedPlayback(message("shared-photo-settled", "old-server", 1, true), sender))
+        assertFalse(bridge.acceptSharedPlayback(message("shared-playback-state", "old-server", 3, true), sender))
+        assertTrue(bridge.acceptSharedPlayback(message("shared-playback-state", "new-server", 2, false), sender))
+        assertEquals(2, observed.size)
+    }
+
     private class FixedDecoder : FramePhotoDecoder { override fun decodeAndResize(base64Jpeg: String): ByteArray = base64Jpeg.toByteArray() }
 }
