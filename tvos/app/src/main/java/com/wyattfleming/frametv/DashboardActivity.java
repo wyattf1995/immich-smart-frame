@@ -33,6 +33,7 @@ public final class DashboardActivity extends Activity {
     private boolean menuRequested;
     private boolean active;
     private boolean loadFailed;
+    private HomeAssistantForecastCapture forecastCapture;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -40,6 +41,7 @@ public final class DashboardActivity extends Activity {
         try { feature = Feature.valueOf(getIntent().getStringExtra("feature")); }
         catch (IllegalArgumentException | NullPointerException error) { finish(); return; }
         address = new TvPreferences(this).url(feature);
+        if (feature == Feature.HOME || feature == Feature.WEATHER) forecastCapture = new HomeAssistantForecastCapture(this);
         if (address.isEmpty()) {
             startActivity(new Intent(this, SetupActivity.class));
             finish();
@@ -124,6 +126,7 @@ public final class DashboardActivity extends Activity {
                         status.setVisibility(View.GONE);
                         updateControls();
                         if (!menuRequested) web.requestFocus();
+                        if (forecastCapture != null) forecastCapture.start(web, new TvPreferences(DashboardActivity.this).url(Feature.HOME));
                     }
                 }
                 @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
@@ -186,6 +189,7 @@ public final class DashboardActivity extends Activity {
         createRenderer();
     }
     private void destroyRenderer() {
+        if (forecastCapture != null) forecastCapture.stop();
         WebView old = web;
         web = null;
         if (old != null) {

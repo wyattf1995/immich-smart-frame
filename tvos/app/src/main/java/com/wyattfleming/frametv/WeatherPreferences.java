@@ -18,9 +18,19 @@ public final class WeatherPreferences {
 
     public void saveLocation(WeatherLocation location) {
         if (location == null || !location.valid()) throw new IllegalArgumentException("Choose a valid location");
-        values.edit().putString("city", location.label)
+        values.edit().putBoolean("ha_preferred", false).putString("city", location.label)
                 .putLong("latitude", Double.doubleToRawLongBits(location.latitude))
                 .putLong("longitude", Double.doubleToRawLongBits(location.longitude)).apply();
+    }
+
+    public boolean homeAssistantPreferred() { return values.getBoolean("ha_preferred", true); }
+    public void preferHomeAssistant() { values.edit().putBoolean("ha_preferred", true).apply(); }
+    public String homeAssistantSource() { return values.getString("ha_source", ""); }
+    public String homeAssistantJson() { return values.getString("ha_forecast", ""); }
+    public long homeAssistantFetchedAt() { return values.getLong("ha_fetched_at", 0); }
+    public void saveHomeAssistantForecast(String source, String json, long fetchedAt) {
+        values.edit().putString("ha_source", source).putString("ha_forecast", json)
+                .putLong("ha_fetched_at", fetchedAt).apply();
     }
 
     public String cachedJson() { return values.getString("forecast_json", ""); }

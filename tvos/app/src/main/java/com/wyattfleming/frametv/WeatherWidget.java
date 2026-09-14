@@ -128,11 +128,20 @@ public final class WeatherWidget extends LinearLayout {
 
     private void loadIfNeeded() {
         WeatherLocation location = preferences.location();
-        if (location == null) { showUnconfigured(); return; }
         long now = System.currentTimeMillis();
+        String homeAddress = new TvPreferences(getContext()).url(Feature.HOME);
+        if (preferences.homeAssistantPreferred() && WeatherCachePolicy.isUsable(homeAddress,
+                preferences.homeAssistantSource(), preferences.homeAssistantFetchedAt(), now)) {
+            try {
+                showForecast(parseForecast(preferences.homeAssistantJson()), location == null ? "Home" : location.label,
+                        preferences.homeAssistantFetchedAt(), true, "Home Assistant");
+                return;
+            } catch (JSONException ignored) { /* Use the public forecast when HA has no usable snapshot. */ }
+        }
+        if (location == null) { showUnconfigured(); return; }
         boolean usable = WeatherCachePolicy.isUsable(location.sourceKey(), preferences.cachedSource(), preferences.fetchedAt(), now);
         if (usable) {
-            try { showForecast(parseForecast(preferences.cachedJson()), location, preferences.fetchedAt(), true); }
+            try { showForecast(parseForecast(preferences.cachedJson()), location.label, preferences.fetchedAt(), true, "Open-Meteo"); }
             catch (JSONException ignored) { usable = false; }
         } else {
             heading.setText(location.label + " · Loading weather…");
@@ -163,7 +172,7 @@ public final class WeatherWidget extends LinearLayout {
                     try {
                         WeatherForecast forecast = parseForecast(response);
                         preferences.saveForecast(sourceKey, response, System.currentTimeMillis());
-                        showForecast(forecast, location, System.currentTimeMillis(), false);
+                        showForecast(forecast, location.label, System.currentTimeMillis(), false, "Open-Meteo");
                         return;
                     } catch (JSONException malformed) { resultError(location, "Forecast data needs a retry"); return; }
                 }
@@ -219,9 +228,9 @@ public final class WeatherWidget extends LinearLayout {
         attribution.setText("Weather data by Open-Meteo");
     }
 
-    private void showForecast(WeatherForecast forecast, WeatherLocation location, long fetchedAt, boolean cached) {
+    private void showForecast(WeatherForecast forecast, String label, long fetchedAt, boolean cached, String provider) {
         String current = forecast.currentTemperature == null ? "—" : Math.round(forecast.currentTemperature) + "°F";
-        heading.setText(location.label + "  " + current + " · " + WeatherForecast.condition(forecast.currentCode));
+        heading.setText(label + "  " + current + " · " + WeatherForecast.condition(forecast.currentCode));
         TimeZone zone = forecast.timeZone;
         List<WeatherForecast.Hour> hours = forecast.nextHours(System.currentTimeMillis() / 1000L, 6);
         StringBuilder hourText = new StringBuilder("Hourly  ");
@@ -243,7 +252,7 @@ public final class WeatherWidget extends LinearLayout {
         }
         daily.setText(dayText);
         long ageMinutes = Math.max(0, (System.currentTimeMillis() - fetchedAt) / 60000L);
-        attribution.setText("Weather data by Open-Meteo" + (cached && ageMinutes > 0 ? " · updated " + ageMinutes + "m ago" : ""));
+        attribution.setText("Weather data: " + provider + (cached && ageMinutes > 0 ? " · updated " + ageMinutes + "m ago" : ""));
     }
 
     private static String format(String pattern, long epochSeconds, TimeZone zone) {
@@ -258,7 +267,7 @@ public final class WeatherWidget extends LinearLayout {
         getContext().startActivity(intent);
     }
 
-    private static WeatherForecast parseForecast(String payload) throws JSONException {
+    static WeatherForecast parseForecast(String payload) throws JSONException {
         JSONObject root = new JSONObject(payload);
         JSONObject current = root.getJSONObject("current");
         JSONObject hourly = root.getJSONObject("hourly");

@@ -50,6 +50,16 @@ public final class WeatherSetupActivity extends Activity {
                 16, TvUi.MUTED);
         description.setPadding(0, TvUi.dp(this, 12), 0, TvUi.dp(this, 14));
         content.addView(description);
+        if (new TvPreferences(this).configured(Feature.HOME)) {
+            content.addView(TvUi.button(this, "Use Home Assistant forecast", () -> {
+                new WeatherPreferences(this).preferHomeAssistant();
+                startActivity(new android.content.Intent(this, DashboardActivity.class).putExtra("feature", Feature.HOME.name()));
+                finish();
+            }));
+            TextView hint = TvUi.text(this, "Open Home Assistant to refresh its forecast, then press Back. Or choose a city below for Open-Meteo.", 14, TvUi.MUTED);
+            hint.setPadding(0, TvUi.dp(this, 10), 0, TvUi.dp(this, 10));
+            content.addView(hint);
+        }
         query = new EditText(this);
         query.setSingleLine(true);
         query.setHint("City or ZIP code");
