@@ -1,9 +1,9 @@
 diff --git a/frontend/src/ts/shared-playback.ts b/frontend/src/ts/shared-playback.ts
 new file mode 100644
-index 0000000..cc795ed
+index 0000000..921a997
 --- /dev/null
 +++ b/frontend/src/ts/shared-playback.ts
-@@ -0,0 +1,323 @@
+@@ -0,0 +1,399 @@
 +import DOMPurify from "dompurify";
 +
 +export type SharedSlide = {
@@ -50,9 +50,14 @@ index 0000000..cc795ed
 +
 +function validState(value: SharedPlaybackState): boolean {
 +    return Boolean(
-+        value && typeof value.sessionId === "string" &&
-+        typeof value.version === "number" && typeof value.serverNow === "number" &&
-+        typeof value.paused === "boolean" && typeof value.loading === "boolean",
++        value && typeof value.sessionId === "string" && value.sessionId.length <= 128 &&
++        Number.isFinite(value.version) && Number.isFinite(value.serverNow) &&
++        typeof value.paused === "boolean" && typeof value.loading === "boolean" &&
++        [value.current, value.next].every((slide) => slide === null || (
++            typeof slide.id === "string" && slide.id.length > 0 && slide.id.length <= 256 &&
++            typeof slide.assetId === "string" && slide.assetId.length > 0 &&
++            Number.isFinite(slide.startsAt) && typeof slide.url === "string" && slide.url.length <= 4096
++        )),
 +    );
 +}
 +
@@ -72,6 +77,8 @@ index 0000000..cc795ed
 +    private commandInFlight = false;
 +    private requestedState = 0;
 +    private acceptedState = 0;
++    private revision = 0;
++    private readonly preparing = new Map<string, Promise<PreparedSlide>>();
 +
 +    constructor(private readonly ports: SharedPlaybackPorts) {}
 +
@@ -114,6 +121,7 @@ index 0000000..cc795ed
 +
 +    currentId(): string | undefined { return this.state?.current?.id; }
 +    currentSessionId(): string | undefined { return this.state?.sessionId; }
++    isPaused(): boolean { return this.state?.paused ?? false; }
 +
 +    private poll(): void {
 +        if (this.disposed || !this.visible) return;
@@ -125,21 +133,19 @@ index 0000000..cc795ed
 +            .then((state) => {
 +                const receivedAt = this.ports.now();
 +                if (!this.active(generation) || !validState(state)) return;
-+                // Midpoint minimizes asymmetry from request latency.
-+                this.offsetMs = state.serverNow - ((sentAt + receivedAt) / 2);
-+                this.retryMs = POLL_MS;
-+                this.ports.status("connected");
-+                this.accept(state, generation, requestId);
++                this.accept(state, generation, requestId, state.serverNow - ((sentAt + receivedAt) / 2));
 +            })
 +            .catch(() => {
 +                if (!this.active(generation)) return;
 +                this.ports.status("offline");
++                if (this.displayTimer) this.ports.clearTimer(this.displayTimer);
++                this.displayTimer = undefined;
 +                this.pollSoon(this.retryMs);
 +                this.retryMs = Math.min(RETRY_MAX_MS, this.retryMs * 2);
 +            });
 +    }
 +
-+    private accept(state: SharedPlaybackState, generation: number, requestId: number): void {
++    private accept(state: SharedPlaybackState, generation: number, requestId: number, offset?: number): void {
 +        if (!this.active(generation) || !validState(state)) return;
 +        if (requestId < this.acceptedState) return;
 +        if (
@@ -147,6 +153,10 @@ index 0000000..cc795ed
 +            state.version < this.state.version
 +        ) return;
 +        this.acceptedState = requestId;
++        if (offset !== undefined) this.offsetMs = offset;
++        this.retryMs = POLL_MS;
++        this.ports.status("connected");
++        const revision = ++this.revision;
 +        const sessionChanged = this.state && this.state.sessionId !== state.sessionId;
 +        this.state = state;
 +        this.ports.paused(state.paused);
@@ -154,41 +164,67 @@ index 0000000..cc795ed
 +            this.generation++;
 +            generation = this.generation;
 +            this.prepared.clear();
++            this.preparing.clear();
 +            this.renderedId = undefined;
 +            this.cancelWork();
 +        }
 +        const wanted = [state.current, state.next].filter((slide): slide is SharedSlide => slide !== null);
 +        const wantedIds = new Set(wanted.map((slide) => slide.id));
 +        for (const id of this.prepared.keys()) if (!wantedIds.has(id)) this.prepared.delete(id);
-+        Promise.all(wanted.filter((slide) => !this.prepared.has(slide.id)).map((slide) =>
-+            this.withTimeout((signal) => this.ports.prepare(slide, signal)).then((prepared) => {
-+                if (this.active(generation)) this.prepared.set(slide.id, prepared);
-+            }),
-+        )).then(() => {
-+            if (!this.active(generation)) return;
-+            this.showCurrent(state, generation);
++        Promise.all(wanted.map((slide) => this.prepare(slide))).then(() => {
++            if (!this.active(generation) || revision !== this.revision) return;
++            this.showCurrent(state, generation, revision);
 +        }).catch(() => {
-+            if (this.active(generation)) this.ports.status("error");
++            if (this.active(generation) && revision === this.revision) this.ports.status("error");
 +        });
 +        this.pollSoon(POLL_MS);
 +    }
 +
-+    private showCurrent(state: SharedPlaybackState, generation: number): void {
++    private prepare(slide: SharedSlide): Promise<PreparedSlide> {
++        const cached = this.prepared.get(slide.id);
++        if (cached) return Promise.resolve(cached);
++        const running = this.preparing.get(slide.id);
++        if (running) return running;
++        const runningPrepare = this.withTimeout((signal) => this.ports.prepare(slide, signal)).then((prepared) => {
++            this.preparing.delete(slide.id);
++            this.prepared.set(slide.id, prepared);
++            return prepared;
++        }).catch((error) => {
++            this.preparing.delete(slide.id);
++            throw error;
++        });
++        this.preparing.set(slide.id, runningPrepare);
++        return runningPrepare;
++    }
++
++    private showCurrent(state: SharedPlaybackState, generation: number, revision: number): void {
++        if (!this.active(generation) || revision !== this.revision || this.state !== state) return;
 +        const current = state.current;
-+        if (!current || state.loading) return;
++        if (!current) return;
 +        const prepared = this.prepared.get(current.id);
 +        if (!prepared) return;
 +        const delay = Math.max(0, current.startsAt - (this.ports.now() + this.offsetMs));
 +        if (delay > 0) {
 +            if (this.displayTimer) this.ports.clearTimer(this.displayTimer);
-+            this.displayTimer = this.ports.setTimer(
-+                () => this.showCurrent(state, generation), delay,
-+            );
++            this.displayTimer = this.ports.setTimer(() => this.showCurrent(state, generation, revision), delay);
 +            return;
 +        }
 +        if (this.renderedId !== current.id) {
 +            this.ports.render(prepared);
 +            this.renderedId = current.id;
++        }
++        const next = state.next;
++        if (!state.paused && next && this.prepared.has(next.id)) {
++            const nextDelay = Math.max(0, next.startsAt - (this.ports.now() + this.offsetMs));
++            if (this.displayTimer) this.ports.clearTimer(this.displayTimer);
++            this.displayTimer = this.ports.setTimer(() => {
++                if (!this.active(generation) || revision !== this.revision || this.state !== state) return;
++                const nextPrepared = this.prepared.get(next.id);
++                if (nextPrepared && this.renderedId !== next.id) {
++                    this.ports.render(nextPrepared);
++                    this.renderedId = next.id;
++                }
++            }, nextDelay);
 +        }
 +    }
 +
@@ -223,38 +259,49 @@ index 0000000..cc795ed
 +    }
 +}
 +
-+type DomPreparedSlide = PreparedSlide & { frame: HTMLElement };
++type DomPreparedSlide = PreparedSlide & { frame: HTMLElement; history?: HTMLFormElement };
 +export type StartSharedPlaybackOptions = { group?: string; root?: HTMLElement; document?: Document };
 +
 +function sameOriginPath(raw: string, base: string): string | undefined {
 +    try {
 +        const url = new URL(raw, base);
-+        return url.origin === new URL(base).origin && /^\/(?!\/)/.test(url.pathname) ? url.toString() : undefined;
++        return url.origin === new URL(base).origin && !url.username && !url.password && !url.hash && /^\/(?!\/)/.test(url.pathname) ? url.toString() : undefined;
 +    } catch { return undefined; }
 +}
 +
-+function sanitizeFrame(html: string, document: Document): HTMLElement | undefined {
-+    const clean = DOMPurify.sanitize(html, { FORBID_TAGS: ["script"], FORBID_ATTR: ["style"] });
++function sanitizeFrame(html: string, document: Document, origin = window.location.origin): DomPreparedSlide | undefined {
++    const clean = DOMPurify.sanitize(html, { FORBID_TAGS: ["script", "iframe", "object", "embed"] });
 +    const holder = document.createElement("div");
 +    holder.innerHTML = clean;
 +    for (const node of holder.querySelectorAll("*")) {
 +        for (const attribute of Array.from(node.attributes)) {
 +            if (/^(on|hx-|data-hx-)/i.test(attribute.name)) node.removeAttribute(attribute.name);
++            if ((attribute.name === "src" || attribute.name === "href") && node instanceof HTMLImageElement) {
++                const value = attribute.value;
++                if (!value.startsWith("data:image/jpeg") && !sameOriginPath(value, origin)) node.removeAttribute(attribute.name);
++            }
 +        }
 +    }
 +    const frame = holder.matches(".frame") ? holder : holder.querySelector<HTMLElement>(".frame");
-+    return frame?.cloneNode(true) as HTMLElement | undefined;
++    if (!frame) return undefined;
++    const history = holder.querySelector<HTMLFormElement>("#kiosk-history")?.cloneNode(true) as HTMLFormElement | undefined;
++    return { id: "", frame: frame.cloneNode(true) as HTMLElement, history };
 +}
 +
-+async function decodeFrame(frame: HTMLElement): Promise<void> {
++async function decodeFrame(frame: HTMLElement, signal: AbortSignal): Promise<void> {
 +    await Promise.all(Array.from(frame.querySelectorAll("img")).map(async (image) => {
++        if (signal.aborted) throw new DOMException("aborted", "AbortError");
 +        if (typeof image.decode === "function") {
-+            try { await image.decode(); return; } catch { /* wait for the load event */ }
++            try { await image.decode(); if (image.naturalWidth > 0) return; } catch { /* load event below */ }
 +        }
-+        if (image.complete) return;
++        if (image.complete && image.naturalWidth > 0) return;
 +        await new Promise<void>((resolve, reject) => {
-+            image.addEventListener("load", () => resolve(), { once: true });
-+            image.addEventListener("error", () => reject(new Error("image decode failed")), { once: true });
++            const done = () => { signal.removeEventListener("abort", abort); clearTimeout(timeout); };
++            const abort = () => { done(); reject(new DOMException("aborted", "AbortError")); };
++            const timeout = window.setTimeout(() => { done(); reject(new Error("image decode timed out")); }, REQUEST_TIMEOUT_MS);
++            image.addEventListener("load", () => { done(); image.naturalWidth > 0 ? resolve() : reject(new Error("image decode failed")); }, { once: true });
++            image.addEventListener("error", () => { done(); reject(new Error("image decode failed")); }, { once: true });
++            signal.addEventListener("abort", abort, { once: true });
 +        });
 +    }));
 +}
@@ -267,12 +314,24 @@ index 0000000..cc795ed
 +    if (!group || !root) return () => undefined;
 +    const origin = window.location.origin;
 +    const endpoint = `/api/playback/${encodeURIComponent(group)}`;
++    const readBounded = async (response: Response, limit: number): Promise<string> => {
++        if (!response.body) throw new Error("response has no body");
++        const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let total = 0;
++        while (true) {
++            const next = await reader.read(); if (next.done) break;
++            total += next.value.byteLength;
++            if (total > limit) { await reader.cancel(); throw new Error("response too large"); }
++            chunks.push(next.value);
++        }
++        const result = new Uint8Array(total); let offset = 0;
++        for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
++        return new TextDecoder().decode(result);
++    };
 +    const fetchJSON = async (url: string, init: RequestInit, acceptConflict = false): Promise<SharedPlaybackState> => {
 +        const response = await fetch(url, { ...init, credentials: "same-origin" });
 +        const length = Number(response.headers.get("content-length") ?? 0);
 +        if ((!response.ok && !(acceptConflict && response.status === 409)) || length > 65_536) throw new Error(`playback request failed: ${response.status}`);
-+        const body = await response.text();
-+        if (body.length > 65_536) throw new Error("playback response too large");
++        const body = await readBounded(response, 65_536);
 +        return JSON.parse(body) as SharedPlaybackState;
 +    };
 +    const controller = new SharedPlaybackController({
@@ -283,46 +342,63 @@ index 0000000..cc795ed
 +            body: JSON.stringify({ action, expectedVersion, sessionId }),
 +        }, true),
 +        prepare: async (slide, signal) => {
-+            const url = sameOriginPath(slide.url, origin);
-+            if (!url) throw new Error("unsafe slide URL");
-+            const response = await fetch(url, { signal, credentials: "same-origin" });
++            const raw = sameOriginPath(slide.url, origin);
++            if (!raw) throw new Error("unsafe slide URL");
++            const url = new URL(raw);
++            if (!url.pathname.startsWith(`${endpoint}/`)) throw new Error("unexpected slide endpoint");
++            url.searchParams.set("client_width", `${Math.min(3840, Math.max(1, Math.round(window.innerWidth)))}`);
++            url.searchParams.set("client_height", `${Math.min(2160, Math.max(1, Math.round(window.innerHeight)))}`);
++            const frameId = root.dataset.frameId;
++            if (frameId && /^[A-Za-z0-9_-]{1,128}$/.test(frameId)) url.searchParams.set("frame_id", frameId);
++            const response = await fetch(url.toString(), { signal, credentials: "same-origin" });
 +            if (!response.ok) throw new Error("slide request failed");
-+            const html = await response.text();
-+            if (html.length > 262_144) throw new Error("slide partial too large");
-+            const frame = sanitizeFrame(html, document);
-+            if (!frame) throw new Error("slide has no frame");
-+            await decodeFrame(frame);
-+            return { id: slide.id, frame } as DomPreparedSlide;
++            const html = await readBounded(response, 12 * 1024 * 1024);
++            const prepared = sanitizeFrame(html, document, origin);
++            if (!prepared) throw new Error("slide has no frame");
++            await decodeFrame(prepared.frame, signal);
++            return { ...prepared, id: slide.id };
 +        },
 +        render: (prepared) => {
 +            const frame = (prepared as DomPreparedSlide).frame;
++            const history = (prepared as DomPreparedSlide).history;
 +            root.replaceChildren(frame);
-+            const history = document.querySelector<HTMLInputElement>(".kiosk-history--entry");
-+            if (history && controller.currentId() === prepared.id) history.value = prepared.id;
++            const currentHistory = document.querySelector<HTMLFormElement>("#kiosk-history");
++            if (history && currentHistory) currentHistory.replaceWith(history);
 +            root.dataset.sharedPlaybackSession = controller.currentSessionId() ?? "";
 +            root.dataset.sharedPlaybackSlide = prepared.id;
-+            root.dispatchEvent(new Event("frame:shared-photo-settled"));
++            root.dispatchEvent(new Event("frame:shared-photo-settled", { bubbles: true }));
 +        },
 +        status: (status) => root.dataset.sharedPlaybackStatus = status,
-+        paused: (paused) => document.body.classList.toggle("polling-paused", paused),
++        paused: (paused) => {
++            document.body.classList.toggle("polling-paused", paused);
++            root.dataset.sharedPlaybackPaused = `${paused}`;
++            root.dispatchEvent(new Event("frame:shared-playback-state", { bubbles: true }));
++        },
 +    });
 +    const command = (action: SharedPlaybackAction) => controller.command(action);
 +    const onNext = () => command("next"); const onPrevious = () => command("previous");
 +    document.querySelector(".navigation--next-asset")?.addEventListener("click", onNext);
 +    document.querySelector(".navigation--prev-asset")?.addEventListener("click", onPrevious);
 +    const onKey = (event: KeyboardEvent) => {
-+        if (event.type === "keydown" && event.key.toLowerCase() === "p") command(event.shiftKey ? "resume" : "pause");
-+        if (event.type === "keyup" && event.key === "ArrowRight") command("next");
-+        if (event.type === "keyup" && event.key === "ArrowLeft") command("previous");
-+        if (event.type === "keyup" && event.key === " ") command("pause");
++        if ((event.target as HTMLElement | null)?.matches("input,textarea,select,[contenteditable]")) return;
++        const action = event.type === "keydown" && event.key.toLowerCase() === "p" ? (event.shiftKey ? "resume" : "pause") :
++            event.type === "keyup" && event.key === "ArrowRight" ? "next" : event.type === "keyup" && event.key === "ArrowLeft" ? "previous" :
++            event.type === "keyup" && event.key === " " ? (controller.isPaused() ? "resume" : "pause") : undefined;
++        if (action) { event.preventDefault(); command(action); }
 +    };
 +    const onVisibility = () => controller.setVisible(document.visibilityState === "visible");
 +    document.addEventListener("keydown", onKey); document.addEventListener("keyup", onKey); document.addEventListener("visibilitychange", onVisibility);
++    const onPageHide = () => controller.setVisible(false);
++    const onPageShow = () => controller.setVisible(true);
++    controller.setVisible(document.visibilityState === "visible");
++    document.addEventListener("pagehide", onPageHide);
++    document.addEventListener("pageshow", onPageShow);
 +    controller.start();
 +    return () => {
 +        controller.dispose(); document.querySelector(".navigation--next-asset")?.removeEventListener("click", onNext);
 +        document.querySelector(".navigation--prev-asset")?.removeEventListener("click", onPrevious);
 +        document.removeEventListener("keydown", onKey); document.removeEventListener("keyup", onKey); document.removeEventListener("visibilitychange", onVisibility);
++        document.removeEventListener("pagehide", onPageHide); document.removeEventListener("pageshow", onPageShow);
 +    };
 +}
 +
