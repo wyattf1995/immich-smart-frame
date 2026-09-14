@@ -69,24 +69,24 @@ public final class WeatherForecast {
     public static String condition(Integer code) {
         if (code == null) return "Weather";
         if (code == 0) return "Clear";
-        if (code <= 3) return "Cloudy";
+        if (code >= 1 && code <= 3) return "Cloudy";
         if (code == 45 || code == 48) return "Fog";
         if (code >= 51 && code <= 67) return "Rain";
         if (code >= 71 && code <= 77) return "Snow";
         if (code >= 80 && code <= 82) return "Showers";
         if (code >= 85 && code <= 86) return "Snow showers";
-        if (code >= 95) return "Storms";
+        if (code == 95 || code == 96 || code == 99) return "Storms";
         return "Weather";
     }
 
     public static String glyph(Integer code) {
         if (code == null) return "·";
         if (code == 0) return "☀";
-        if (code <= 3) return "☁";
+        if (code >= 1 && code <= 3) return "☁";
         if (code == 45 || code == 48) return "≋";
-        if (code >= 95) return "⚡";
-        if (code >= 85) return "✳";
-        if (code >= 51 && code <= 82) return "☂";
+        if (code == 95 || code == 96 || code == 99) return "⚡";
+        if ((code >= 71 && code <= 77) || code == 85 || code == 86) return "✳";
+        if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return "☂";
         return "·";
     }
 

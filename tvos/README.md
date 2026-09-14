@@ -129,4 +129,14 @@ generation prompt are in `artwork/`; the packaged JPEG is in `drawable-nodpi/`.
 The compact forecast sits above a scenic gap; home dashboards and the five-column
 streaming favorites occupy the lower shelf. Inputs and system actions follow;
 All apps is the final section. Physical Sony Home behavior remains as documented
-above. Draft build/device validation is pending.
+above. Combined build/device validation is pending.
+
+The native widget uses Open-Meteo over HTTPS: current conditions, next six hours
+and five days in Fahrenheit and the forecast location’s timezone. Select the
+widget to search and choose a city/ZIP. Configuration and a small cache live in
+private preferences; no location or credentials are bundled with the APK. Cache
+reuse is bounded to six hours, with a 30-minute refresh only while the launcher
+is resumed. Source-scoping and midnight rollover have source-negative JVM proofs.
+The existing Home Assistant dashboard login is independent of this native feed.
+Official provider documentation: https://open-meteo.com/en/docs and
+https://open-meteo.com/en/docs/geocoding-api.
