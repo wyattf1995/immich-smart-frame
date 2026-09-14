@@ -24,6 +24,7 @@ assert max_error<=8,('Compression obscures fine detail',max_error)
 assert raw[luma_bytes:]==actual[luma_bytes:],'Neutral chroma changed'
 j=json.loads((root/'reports/video-compatible-fixture.json').read_text())
 assert j['encodedSha256']==hashlib.sha256(encoded.read_bytes()).hexdigest()
+assert j['encodedBytes']*8/(8/15)<60_000_000,'Fixture exceeds observed Sony decoder bitrate limit'
 j.update(verifiedDimensions=[3840,2160],profile='Main',level='5.1',tier='High',
  maximumLumaError=max_error,lumaErrorLimit=8,neutralChromaExact=True,verified=True)
 (root/'reports/video-compatible-fixture.json').write_text(json.dumps(j,indent=2)+'\n')
