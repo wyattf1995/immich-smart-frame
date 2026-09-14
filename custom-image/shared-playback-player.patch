@@ -1,9 +1,9 @@
 diff --git a/frontend/src/ts/shared-playback.ts b/frontend/src/ts/shared-playback.ts
 new file mode 100644
-index 0000000..c7d3db4
+index 0000000..1e6bc36
 --- /dev/null
 +++ b/frontend/src/ts/shared-playback.ts
-@@ -0,0 +1,418 @@
+@@ -0,0 +1,429 @@
 +import DOMPurify from "dompurify";
 +
 +export type SharedSlide = {
@@ -382,13 +382,24 @@ index 0000000..c7d3db4
 +            if (history && currentHistory) currentHistory.replaceWith(history);
 +            root.dataset.sharedPlaybackSession = controller.currentSessionId() ?? "";
 +            root.dataset.sharedPlaybackSlide = prepared.id;
-+            root.dispatchEvent(new Event("frame:shared-photo-settled", { bubbles: true }));
++            root.dataset.sharedPlaybackPaused = `${controller.isPaused()}`;
++            root.dispatchEvent(new CustomEvent("frame:shared-photo-settled", {
++                bubbles: true,
++                detail: { sharedPlaybackPaused: controller.isPaused() },
++            }));
 +        },
 +        status: (status) => root.dataset.sharedPlaybackStatus = status,
 +        paused: (paused) => {
 +            document.body.classList.toggle("polling-paused", paused);
++            root.dataset.sharedPlaybackSession = controller.currentSessionId() ?? "";
++            const current = controller.currentId();
++            if (current) root.dataset.sharedPlaybackSlide = current;
++            else delete root.dataset.sharedPlaybackSlide;
 +            root.dataset.sharedPlaybackPaused = `${paused}`;
-+            root.dispatchEvent(new Event("frame:shared-playback-state", { bubbles: true }));
++            root.dispatchEvent(new CustomEvent("frame:shared-playback-state", {
++                bubbles: true,
++                detail: { sharedPlaybackPaused: paused },
++            }));
 +        },
 +    });
 +    const command = (action: SharedPlaybackAction) => controller.command(action);
