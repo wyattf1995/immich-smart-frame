@@ -1,9 +1,9 @@
 diff --git a/frontend/tests/shared-playback.test.ts b/frontend/tests/shared-playback.test.ts
 new file mode 100644
-index 0000000..174a340
+index 0000000..068425b
 --- /dev/null
 +++ b/frontend/tests/shared-playback.test.ts
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,136 @@
 +import assert from "node:assert/strict";
 +import test from "node:test";
 +
@@ -105,6 +105,30 @@ index 0000000..174a340
 +    assert.equal(rendered, 0);
 +    controller.setVisible(true); controller.dispose(); await settle();
 +    assert.equal(rendered, 0);
++});
++
++test("a late lower-version poll cannot replace a command response", async () => {
++    const timers: Array<() => void> = [];
++    const rendered: string[] = [];
++    let resolvePoll!: (value: SharedPlaybackState) => void;
++    let calls = 0;
++    const controller = new SharedPlaybackController({
++        now: () => 1_000,
++        setTimer: (callback, delay) => { if (delay < 8_000) timers.push(callback); return 1 as unknown as ReturnType<typeof setTimeout>; },
++        clearTimer: () => undefined,
++        fetchState: () => {
++            calls++;
++            return calls === 1 ? Promise.resolve(state()) : new Promise((resolve) => { resolvePoll = resolve; });
++        },
++        sendCommand: async () => state({ version: 2, current: slide("b"), next: slide("c") }),
++        prepare: async (value) => ({ id: value.id }), render: (value) => rendered.push(value.id),
++        status: () => undefined, paused: () => undefined,
++    });
++    controller.start(); await settle();
++    timers.shift()?.(); await settle(); // begin a second, deliberately late poll
++    controller.command("next"); await settle();
++    resolvePoll(state({ version: 1, current: slide("a"), next: slide("b") })); await settle();
++    assert.deepEqual(rendered, ["a", "b"]);
 +});
 +
 +test("duplicate commands use one compare-and-swap version and session resets decode cache", async () => {
