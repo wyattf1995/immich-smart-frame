@@ -19,6 +19,8 @@ import android.widget.TextView;
 import java.nio.ByteBuffer;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 
 /**
  * One-frame YV12 experiment. It reports accepted/rejected formats and actual buffers, but never
@@ -29,14 +31,13 @@ public final class YuvProbeActivity extends Activity implements SurfaceHolder.Ca
     private static final int MAX_QUEUED_IMAGES = 1;
 
     private final Object requestLock = new Object();
-    private final Object writerLock = new Object();
     private final ExecutorService writerExecutor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "Frame4KProbe-YuvWriter");
         thread.setDaemon(true);
         return thread;
     });
     private SurfaceHolder holder;
-    private Surface surface;
+    private volatile Surface surface;
     private ImageWriter writer;
     private TextView overlay;
     private ProbeMode mode = ProbeMode.HD;
@@ -44,7 +45,7 @@ public final class YuvProbeActivity extends Activity implements SurfaceHolder.Ca
     private volatile boolean resumed;
     private volatile long generation;
     private volatile boolean destroyed;
-    private Request pending;
+    private Work pending;
     private boolean workerScheduled;
 
     @Override
@@ -82,18 +83,14 @@ public final class YuvProbeActivity extends Activity implements SurfaceHolder.Ca
         super.onResume();
         resumed = true;
         Log.i(TAG, "yuv_lifecycle onResume");
-        requestFrame();
+        enqueueWork(true, false, false);
     }
 
     @Override
     public void onPause() {
         resumed = false;
-        synchronized (requestLock) {
-            generation++;
-            pending = null;
-        }
         Log.i(TAG, "yuv_lifecycle onPause generation=" + generation);
-        closeWriter();
+        enqueueWork(false, true, false);
         super.onPause();
     }
 
@@ -101,12 +98,18 @@ public final class YuvProbeActivity extends Activity implements SurfaceHolder.Ca
     public void onDestroy() {
         destroyed = true;
         resumed = false;
-        synchronized (requestLock) {
-            generation++;
-            pending = null;
-        }
-        closeWriter();
+        enqueueWork(false, true, true);
         writerExecutor.shutdown();
+        try {
+            if (!writerExecutor.awaitTermination(750, TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "yuv_writer_shutdown_timeout; interrupting cooperative worker");
+                writerExecutor.shutdownNow();
+                writerExecutor.awaitTermination(250, TimeUnit.MILLISECONDS);
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            writerExecutor.shutdownNow();
+        }
         Log.i(TAG, "yuv_lifecycle onDestroy");
         super.onDestroy();
     }
@@ -115,27 +118,21 @@ public final class YuvProbeActivity extends Activity implements SurfaceHolder.Ca
     public void surfaceCreated(SurfaceHolder surfaceHolder) {
         surface = surfaceHolder.getSurface();
         Log.i(TAG, "yuv_surface_created valid=" + (surface != null && surface.isValid()));
-        createWriterIfPossible();
-        requestFrame();
+        enqueueWork(true, false, false);
     }
 
     @Override
     public void surfaceChanged(SurfaceHolder surfaceHolder, int format, int width, int height) {
         Log.i(TAG, "yuv_surface_changed format=" + format + " callback=" + width + "x" + height
                 + " requested=" + mode.width + "x" + mode.height);
-        createWriterIfPossible();
-        requestFrame();
+        enqueueWork(true, false, false);
     }
 
     @Override
     public void surfaceDestroyed(SurfaceHolder surfaceHolder) {
         Log.i(TAG, "yuv_surface_destroyed");
         surface = null;
-        synchronized (requestLock) {
-            generation++;
-            pending = null;
-        }
-        closeWriter();
+        enqueueWork(false, true, false);
     }
 
     @Override
@@ -148,12 +145,13 @@ public final class YuvProbeActivity extends Activity implements SurfaceHolder.Ca
             mode = ProbeMode.fromRightSelection(key == KeyEvent.KEYCODE_DPAD_RIGHT);
             holder.setFixedSize(mode.width, mode.height);
             Log.i(TAG, "yuv_requested_buffer=" + mode.width + "x" + mode.height);
+            enqueueWork(false, true, false);
             updateOverlay("YV12 resize requested " + mode.width + "x" + mode.height);
             return true;
         }
         if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
             alternatePattern = !alternatePattern;
-            requestFrame();
+            enqueueWork(false, false, false);
             return true;
         }
         if (key == KeyEvent.KEYCODE_MENU) {
@@ -167,42 +165,51 @@ public final class YuvProbeActivity extends Activity implements SurfaceHolder.Ca
         return super.dispatchKeyEvent(event);
     }
 
-    private void createWriterIfPossible() {
+    /** All ImageWriter creation, dequeue, queue and closure happen on writerExecutor only. */
+    private void createWriterOnWorker() {
         Surface candidate = surface;
-        if (candidate == null || !candidate.isValid()) return;
-        synchronized (writerLock) {
-            closeWriterLocked();
-            try {
-                // API 23 two-argument form: the Surface's YV12 format is the contract.
-                writer = ImageWriter.newInstance(candidate, MAX_QUEUED_IMAGES);
-                int negotiatedFormat = writer.getFormat();
-                Log.i(TAG, "yuv_writer_created max_images=" + MAX_QUEUED_IMAGES
-                        + " negotiated_format=" + negotiatedFormat);
-                if (negotiatedFormat != ImageFormat.YV12) {
-                    throw new IllegalStateException("ImageWriter negotiated format " + negotiatedFormat);
-                }
-            } catch (RuntimeException error) {
-                closeWriterLocked();
-                writer = null;
-                reportFailure("ImageWriter rejected YV12 surface", error);
+        closeWriterOnWorker();
+        if (candidate == null || !candidate.isValid()) {
+            reportStatus("YV12 surface unavailable; no writer created");
+            return;
+        }
+        try {
+            // API 23 two-argument form: the Surface's YV12 format is the contract.
+            writer = ImageWriter.newInstance(candidate, MAX_QUEUED_IMAGES);
+            int negotiatedFormat = writer.getFormat();
+            Log.i(TAG, "yuv_writer_created max_images=" + MAX_QUEUED_IMAGES
+                    + " negotiated_format=" + negotiatedFormat);
+            if (negotiatedFormat != ImageFormat.YV12) {
+                throw new IllegalStateException("ImageWriter negotiated format " + negotiatedFormat);
             }
+        } catch (RuntimeException error) {
+            closeWriterOnWorker();
+            reportFailure("ImageWriter rejected YV12 surface", error);
         }
     }
 
-    private void requestFrame() {
-        if (destroyed) return;
+    private void enqueueWork(boolean recreateWriter, boolean closeWriter, boolean allowDestroyed) {
+        if (destroyed && !allowDestroyed) return;
         synchronized (requestLock) {
             generation++;
-            pending = new Request(generation, mode, alternatePattern);
+            boolean priorRecreate = pending != null && pending.recreateWriter;
+            boolean priorClose = pending != null && pending.closeWriter;
+            pending = new Work(generation, mode, alternatePattern,
+                    recreateWriter || priorRecreate, closeWriter || priorClose);
             if (workerScheduled) return;
             workerScheduled = true;
-            writerExecutor.execute(this::drainLatestFrame);
+            try {
+                writerExecutor.execute(this::drainLatestFrame);
+            } catch (RejectedExecutionException rejected) {
+                workerScheduled = false;
+                Log.w(TAG, "yuv_worker_rejected during shutdown", rejected);
+            }
         }
     }
 
     private void drainLatestFrame() {
         while (true) {
-            Request request;
+            Work request;
             synchronized (requestLock) {
                 request = pending;
                 pending = null;
@@ -211,20 +218,21 @@ public final class YuvProbeActivity extends Activity implements SurfaceHolder.Ca
                     return;
                 }
             }
-            if (!resumed || request.generation != generation) continue;
+            if (request.closeWriter) closeWriterOnWorker();
+            if (request.recreateWriter && resumed && !destroyed) createWriterOnWorker();
+            if (!resumed || request.generation != generation || destroyed) continue;
             queueSingleFrame(request);
         }
     }
 
-    private void queueSingleFrame(Request request) {
-        synchronized (writerLock) {
-            if (!resumed || request.generation != generation || writer == null) {
-                reportStatus("YV12 surface unavailable; no frame queued");
-                return;
-            }
-            Image image = null;
-            try {
-                image = writer.dequeueInputImage();
+    private void queueSingleFrame(Work request) {
+        if (!resumed || request.generation != generation || writer == null) {
+            reportStatus("YV12 surface unavailable; no frame queued");
+            return;
+        }
+        Image image = null;
+        try {
+            image = writer.dequeueInputImage();
                 if (image.getFormat() != ImageFormat.YV12) {
                     throw new IllegalStateException("unexpected ImageWriter format " + image.getFormat());
                 }
@@ -239,35 +247,37 @@ public final class YuvProbeActivity extends Activity implements SurfaceHolder.Ca
                 if (planes.length != 3) {
                     throw new IllegalStateException("expected 3 YV12 planes, got " + planes.length);
                 }
-                fillImage(planes, width, height, request.alternatePattern);
-                if (!resumed || request.generation != generation) {
-                    image.close();
-                    return;
-                }
-                Log.i(TAG, "yuv_image format=" + image.getFormat() + " actual=" + width + "x" + height
-                        + " plane_strides=" + describePlanes(planes));
-                writer.queueInputImage(image);
-                image = null;
-                Log.i(TAG, "yuv_queued generation=" + request.generation + " requested="
-                        + request.mode.width + "x" + request.mode.height);
-                reportStatus("YV12 queued " + width + "x" + height + " — panel detail still unverified");
-            } catch (RuntimeException error) {
-                reportFailure("YV12 frame rejected", error);
-            } finally {
-                if (image != null) image.close();
+            if (!fillImage(planes, width, height, request.alternatePattern,
+                    () -> isCancelled(request.generation))) {
+                Log.i(TAG, "yuv_fill_cancelled generation=" + request.generation);
+                return;
             }
+            if (isCancelled(request.generation)) return;
+            Log.i(TAG, "yuv_image format=" + image.getFormat() + " actual=" + width + "x" + height
+                    + " plane_strides=" + describePlanes(planes));
+            writer.queueInputImage(image);
+            image = null;
+            Log.i(TAG, "yuv_queued generation=" + request.generation + " requested="
+                    + request.mode.width + "x" + request.mode.height);
+            reportStatus("YV12 queued " + width + "x" + height + " — panel detail still unverified");
+        } catch (RuntimeException error) {
+            reportFailure("YV12 frame rejected", error);
+        } finally {
+            if (image != null) image.close();
         }
     }
 
-    private static void fillImage(Image.Plane[] planes, int width, int height, boolean alternate) {
-        YuvPlaneFiller.fillLuma(planes[0].getBuffer(), width, height, planes[0].getRowStride(),
-                planes[0].getPixelStride(), alternate);
+    private boolean fillImage(Image.Plane[] planes, int width, int height, boolean alternate,
+                              YuvPlaneFiller.Cancellation cancellation) {
+        if (!YuvPlaneFiller.fillLuma(planes[0].getBuffer(), width, height, planes[0].getRowStride(),
+                planes[0].getPixelStride(), alternate, cancellation)) return false;
         int chromaWidth = (width + 1) / 2;
         int chromaHeight = (height + 1) / 2;
         for (int index = 1; index < 3; index++) {
-            YuvPlaneFiller.fillNeutralChroma(planes[index].getBuffer(), chromaWidth, chromaHeight,
-                    planes[index].getRowStride(), planes[index].getPixelStride());
+            if (!YuvPlaneFiller.fillNeutralChroma(planes[index].getBuffer(), chromaWidth, chromaHeight,
+                    planes[index].getRowStride(), planes[index].getPixelStride(), cancellation)) return false;
         }
+        return true;
     }
 
     private static String describePlanes(Image.Plane[] planes) {
@@ -279,16 +289,21 @@ public final class YuvProbeActivity extends Activity implements SurfaceHolder.Ca
         return result.toString();
     }
 
-    private void closeWriter() {
-        synchronized (writerLock) { closeWriterLocked(); }
+    private void closeWriterOnWorker() {
+        if (writer != null) {
+            try {
+                writer.close();
+                Log.i(TAG, "yuv_writer_closed");
+            } catch (RuntimeException error) {
+                Log.e(TAG, "failure closing ImageWriter", error);
+            } finally {
+                writer = null;
+            }
+        }
     }
 
-    private void closeWriterLocked() {
-        if (writer != null) {
-            writer.close();
-            writer = null;
-            Log.i(TAG, "yuv_writer_closed");
-        }
+    private boolean isCancelled(long requestGeneration) {
+        return destroyed || !resumed || generation != requestGeneration || Thread.currentThread().isInterrupted();
     }
 
     private void reportFailure(String message, RuntimeException error) {
@@ -306,15 +321,19 @@ public final class YuvProbeActivity extends Activity implements SurfaceHolder.Ca
                 + "A queued YUV frame does not prove direct hardware composition; inspect SF and stripes.");
     }
 
-    private static final class Request {
+    private static final class Work {
         final long generation;
         final ProbeMode mode;
         final boolean alternatePattern;
+        final boolean recreateWriter;
+        final boolean closeWriter;
 
-        Request(long generation, ProbeMode mode, boolean alternatePattern) {
+        Work(long generation, ProbeMode mode, boolean alternatePattern, boolean recreateWriter, boolean closeWriter) {
             this.generation = generation;
             this.mode = mode;
             this.alternatePattern = alternatePattern;
+            this.recreateWriter = recreateWriter;
+            this.closeWriter = closeWriter;
         }
     }
 }

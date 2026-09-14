@@ -19,25 +19,41 @@ final class YuvPlaneFiller {
         }
     }
 
+    interface Cancellation { boolean isCancelled(); }
+
     static void fillLuma(ByteBuffer plane, int width, int height, int rowStride, int pixelStride,
                          boolean alternatePattern) {
+        fillLuma(plane, width, height, rowStride, pixelStride, alternatePattern, () -> false);
+    }
+
+    static boolean fillLuma(ByteBuffer plane, int width, int height, int rowStride, int pixelStride,
+                            boolean alternatePattern, Cancellation cancellation) {
         validatePlane(plane, width, height, rowStride, pixelStride);
         int base = plane.position();
         for (int y = 0; y < height; y++) {
+            if (cancellation.isCancelled()) return false;
             for (int x = 0; x < width; x++) {
                 plane.put(base + y * rowStride + x * pixelStride, lumaAt(x, y, width, height, alternatePattern));
             }
         }
+        return true;
     }
 
     static void fillNeutralChroma(ByteBuffer plane, int width, int height, int rowStride, int pixelStride) {
+        fillNeutralChroma(plane, width, height, rowStride, pixelStride, () -> false);
+    }
+
+    static boolean fillNeutralChroma(ByteBuffer plane, int width, int height, int rowStride, int pixelStride,
+                                     Cancellation cancellation) {
         validatePlane(plane, width, height, rowStride, pixelStride);
         int base = plane.position();
         for (int y = 0; y < height; y++) {
+            if (cancellation.isCancelled()) return false;
             for (int x = 0; x < width; x++) {
                 plane.put(base + y * rowStride + x * pixelStride, NEUTRAL_CHROMA);
             }
         }
+        return true;
     }
 
     static byte lumaAt(int x, int y, int width, int height, boolean alternatePattern) {
@@ -62,6 +78,10 @@ final class YuvPlaneFiller {
         validateImageShape(width, height);
         if (plane == null || rowStride < 1 || pixelStride < 1) {
             throw new IllegalArgumentException("invalid plane layout");
+        }
+        long minimumRowStride = (long) (width - 1) * pixelStride + 1;
+        if (rowStride < minimumRowStride) {
+            throw new IllegalArgumentException("row stride overlaps a row's samples");
         }
         long lastOffset = (long) (height - 1) * rowStride + (long) (width - 1) * pixelStride;
         long lastIndex = (long) plane.position() + lastOffset;
