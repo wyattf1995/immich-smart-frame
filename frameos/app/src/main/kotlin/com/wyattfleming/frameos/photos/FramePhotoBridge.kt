@@ -308,7 +308,7 @@ class FramePhotoBridge(
         if (!SHARED_SCALAR.matches(sessionId) || !SHARED_SCALAR.matches(slideId) || !boundedWholeNumber(epoch, MAX_DIAGNOSTIC_EPOCH)) return false
         val epochValue = epoch.toLong()
         if (type == SHARED_SETTLED_TYPE) {
-            if (sharedPlaybackSession != null && sharedPlaybackSession != sessionId) return false
+            // The document epoch orders settled slides across a server restart.
             if (epochValue <= sharedPlaybackEpoch) return false
             sharedPlaybackSession = sessionId
             sharedPlaybackEpoch = epochValue
