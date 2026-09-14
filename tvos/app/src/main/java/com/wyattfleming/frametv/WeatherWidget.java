@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.StateListDrawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
@@ -44,6 +45,14 @@ public final class WeatherWidget extends LinearLayout {
     private boolean closed;
     private boolean loading;
     private long requestNumber;
+    private final Runnable refresh = new Runnable() {
+        @Override public void run() {
+            if (!closed && resumed) {
+                loadIfNeeded();
+                main.postDelayed(this, WeatherCachePolicy.REFRESH_MILLIS);
+            }
+        }
+    };
 
     public WeatherWidget(Context context) {
         super(context);
@@ -72,10 +81,15 @@ public final class WeatherWidget extends LinearLayout {
         if (closed) return;
         resumed = true;
         loadIfNeeded();
+        main.removeCallbacks(refresh);
+        main.postDelayed(refresh, WeatherCachePolicy.REFRESH_MILLIS);
     }
 
     public void pause() {
         resumed = false;
+        requestNumber++;
+        loading = false;
+        main.removeCallbacks(refresh);
         HttpURLConnection connection = activeConnection;
         if (connection != null) connection.disconnect();
     }
@@ -96,11 +110,19 @@ public final class WeatherWidget extends LinearLayout {
         return view;
     }
 
-    private GradientDrawable panelBackground(Context context) {
+    private StateListDrawable panelBackground(Context context) {
+        StateListDrawable states = new StateListDrawable();
+        states.addState(new int[]{android.R.attr.state_pressed}, panel(context, Color.argb(245, 45, 82, 72), TvUi.ACCENT, 2));
+        states.addState(new int[]{android.R.attr.state_focused}, panel(context, Color.argb(242, 42, 77, 70), TvUi.ACCENT, 2));
+        states.addState(new int[]{}, panel(context, Color.argb(224, 17, 54, 51), Color.argb(55, 219, 249, 209), 1));
+        return states;
+    }
+
+    private GradientDrawable panel(Context context, int start, int stroke, int width) {
         GradientDrawable panel = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[]{Color.argb(224, 17, 54, 51), Color.argb(218, 21, 38, 68)});
+                new int[]{start, Color.argb(218, 21, 38, 68)});
         panel.setCornerRadius(TvUi.dp(context, 12));
-        panel.setStroke(TvUi.dp(context, 1), Color.argb(55, 219, 249, 209));
+        panel.setStroke(TvUi.dp(context, width), stroke);
         return panel;
     }
 
@@ -111,7 +133,7 @@ public final class WeatherWidget extends LinearLayout {
         boolean usable = WeatherCachePolicy.isUsable(location.sourceKey(), preferences.cachedSource(), preferences.fetchedAt(), now);
         if (usable) {
             try { showForecast(parseForecast(preferences.cachedJson()), location, preferences.fetchedAt(), true); }
-            catch (JSONException ignored) { /* refetch below */ }
+            catch (JSONException ignored) { usable = false; }
         } else {
             heading.setText(location.label + " · Loading weather…");
             hourly.setText("Hourly forecast loading");
@@ -124,6 +146,7 @@ public final class WeatherWidget extends LinearLayout {
     private void fetch(WeatherLocation location) {
         loading = true;
         final long request = ++requestNumber;
+        final String sourceKey = location.sourceKey();
         executor.execute(() -> {
             String payload = null;
             Exception failure = null;
@@ -133,11 +156,13 @@ public final class WeatherWidget extends LinearLayout {
             final Exception result = failure;
             main.post(() -> {
                 loading = false;
-                if (closed || !resumed || request != requestNumber) return;
+                WeatherLocation currentLocation = preferences.location();
+                if (closed || !resumed || request != requestNumber || currentLocation == null
+                        || !sourceKey.equals(currentLocation.sourceKey())) return;
                 if (response != null) {
                     try {
                         WeatherForecast forecast = parseForecast(response);
-                        preferences.saveForecast(location.sourceKey(), response, System.currentTimeMillis());
+                        preferences.saveForecast(sourceKey, response, System.currentTimeMillis());
                         showForecast(forecast, location, System.currentTimeMillis(), false);
                         return;
                     } catch (JSONException malformed) { resultError(location, "Forecast data needs a retry"); return; }
@@ -160,6 +185,7 @@ public final class WeatherWidget extends LinearLayout {
         connection.setConnectTimeout(7000);
         connection.setReadTimeout(7000);
         connection.setRequestProperty("Accept", "application/json");
+        long deadline = System.currentTimeMillis() + 10_000L;
         try {
             if (connection.getResponseCode() != 200) throw new java.io.IOException("Weather service response unavailable");
             try (BufferedInputStream input = new BufferedInputStream(connection.getInputStream());
@@ -167,6 +193,7 @@ public final class WeatherWidget extends LinearLayout {
                 byte[] buffer = new byte[4096];
                 int read;
                 while ((read = input.read(buffer)) != -1) {
+                    if (System.currentTimeMillis() > deadline) throw new java.io.IOException("Weather request timed out");
                     if (output.size() + read > MAX_RESPONSE_BYTES) throw new java.io.IOException("Weather response was too large");
                     output.write(buffer, 0, read);
                 }
@@ -202,15 +229,17 @@ public final class WeatherWidget extends LinearLayout {
             if (hourText.length() > 9) hourText.append("   ");
             hourText.append(format("h a", hour.epochSeconds, zone)).append(" ")
                     .append(hour.temperature == null ? "—" : Math.round(hour.temperature) + "°")
+                    .append(" ").append(WeatherForecast.glyph(hour.code))
                     .append(hour.precipitationChance == null ? "" : " " + hour.precipitationChance + "%");
         }
         hourly.setText(hourText);
         StringBuilder dayText = new StringBuilder("Daily    ");
-        for (WeatherForecast.Day day : forecast.nextDays(5)) {
+        for (WeatherForecast.Day day : forecast.nextDays(System.currentTimeMillis() / 1000L, 5)) {
             if (dayText.length() > 9) dayText.append("   ");
             dayText.append(format("EEE", day.epochSeconds, zone)).append(" ")
                     .append(day.high == null ? "—" : Math.round(day.high) + "°")
-                    .append("/").append(day.low == null ? "—" : Math.round(day.low) + "°");
+                    .append("/").append(day.low == null ? "—" : Math.round(day.low) + "°")
+                    .append(" ").append(WeatherForecast.glyph(day.code));
         }
         daily.setText(dayText);
         long ageMinutes = Math.max(0, (System.currentTimeMillis() - fetchedAt) / 60000L);
@@ -255,15 +284,31 @@ public final class WeatherWidget extends LinearLayout {
 
     private static Double numberAt(JSONArray values, int index) {
         if (values == null || index < 0 || index >= values.length() || values.isNull(index)) return null;
-        double value = values.optDouble(index, Double.NaN);
-        return Double.isNaN(value) ? null : value;
+        Object item = values.opt(index);
+        if (!(item instanceof Number)) return null;
+        double value = ((Number) item).doubleValue();
+        return Double.isFinite(value) ? value : null;
     }
-    private static Integer integerAt(JSONArray values, int index) { return values == null || index < 0 || index >= values.length() || values.isNull(index) ? null : values.optInt(index); }
+    private static Integer integerAt(JSONArray values, int index) {
+        if (values == null || index < 0 || index >= values.length() || values.isNull(index)) return null;
+        Object item = values.opt(index);
+        if (!(item instanceof Number)) return null;
+        double value = ((Number) item).doubleValue();
+        return !Double.isFinite(value) || Math.rint(value) != value ? null : (int) value;
+    }
     private static long longAt(JSONArray values, int index, long fallback) { return values == null || index < 0 || index >= values.length() || values.isNull(index) ? fallback : values.optLong(index, fallback); }
     private static Double numberAt(JSONObject object, String key) {
         if (object.isNull(key)) return null;
-        double value = object.optDouble(key, Double.NaN);
-        return Double.isNaN(value) ? null : value;
+        Object item = object.opt(key);
+        if (!(item instanceof Number)) return null;
+        double value = ((Number) item).doubleValue();
+        return Double.isFinite(value) ? value : null;
     }
-    private static Integer integerAt(JSONObject object, String key) { return object.isNull(key) ? null : object.optInt(key); }
+    private static Integer integerAt(JSONObject object, String key) {
+        if (object.isNull(key)) return null;
+        Object item = object.opt(key);
+        if (!(item instanceof Number)) return null;
+        double value = ((Number) item).doubleValue();
+        return !Double.isFinite(value) || Math.rint(value) != value ? null : (int) value;
+    }
 }

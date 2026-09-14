@@ -31,7 +31,10 @@ public final class WeatherSetupActivity extends Activity {
     private LinearLayout results;
     private TextView message;
     private EditText query;
+    private android.widget.Button searchButton;
+    private volatile HttpURLConnection activeConnection;
     private boolean stopped;
+    private long requestNumber;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -55,7 +58,8 @@ public final class WeatherSetupActivity extends Activity {
         query.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_POSTAL_ADDRESS);
         query.setSelectAllOnFocus(true);
         content.addView(query, new LinearLayout.LayoutParams(-1, TvUi.dp(this, 58)));
-        content.addView(TvUi.button(this, "Search locations", this::search));
+        searchButton = TvUi.button(this, "Search locations", this::search);
+        content.addView(searchButton);
         message = TvUi.text(this, "", 16, TvUi.ACCENT);
         message.setPadding(0, TvUi.dp(this, 14), 0, TvUi.dp(this, 6));
         message.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
@@ -68,8 +72,14 @@ public final class WeatherSetupActivity extends Activity {
         setContentView(scroll);
     }
 
-    @Override protected void onStop() { stopped = true; super.onStop(); }
-    @Override protected void onStart() { super.onStart(); stopped = false; }
+    @Override protected void onStop() {
+        stopped = true;
+        requestNumber++;
+        HttpURLConnection connection = activeConnection;
+        if (connection != null) connection.disconnect();
+        super.onStop();
+    }
+    @Override protected void onStart() { super.onStart(); stopped = false; if (searchButton != null) searchButton.setEnabled(true); }
     @Override protected void onDestroy() { executor.shutdownNow(); main.removeCallbacksAndMessages(null); super.onDestroy(); }
 
     private void search() {
@@ -77,6 +87,8 @@ public final class WeatherSetupActivity extends Activity {
         if (text.length() < 2) { message.setText("Enter at least two characters."); query.requestFocus(); return; }
         results.removeAllViews();
         message.setText("Searching locations…");
+        searchButton.setEnabled(false);
+        final long request = ++requestNumber;
         executor.execute(() -> {
             List<WeatherLocation> locations = null;
             Exception failure = null;
@@ -84,7 +96,8 @@ public final class WeatherSetupActivity extends Activity {
             final List<WeatherLocation> response = locations;
             final Exception result = failure;
             main.post(() -> {
-                if (isFinishing() || stopped) return;
+                if (isFinishing() || stopped || request != requestNumber) return;
+                searchButton.setEnabled(true);
                 if (result != null) { message.setText("Couldn’t search right now. Try again later."); return; }
                 if (response == null || response.isEmpty()) { message.setText("No matching locations. Try a city plus state or country."); return; }
                 message.setText("Choose your location");
@@ -104,13 +117,17 @@ public final class WeatherSetupActivity extends Activity {
         results.addView(choice, lp);
     }
 
-    private static List<WeatherLocation> searchLocations(String search) throws Exception {
+    private List<WeatherLocation> searchLocations(String search) throws Exception {
         String endpoint = "https://geocoding-api.open-meteo.com/v1/search?name="
                 + URLEncoder.encode(search, "UTF-8") + "&count=8&language=en&format=json";
         HttpURLConnection connection = (HttpURLConnection) new java.net.URL(endpoint).openConnection();
+        activeConnection = connection;
         connection.setConnectTimeout(7000);
         connection.setReadTimeout(7000);
         connection.setRequestProperty("Accept", "application/json");
+        // Each activity owns one request at a time; onStop disconnects this exact connection.
+        // The deadline also bounds a response that continually drips bytes below readTimeout.
+        long deadline = System.currentTimeMillis() + 10_000L;
         try {
             if (connection.getResponseCode() != 200) throw new java.io.IOException("Geocoding response unavailable");
             String payload;
@@ -118,6 +135,7 @@ public final class WeatherSetupActivity extends Activity {
                  ByteArrayOutputStream output = new ByteArrayOutputStream()) {
                 byte[] buffer = new byte[4096]; int read;
                 while ((read = input.read(buffer)) != -1) {
+                    if (System.currentTimeMillis() > deadline) throw new java.io.IOException("Geocoding request timed out");
                     if (output.size() + read > MAX_RESPONSE_BYTES) throw new java.io.IOException("Geocoding response was too large");
                     output.write(buffer, 0, read);
                 }
@@ -136,7 +154,10 @@ public final class WeatherSetupActivity extends Activity {
                 if (location.valid()) results.add(location);
             }
             return results;
-        } finally { connection.disconnect(); }
+        } finally {
+            if (activeConnection == connection) activeConnection = null;
+            connection.disconnect();
+        }
     }
 
     private static String label(JSONObject item) {

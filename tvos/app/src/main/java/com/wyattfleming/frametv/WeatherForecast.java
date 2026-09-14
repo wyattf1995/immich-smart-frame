@@ -54,11 +54,12 @@ public final class WeatherForecast {
         return chosen;
     }
 
-    public List<Day> nextDays(int count) {
+    public List<Day> nextDays(long nowEpochSeconds, int count) {
         if (count <= 0) return Collections.emptyList();
         List<Day> chosen = new ArrayList<>();
+        String today = localDay(nowEpochSeconds);
         for (Day day : daily) {
-            if (day.high == null && day.low == null) continue;
+            if ((day.high == null && day.low == null) || localDay(day.epochSeconds).compareTo(today) < 0) continue;
             chosen.add(day);
             if (chosen.size() == count) break;
         }
@@ -76,5 +77,22 @@ public final class WeatherForecast {
         if (code >= 85 && code <= 86) return "Snow showers";
         if (code >= 95) return "Storms";
         return "Weather";
+    }
+
+    public static String glyph(Integer code) {
+        if (code == null) return "·";
+        if (code == 0) return "☀";
+        if (code <= 3) return "☁";
+        if (code == 45 || code == 48) return "≋";
+        if (code >= 95) return "⚡";
+        if (code >= 85) return "✳";
+        if (code >= 51 && code <= 82) return "☂";
+        return "·";
+    }
+
+    private String localDay(long epochSeconds) {
+        java.text.SimpleDateFormat formatter = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
+        formatter.setTimeZone(timeZone);
+        return formatter.format(new java.util.Date(epochSeconds * 1000L));
     }
 }
