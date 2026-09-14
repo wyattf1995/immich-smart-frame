@@ -15,3 +15,7 @@ Controls: DPAD Left selects the 1080p buffer, Right selects the 4K buffer, Cente
 the grayscale pattern alignment, Menu toggles the text overlay, and Back exits. The logs use
 the `Frame4KProbe` tag. A 4K EGL buffer only demonstrates the buffer path; inspection of the
 stripe test pattern is still required to establish visible panel detail.
+
+Hide the overlay with Menu before collecting a SurfaceFlinger/HWC snapshot.
+Compare actual EGL and latched-buffer sizes; `latest_requested` is UI intent and may
+briefly differ from a surface during asynchronous resize.

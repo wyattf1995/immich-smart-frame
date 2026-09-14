@@ -75,7 +75,6 @@ public final class ProbeActivity extends Activity {
     @Override
     public void onDestroy() {
         Log.i(TAG, "lifecycle onDestroy");
-        glView.release();
         super.onDestroy();
     }
 

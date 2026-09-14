@@ -27,18 +27,17 @@ final class ProbeSurfaceView extends GLSurfaceView {
     }
 
     void setProbeMode(ProbeMode mode, boolean alternatePattern) {
+        // Publish intent before the asynchronous resize; diagnostics label it as the latest
+        // request, separately from the measured EGL buffer which may still be transitioning.
+        renderer.setRequestedMode(mode);
+        queueEvent(() -> renderer.setAlternatePattern(alternatePattern));
         getHolder().setFixedSize(mode.width, mode.height);
-        queueEvent(() -> renderer.setMode(mode, alternatePattern));
         requestRender();
     }
 
     void setAlternatePattern(boolean alternatePattern) {
         queueEvent(() -> renderer.setAlternatePattern(alternatePattern));
         requestRender();
-    }
-
-    void release() {
-        queueEvent(renderer::release);
     }
 
     interface RendererStatus { void onStatus(String status); }
@@ -75,7 +74,7 @@ final class ProbeSurfaceView extends GLSurfaceView {
         private final RendererStatus status;
         private final FloatBuffer vertices = ByteBuffer.allocateDirect(QUAD.length * 4)
                 .order(ByteOrder.nativeOrder()).asFloatBuffer();
-        private ProbeMode requestedMode = ProbeMode.HD;
+        private volatile ProbeMode requestedMode = ProbeMode.HD;
         private boolean alternatePattern;
         private int program;
         private int positionLocation;
@@ -83,7 +82,6 @@ final class ProbeSurfaceView extends GLSurfaceView {
         private int alternateLocation;
         private int width;
         private int height;
-        private boolean released;
         private boolean failed;
 
         RendererImpl(RendererStatus status) {
@@ -91,17 +89,13 @@ final class ProbeSurfaceView extends GLSurfaceView {
             vertices.put(QUAD).position(0);
         }
 
-        void setMode(ProbeMode mode, boolean alternate) {
-            requestedMode = mode;
-            alternatePattern = alternate;
-        }
+        void setRequestedMode(ProbeMode mode) { requestedMode = mode; }
 
         void setAlternatePattern(boolean alternate) { alternatePattern = alternate; }
 
         @Override
         public void onSurfaceCreated(javax.microedition.khronos.opengles.GL10 unused,
                                      javax.microedition.khronos.egl.EGLConfig config) {
-            released = false;
             failed = false;
             Log.i(TAG, "surface_created renderer=" + GLES20.glGetString(GLES20.GL_RENDERER)
                     + " vendor=" + GLES20.glGetString(GLES20.GL_VENDOR));
@@ -137,7 +131,7 @@ final class ProbeSurfaceView extends GLSurfaceView {
             boolean heightOk = EGL14.eglQuerySurface(EGL14.eglGetCurrentDisplay(), EGL14.eglGetCurrentSurface(EGL14.EGL_DRAW),
                     EGL14.EGL_HEIGHT, eglHeight, 0);
             int eglError = EGL14.eglGetError();
-            Log.i(TAG, "surface_changed requested=" + requestedMode.width + "x" + requestedMode.height
+            Log.i(TAG, "surface_changed latest_requested=" + requestedMode.width + "x" + requestedMode.height
                     + " callback=" + width + "x" + height + " egl_surface=" + eglWidth[0] + "x" + eglHeight[0]
                     + " gl_viewport=" + viewport[2] + "x" + viewport[3]
                     + " query_ok=" + widthOk + "/" + heightOk + " egl_error=0x" + Integer.toHexString(eglError));
@@ -147,14 +141,14 @@ final class ProbeSurfaceView extends GLSurfaceView {
             if (!widthOk || !heightOk || eglError != EGL14.EGL_SUCCESS) {
                 fail("EGL surface query failed 0x" + Integer.toHexString(eglError));
             } else {
-                status.onStatus("Requested " + requestedMode.displayName + " " + requestedMode.width + "x" + requestedMode.height
+                status.onStatus("Latest request " + requestedMode.displayName + " " + requestedMode.width + "x" + requestedMode.height
                         + " | EGL " + eglWidth[0] + "x" + eglHeight[0]);
             }
         }
 
         @Override
         public void onDrawFrame(javax.microedition.khronos.opengles.GL10 unused) {
-            if (released || failed || program == 0 || width <= 0 || height <= 0) return;
+            if (failed || program == 0 || width <= 0 || height <= 0) return;
             GLES20.glUseProgram(program);
             GLES20.glEnableVertexAttribArray(positionLocation);
             GLES20.glVertexAttribPointer(positionLocation, 2, GLES20.GL_FLOAT, false, 0, vertices);
@@ -166,19 +160,13 @@ final class ProbeSurfaceView extends GLSurfaceView {
             if (glError != GLES20.GL_NO_ERROR) {
                 fail("GL draw failed 0x" + Integer.toHexString(glError));
             } else {
-                Log.i(TAG, "frame_drawn requested=" + requestedMode.width + "x" + requestedMode.height
+                Log.i(TAG, "frame_drawn latest_requested=" + requestedMode.width + "x" + requestedMode.height
                         + " surface=" + width + "x" + height + " alternate=" + alternatePattern);
             }
         }
 
-        void release() {
-            released = true;
-            if (program != 0) {
-                GLES20.glDeleteProgram(program);
-                program = 0;
-            }
-            Log.i(TAG, "renderer_released");
-        }
+        // GLSurfaceView owns the EGL context; destroying it releases its GL objects.
+        // Manual deletion during pause would require a separate resume rebuild path.
 
         private int buildProgram() {
             int vertex = compileShader(GLES20.GL_VERTEX_SHADER, VERTEX);
