@@ -1,9 +1,9 @@
 diff --git a/frontend/src/ts/shared-playback.ts b/frontend/src/ts/shared-playback.ts
 new file mode 100644
-index 0000000..e7cbace
+index 0000000..1e6bc36
 --- /dev/null
 +++ b/frontend/src/ts/shared-playback.ts
-@@ -0,0 +1,400 @@
+@@ -0,0 +1,429 @@
 +import DOMPurify from "dompurify";
 +
 +export type SharedSlide = {
@@ -171,8 +171,14 @@ index 0000000..e7cbace
 +        const wanted = [state.current, state.next].filter((slide): slide is SharedSlide => slide !== null);
 +        const wantedIds = new Set(wanted.map((slide) => slide.id));
 +        for (const id of this.prepared.keys()) if (!wantedIds.has(id)) this.prepared.delete(id);
-+        Promise.all(wanted.map((slide) => this.prepare(slide))).then(() => {
-+            if (!this.active(generation) || revision !== this.revision) return;
++        const current = state.current;
++        if (current) this.prepare(current, generation).then(() => {
++            this.showCurrent(state, generation, revision);
++        }).catch(() => {
++            if (this.active(generation) && revision === this.revision) this.ports.status("error");
++        });
++        if (state.next) this.prepare(state.next, generation).then(() => {
++            // A slow next must not delay the current, but must arm its deadline once decoded.
 +            this.showCurrent(state, generation, revision);
 +        }).catch(() => {
 +            if (this.active(generation) && revision === this.revision) this.ports.status("error");
@@ -180,18 +186,19 @@ index 0000000..e7cbace
 +        this.pollSoon(POLL_MS);
 +    }
 +
-+    private prepare(slide: SharedSlide): Promise<PreparedSlide> {
++    private prepare(slide: SharedSlide, generation: number): Promise<PreparedSlide> {
 +        const cached = this.prepared.get(slide.id);
 +        if (cached) return Promise.resolve(cached);
 +        const running = this.preparing.get(slide.id);
 +        if (running) return running;
-+        const runningPrepare = this.withTimeout((signal) => this.ports.prepare(slide, signal)).then((prepared) => {
-+            this.preparing.delete(slide.id);
-+            this.prepared.set(slide.id, prepared);
++        let runningPrepare!: Promise<PreparedSlide>;
++        runningPrepare = this.withTimeout((signal) => this.ports.prepare(slide, signal)).then((prepared) => {
++            if (this.active(generation) && this.preparing.get(slide.id) === runningPrepare) {
++                this.prepared.set(slide.id, prepared);
++            }
 +            return prepared;
-+        }).catch((error) => {
-+            this.preparing.delete(slide.id);
-+            throw error;
++        }).finally(() => {
++            if (this.preparing.get(slide.id) === runningPrepare) this.preparing.delete(slide.id);
 +        });
 +        this.preparing.set(slide.id, runningPrepare);
 +        return runningPrepare;
@@ -201,9 +208,17 @@ index 0000000..e7cbace
 +        if (!this.active(generation) || revision !== this.revision || this.state !== state) return;
 +        const current = state.current;
 +        if (!current) return;
++        const now = this.ports.now() + this.offsetMs;
++        const dueNext = !state.paused && state.next && state.next.startsAt <= now
++            ? this.prepared.get(state.next.id) : undefined;
++        if (dueNext && this.renderedId !== dueNext.id) {
++            this.ports.render(dueNext);
++            this.renderedId = dueNext.id;
++            return;
++        }
 +        const prepared = this.prepared.get(current.id);
 +        if (!prepared) return;
-+        const delay = Math.max(0, current.startsAt - (this.ports.now() + this.offsetMs));
++        const delay = Math.max(0, current.startsAt - now);
 +        if (delay > 0) {
 +            if (this.displayTimer) this.ports.clearTimer(this.displayTimer);
 +            this.displayTimer = this.ports.setTimer(() => this.showCurrent(state, generation, revision), delay);
@@ -367,19 +382,32 @@ index 0000000..e7cbace
 +            if (history && currentHistory) currentHistory.replaceWith(history);
 +            root.dataset.sharedPlaybackSession = controller.currentSessionId() ?? "";
 +            root.dataset.sharedPlaybackSlide = prepared.id;
-+            root.dispatchEvent(new Event("frame:shared-photo-settled", { bubbles: true }));
++            root.dataset.sharedPlaybackPaused = `${controller.isPaused()}`;
++            root.dispatchEvent(new CustomEvent("frame:shared-photo-settled", {
++                bubbles: true,
++                detail: { sharedPlaybackPaused: controller.isPaused() },
++            }));
 +        },
 +        status: (status) => root.dataset.sharedPlaybackStatus = status,
 +        paused: (paused) => {
 +            document.body.classList.toggle("polling-paused", paused);
++            root.dataset.sharedPlaybackSession = controller.currentSessionId() ?? "";
++            const current = controller.currentId();
++            if (current) root.dataset.sharedPlaybackSlide = current;
++            else delete root.dataset.sharedPlaybackSlide;
 +            root.dataset.sharedPlaybackPaused = `${paused}`;
-+            root.dispatchEvent(new Event("frame:shared-playback-state", { bubbles: true }));
++            root.dispatchEvent(new CustomEvent("frame:shared-playback-state", {
++                bubbles: true,
++                detail: { sharedPlaybackPaused: paused },
++            }));
 +        },
 +    });
 +    const command = (action: SharedPlaybackAction) => controller.command(action);
 +    const onNext = () => command("next"); const onPrevious = () => command("previous");
++    const onPlayPause = () => command(controller.isPaused() ? "resume" : "pause");
 +    document.querySelector(".navigation--next-asset")?.addEventListener("click", onNext);
 +    document.querySelector(".navigation--prev-asset")?.addEventListener("click", onPrevious);
++    document.querySelector(".navigation--play-pause")?.addEventListener("click", onPlayPause);
 +    const onKey = (event: KeyboardEvent) => {
 +        if ((event.target as HTMLElement | null)?.matches("input,textarea,select,[contenteditable]")) return;
 +        const action = event.type === "keydown" && event.key.toLowerCase() === "p" ? (event.shiftKey ? "resume" : "pause") :
@@ -392,14 +420,15 @@ index 0000000..e7cbace
 +    const onPageHide = () => controller.setVisible(false);
 +    const onPageShow = () => controller.setVisible(true);
 +    controller.setVisible(document.visibilityState === "visible");
-+    document.addEventListener("pagehide", onPageHide);
-+    document.addEventListener("pageshow", onPageShow);
++    window.addEventListener("pagehide", onPageHide);
++    window.addEventListener("pageshow", onPageShow);
 +    controller.start();
 +    return () => {
 +        controller.dispose(); document.querySelector(".navigation--next-asset")?.removeEventListener("click", onNext);
 +        document.querySelector(".navigation--prev-asset")?.removeEventListener("click", onPrevious);
++        document.querySelector(".navigation--play-pause")?.removeEventListener("click", onPlayPause);
 +        document.removeEventListener("keydown", onKey); document.removeEventListener("keyup", onKey); document.removeEventListener("visibilitychange", onVisibility);
-+        document.removeEventListener("pagehide", onPageHide); document.removeEventListener("pageshow", onPageShow);
++        window.removeEventListener("pagehide", onPageHide); window.removeEventListener("pageshow", onPageShow);
 +    };
 +}
 +
