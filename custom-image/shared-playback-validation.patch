@@ -1,0 +1,229 @@
+diff --git a/ci/shared-playback-nas.sh b/ci/shared-playback-nas.sh
+new file mode 100755
+index 0000000..6d6ce01
+--- /dev/null
++++ b/ci/shared-playback-nas.sh
+@@ -0,0 +1,127 @@
++#!/usr/bin/env bash
++# Runs only in the credential-free agent-nas browser runtime. All generated
++# toolchains, caches, reports, and temporary files stay under /workspace.
++set -euo pipefail
++
++readonly NODE_VERSION='26.7.0'
++readonly NODE_SHA256='982aa24dd8be4c889c6a8ab337ddff3b0896645b20f4239356e80552c16277ee'
++readonly NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
++readonly GO_VERSION='1.26.6'
++readonly GO_SHA256='708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89'
++readonly GO_URL="https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
++readonly KIOSK_VERSION='0.1.0'
++
++root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
++cd "$root_dir"
++
++readonly workspace_dir="$root_dir/.nas-shared-playback"
++readonly tools_dir="$workspace_dir/toolchains"
++readonly cache_dir="$workspace_dir/cache"
++readonly temp_dir="$workspace_dir/tmp"
++readonly report_dir="$root_dir/reports/shared-playback"
++readonly report_zip="$root_dir/reports/shared-playback-validation.zip"
++readonly command_report="$report_dir/commands.tsv"
++readonly sanitized_log="$report_dir/sanitized.log"
++readonly source_identity='/run/agent-source-identity.json'
++
++mkdir -p "$tools_dir" "$cache_dir/npm" "$cache_dir/go-build" "$cache_dir/gomod" "$workspace_dir/gopath" "$temp_dir" "$report_dir"
++chmod 700 "$workspace_dir" "$tools_dir" "$cache_dir" "$temp_dir" "$report_dir"
++: > "$command_report"
++: > "$sanitized_log"
++chmod 600 "$command_report" "$sanitized_log"
++
++for dependency in curl sha256sum tar xz; do
++  command -v "$dependency" >/dev/null 2>&1 || { printf 'missing required runtime dependency: %s\n' "$dependency" >&2; exit 64; }
++done
++[[ -f "$source_identity" && ! -L "$source_identity" ]] || { printf 'missing runner source identity\n' >&2; exit 66; }
++[[ -f frontend/package-lock.json && -f go.mod && -f ci/shared-playback.test.ts ]] || { printf 'materialized source or shared playback test is missing\n' >&2; exit 66; }
++[[ -f ci/shared-playback-browser.mjs ]] || { printf 'required browser integration script is missing\n' >&2; exit 66; }
++cp "$source_identity" "$report_dir/source-identity.json"
++chmod 600 "$report_dir/source-identity.json"
++
++run_step() {
++  local name="$1"
++  shift
++  printf '%s\tstarted\t%s\n' "$name" "$*" >> "$command_report"
++  if "$@" >> "$sanitized_log" 2>&1; then
++    printf '%s\tpassed\t%s\n' "$name" "$*" >> "$command_report"
++  else
++    local status=$?
++    printf '%s\tfailed\t%s\n' "$name" "$*" >> "$command_report"
++    return "$status"
++  fi
++}
++
++download_and_verify() {
++  local url="$1"
++  local sha="$2"
++  local output="$3"
++  run_step "download-$(basename "$output")" curl --fail --location --silent --show-error --output "$output" "$url"
++  printf '%s  %s\n' "$sha" "$output" | sha256sum --check --strict >> "$sanitized_log" 2>&1
++}
++
++node_archive="$workspace_dir/node-v${NODE_VERSION}-linux-x64.tar.xz"
++go_archive="$workspace_dir/go${GO_VERSION}.linux-amd64.tar.gz"
++download_and_verify "$NODE_URL" "$NODE_SHA256" "$node_archive"
++download_and_verify "$GO_URL" "$GO_SHA256" "$go_archive"
++tar -xJf "$node_archive" -C "$tools_dir"
++tar -xzf "$go_archive" -C "$tools_dir"
++
++readonly node_bin="$tools_dir/node-v${NODE_VERSION}-linux-x64/bin/node"
++readonly npm_bin="$tools_dir/node-v${NODE_VERSION}-linux-x64/bin/npm"
++readonly go_bin="$tools_dir/go/bin/go"
++[[ -x "$node_bin" && -x "$npm_bin" && -x "$go_bin" ]] || { printf 'toolchain extraction failed\n' >&2; exit 66; }
++
++export PATH="$tools_dir/node-v${NODE_VERSION}-linux-x64/bin:$tools_dir/go/bin:$PATH"
++export TMPDIR="$temp_dir"
++export npm_config_cache="$cache_dir/npm"
++export GOCACHE="$cache_dir/go-build"
++export GOMODCACHE="$cache_dir/gomod"
++export GOPATH="$workspace_dir/gopath"
++export GOFLAGS='-p=2'
++export GOMAXPROCS=2
++
++run_step node-version "$node_bin" --version
++run_step npm-version "$npm_bin" --version
++run_step go-version "$go_bin" version
++run_step frontend-install bash -c 'cd frontend && npm ci'
++run_step frontend-asset-recovery bash -c 'cd frontend && node_modules/.bin/esbuild tests/asset-request-recovery.test.ts --bundle --platform=node --format=esm --outfile="$TMPDIR/asset-request-recovery.test.mjs" && node --test "$TMPDIR/asset-request-recovery.test.mjs"'
++run_step frontend-polling-recovery bash -c 'cd frontend && node_modules/.bin/esbuild tests/polling-recovery.test.ts --bundle --platform=node --format=esm --alias:htmx.org=./tests/htmx.mock.ts --outfile="$TMPDIR/polling-recovery.test.mjs" && node --test "$TMPDIR/polling-recovery.test.mjs"'
++run_step frontend-paused-retry bash -c 'cd frontend && node_modules/.bin/esbuild tests/paused-retry.test.ts --bundle --platform=node --format=esm --alias:htmx.org=./tests/htmx.mock.ts --outfile="$TMPDIR/paused-retry.test.mjs" && node --test "$TMPDIR/paused-retry.test.mjs"'
++run_step frontend-cache-contracts bash -c 'cd frontend && node --test tests/browser-cache-contract.test.mjs tests/offline-cache-contract.test.mjs'
++run_step frontend-shared-playback bash -c 'cd frontend && node_modules/.bin/esbuild ../ci/shared-playback.test.ts --bundle --platform=node --format=esm --alias:htmx.org=./tests/htmx.mock.ts --outfile="$TMPDIR/shared-playback.test.mjs" && node --test "$TMPDIR/shared-playback.test.mjs"'
++run_step frontend-typecheck bash -c 'cd frontend && node_modules/.bin/tsc --noEmit'
++run_step frontend-css bash -c 'cd frontend && node_modules/.bin/esbuild --minify --bundle --loader:.css=css --external:*.woff --external:*.woff2 --external:*.ttf --target=chrome106,edge106,firefox107,safari12.1,opera92 src/css/kiosk.css --outfile=./public/assets/css/kiosk.css'
++run_step frontend-kiosk-js bash -c 'cd frontend && node_modules/.bin/esbuild src/ts/kiosk.ts --format=iife --global-name=kiosk --bundle --minify --target=es6 --outfile=./public/assets/js/kiosk.js'
++run_step frontend-url-builder-js bash -c 'cd frontend && node_modules/.bin/esbuild src/ts/url-builder.ts --format=iife --global-name=urlBuilder --bundle --minify --target=es6 --outfile=./public/assets/js/url-builder.js'
++run_step go-mod-download "$go_bin" mod download
++run_step templ-generate "$go_bin" tool templ generate
++run_step go-test bash -c 'CI=1 go test ./...'
++run_step go-race-routes bash -c 'CI=1 go test -race ./internal/routes'
++run_step go-build bash -c 'CGO_ENABLED=0 go build -a -installsuffix cgo -ldflags "-X main.version=0.1.0 -s -w" -o dist/kiosk .'
++run_step browser-integration "$node_bin" ci/shared-playback-browser.mjs
++
++if [[ -f ci/shared-playback-proof.sh ]]; then
++  run_step source-negative-proof bash ci/shared-playback-proof.sh
++else
++  printf 'source-negative-proof\tnot-provided\tci/shared-playback-proof.sh\n' >> "$command_report"
++fi
++
++cat > "$report_dir/resource-ledger.md" <<'EOF'
++# Task-owned resource ledger
++
++Owner task: shared-playback NAS validation
++Source worktree: /Users/wyattfleming/.codex/private/frame-sync-20260913/validation (branch sync-validation)
++Project worktree: /Users/wyattfleming/frame-sync-validation (branch codex/frame-sync-validation-20260913)
++Disposable NAS workspace: /workspace/.nas-shared-playback
++
++| Resource | Exact identifier/path | Why needed | Closeout proof |
++|---|---|---|---|
++| Toolchain/cache workspace | /workspace/.nas-shared-playback | Pinned Node and Go plus ephemeral caches | NAS closeout receipt and export manifest |
++| Browser/server | Defined by ci/shared-playback-browser.mjs | Two-client local integration | Script must close owned contexts/browser/server before it exits |
++| Git worktree | validation / frame-sync-validation paths above | Source and generated patch | Parent verifies merge and worktree closeout |
++EOF
++chmod 600 "$report_dir/resource-ledger.md"
++
++run_step reports "$node_bin" ci/shared-playback-report.mjs --report-dir "$report_dir" --source-identity "$report_dir/source-identity.json" --commands "$command_report" --log "$sanitized_log" --node "$node_bin" --go "$go_bin" --zip "$report_zip"
++[[ -s dist/kiosk && -s "$report_zip" ]] || { printf 'expected artifacts are missing\n' >&2; exit 66; }
+diff --git a/ci/shared-playback-report.mjs b/ci/shared-playback-report.mjs
+new file mode 100755
+index 0000000..d5436ef
+--- /dev/null
++++ b/ci/shared-playback-report.mjs
+@@ -0,0 +1,90 @@
++#!/usr/bin/env node
++import { createHash } from 'node:crypto';
++import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
++import path from 'node:path';
++import { spawnSync } from 'node:child_process';
++
++function usage() {
++  throw new Error('usage: shared-playback-report.mjs --report-dir DIR --source-identity FILE --commands FILE --log FILE --node FILE --go FILE --zip FILE');
++}
++
++const args = process.argv.slice(2);
++const values = new Map();
++for (let index = 0; index < args.length; index += 2) {
++  if (!args[index]?.startsWith('--') || args[index + 1] === undefined) usage();
++  values.set(args[index].slice(2), args[index + 1]);
++}
++for (const key of ['report-dir', 'source-identity', 'commands', 'log', 'node', 'go', 'zip']) {
++  if (!values.has(key)) usage();
++}
++
++const sha256 = async file => createHash('sha256').update(await readFile(file)).digest('hex');
++const version = executable => {
++  const args = path.basename(executable) === 'node' ? ['--version'] : ['version'];
++  const result = spawnSync(executable, args, { encoding: 'utf8' });
++  if (result.status !== 0) throw new Error(`could not read version for ${executable}`);
++  return result.stdout.trim();
++};
++
++const crcTable = Array.from({ length: 256 }, (_, value) => {
++  let crc = value;
++  for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
++  return crc >>> 0;
++});
++const crc32 = bytes => {
++  let crc = 0xffffffff;
++  for (const byte of bytes) crc = (crc >>> 8) ^ crcTable[(crc ^ byte) & 0xff];
++  return (crc ^ 0xffffffff) >>> 0;
++};
++const u16 = value => { const out = Buffer.alloc(2); out.writeUInt16LE(value); return out; };
++const u32 = value => { const out = Buffer.alloc(4); out.writeUInt32LE(value >>> 0); return out; };
++
++async function writeStoredZip(output, entries) {
++  const chunks = [];
++  const central = [];
++  let offset = 0;
++  for (const entry of entries) {
++    const name = Buffer.from(entry.name);
++    const content = await readFile(entry.file);
++    const crc = crc32(content);
++    const local = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(content.length), u32(content.length), u16(name.length), u16(0), name, content]);
++    chunks.push(local);
++    central.push(Buffer.concat([Buffer.from([0x50, 0x4b, 0x01, 0x02]), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(content.length), u32(content.length), u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset), name]));
++    offset += local.length;
++  }
++  const directory = Buffer.concat(central);
++  chunks.push(directory, Buffer.concat([Buffer.from([0x50, 0x4b, 0x05, 0x06]), u16(0), u16(0), u16(entries.length), u16(entries.length), u32(directory.length), u32(offset), u16(0)]));
++  await writeFile(output, Buffer.concat(chunks), { mode: 0o600 });
++}
++
++const reportDir = path.resolve(values.get('report-dir'));
++const sourceIdentity = path.resolve(values.get('source-identity'));
++const commands = path.resolve(values.get('commands'));
++const log = path.resolve(values.get('log'));
++const nodeExecutable = path.resolve(values.get('node'));
++const goExecutable = path.resolve(values.get('go'));
++const zip = path.resolve(values.get('zip'));
++
++const tools = {
++  node: { executable: nodeExecutable, version: version(nodeExecutable), sha256: await sha256(nodeExecutable) },
++  go: { executable: goExecutable, version: version(goExecutable), sha256: await sha256(goExecutable) },
++};
++await writeFile(path.join(reportDir, 'tools.json'), `${JSON.stringify(tools, null, 2)}\n`, { mode: 0o600 });
++const commandLines = (await readFile(commands, 'utf8')).trimEnd().split('\n').filter(Boolean);
++const failed = commandLines.filter(line => /\tfailed\t/.test(line));
++const summary = {
++  status: failed.length === 0 ? 'passed' : 'failed',
++  commandCount: commandLines.length,
++  failedCommands: failed,
++  sourceIdentitySha256: await sha256(sourceIdentity),
++  sanitizedLogSha256: await sha256(log),
++};
++await writeFile(path.join(reportDir, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });
++
++const entries = [];
++for (const name of (await readdir(reportDir)).sort()) {
++  const file = path.join(reportDir, name);
++  if (path.resolve(file) === zip || !(await stat(file)).isFile()) continue;
++  entries.push({ name, file });
++}
++await writeStoredZip(zip, entries);
