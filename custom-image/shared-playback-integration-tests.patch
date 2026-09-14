@@ -1,0 +1,523 @@
+diff --git a/ci/shared-playback-browser.mjs b/ci/shared-playback-browser.mjs
+new file mode 100644
+index 0000000..274002e
+--- /dev/null
++++ b/ci/shared-playback-browser.mjs
+@@ -0,0 +1,101 @@
++import { createRequire } from 'node:module';
++import { spawn, spawnSync } from 'node:child_process';
++import { readFile, writeFile, mkdir } from 'node:fs/promises';
++import { resolve } from 'node:path';
++import assert from 'node:assert/strict';
++const require = createRequire('/opt/launchpad-browser-runtime/package.json');
++const { chromium } = require('playwright');
++const root=process.cwd(), reports=resolve(root,'reports/shared-playback');
++await mkdir(reports,{recursive:true});
++const fixture=resolve(process.env.TMPDIR,'shared-playback-fixture');
++const readyFile=resolve(process.env.TMPDIR,`shared-playback-ready-${process.pid}.json`);
++const build=spawnSync('go',['test','-c','-o',fixture,'./internal/routes'],{stdio:'inherit'});
++assert.equal(build.status,0,'fixture compilation');
++const server=spawn(fixture,['-test.run=^TestSharedPlaybackBrowserFixture$','-test.timeout=4m'],{cwd:root,env:{...process.env,FRAME_SYNC_FIXTURE_READY:readyFile,FRAME_SYNC_SOURCE_ROOT:root},stdio:['ignore','pipe','pipe']});
++let log='';server.stdout.on('data',d=>log+=d);server.stderr.on('data',d=>log+=d);
++const delay=ms=>new Promise(r=>setTimeout(r,ms));
++async function eventually(fn,label,timeout=20000){const end=Date.now()+timeout;let error;while(Date.now()<end){try {const result=await fn();if(result)return result;}catch(e){error=e;}await delay(100);}throw Error(`${label}: ${error?.message??'timed out'}`);}
++let browser;const contexts=[];const errors=[];const report={synthetic:true,tests:[],transitions:[],resources:{fixturePid:server.pid}};
++try{
++ const ready=await eventually(async()=>JSON.parse(await readFile(readyFile,'utf8')),'fixture ready',10000);
++ assert.equal(ready.pid,server.pid);
++ browser=await chromium.launch({headless:true,chromiumSandbox:false});
++ const makePage=async(viewport,clockSkew=0)=>{
++  const context=await browser.newContext({viewport});contexts.push(context);
++  await context.addInitScript(({clockSkew})=>{
++   const realNow=Date.now.bind(Date);Date.now=()=>realNow()+clockSkew;
++   window.sharedSettles=[];window.sharedStates=[];
++   for(const [name,key]of [['frame:shared-photo-settled','sharedSettles'],['frame:shared-playback-state','sharedStates']])document.addEventListener(name,event=>{
++    const root=document.querySelector('#kiosk');
++    const photo=root?.querySelector('img[alt="Main image"]');
++    window[key].push({at:performance.timeOrigin+performance.now(),id:root?.dataset.sharedPlaybackSlide,session:root?.dataset.sharedPlaybackSession,paused:event.detail?.sharedPlaybackPaused,decoded:photo?.complete&&photo?.naturalWidth>0,history:document.querySelector('#kiosk-history input[name=history]')?.value});
++   });
++  },{clockSkew});
++  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
++  await page.goto(`${ready.url}/?sync_group=shared-test&frame_id=synthetic-${contexts.length}`);
++  return page;
++ };
++ const a=await makePage({width:1280,height:720});
++ const id=page=>page.locator('#kiosk').getAttribute('data-shared-playback-slide');
++ const state=async()=>{const r=await a.request.get(`${ready.url}/api/playback/shared-test`);assert.equal(r.status(),200);return r.json();};
++ await eventually(()=>id(a),'first decoded photo');
++ const b=await makePage({width:960,height:540},90000);
++ await eventually(async()=>{const x=await id(a);return x&&x===await id(b)},'late join and skewed clock match');
++ report.tests.push('late join displays current; 90-second client clock skew corrected');
++ const apiCommand=async(action,expected)=>{
++  const s=expected??await state();const r=await a.request.post(`${ready.url}/api/playback/shared-test/control`,{headers:{Origin:ready.url},data:{action,sessionId:s.sessionId,expectedVersion:s.version}});return {status:r.status(),state:await r.json()};
++ };
++ // Observe actual independently decoded transitions, with no local asset selection.
++ const first=await id(a);
++ await eventually(async()=>{const aa=await a.evaluate(()=>window.sharedSettles),bb=await b.evaluate(()=>window.sharedSettles);const pairs=aa.filter(x=>x.id!==first).map(x=>({a:x,b:bb.find(y=>x.id===y.id)})).filter(x=>x.b);if(pairs.length<3)return false;report.transitions=pairs;return true;},'three automatic synchronized transitions',45000);
++ for(const pair of report.transitions){assert.ok(Math.abs(pair.a.at-pair.b.at)<700,'scheduled transitions differ by less than 700ms');assert.ok(pair.a.decoded&&pair.b.decoded);assert.equal(pair.a.history,pair.b.history);assert.equal(typeof pair.a.paused,'boolean');}
++ await a.keyboard.press('p');
++ await eventually(async()=>{const s=await state();return s.paused&&await a.locator('#kiosk').getAttribute('data-shared-playback-paused')==='true'&&await b.locator('#kiosk').getAttribute('data-shared-playback-paused')==='true'},'shared pause');
++ await eventually(async()=>await id(a)===await id(b),'paused settled match');
++ const pausedId=await id(a);await delay(11000);assert.equal(await id(a),pausedId);assert.equal(await id(b),pausedId);
++ report.tests.push('pause on one browser holds both beyond the configured interval');
++ await eventually(async()=>Boolean((await state()).next),'prepared next');
++ const cas=await state();const simultaneous=await Promise.all([apiCommand('next',cas),apiCommand('next',cas)]);
++ assert.deepEqual(simultaneous.map(x=>x.status).sort(),[200,409]);
++ await eventually(async()=>{const x=await id(a);return x!==pausedId&&x===await id(b)},'one CAS next on both');
++ const afterNext=await id(a);
++ await b.keyboard.press('ArrowLeft');
++ await eventually(async()=>await id(a)===pausedId&&await id(b)===pausedId,'previous on other browser');
++ await b.keyboard.press('ArrowRight');
++ await eventually(async()=>await id(a)===afterNext&&await id(b)===afterNext,'forward returns to selected photo');
++ report.tests.push('simultaneous next deduplicated; previous/next shared across browsers');
++ // Disconnect one participant before resuming; a failed poll must cancel local deadlines.
++ await contexts[1].setOffline(true);await delay(1800);
++ const held=await id(b);await a.keyboard.press('Shift+p');
++ await eventually(async()=>!(await state()).paused,'resume');
++ await eventually(async()=>await id(a)!==held,'online browser advances',16000);
++ assert.equal(await id(b),held,'offline browser holds the last image');
++ await contexts[1].setOffline(false);
++ await eventually(async()=>await id(a)===await id(b),'reconnect catches current',20000);
++ report.tests.push('disconnected browser holds image; reconnect catches current without backlog');
++ await a.screenshot({path:resolve(reports,'shared-browser-tv.png')});
++ await b.screenshot({path:resolve(reports,'shared-browser-frame.png')});
++ for(const page of [a,b]){
++  assert.equal(await page.locator('#kiosk .frame').count(),1);
++  const events=await page.evaluate(()=>({settles:window.sharedSettles,states:window.sharedStates}));
++  assert.ok(events.states.length>0&&events.states.every(s=>typeof s.paused==='boolean'&&s.session));
++  assert.ok(events.settles.every(s=>s.decoded&&s.history?.startsWith('*')&&s.session));
++ }
++ const before=(await (await a.request.get(`${ready.url}/fixture/stats`)).json()).independentRequests;
++ assert.equal(before,0,'shared views never use independent asset routes');
++ const soloContext=await browser.newContext();contexts.push(soloContext);const solo=await soloContext.newPage();await solo.goto(ready.url);
++ await eventually(async()=>((await (await a.request.get(`${ready.url}/fixture/stats`)).json()).independentRequests)>before,'independent home still starts existing HTMX slideshow');
++ report.tests.push('shared mode skips independent endpoints; existing independent mode retained');
++ assert.deepEqual(errors,[],'browser JavaScript errors');
++ report.status='passed';
++}catch(error){report.status='failed';report.error=error.stack;throw error;}
++finally{
++ for(const c of contexts)await c.close().catch(()=>{});
++ if(browser)await browser.close();
++ if(server.exitCode===null){server.kill('SIGTERM');await Promise.race([new Promise(r=>server.once('exit',r)),delay(5000)]);}
++ report.resources.fixtureExited=server.exitCode!==null||server.signalCode!==null;
++ report.resources.contextsClosed=contexts.length;report.resources.browserClosed=Boolean(browser);
++ await writeFile(resolve(reports,'shared-browser.json'),JSON.stringify(report,null,2));
++ await writeFile(resolve(reports,'shared-browser-fixture.log'),log);
++ if(!report.resources.fixtureExited){server.kill('SIGKILL');throw Error('fixture did not shut down gracefully');}
++}
+diff --git a/ci/shared-playback-proof.sh b/ci/shared-playback-proof.sh
+new file mode 100755
+index 0000000..9207d78
+--- /dev/null
++++ b/ci/shared-playback-proof.sh
+@@ -0,0 +1,36 @@
++#!/usr/bin/env bash
++# Mutations touch source only. Exact original bytes are restored in finally,
++# and the same unedited guarding test must fail for its assertion then pass.
++set -euo pipefail
++python3 - <<'PY'
++from pathlib import Path
++import hashlib,json,subprocess
++root=Path.cwd();out=root/'reports/shared-playback';out.mkdir(parents=True,exist_ok=True)
++results=[]
++def proof(name,file,old,new,count,test,failed_marker):
++ p=root/file;original=p.read_bytes();text=original.decode();assert text.count(old)==count,(name,'guard drift')
++ def run(label):
++  result=subprocess.run(test,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
++  (out/(name+'-'+label+'.log')).write_text(result.stdout)
++  return result
++ green_before=run('green-before');assert green_before.returncode==0,(name,'baseline guard failed')
++ try:
++  p.write_text(text.replace(old,new))
++  negative=run('red')
++  assert negative.returncode!=0 and failed_marker in negative.stdout,(name,'did not fail at guarding test')
++ finally:
++  p.write_bytes(original)
++ assert p.read_bytes()==original
++ green=run('green-after');assert green.returncode==0,(name,'restored guard failed')
++ results.append({'name':name,'testCommand':test,'redExit':negative.returncode,'greenBeforeExit':green_before.returncode,'greenAfterExit':green.returncode,'restoredSha256':hashlib.sha256(original).hexdigest(),'testsUnchanged':True})
++ (out/'source-negative-proof.json').write_text(json.dumps({'status':'in-progress','proofs':results},indent=2))
++proof('coordinator-cas','internal/playback/coordinator.go',
++ 'if command.ExpectedEpoch != s.epoch || command.ExpectedVersion != s.version {','if false {',2,
++ ['go','test','-count=1','./internal/playback','-run','^TestReplayedAndRestartedCommandsAreRejected$'],
++ '--- FAIL: TestReplayedAndRestartedCommandsAreRejected')
++proof('control-origin','internal/routes/routes_shared_playback.go',
++ 'if !sameOriginPlaybackControl(c.Request()) {','if false && !sameOriginPlaybackControl(c.Request()) {',1,
++ ['go','test','-count=1','./internal/routes','-run','^TestSharedPlaybackControlRejectsCrossOriginAndMalformedJSON$/missing_origin$'],
++ '--- FAIL: TestSharedPlaybackControlRejectsCrossOriginAndMalformedJSON')
++(out/'source-negative-proof.json').write_text(json.dumps({'status':'passed','proofs':results},indent=2))
++PY
+diff --git a/internal/config/config_shared_playback_test.go b/internal/config/config_shared_playback_test.go
+new file mode 100644
+index 0000000..7b124b1
+--- /dev/null
++++ b/internal/config/config_shared_playback_test.go
+@@ -0,0 +1,75 @@
++package config
++
++import (
++	"fmt"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func sharedPlaybackConfig() *Config {
++	c := New()
++	c.Curation.Profiles = map[string]CurationProfile{"balanced": {}}
++	c.Kiosk.SyncGroups = map[string]SyncGroupSettings{
++		"downstairs": {CurationProfile: "balanced", Duration: 45},
++	}
++	return c
++}
++
++func TestValidateSyncGroups(t *testing.T) {
++	tests := []struct {
++		name   string
++		mutate func(*Config)
++		want   string
++	}{
++		{name: "configured group", mutate: func(*Config) {}},
++		{name: "bad identifier", mutate: func(c *Config) {
++			c.Kiosk.SyncGroups = map[string]SyncGroupSettings{"Bad ID": {CurationProfile: "balanced", Duration: 45}}
++		}, want: "invalid shared playback group ID"},
++		{name: "duration below bound", mutate: func(c *Config) {
++			c.Kiosk.SyncGroups["downstairs"] = SyncGroupSettings{CurationProfile: "balanced", Duration: 9}
++		}, want: "duration must be 10..3600"},
++		{name: "duration above bound", mutate: func(c *Config) {
++			c.Kiosk.SyncGroups["downstairs"] = SyncGroupSettings{CurationProfile: "balanced", Duration: 3601}
++		}, want: "duration must be 10..3600"},
++		{name: "missing profile", mutate: func(c *Config) { c.Kiosk.SyncGroups["downstairs"] = SyncGroupSettings{Duration: 45} }, want: "requires a curation_profile"},
++		{name: "unknown profile", mutate: func(c *Config) {
++			c.Kiosk.SyncGroups["downstairs"] = SyncGroupSettings{CurationProfile: "missing", Duration: 45}
++		}, want: "unknown curation_profile"},
++		{name: "eight groups allowed", mutate: func(c *Config) {
++			c.Kiosk.SyncGroups = make(map[string]SyncGroupSettings)
++			for i := range 8 {
++				c.Kiosk.SyncGroups[fmt.Sprintf("group-%d", i)] = SyncGroupSettings{CurationProfile: "balanced", Duration: 45}
++			}
++		}},
++		{name: "ninth group rejected", mutate: func(c *Config) {
++			c.Kiosk.SyncGroups = make(map[string]SyncGroupSettings)
++			for i := range 9 {
++				c.Kiosk.SyncGroups[fmt.Sprintf("group-%d", i)] = SyncGroupSettings{CurationProfile: "balanced", Duration: 45}
++			}
++		}, want: "at most 8 groups"},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			c := sharedPlaybackConfig()
++			tt.mutate(c)
++			err := c.ValidateSyncGroups()
++			if tt.want == "" {
++				require.NoError(t, err)
++			} else {
++				require.ErrorContains(t, err, tt.want)
++			}
++		})
++	}
++}
++
++func TestSnapshotDeepCopiesSyncGroups(t *testing.T) {
++	c := sharedPlaybackConfig()
++	snapshot := c.Snapshot()
++	snapshot.Kiosk.SyncGroups["downstairs"] = SyncGroupSettings{CurationProfile: "balanced", Duration: 120}
++	snapshot.Kiosk.SyncGroups["upstairs"] = SyncGroupSettings{CurationProfile: "balanced", Duration: 45}
++
++	require.Equal(t, 45, c.Kiosk.SyncGroups["downstairs"].Duration)
++	_, exists := c.Kiosk.SyncGroups["upstairs"]
++	require.False(t, exists)
++}
+diff --git a/internal/routes/routes_shared_playback_browser_test.go b/internal/routes/routes_shared_playback_browser_test.go
+new file mode 100644
+index 0000000..c7e5365
+--- /dev/null
++++ b/internal/routes/routes_shared_playback_browser_test.go
+@@ -0,0 +1,122 @@
++package routes
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"fmt"
++	"image"
++	"image/color"
++	"image/jpeg"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/playback"
++	"github.com/labstack/echo/v5"
++)
++
++// This opt-in test process hosts the production HTML, player bundle, coordinator,
++// HTTP routes and JPEG renderer. Only the photo source is synthetic. The browser
++// harness owns its process and sends SIGTERM; ordinary go test never starts it.
++func TestSharedPlaybackBrowserFixture(t *testing.T) {
++	readyPath := os.Getenv("FRAME_SYNC_FIXTURE_READY")
++	if readyPath == "" {
++		t.Skip("explicit browser fixture process only")
++	}
++	sourceRoot := os.Getenv("FRAME_SYNC_SOURCE_ROOT")
++	if sourceRoot == "" {
++		t.Fatal("source root is required")
++	}
++	var selections atomic.Uint64
++	var independentRequests atomic.Uint64
++	photoSource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
++		if len(parts) < 3 || parts[0] != "api" || parts[1] != "assets" {
++			http.NotFound(w, r)
++			return
++		}
++		id := parts[2]
++		if len(parts) == 3 {
++			w.Header().Set("Content-Type", "application/json")
++			_ = json.NewEncoder(w).Encode(testImageAsset(id))
++			return
++		}
++		if len(parts) != 4 || (parts[3] != "thumbnail" && parts[3] != "original") {
++			http.NotFound(w, r)
++			return
++		}
++		canvas := image.NewRGBA(image.Rect(0, 0, 480, 270))
++		var n uint64
++		_, _ = fmt.Sscanf(id, "00000000-0000-4000-8000-%012d", &n)
++		for y := 0; y < 270; y++ {
++			for x := 0; x < 480; x++ {
++				canvas.SetRGBA(x, y, color.RGBA{R: uint8((uint64(x) + n*47) % 256), G: uint8((uint64(y) + n*71) % 256), B: uint8((n * 39) % 256), A: 255})
++			}
++		}
++		w.Header().Set("Content-Type", "image/jpeg")
++		_ = jpeg.Encode(w, canvas, &jpeg.Options{Quality: 85})
++	}))
++	defer photoSource.Close()
++	cfg := newCancellationTestConfig(photoSource.URL)
++	cfg.Kiosk.HTTPTimeout = 8
++	cfg.Kiosk.SyncGroups = map[string]config.SyncGroupSettings{"shared-test": {CurationProfile: "balanced", Duration: 10}}
++	cfg.ShowTime = false
++	cfg.ShowDate = false
++	cfg.DisableScreensaver = false
++	cfg.DisableSleep = true
++	cfg.ShowMoreInfo = false
++	cfg.ShowProgressBar = false
++	cfg.ShowImageDate = false
++	cfg.ImageFit = "contain"
++	cfg.Transition = "none"
++	com := common.New()
++	coordinator, err := playback.New([]playback.GroupConfig{{ID: "shared-test", SelectionKey: "balanced", Duration: 10 * time.Second,
++		PreloadLead: 3 * time.Second, IdleTimeout: time.Minute, RetryDelay: time.Second, RetryLimit: 3, HistoryLimit: 12}},
++		func(ctx context.Context, request playback.LoadRequest) (playback.Asset, error) {
++			if err := ctx.Err(); err != nil {
++				return playback.Asset{}, err
++			}
++			return playback.NewAsset(fmt.Sprintf("00000000-0000-4000-8000-%012d", selections.Add(1)), ""), nil
++		}, playback.Options{MaxConfiguredGroups: 8})
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer coordinator.Close()
++	shared := &SharedPlayback{coordinator: coordinator, base: cfg, common: com}
++	e := echo.New()
++	shared.Register(e)
++	e.GET("/", Home(cfg, com))
++	e.GET("/assets/js/kiosk.*.js", func(c *echo.Context) error {
++		return c.File(filepath.Join(sourceRoot, "frontend/public/assets/js/kiosk.js"))
++	})
++	e.GET("/assets/css/kiosk.*.css", func(c *echo.Context) error {
++		return c.File(filepath.Join(sourceRoot, "frontend/public/assets/css/kiosk.css"))
++	})
++	e.Static("/assets", filepath.Join(sourceRoot, "frontend/public/assets"))
++	e.POST("/asset/new", func(c *echo.Context) error { independentRequests.Add(1); return c.NoContent(204) })
++	e.POST("/asset/offline", func(c *echo.Context) error { independentRequests.Add(1); return c.NoContent(204) })
++	e.POST("/asset/previous", func(c *echo.Context) error { independentRequests.Add(1); return c.NoContent(204) })
++	e.GET("/fixture/stats", func(c *echo.Context) error {
++		return c.JSON(200, map[string]any{"independentRequests": independentRequests.Load(), "selections": selections.Load()})
++	})
++	server := httptest.NewServer(e)
++	defer server.Close()
++	var ready bytes.Buffer
++	_ = json.NewEncoder(&ready).Encode(map[string]any{"url": server.URL, "pid": os.Getpid(), "source": "synthetic"})
++	if err := os.WriteFile(readyPath, ready.Bytes(), 0600); err != nil {
++		t.Fatal(err)
++	}
++	select {
++	case <-com.Context().Done():
++	case <-time.After(4 * time.Minute):
++		t.Error("browser fixture exceeded lifetime")
++	}
++}
+diff --git a/internal/routes/routes_shared_playback_test.go b/internal/routes/routes_shared_playback_test.go
+new file mode 100644
+index 0000000..3cf2396
+--- /dev/null
++++ b/internal/routes/routes_shared_playback_test.go
+@@ -0,0 +1,159 @@
++package routes
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/playback"
++	"github.com/labstack/echo/v5"
++	"github.com/stretchr/testify/require"
++)
++
++type sharedPlaybackTestServer struct {
++	e      *echo.Echo
++	shared *SharedPlayback
++	calls  *atomic.Int32
++}
++
++func newSharedPlaybackTestServer(t *testing.T) *sharedPlaybackTestServer {
++	t.Helper()
++	base := config.New()
++	base.ImmichURL = "http://private-immich.invalid"
++	base.Kiosk.HTTPTimeout = 1
++	var sequence atomic.Int32
++	calls := &atomic.Int32{}
++	coordinator, err := playback.New([]playback.GroupConfig{{
++		ID: "downstairs", SelectionKey: "balanced", Duration: 45 * time.Second, IdleTimeout: time.Minute,
++	}}, func(context.Context, playback.LoadRequest) (playback.Asset, error) {
++		calls.Add(1)
++		index := sequence.Add(1)
++		return playback.NewAsset(fmt.Sprintf("asset-%d", index), "private-selected-user"), nil
++	}, playback.Options{})
++	require.NoError(t, err)
++	server := &sharedPlaybackTestServer{shared: &SharedPlayback{coordinator: coordinator, base: base, common: common.New()}, calls: calls}
++	server.e = echo.New()
++	server.shared.Register(server.e)
++	t.Cleanup(server.shared.Close)
++	return server
++}
++
++func (s *sharedPlaybackTestServer) request(method, target, body string) *httptest.ResponseRecorder {
++	req := httptest.NewRequest(method, "http://frame.test"+target, strings.NewReader(body))
++	req.Host = "frame.test"
++	rec := httptest.NewRecorder()
++	s.e.ServeHTTP(rec, req)
++	return rec
++}
++
++func (s *sharedPlaybackTestServer) readyState(t *testing.T) sharedStateResponse {
++	t.Helper()
++	deadline := time.Now().Add(time.Second)
++	for time.Now().Before(deadline) {
++		rec := s.request(http.MethodGet, "/api/playback/downstairs", "")
++		require.Equal(t, http.StatusOK, rec.Code)
++		var state sharedStateResponse
++		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &state))
++		if state.Current != nil && state.Next != nil && !state.Loading {
++			return state
++		}
++		time.Sleep(time.Millisecond)
++	}
++	t.Fatal("shared playback did not prepare current and next slides")
++	return sharedStateResponse{}
++}
++
++func controlRequest(t *testing.T, body string) *http.Request {
++	t.Helper()
++	req := httptest.NewRequest(http.MethodPost, "http://frame.test/api/playback/downstairs/control", strings.NewReader(body))
++	req.Host = "frame.test"
++	req.Header.Set("Origin", "http://frame.test")
++	req.Header.Set("Sec-Fetch-Site", "same-origin")
++	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
++	return req
++}
++
++func TestSharedPlaybackUnconfiguredGroupReturnsNotFoundWithoutAllocation(t *testing.T) {
++	server := newSharedPlaybackTestServer(t)
++	rec := server.request(http.MethodGet, "/api/playback/not-configured", "")
++	require.Equal(t, http.StatusNotFound, rec.Code)
++	require.Equal(t, "private, no-store", rec.Header().Get("Cache-Control"))
++	require.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
++	require.Zero(t, server.calls.Load())
++}
++
++func TestSharedPlaybackStateUsesBoundedNoStoreDTO(t *testing.T) {
++	server := newSharedPlaybackTestServer(t)
++	state := server.readyState(t)
++	rec := server.request(http.MethodGet, "/api/playback/downstairs", "")
++	require.Equal(t, http.StatusOK, rec.Code)
++	require.Contains(t, rec.Header().Get(echo.HeaderContentType), echo.MIMEApplicationJSON)
++	require.Equal(t, "private, no-store", rec.Header().Get("Cache-Control"))
++	require.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
++	require.NotContains(t, rec.Body.String(), "private-selected-user")
++	require.NotContains(t, rec.Body.String(), "private-immich.invalid")
++	require.NotEmpty(t, state.SessionID)
++	require.NotZero(t, state.ServerNow)
++	require.NotNil(t, state.Current)
++	require.NotNil(t, state.Next)
++	require.NotEqual(t, state.Current.ID, state.Next.ID)
++	require.NotEmpty(t, state.Current.URL)
++}
++
++func TestSharedPlaybackControlRejectsCrossOriginAndMalformedJSON(t *testing.T) {
++	server := newSharedPlaybackTestServer(t)
++	state := server.readyState(t)
++	valid := fmt.Sprintf(`{"action":"pause","sessionId":%q,"expectedVersion":%d}`, state.SessionID, state.Version)
++	tooLarge := `{"action":"pause","sessionId":"` + strings.Repeat("a", 1100) + `","expectedVersion":1}`
++	tests := []struct {
++		name   string
++		body   string
++		mutate func(*http.Request)
++		want   int
++	}{
++		{name: "missing origin", body: valid, mutate: func(r *http.Request) { r.Header.Del("Origin") }, want: http.StatusForbidden},
++		{name: "cross site origin", body: valid, mutate: func(r *http.Request) { r.Header.Set("Origin", "https://other.test") }, want: http.StatusForbidden},
++		{name: "cross site fetch metadata", body: valid, mutate: func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "cross-site") }, want: http.StatusForbidden},
++		{name: "wrong content type", body: valid, mutate: func(r *http.Request) { r.Header.Set(echo.HeaderContentType, echo.MIMETextPlain) }, want: http.StatusUnsupportedMediaType},
++		{name: "oversized body", body: tooLarge, mutate: func(*http.Request) {}, want: http.StatusBadRequest},
++		{name: "unknown field", body: valid[:len(valid)-1] + `,"extra":true}`, mutate: func(*http.Request) {}, want: http.StatusBadRequest},
++		{name: "trailing JSON", body: valid + ` {}`, mutate: func(*http.Request) {}, want: http.StatusBadRequest},
++		{name: "unknown action", body: fmt.Sprintf(`{"action":"delete","sessionId":%q,"expectedVersion":%d}`, state.SessionID, state.Version), mutate: func(*http.Request) {}, want: http.StatusBadRequest},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			req := controlRequest(t, tt.body)
++			tt.mutate(req)
++			rec := httptest.NewRecorder()
++			server.e.ServeHTTP(rec, req)
++			require.Equal(t, tt.want, rec.Code)
++			require.Equal(t, "private, no-store", rec.Header().Get("Cache-Control"))
++		})
++	}
++
++	req := controlRequest(t, valid)
++	rec := httptest.NewRecorder()
++	server.e.ServeHTTP(rec, req)
++	require.Equal(t, http.StatusOK, rec.Code)
++	replay := controlRequest(t, valid)
++	replayRec := httptest.NewRecorder()
++	server.e.ServeHTTP(replayRec, replay)
++	require.Equal(t, http.StatusConflict, replayRec.Code)
++}
++
++func TestSharedPlaybackSlideRejectsMissingClientDimensions(t *testing.T) {
++	server := newSharedPlaybackTestServer(t)
++	state := server.readyState(t)
++	require.NotNil(t, state.Current)
++	rec := server.request(http.MethodGet, "/api/playback/downstairs/slide/"+state.Current.ID, "")
++	require.Equal(t, http.StatusBadRequest, rec.Code)
++	require.Equal(t, "private, no-store", rec.Header().Get("Cache-Control"))
++}
