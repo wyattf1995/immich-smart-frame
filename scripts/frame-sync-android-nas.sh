@@ -16,6 +16,7 @@ readonly transport_manifest="$work_dir/transport-source-manifest.json"
 readonly identity_file="$report_dir/source-identity.json"
 readonly report_zip="$root_dir/reports/frame-sync-android-validation.zip"
 readonly parser_source="$frameos_dir/app/src/main/kotlin/com/wyattfleming/frameos/photos/FrameSharedPlaybackMetadata.kt"
+readonly bridge_source="$frameos_dir/app/src/main/kotlin/com/wyattfleming/frameos/photos/FramePhotoBridge.kt"
 readonly parser_test="com.wyattfleming.frameos.photos.FrameSharedPlaybackMetadataTest"
 
 # Clean committed-source admission is enforced by agent-nas before transport.
@@ -25,7 +26,7 @@ export TMPDIR="$work_dir/tmp"
 export GRADLE_USER_HOME="$work_dir/gradle-home"
 export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Djava.io.tmpdir=$TMPDIR"
 
-[[ -x "$frameos_dir/gradlew" && -x "$tvos_dir/gradlew" && -f "$parser_source" ]] || {
+[[ -x "$frameos_dir/gradlew" && -x "$tvos_dir/gradlew" && -f "$parser_source" && -f "$bridge_source" ]] || {
   printf 'required Android projects or FrameOS shared-playback guard are missing\n' >&2
   exit 66
 }
@@ -108,7 +109,17 @@ restore_parser_source() {
       cp "$work_dir/FrameSharedPlaybackMetadata.kt.original" "$parser_source"
   fi
 }
-trap restore_parser_source EXIT
+restore_bridge_source() {
+  if [[ -f "$work_dir/FramePhotoBridge.kt.original" ]]; then
+    cmp -s "$work_dir/FramePhotoBridge.kt.original" "$bridge_source" || \
+      cp "$work_dir/FramePhotoBridge.kt.original" "$bridge_source"
+  fi
+}
+restore_sources() {
+  restore_parser_source
+  restore_bridge_source
+}
+trap restore_sources EXIT
 
 # agent-nas verified every source.tar member before extracting it, and binds the
 # requested commit in the remote receipt. Android jobs intentionally receive no
@@ -170,6 +181,54 @@ restore_parser_source
 printf 'source-negative parser guard failed as expected and restored exact bytes\n' | tee "$report_dir/source-negative-proof.txt"
 
 run_step frameos-guard-green bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest --tests '$parser_test'"
+
+# Reintroduce only the prior cross-session rejection. The restart regression
+# must fail as an assertion, then source bytes and the focused suite must be
+# restored before the complete Android validation runs.
+run_step frameos-reconnect-guard-initial bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest --tests '$parser_test'"
+cp "$bridge_source" "$work_dir/FramePhotoBridge.kt.original"
+bridge_before_sha="$(sha256sum "$bridge_source" | awk '{print $1}')"
+python3 - "$bridge_source" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+source = p.read_text()
+needle = '''if (type == SHARED_SETTLED_TYPE) {
+            // The document epoch orders settled slides across a server restart.
+            if (epochValue <= sharedPlaybackEpoch) return false'''
+replacement = '''if (type == SHARED_SETTLED_TYPE) {
+            if (sharedPlaybackSession != null && sharedPlaybackSession != sessionId) return false
+            // The document epoch orders settled slides across a server restart.
+            if (epochValue <= sharedPlaybackEpoch) return false'''
+if source.count(needle) != 1:
+    raise SystemExit('shared playback restart correction is not uniquely patchable')
+p.write_text(source.replace(needle, replacement))
+PY
+rm -rf "$frameos_dir/app/build/test-results/testDebugUnitTest"
+if (cd "$frameos_dir" && ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest --tests "$parser_test") >>"$raw_log_file" 2>&1; then
+  printf 'reconnect source-negative run unexpectedly passed\n' >&2
+  exit 70
+fi
+python3 - "$frameos_dir/app/build/test-results/testDebugUnitTest" "$parser_test" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+root, expected_suite = Path(sys.argv[1]), sys.argv[2]
+expected_case = 'newer settled session replaces restarted server while stale session stays rejected'
+for report in root.glob('TEST-*.xml'):
+    suite = ET.parse(report).getroot()
+    if suite.attrib.get('name') != expected_suite:
+        continue
+    for case in suite.findall('testcase'):
+        if case.attrib.get('name') == expected_case and case.find('failure') is not None:
+            raise SystemExit(0)
+raise SystemExit('negative run did not record the shared playback restart regression assertion failure')
+PY
+restore_bridge_source
+[[ "$(sha256sum "$bridge_source" | awk '{print $1}')" == "$bridge_before_sha" ]] || { printf 'source-negative proof did not restore exact bridge bytes\n' >&2; exit 71; }
+printf 'source-negative shared playback reconnect guard failed as expected and restored exact bytes\n' | tee -a "$report_dir/source-negative-proof.txt"
+run_step frameos-reconnect-guard-green bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest --tests '$parser_test'"
+
 run_step frameos-unit-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 testDebugUnitTest lintDebug assembleRelease"
 run_step tvos-unit bash -c "cd '$tvos_dir' && ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest"
 run_step tvos-nas-build bash "$tvos_dir/tools/nas-build.sh"
@@ -188,7 +247,10 @@ identity = {
   'transportSourceManifest': json.loads(manifest.read_text()),
   'sdkBootstrap': json.loads(bootstrap.read_text()),
   'artifacts': {str(p.relative_to(root)): {'sha256':digest(p), 'bytes':p.stat().st_size, 'signing':'unsigned'} for p in artifacts},
-  'sourceGuard': {'file':'frameos/app/src/main/kotlin/com/wyattfleming/frameos/photos/FrameSharedPlaybackMetadata.kt', 'restoredSha256':digest(root/'frameos/app/src/main/kotlin/com/wyattfleming/frameos/photos/FrameSharedPlaybackMetadata.kt')},
+  'sourceGuards': [
+    {'file':'frameos/app/src/main/kotlin/com/wyattfleming/frameos/photos/FrameSharedPlaybackMetadata.kt', 'restoredSha256':digest(root/'frameos/app/src/main/kotlin/com/wyattfleming/frameos/photos/FrameSharedPlaybackMetadata.kt')},
+    {'file':'frameos/app/src/main/kotlin/com/wyattfleming/frameos/photos/FramePhotoBridge.kt', 'restoredSha256':digest(root/'frameos/app/src/main/kotlin/com/wyattfleming/frameos/photos/FramePhotoBridge.kt')},
+  ],
 }
 (report/'source-identity.json').write_text(json.dumps(identity, indent=2)+'\n')
 PY
