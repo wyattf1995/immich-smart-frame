@@ -529,10 +529,19 @@ index a5a77cb..f9e865a 100644
  
  	e.POST("/asset/offline", routes.OfflineMode(baseConfig, c))
 diff --git a/frontend/src/ts/shared-playback.ts b/frontend/src/ts/shared-playback.ts
-index ce856f0..05668cd 100644
+index ce856f0..2330974 100644
 --- a/frontend/src/ts/shared-playback.ts
 +++ b/frontend/src/ts/shared-playback.ts
-@@ -390,7 +390,7 @@ export function startSharedPlayback(options: StartSharedPlaybackOptions = {}): (
+@@ -356,7 +356,7 @@ export function startSharedPlayback(options: StartSharedPlaybackOptions = {}): (
+         return JSON.parse(body) as SharedPlaybackState;
+     };
+     const controller = new SharedPlaybackController({
+-        now: () => Date.now(), setTimer: (fn, delay) => window.setTimeout(fn, delay), clearTimer: window.clearTimeout,
++        now: () => Date.now(), setTimer: (fn, delay) => window.setTimeout(fn, delay), clearTimer: (timer) => window.clearTimeout(timer),
+         fetchState: (signal) => fetchJSON(endpoint, { signal }),
+         sendCommand: (action, expectedVersion, sessionId, signal) => fetchJSON(`${endpoint}/control`, {
+             method: "POST", signal, headers: { "content-type": "application/json" },
+@@ -390,20 +390,20 @@ export function startSharedPlayback(options: StartSharedPlaybackOptions = {}): (
              root.dataset.sharedPlaybackPaused = `${controller.isPaused()}`;
              root.dispatchEvent(new CustomEvent("frame:shared-photo-settled", {
                  bubbles: true,
@@ -541,7 +550,16 @@ index ce856f0..05668cd 100644
              }));
          },
          status: (status) => root.dataset.sharedPlaybackStatus = status,
-@@ -403,7 +403,7 @@ export function startSharedPlayback(options: StartSharedPlaybackOptions = {}): (
+         paused: (paused) => {
+             document.body.classList.toggle("polling-paused", paused);
+-            root.dataset.sharedPlaybackSession = controller.currentSessionId() ?? "";
+-            const current = controller.currentId();
+-            if (current) root.dataset.sharedPlaybackSlide = current;
+-            else delete root.dataset.sharedPlaybackSlide;
++            const previousSession = root.dataset.sharedPlaybackSession;
++            const session = controller.currentSessionId() ?? "";
++            if (previousSession && previousSession !== session) delete root.dataset.sharedPlaybackSlide;
++            root.dataset.sharedPlaybackSession = session;
              root.dataset.sharedPlaybackPaused = `${paused}`;
              root.dispatchEvent(new CustomEvent("frame:shared-playback-state", {
                  bubbles: true,
