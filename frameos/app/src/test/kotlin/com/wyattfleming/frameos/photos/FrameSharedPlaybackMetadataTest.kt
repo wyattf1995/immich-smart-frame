@@ -11,6 +11,8 @@ import java.nio.file.Files
 class FrameSharedPlaybackMetadataTest {
     @Test fun `sync group requires one bounded query scalar and no duplicate frame id`() {
         assertEquals("living-room", FrameSharedPlaybackMetadata.configuredGroup("https://photos.example/kiosk?frame_id=one&sync_group=living-room"))
+        assertEquals("a".repeat(48), FrameSharedPlaybackMetadata.configuredGroup("https://photos.example/kiosk?sync_group=${"a".repeat(48)}"))
+        assertNull(FrameSharedPlaybackMetadata.configuredGroup("https://photos.example/kiosk?sync_group=${"a".repeat(49)}"))
         assertNull(FrameSharedPlaybackMetadata.configuredGroup("https://photos.example/kiosk?sync_group=bad%20group"))
         assertNull(FrameSharedPlaybackMetadata.configuredGroup("https://photos.example/kiosk?sync_group=one&sync_group=two"))
         assertNull(FrameSharedPlaybackMetadata.configuredGroup("https://photos.example/kiosk?sync_group=one&frame_id=a&frame_id=b"))
