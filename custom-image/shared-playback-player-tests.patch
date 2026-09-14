@@ -1,9 +1,9 @@
 diff --git a/frontend/tests/shared-playback.test.ts b/frontend/tests/shared-playback.test.ts
 new file mode 100644
-index 0000000..068425b
+index 0000000..99427ee
 --- /dev/null
 +++ b/frontend/tests/shared-playback.test.ts
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,142 @@
 +import assert from "node:assert/strict";
 +import test from "node:test";
 +
@@ -87,6 +87,12 @@ index 0000000..068425b
 +    h.runNextTimer(); await settle();
 +    assert.deepEqual(h.rendered, ["a", "b"]);
 +    assert.equal(h.statuses.at(-1), "connected");
++});
++
++test("loading the next photo does not hide an already authoritative current photo", async () => {
++    const h = harness([state({ loading: true })]);
++    h.controller.start(); await settle();
++    assert.deepEqual(h.rendered, ["a"]);
 +});
 +
 +test("stale fetches, hidden pages, and disposal cannot render newer work", async () => {
