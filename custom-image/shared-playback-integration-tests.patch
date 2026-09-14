@@ -1,6 +1,6 @@
 diff --git a/ci/shared-playback-browser.mjs b/ci/shared-playback-browser.mjs
 new file mode 100644
-index 0000000..274002e
+index 0000000..76fad94
 --- /dev/null
 +++ b/ci/shared-playback-browser.mjs
 @@ -0,0 +1,101 @@
@@ -34,7 +34,7 @@ index 0000000..274002e
 +   for(const [name,key]of [['frame:shared-photo-settled','sharedSettles'],['frame:shared-playback-state','sharedStates']])document.addEventListener(name,event=>{
 +    const root=document.querySelector('#kiosk');
 +    const photo=root?.querySelector('img[alt="Main image"]');
-+    window[key].push({at:performance.timeOrigin+performance.now(),id:root?.dataset.sharedPlaybackSlide,session:root?.dataset.sharedPlaybackSession,paused:event.detail?.sharedPlaybackPaused,decoded:photo?.complete&&photo?.naturalWidth>0,history:document.querySelector('#kiosk-history input[name=history]')?.value});
++    window[key].push({at:performance.timeOrigin+performance.now(),id:root?.dataset.sharedPlaybackSlide,session:root?.dataset.sharedPlaybackSession,paused:typeof event.detail==='string'?JSON.parse(event.detail).sharedPlaybackPaused:undefined,decoded:photo?.complete&&photo?.naturalWidth>0,history:document.querySelector('#kiosk-history input[name=history]')?.value});
 +   });
 +  },{clockSkew});
 +  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
@@ -230,10 +230,10 @@ index 0000000..7b124b1
 +}
 diff --git a/internal/routes/routes_shared_playback_browser_test.go b/internal/routes/routes_shared_playback_browser_test.go
 new file mode 100644
-index 0000000..c7e5365
+index 0000000..7b2e99d
 --- /dev/null
 +++ b/internal/routes/routes_shared_playback_browser_test.go
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,123 @@
 +package routes
 +
 +import (
@@ -303,6 +303,7 @@ index 0000000..c7e5365
 +	defer photoSource.Close()
 +	cfg := newCancellationTestConfig(photoSource.URL)
 +	cfg.Kiosk.HTTPTimeout = 8
++	cfg.Kiosk.DisableURLQueries = true
 +	cfg.Kiosk.SyncGroups = map[string]config.SyncGroupSettings{"shared-test": {CurationProfile: "balanced", Duration: 10}}
 +	cfg.ShowTime = false
 +	cfg.ShowDate = false
@@ -358,10 +359,10 @@ index 0000000..c7e5365
 +}
 diff --git a/internal/routes/routes_shared_playback_test.go b/internal/routes/routes_shared_playback_test.go
 new file mode 100644
-index 0000000..3cf2396
+index 0000000..ad0b84e
 --- /dev/null
 +++ b/internal/routes/routes_shared_playback_test.go
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,211 @@
 +package routes
 +
 +import (
@@ -520,4 +521,56 @@ index 0000000..3cf2396
 +	rec := server.request(http.MethodGet, "/api/playback/downstairs/slide/"+state.Current.ID, "")
 +	require.Equal(t, http.StatusBadRequest, rec.Code)
 +	require.Equal(t, "private, no-store", rec.Header().Get("Cache-Control"))
++}
++
++func TestSharedPlaybackSlideRendersWithStrictDimensionsWhenURLOverridesDisabled(t *testing.T) {
++	preview := mustEncodeJPEG(t)
++	photoSource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch {
++		case strings.HasPrefix(r.URL.Path, "/api/assets/") && strings.HasSuffix(r.URL.Path, "/thumbnail"):
++			w.Header().Set(echo.HeaderContentType, "image/jpeg")
++			_, _ = w.Write(preview)
++		case strings.HasPrefix(r.URL.Path, "/api/assets/"):
++			w.Header().Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
++			_ = json.NewEncoder(w).Encode(testImageAsset(pathBase(r.URL.Path)))
++		default:
++			http.NotFound(w, r)
++		}
++	}))
++	t.Cleanup(photoSource.Close)
++
++	base := newCancellationTestConfig(photoSource.URL)
++	base.Kiosk.DisableURLQueries = true
++	var sequence atomic.Int32
++	coordinator, err := playback.New([]playback.GroupConfig{{
++		ID: "downstairs", SelectionKey: "balanced", Duration: 45 * time.Second, IdleTimeout: time.Minute,
++	}}, func(context.Context, playback.LoadRequest) (playback.Asset, error) {
++		return playback.NewAsset(fmt.Sprintf("render-asset-%d", sequence.Add(1)), ""), nil
++	}, playback.Options{})
++	require.NoError(t, err)
++	t.Cleanup(coordinator.Close)
++
++	server := &sharedPlaybackTestServer{
++		shared: &SharedPlayback{coordinator: coordinator, base: base, common: common.New()},
++	}
++	server.e = echo.New()
++	server.shared.Register(server.e)
++	state := server.readyState(t)
++	require.NotNil(t, state.Current)
++	path := "/api/playback/downstairs/slide/" + state.Current.ID
++
++	valid := server.request(http.MethodGet, path+"?client_width=640&client_height=360", "")
++	require.Equal(t, http.StatusOK, valid.Code)
++	require.Contains(t, valid.Body.String(), "data:image/jpeg;base64,")
++	require.Equal(t, "private, no-store", valid.Header().Get("Cache-Control"))
++
++	for _, suffix := range []string{
++		"?client_width=640&client_width=641&client_height=360",
++		"?client_width=invalid&client_height=360",
++		"?client_width=3841&client_height=2160",
++	} {
++		rec := server.request(http.MethodGet, path+suffix, "")
++		require.Equal(t, http.StatusBadRequest, rec.Code, suffix)
++		require.Equal(t, "private, no-store", rec.Header().Get("Cache-Control"))
++	}
 +}
