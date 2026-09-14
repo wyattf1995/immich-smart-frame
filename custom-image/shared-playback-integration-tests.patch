@@ -1,9 +1,9 @@
 diff --git a/ci/shared-playback-browser.mjs b/ci/shared-playback-browser.mjs
 new file mode 100644
-index 0000000..1a6c7ab
+index 0000000..5890641
 --- /dev/null
 +++ b/ci/shared-playback-browser.mjs
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,118 @@
 +import { createRequire } from 'node:module';
 +import { spawn, spawnSync } from 'node:child_process';
 +import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -21,7 +21,7 @@ index 0000000..1a6c7ab
 +let log='';server.stdout.on('data',d=>log+=d);server.stderr.on('data',d=>log+=d);
 +const delay=ms=>new Promise(r=>setTimeout(r,ms));
 +async function eventually(fn,label,timeout=20000){const end=Date.now()+timeout;let error;while(Date.now()<end){try {const result=await fn();if(result)return result;}catch(e){error=e;}await delay(100);}throw Error(`${label}: ${error?.message??'timed out'}`);}
-+let browser;const contexts=[];const errors=[];const report={synthetic:true,tests:[],transitions:[],resources:{fixturePid:server.pid}};
++let browser;const contexts=[];const pages=[];const network=[];const consoleMessages=[];const errors=[];const report={synthetic:true,tests:[],transitions:[],resources:{fixturePid:server.pid}};
 +try{
 + const ready=await eventually(async()=>JSON.parse(await readFile(readyFile,'utf8')),'fixture ready',10000);
 + assert.equal(ready.pid,server.pid);
@@ -37,8 +37,16 @@ index 0000000..1a6c7ab
 +    window[key].push({at:performance.timeOrigin+performance.now(),id:root?.dataset.sharedPlaybackSlide,session:root?.dataset.sharedPlaybackSession,paused:typeof event.detail==='string'?JSON.parse(event.detail).sharedPlaybackPaused:undefined,decoded:photo?.complete&&photo?.naturalWidth>0,history:document.querySelector('#kiosk-history input[name=history]')?.value});
 +   });
 +  },{clockSkew});
-+  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
-+  await page.goto(`${ready.url}/?sync_group=shared-test&frame_id=synthetic-${contexts.length}`);
++  const page=await context.newPage();pages.push(page);page.on('pageerror',e=>errors.push(e.stack??e.message));
++  page.on('response',r=>{if(network.length<100)network.push({url:r.url(),status:r.status(),type:r.request().resourceType()});});
++  page.on('requestfailed',r=>{if(network.length<100)network.push({url:r.url(),failed:r.failure()?.errorText});});
++  page.on('console',m=>{if(consoleMessages.length<40)consoleMessages.push({type:m.type(),text:m.text().slice(0,1000)});});
++  const homeResponse=await page.goto(`${ready.url}/?sync_group=shared-test&frame_id=synthetic-${contexts.length}`);
++  assert.equal(homeResponse.status(),200,'shared home responds successfully');
++  const bundle=await page.locator('script[src*="/assets/js/kiosk."]').getAttribute('src');
++  assert.ok(bundle,'shared home includes player bundle');
++  const bundleResponse=await page.request.get(new URL(bundle,ready.url).href);
++  assert.equal(bundleResponse.status(),200,'player bundle responds successfully');
 +  return page;
 + };
 + const a=await makePage({width:1280,height:720});
@@ -95,7 +103,15 @@ index 0000000..1a6c7ab
 + report.tests.push('shared mode skips independent endpoints; existing independent mode retained');
 + assert.deepEqual(errors,[],'browser JavaScript errors');
 + report.status='passed';
-+}catch(error){report.status='failed';report.error=error.stack;throw error;}
++}catch(error){
++ report.status='failed';report.error=error.stack;report.pageErrors=errors;report.network=network;report.console=consoleMessages;report.pages=[];
++ for(const [index,page] of pages.entries()){
++  report.pages.push(await page.evaluate(()=>({url:location.href,body:document.body?.innerText.slice(0,2000),kiosk:document.querySelector('#kiosk')?.outerHTML.slice(0,3000),kioskData:document.querySelector('#kiosk-data')?.textContent,settles:window.sharedSettles,states:window.sharedStates})).catch(e=>({error:e.message})));
++  await page.screenshot({path:resolve(reports,`shared-browser-failure-${index}.png`)}).catch(()=>{});
++ }
++ console.error(JSON.stringify({pageErrors:errors,network,console:consoleMessages,pages:report.pages},null,2));
++ throw error;
++}
 +finally{
 + for(const c of contexts)await c.close().catch(()=>{});
 + if(browser)await browser.close();
