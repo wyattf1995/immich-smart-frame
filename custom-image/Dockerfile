@@ -82,6 +82,13 @@ COPY classification-gate-tests.patch /tmp/classification-gate-tests.patch
 COPY classification-gate.patch /tmp/classification-gate.patch
 COPY classification-caption-completion-tests.patch /tmp/classification-caption-completion-tests.patch
 COPY classification-caption-completion.patch /tmp/classification-caption-completion.patch
+COPY shared-playback-coordinator.patch /tmp/shared-playback-coordinator.patch
+COPY shared-playback-coordinator-tests.patch /tmp/shared-playback-coordinator-tests.patch
+COPY shared-playback-player.patch /tmp/shared-playback-player.patch
+COPY shared-playback-player-tests.patch /tmp/shared-playback-player-tests.patch
+COPY shared-playback-validation.patch /tmp/shared-playback-validation.patch
+COPY shared-playback-integration.patch /tmp/shared-playback-integration.patch
+COPY shared-playback-integration-tests.patch /tmp/shared-playback-integration-tests.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -228,7 +235,21 @@ RUN cd /src \
 		&& git apply --check --unidiff-zero /tmp/classification-caption-completion-tests.patch \
 		&& git apply --unidiff-zero /tmp/classification-caption-completion-tests.patch \
 		&& git apply --check --unidiff-zero /tmp/classification-caption-completion.patch \
-		&& git apply --unidiff-zero /tmp/classification-caption-completion.patch
+		&& git apply --unidiff-zero /tmp/classification-caption-completion.patch \
+		&& git apply --check /tmp/shared-playback-coordinator.patch \
+		&& git apply /tmp/shared-playback-coordinator.patch \
+		&& git apply --check /tmp/shared-playback-coordinator-tests.patch \
+		&& git apply /tmp/shared-playback-coordinator-tests.patch \
+		&& git apply --check /tmp/shared-playback-player.patch \
+		&& git apply /tmp/shared-playback-player.patch \
+		&& git apply --check /tmp/shared-playback-player-tests.patch \
+		&& git apply /tmp/shared-playback-player-tests.patch \
+		&& git apply --check /tmp/shared-playback-validation.patch \
+		&& git apply /tmp/shared-playback-validation.patch \
+		&& git apply --check /tmp/shared-playback-integration.patch \
+		&& git apply /tmp/shared-playback-integration.patch \
+		&& git apply --check /tmp/shared-playback-integration-tests.patch \
+		&& git apply /tmp/shared-playback-integration-tests.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
@@ -253,7 +274,9 @@ RUN node_modules/.bin/esbuild tests/asset-request-recovery.test.ts \
       --alias:htmx.org=./tests/htmx.mock.ts \
       --outfile=/tmp/paused-retry.test.mjs \
     && node --test /tmp/paused-retry.test.mjs \
-    && node --test tests/browser-cache-contract.test.mjs tests/offline-cache-contract.test.mjs
+    && node --test tests/browser-cache-contract.test.mjs tests/offline-cache-contract.test.mjs \
+    && node_modules/.bin/esbuild tests/shared-playback.test.ts --bundle --platform=node --format=esm --outfile=/tmp/shared-playback.test.mjs \
+    && node --test /tmp/shared-playback.test.mjs
 RUN task frontend
 
 FROM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS build
