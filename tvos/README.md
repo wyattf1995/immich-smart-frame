@@ -98,32 +98,40 @@ long-term responsiveness. A physical Lenovo frame is not a TV QA device.
 
 ## Reversible home-screen selection
 
-First install and test as an ordinary TV app. Keep the stock launcher and all
-Cast/Sony system packages enabled. Record the existing HOME component before
-changing the default through the supported Android package command or UI. Restore
-that exact component to roll back. Never disable vendor packages as a shortcut.
-
-On the initial Sony test unit the observed previous component was
-`com.google.android.tvlauncher/.MainActivity`; confirm it again on other TVs.
+First install and test as an ordinary TV app. Record the existing HOME component
+and verify the actual Home key after changing its preference. Preserve Cast,
+Sony services, launcher data, and a tested route back to the original homepage.
+Disabling a stock launcher package is a separate, device-specific change that
+requires the owner's explicit choice; do not apply it automatically to other TVs.
 An LG webOS television cannot install this Android APK directly.
 
-### Sony XBR-65A8F limitation verified on Android 9
+### Sony XBR-65A8F on Android 9
 
-The system launcher has HOME intent priority 2. Android accepts and saves the
-Frame TV preference, but the resolver and physical Home key still choose Sony's
-launcher. Always verify the actual Home key; a `Success` command response is
-insufficient. The tested preference was restored to the stock component.
-
-Android 9 chooses a higher-priority activity before consulting the saved
-preference and caps normal apps' positive filter priorities to zero. See
+The stock component is `com.google.android.tvlauncher/.MainActivity`, with HOME
+intent priority 2. Android accepts Frame TV's preference but still resolves to
+that higher-priority stock activity. See
 [the Android 9 resolver source](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r30/services/core/java/com/android/server/pm/PackageManagerService.java).
-The stock launcher remains enabled. On 2026-09-13, an activity-only disable
-and re-enable were both rejected by Android with `Shell cannot change component
-state`. The preferred HOME was restored to stock and its resolver verified.
-A full-package disable is a separate, broader choice and has not been performed.
-The host-side restore command successfully enables the stock launcher package,
-sets its HOME preference and verifies the resolver; actual recovery from a disabled
-package and reboot persistence remain unverified until that choice is authorized.
+Activity-only disable and re-enable commands were rejected with `Shell cannot
+change component state`; they are not a usable recovery procedure on this TV.
+
+On September 13, 2026 Wyatt explicitly authorized the broader package switch.
+Disabling only `com.google.android.tvlauncher` with `pm disable-user --user 0`
+succeeded, and the HOME resolver selected Frame TV. The original application and
+its data are retained. The host-side `Restore Sony Home.command` was then tested
+against that actually disabled package: it enabled the package, set the stock
+HOME preference, verified the resolver and sent Home successfully. Screenshots
+show the system app-information page also offers Enable; the full remote recovery
+flow and boot persistence require their own device checks.
+
+Version 0.4.1 adds a Sony Home helper that detects package-level disabling and
+opens the original launcher's app settings with instructions to choose Enable
+and press Home. The Mac restore script remains the alternate recovery path and
+requires the authorized network ADB connection. No APK changes package states
+itself, and no Cast receiver/service package is disabled.
+
+Photo synchronization between the TV and Lenovo frame is a separate proposed
+feature; see [shared playback design](PHOTO-SYNC.md). Giving both viewers the same
+`frame_id` is not synchronization.
 
 ### Forest home and native forecast (0.3.3)
 

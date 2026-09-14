@@ -16,7 +16,10 @@ outside this implementation's write/test scope.
   boot receiver, accessibility takeover, video wallpaper or bundled browser.
 - Preserve Cast receiver and Sony audio/input/picture settings. Leave stock
   launcher installed and accessible. Validate as an ordinary app before setting
-  it as HOME. No package disabling/debloat or idle protection changes.
+  it as HOME. Original scope excluded package disabling. On September 13 Wyatt
+  explicitly authorized disabling only the stock launcher package on this Sony
+  after testing Frame TV; README records the exact switch and recovery evidence.
+  No general debloat or idle-protection changes are authorized.
 - No tokens, household endpoints or datasets in committed source/NAS uploads.
   Dashboard auth occurs in the renderer. No JS-native bridge, ignored TLS
   errors, file/content access, automatic external intents or cross-origin
