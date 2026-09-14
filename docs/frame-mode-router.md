@@ -141,15 +141,16 @@ The same DUMP-protected, explicitly targeted receiver can add, replace, or
 remove the `sync_group` query option on the already configured Photos URL. It
 never accepts a replacement Photos URL. Groups use lowercase letters, digits,
 `_`, and `-`, are 1–48 characters, and an empty value removes the option.
-Foreground the activity after a successful change so Photos reloads with the
-new configuration:
+Restart the activity after a successful change so a currently foreground
+instance cannot retain its previous in-memory Photos URL:
 
 ```sh
 adb -s DEVICE_SERIAL shell am broadcast --user 0 --receiver-foreground \
   -a com.wyattfleming.frameos.CONTROL \
   -n com.wyattfleming.frameos/.control.FrameControlReceiver \
   --es frameos.photos_sync_group 'living-room'
-adb -s DEVICE_SERIAL shell am start --activity-reorder-to-front \
+adb -s DEVICE_SERIAL shell am force-stop com.wyattfleming.frameos
+adb -s DEVICE_SERIAL shell am start \
   -n com.wyattfleming.frameos/.MainActivity
 ```
 
