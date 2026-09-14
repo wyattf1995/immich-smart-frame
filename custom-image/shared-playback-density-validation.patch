@@ -1,0 +1,47 @@
+diff --git a/ci/shared-playback-nas.sh b/ci/shared-playback-nas.sh
+index 903be36d..6890cd93 100755
+--- a/ci/shared-playback-nas.sh
++++ b/ci/shared-playback-nas.sh
+@@ -117,6 +117,7 @@ run_step go-race-playback bash -c 'CI=1 go test -race ./internal/playback'
+ source_commit="$($node_bin -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync("/run/agent-source-identity.json", "utf8")); if (!/^[0-9a-f]{40}$/.test(value.commit)) process.exit(64); process.stdout.write(value.commit)')"
+ run_step go-build bash -c "CGO_ENABLED=0 go build -a -installsuffix cgo -ldflags '-X main.version=${source_commit} -s -w' -o dist/kiosk ."
+ run_step browser-integration "$node_bin" ci/shared-playback-browser.mjs
++run_step browser-photo-quality "$node_bin" ci/shared-photo-quality-browser.mjs
+ compgen -G "$report_dir/*browser*.json" >/dev/null || { printf 'required browser JSON report is missing\n' >&2; exit 66; }
+ compgen -G "$report_dir/*.png" >/dev/null || { printf 'required browser screenshot is missing\n' >&2; exit 66; }
+ 
+@@ -126,16 +127,15 @@ compgen -G "$report_dir/*proof*.json" >/dev/null || { printf 'required source-ne
+ cat > "$report_dir/resource-ledger.md" <<'EOF'
+ # Task-owned resource ledger
+ 
+-Owner task: shared-playback NAS validation
+-Source worktree: /Users/wyattfleming/.codex/private/frame-sync-20260913/validation (branch sync-validation)
+-Project worktree: /Users/wyattfleming/frame-sync-validation (branch codex/frame-sync-validation-20260913)
++Owner task: shared-playback photo-quality NAS validation
++Source worktree: /Users/wyattfleming/.codex/private/frame-sync-20260913/upstream
++Source branch: sync-photo-quality-20260914
+ Disposable NAS workspace: /workspace/.nas-shared-playback
+ 
+ | Resource | Exact identifier/path | Why needed | Closeout proof |
+ |---|---|---|---|
+ | Toolchain/cache workspace | /workspace/.nas-shared-playback | Pinned Node and Go plus ephemeral caches | NAS closeout receipt and export manifest |
+-| Browser/server | Defined by ci/shared-playback-browser.mjs | Two-client local integration | Script must close owned contexts/browser/server before it exits |
+-| Git worktree | validation / frame-sync-validation paths above | Source and generated patch | Parent verifies merge and worktree closeout |
++| Browser/server | Defined by ci/shared-playback-browser.mjs and ci/shared-photo-quality-browser.mjs | Sync and image-density integration | Scripts record context/browser/fixture closeout |
+ EOF
+ chmod 600 "$report_dir/resource-ledger.md"
+ 
+diff --git a/ci/shared-playback-proof.sh b/ci/shared-playback-proof.sh
+index de674326..26749d26 100755
+--- a/ci/shared-playback-proof.sh
++++ b/ci/shared-playback-proof.sh
+@@ -50,5 +50,9 @@ proof('browser-displayed-metadata','frontend/src/ts/shared-playback.ts',
+             if (current) root.dataset.sharedPlaybackSlide = current;
+             else delete root.dataset.sharedPlaybackSlide;""",1,
+  browser_test,'initial state has no displayed slide metadata',browser=True)
++quality_test=['bash','-c','frontend/node_modules/.bin/esbuild frontend/src/ts/kiosk.ts --format=iife --global-name=kiosk --bundle --minify --target=es6 --outfile=frontend/public/assets/js/kiosk.js && node ci/shared-photo-quality-browser.mjs']
++proof('browser-photo-density','frontend/src/ts/shared-playback.ts',
++ 'const pixelRatio = window.devicePixelRatio || 1;', 'const pixelRatio = 1;',1,
++ quality_test,'physical photo request: sony-density')
+ (out/'source-negative-proof.json').write_text(json.dumps({'status':'passed','proofs':results},indent=2))
+ PY
