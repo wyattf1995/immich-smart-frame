@@ -1,9 +1,9 @@
 diff --git a/frontend/src/ts/shared-playback.ts b/frontend/src/ts/shared-playback.ts
 new file mode 100644
-index 0000000..1e6bc36
+index 0000000..ce856f0
 --- /dev/null
 +++ b/frontend/src/ts/shared-playback.ts
-@@ -0,0 +1,429 @@
+@@ -0,0 +1,440 @@
 +import DOMPurify from "dompurify";
 +
 +export type SharedSlide = {
@@ -116,7 +116,7 @@ index 0000000..1e6bc36
 +            .catch(() => {
 +                if (this.active(generation)) this.pollSoon(0);
 +            })
-+            .finally(() => { this.commandInFlight = false; });
++            .then(() => { this.commandInFlight = false; });
 +    }
 +
 +    currentId(): string | undefined { return this.state?.current?.id; }
@@ -192,14 +192,19 @@ index 0000000..1e6bc36
 +        const running = this.preparing.get(slide.id);
 +        if (running) return running;
 +        let runningPrepare!: Promise<PreparedSlide>;
-+        runningPrepare = this.withTimeout((signal) => this.ports.prepare(slide, signal)).then((prepared) => {
-+            if (this.active(generation) && this.preparing.get(slide.id) === runningPrepare) {
-+                this.prepared.set(slide.id, prepared);
-+            }
-+            return prepared;
-+        }).finally(() => {
-+            if (this.preparing.get(slide.id) === runningPrepare) this.preparing.delete(slide.id);
-+        });
++        runningPrepare = this.withTimeout((signal) => this.ports.prepare(slide, signal)).then(
++            (prepared) => {
++                if (this.active(generation) && this.preparing.get(slide.id) === runningPrepare) {
++                    this.prepared.set(slide.id, prepared);
++                }
++                if (this.preparing.get(slide.id) === runningPrepare) this.preparing.delete(slide.id);
++                return prepared;
++            },
++            (error) => {
++                if (this.preparing.get(slide.id) === runningPrepare) this.preparing.delete(slide.id);
++                throw error;
++            },
++        );
 +        this.preparing.set(slide.id, runningPrepare);
 +        return runningPrepare;
 +    }
@@ -211,9 +216,11 @@ index 0000000..1e6bc36
 +        const now = this.ports.now() + this.offsetMs;
 +        const dueNext = !state.paused && state.next && state.next.startsAt <= now
 +            ? this.prepared.get(state.next.id) : undefined;
-+        if (dueNext && this.renderedId !== dueNext.id) {
-+            this.ports.render(dueNext);
-+            this.renderedId = dueNext.id;
++        if (dueNext) {
++            if (this.renderedId !== dueNext.id) {
++                this.ports.render(dueNext);
++                this.renderedId = dueNext.id;
++            }
 +            return;
 +        }
 +        const prepared = this.prepared.get(current.id);
@@ -267,10 +274,14 @@ index 0000000..1e6bc36
 +        const request = new AbortController();
 +        this.requests.add(request);
 +        const timeout = this.ports.setTimer(() => request.abort(), REQUEST_TIMEOUT_MS);
-+        return work(request.signal).finally(() => {
++        const cleanup = () => {
 +            this.requests.delete(request);
 +            this.ports.clearTimer(timeout);
-+        });
++        };
++        return work(request.signal).then(
++            (value) => { cleanup(); return value; },
++            (error) => { cleanup(); throw error; },
++        );
 +    }
 +}
 +
