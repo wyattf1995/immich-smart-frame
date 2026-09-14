@@ -120,7 +120,7 @@ This prototype leaves the stock launcher enabled, so launch Frame TV as a normal
 app on this model. Disabling the stock launcher would remove the current Sony
 Home escape and needs a separately designed and verified recovery path.
 
-### Forest home and native forecast (0.3.3 draft)
+### Forest home and native forecast (0.3.3)
 
 The home screen uses one still forest-floor photograph, decoded once at bounded
 resolution (1672 × 941, RGB565). A mild vertical shade keeps text readable without
@@ -131,8 +131,12 @@ temperature and separate hourly/daily columns, condition pictograms, blue rain
 percentages and labeled daily highs/lows. It uses static native views. The home
 order is weather, five-column streaming favorites, Home dashboards, Inputs,
 System, then All apps. There is no scenic-height spacer. Physical Sony Home
-behavior remains as documented above. This layout's build/device validation is
-pending; the preceding forest layout was installed and verified on the Sony.
+behavior remains as documented above. Version 0.3.3 was installed on the Sony
+XBR-65A8F on 2026-09-13. Full-HD screenshots verified all ten favorites and Home
+controls visible beneath the forecast; D-pad Down moved from Plex to Netflix,
+Photos, then HDMI 4, scrolling as needed. Back restored weather focus at the top.
+The NAS build passed 24 JVM tests, all source-negative guard checks and lint
+(zero errors, 14 warnings). Signing and installed source identity were verified.
 
 The native widget uses Open-Meteo over HTTPS: current conditions, next six hours
 and five days in Fahrenheit and the forecast location’s timezone. Select the
@@ -152,5 +156,8 @@ Select the widget → Use Home Assistant forecast to refresh; choosing a city
 explicitly selects Open-Meteo. Provider and cached age are visible on home.
 The HA normalizer's local Node tests include a real source-negative Celsius
 conversion check; compilation and JVM guard tests run on the NAS.
+The existing signed-in Home dashboard supplied 48 hourly and six daily forecast
+records on the test TV, and native home displayed Home Assistant attribution.
+This verifies the forecast-only path; it does not imply background HA refresh.
 Official provider documentation: https://open-meteo.com/en/docs and
 https://open-meteo.com/en/docs/geocoding-api.
