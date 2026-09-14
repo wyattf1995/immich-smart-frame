@@ -1,9 +1,9 @@
 diff --git a/ci/shared-playback-browser.mjs b/ci/shared-playback-browser.mjs
 new file mode 100644
-index 0000000..76fad94
+index 0000000..1a6c7ab
 --- /dev/null
 +++ b/ci/shared-playback-browser.mjs
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,102 @@
 +import { createRequire } from 'node:module';
 +import { spawn, spawnSync } from 'node:child_process';
 +import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -43,6 +43,7 @@ index 0000000..76fad94
 + };
 + const a=await makePage({width:1280,height:720});
 + const id=page=>page.locator('#kiosk').getAttribute('data-shared-playback-slide');
++ const photo=page=>page.locator('#kiosk-history input[name=history]').inputValue();
 + const state=async()=>{const r=await a.request.get(`${ready.url}/api/playback/shared-test`);assert.equal(r.status(),200);return r.json();};
 + await eventually(()=>id(a),'first decoded photo');
 + const b=await makePage({width:960,height:540},90000);
@@ -58,17 +59,17 @@ index 0000000..76fad94
 + await a.keyboard.press('p');
 + await eventually(async()=>{const s=await state();return s.paused&&await a.locator('#kiosk').getAttribute('data-shared-playback-paused')==='true'&&await b.locator('#kiosk').getAttribute('data-shared-playback-paused')==='true'},'shared pause');
 + await eventually(async()=>await id(a)===await id(b),'paused settled match');
-+ const pausedId=await id(a);await delay(11000);assert.equal(await id(a),pausedId);assert.equal(await id(b),pausedId);
++ const pausedId=await id(a),pausedPhoto=await photo(a);await delay(11000);assert.equal(await id(a),pausedId);assert.equal(await id(b),pausedId);
 + report.tests.push('pause on one browser holds both beyond the configured interval');
 + await eventually(async()=>Boolean((await state()).next),'prepared next');
 + const cas=await state();const simultaneous=await Promise.all([apiCommand('next',cas),apiCommand('next',cas)]);
 + assert.deepEqual(simultaneous.map(x=>x.status).sort(),[200,409]);
 + await eventually(async()=>{const x=await id(a);return x!==pausedId&&x===await id(b)},'one CAS next on both');
-+ const afterNext=await id(a);
++ const afterNextPhoto=await photo(a);
 + await b.keyboard.press('ArrowLeft');
-+ await eventually(async()=>await id(a)===pausedId&&await id(b)===pausedId,'previous on other browser');
++ await eventually(async()=>await photo(a)===pausedPhoto&&await photo(b)===pausedPhoto&&await id(a)===await id(b),'previous on other browser');
 + await b.keyboard.press('ArrowRight');
-+ await eventually(async()=>await id(a)===afterNext&&await id(b)===afterNext,'forward returns to selected photo');
++ await eventually(async()=>await photo(a)===afterNextPhoto&&await photo(b)===afterNextPhoto&&await id(a)===await id(b),'forward returns to selected photo');
 + report.tests.push('simultaneous next deduplicated; previous/next shared across browsers');
 + // Disconnect one participant before resuming; a failed poll must cancel local deadlines.
 + await contexts[1].setOffline(true);await delay(1800);
