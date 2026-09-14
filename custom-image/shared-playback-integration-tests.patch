@@ -1,9 +1,9 @@
 diff --git a/ci/shared-playback-browser.mjs b/ci/shared-playback-browser.mjs
 new file mode 100644
-index 0000000..5890641
+index 0000000..3a6ac73
 --- /dev/null
 +++ b/ci/shared-playback-browser.mjs
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,147 @@
 +import { createRequire } from 'node:module';
 +import { spawn, spawnSync } from 'node:child_process';
 +import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -11,7 +11,9 @@ index 0000000..5890641
 +import assert from 'node:assert/strict';
 +const require = createRequire('/opt/launchpad-browser-runtime/package.json');
 +const { chromium } = require('playwright');
-+const root=process.cwd(), reports=resolve(root,'reports/shared-playback');
++const metadataOnly=process.env.FRAME_SYNC_METADATA_ONLY==='1';
++if(process.env.FRAME_SYNC_METADATA_ONLY && !metadataOnly)throw Error('FRAME_SYNC_METADATA_ONLY must be 1 when set');
++const root=process.cwd(), reports=resolve(root,metadataOnly?'reports/shared-playback/metadata-only':'reports/shared-playback');
 +await mkdir(reports,{recursive:true});
 +const fixture=resolve(process.env.TMPDIR,'shared-playback-fixture');
 +const readyFile=resolve(process.env.TMPDIR,`shared-playback-ready-${process.pid}.json`);
@@ -26,8 +28,9 @@ index 0000000..5890641
 + const ready=await eventually(async()=>JSON.parse(await readFile(readyFile,'utf8')),'fixture ready',10000);
 + assert.equal(ready.pid,server.pid);
 + browser=await chromium.launch({headless:true,chromiumSandbox:false});
-+ const makePage=async(viewport,clockSkew=0)=>{
++ const makePage=async(viewport,clockSkew=0,configureContext)=>{
 +  const context=await browser.newContext({viewport});contexts.push(context);
++  if(configureContext)await configureContext(context);
 +  await context.addInitScript(({clockSkew})=>{
 +   const realNow=Date.now.bind(Date);Date.now=()=>realNow()+clockSkew;
 +   window.sharedSettles=[];window.sharedStates=[];
@@ -54,6 +57,31 @@ index 0000000..5890641
 + const photo=page=>page.locator('#kiosk-history input[name=history]').inputValue();
 + const state=async()=>{const r=await a.request.get(`${ready.url}/api/playback/shared-test`);assert.equal(r.status(),200);return r.json();};
 + await eventually(()=>id(a),'first decoded photo');
++ if(metadataOnly){
++ const frozen=await state();
++  assert.ok(frozen.current&&frozen.next,'metadata probe requires an advertised current and next slide');
++  const pause=await a.request.post(`${ready.url}/api/playback/shared-test/control`,{headers:{Origin:ready.url},data:{action:'pause',sessionId:frozen.sessionId,expectedVersion:frozen.version}});
++  assert.equal(pause.status(),200,'freeze shared slides for metadata probe');
++  let probeSession=frozen.sessionId;
++  let blockSecondSession=false;
++  const due={...frozen,paused:false,loading:false,current:{...frozen.current,startsAt:Date.now()-2000},next:{...frozen.next,startsAt:Date.now()-1000}};
++  const probe=await makePage({width:800,height:450},0,async context=>{
++   await context.route('**/api/playback/shared-test',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({...due,sessionId:probeSession})}));
++   await context.route('**/api/playback/shared-test/slide/**',route=>blockSecondSession?route.abort():route.continue());
++  });
++  await eventually(async()=>{
++   const events=await probe.evaluate(()=>window.sharedStates);return events.length&&events[0].id===undefined;
++  },'initial state has no displayed slide metadata');
++  await eventually(async()=>{
++   const root=probe.locator('#kiosk');const image=root.locator('img[alt="Main image"]');
++   return await root.getAttribute('data-shared-playback-slide')===due.next.id&&await image.count()===1&&await image.evaluate(node=>node.complete&&node.naturalWidth>0);
++  },'due next settles as displayed metadata');
++  await delay(1300);
++  assert.equal(await id(probe),due.next.id,'repeated predecessor-current state cannot relabel displayed due next');
++  blockSecondSession=true;probeSession='metadata-new-session';
++  await eventually(async()=>await probe.locator('#kiosk').getAttribute('data-shared-playback-slide')===null,'new session clears displayed metadata until settle');
++  report.tests.push('metadata state never labels undecoded/current predecessor; session reset clears until settle');
++ }else{
 + const b=await makePage({width:960,height:540},90000);
 + await eventually(async()=>{const x=await id(a);return x&&x===await id(b)},'late join and skewed clock match');
 + report.tests.push('late join displays current; 90-second client clock skew corrected');
@@ -101,6 +129,7 @@ index 0000000..5890641
 + const soloContext=await browser.newContext();contexts.push(soloContext);const solo=await soloContext.newPage();await solo.goto(ready.url);
 + await eventually(async()=>((await (await a.request.get(`${ready.url}/fixture/stats`)).json()).independentRequests)>before,'independent home still starts existing HTMX slideshow');
 + report.tests.push('shared mode skips independent endpoints; existing independent mode retained');
++ }
 + assert.deepEqual(errors,[],'browser JavaScript errors');
 + report.status='passed';
 +}catch(error){
@@ -124,24 +153,26 @@ index 0000000..5890641
 +}
 diff --git a/ci/shared-playback-proof.sh b/ci/shared-playback-proof.sh
 new file mode 100755
-index 0000000..9207d78
+index 0000000..de67432
 --- /dev/null
 +++ b/ci/shared-playback-proof.sh
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,54 @@
 +#!/usr/bin/env bash
 +# Mutations touch source only. Exact original bytes are restored in finally,
 +# and the same unedited guarding test must fail for its assertion then pass.
 +set -euo pipefail
 +python3 - <<'PY'
 +from pathlib import Path
-+import hashlib,json,subprocess
++import hashlib,json,subprocess,shutil
 +root=Path.cwd();out=root/'reports/shared-playback';out.mkdir(parents=True,exist_ok=True)
 +results=[]
-+def proof(name,file,old,new,count,test,failed_marker):
++def proof(name,file,old,new,count,test,failed_marker,browser=False):
 + p=root/file;original=p.read_bytes();text=original.decode();assert text.count(old)==count,(name,'guard drift')
 + def run(label):
 +  result=subprocess.run(test,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
 +  (out/(name+'-'+label+'.log')).write_text(result.stdout)
++  if browser and (out/'metadata-only').exists():
++   shutil.copytree(out/'metadata-only',out/(name+'-'+label+'-browser'),dirs_exist_ok=True)
 +  return result
 + green_before=run('green-before');assert green_before.returncode==0,(name,'baseline guard failed')
 + try:
@@ -162,6 +193,22 @@ index 0000000..9207d78
 + 'if !sameOriginPlaybackControl(c.Request()) {','if false && !sameOriginPlaybackControl(c.Request()) {',1,
 + ['go','test','-count=1','./internal/routes','-run','^TestSharedPlaybackControlRejectsCrossOriginAndMalformedJSON$/missing_origin$'],
 + '--- FAIL: TestSharedPlaybackControlRejectsCrossOriginAndMalformedJSON')
++# Rebuild the actual browser bundle for each source-only mutation. The focused
++# real-browser path exercises both initial decode and displayed-slide metadata.
++browser_test=['bash','-c','frontend/node_modules/.bin/esbuild frontend/src/ts/kiosk.ts --format=iife --global-name=kiosk --bundle --minify --target=es6 --outfile=frontend/public/assets/js/kiosk.js && FRAME_SYNC_METADATA_ONLY=1 node ci/shared-playback-browser.mjs']
++proof('browser-timer-receiver','frontend/src/ts/shared-playback.ts',
++ 'clearTimer: (timer) => window.clearTimeout(timer)', 'clearTimer: window.clearTimeout',1,
++ browser_test,'first decoded photo',browser=True)
++proof('browser-displayed-metadata','frontend/src/ts/shared-playback.ts',
++ """const previousSession = root.dataset.sharedPlaybackSession;
++            const session = controller.currentSessionId() ?? "";
++            if (previousSession && previousSession !== session) delete root.dataset.sharedPlaybackSlide;
++            root.dataset.sharedPlaybackSession = session;""",
++ """root.dataset.sharedPlaybackSession = controller.currentSessionId() ?? "";
++            const current = controller.currentId();
++            if (current) root.dataset.sharedPlaybackSlide = current;
++            else delete root.dataset.sharedPlaybackSlide;""",1,
++ browser_test,'initial state has no displayed slide metadata',browser=True)
 +(out/'source-negative-proof.json').write_text(json.dumps({'status':'passed','proofs':results},indent=2))
 +PY
 diff --git a/internal/config/config_shared_playback_test.go b/internal/config/config_shared_playback_test.go
