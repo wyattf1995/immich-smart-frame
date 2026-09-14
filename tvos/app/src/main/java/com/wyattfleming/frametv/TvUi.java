@@ -67,11 +67,11 @@ public final class TvUi {
     private static StateListDrawable compactBackground(Context context) {
         StateListDrawable states = new StateListDrawable();
         states.addState(new int[]{android.R.attr.state_pressed},
-                rounded(context, Color.rgb(57, 81, 111), 10, ACCENT, 2));
+                rounded(context, Color.rgb(51, 83, 63), 10, ACCENT, 2));
         states.addState(new int[]{android.R.attr.state_focused},
-                rounded(context, Color.rgb(44, 67, 96), 10, ACCENT, 2));
+                rounded(context, Color.rgb(36, 65, 48), 10, ACCENT, 2));
         states.addState(new int[]{},
-                rounded(context, Color.argb(185, 15, 28, 47), 10, Color.argb(35, 255, 255, 255), 1));
+                rounded(context, Color.argb(190, 10, 25, 19), 10, Color.argb(45, 222, 242, 224), 1));
         return states;
     }
 
