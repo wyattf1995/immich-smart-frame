@@ -39,9 +39,31 @@ the containing evidence directory. Cold archive:
 
 ## Android and physical acceptance
 
-FrameOS 0.2.9 (extension 1.0.6) and Frame TV 0.4.1 source are prepared. The FrameOS
-extension's 30 JavaScript tests and bounded JSON-detail source-negative proof passed.
-The NAS Android launcher additionally requires full JVM/lint/build checks and
-source-only proofs for the group parser and native server-restart pause adoption.
-Those Android checks and signing have not run yet. Actual frame/TV playback remains
-**UNVERIFIED**; physical Lenovo QA requires Wyatt's explicit approval.
+FrameOS 0.2.9 (extension 1.0.6) and Frame TV 0.4.1 both compiled on the NAS.
+
+- Android transport source: `61697ad1c6e4adba46fd7626a244e0c15ea8b9dd`, with all
+  retained source files matching product commit `e21fe7a`.
+- NAS job: `frame-sync-android-2-20260913-232408-d3193c3450f7`.
+- FrameOS: 30 JavaScript tests, 253 JVM tests, debug/release lint, and release
+  compilation passed. No skipped JVM tests or lint warnings/errors.
+- Frame TV: 24 JVM tests, debug compilation, and lint passed. No skipped tests or
+  lint errors; 18 warnings remain about existing vector sizing, drawing allocations,
+  fixed TV orientation, resources, backup metadata, and tooling recommendations.
+- Source-only group-parser and server-restart regression proofs failed with the
+  relevant source change reverted, then passed after exact-byte restoration.
+  TV URL-policy, grid-navigation, and weather source-only proofs also passed.
+- The first run exposed an SDK enumeration incompatibility in the older TV lint.
+  The corrected launcher uses the TV's admitted API 36 SDK separately from the
+  frame's API 37 workspace. Every file in each installed API 37 platform payload
+  matched the pinned official archive (11,384 files per candidate).
+- Both unsigned APKs, the FrameOS R8 map, source/SDK identities, full test reports,
+  and sanitized log were exported with verified hashes, archived, and the exact
+  NAS workspace retired. See `android-validation-audit.json` in the evidence root.
+
+Local Android outputs:
+`/Users/wyattfleming/.codex/private/frame-sync-20260913/artifacts/android-nas-2/`.
+Cold archive:
+`/mnt/user/agent-archives/frame-sync-android-2-20260913-233037-f5e8c10cde81`.
+
+Local signing is pending the shared Mac resource gate. Actual frame/TV playback
+remains **UNVERIFIED**; physical Lenovo QA requires Wyatt's explicit approval.
