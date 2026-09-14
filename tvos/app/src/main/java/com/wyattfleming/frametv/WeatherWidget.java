@@ -155,10 +155,10 @@ public final class WeatherWidget extends LinearLayout {
             final String response = payload;
             final Exception result = failure;
             main.post(() -> {
-                loading = false;
                 WeatherLocation currentLocation = preferences.location();
                 if (closed || !resumed || request != requestNumber || currentLocation == null
                         || !sourceKey.equals(currentLocation.sourceKey())) return;
+                loading = false;
                 if (response != null) {
                     try {
                         WeatherForecast forecast = parseForecast(response);
