@@ -198,7 +198,7 @@ public final class VideoProbeActivity extends Activity implements SurfaceHolder.
             return;
         }
         releaseCodecOnWorker();
-        try (AssetFileDescriptor asset = getResources().openRawResourceFd(R.raw.probe4k_hevc)) {
+        try (AssetFileDescriptor asset = getResources().openRawResourceFd(R.raw.probe4k_hevc_main51)) {
             if (asset == null) throw new IOException("4K HEVC resource has no file descriptor");
             extractor = new MediaExtractor();
             extractor.setDataSource(asset.getFileDescriptor(), asset.getStartOffset(), asset.getLength());
