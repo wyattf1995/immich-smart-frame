@@ -7,7 +7,7 @@ import org.junit.Test;
 
 public final class VideoProbeSpecTest {
     @Test
-    public void exact4kInputIsRequired() {
+    public void exact4kVisibleDimensionsAreRequired() {
         VideoProbeSpec.requireExpectedDimensions(3840, 2160);
         expectIllegalArgument(() -> VideoProbeSpec.requireExpectedDimensions(1920, 1080));
         expectIllegalArgument(() -> VideoProbeSpec.requireExpectedDimensions(3840, 2159));
@@ -19,6 +19,10 @@ public final class VideoProbeSpecTest {
         assertEquals(3839, VideoProbeSpec.cropEndOrDefault(null, 3840));
         assertEquals(12, VideoProbeSpec.cropSize(10, 21));
         assertEquals(3840, VideoProbeSpec.cropSize(0, 3839));
+        VideoProbeSpec.requireExpectedDimensions(
+                VideoProbeSpec.cropSize(0, 3839), VideoProbeSpec.cropSize(0, 2159));
+        expectIllegalArgument(() -> VideoProbeSpec.requireExpectedDimensions(
+                VideoProbeSpec.cropSize(0, 3838), VideoProbeSpec.cropSize(0, 2159)));
     }
 
     @Test
