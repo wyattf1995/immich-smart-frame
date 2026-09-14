@@ -312,8 +312,12 @@ class FramePhotoBridge(
             if (epochValue <= sharedPlaybackEpoch) return false
             sharedPlaybackSession = sessionId
             sharedPlaybackEpoch = epochValue
+        } else if (sharedPlaybackSession == null && epochValue == 0L) {
+            // A page may publish its authoritative pause state before its first slide settles.
+            sharedPlaybackSession = sessionId
+            sharedPlaybackEpoch = epochValue
         } else if (sharedPlaybackSession != sessionId || epochValue < sharedPlaybackEpoch) return false
-        if (sharedPlaybackPaused == paused && type == SHARED_STATE_TYPE) return true
+        if (sharedPlaybackPaused == paused) return true
         sharedPlaybackPaused = paused
         onSharedPlaybackState(SharedPlaybackState(sessionId, slideId, paused, epochValue))
         return true
