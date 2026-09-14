@@ -177,7 +177,7 @@ public final class WeatherWidget extends LinearLayout {
         String address = "https://api.open-meteo.com/v1/forecast?latitude=" + location.latitude
                 + "&longitude=" + location.longitude
                 + "&current=temperature_2m,weather_code"
-                + "&hourly=temperature_2m,weather_code,precipitation_probability"
+                + "&hourly=temperature_2m,weather_code,precipitation_probability,is_day"
                 + "&daily=temperature_2m_max,temperature_2m_min,weather_code"
                 + "&timezone=auto&timeformat=unixtime&temperature_unit=fahrenheit&forecast_days=5";
         HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
@@ -229,7 +229,7 @@ public final class WeatherWidget extends LinearLayout {
             if (hourText.length() > 9) hourText.append("   ");
             hourText.append(format("h a", hour.epochSeconds, zone)).append(" ")
                     .append(hour.temperature == null ? "—" : Math.round(hour.temperature) + "°")
-                    .append(" ").append(WeatherForecast.glyph(hour.code))
+                    .append(" ").append(WeatherForecast.hourGlyph(hour.code, hour.isDay))
                     .append(hour.precipitationChance == null ? "" : " " + hour.precipitationChance + "%");
         }
         hourly.setText(hourText);
@@ -267,9 +267,10 @@ public final class WeatherWidget extends LinearLayout {
         JSONArray hourTemps = hourly.getJSONArray("temperature_2m");
         JSONArray hourCodes = hourly.optJSONArray("weather_code");
         JSONArray precipitation = hourly.optJSONArray("precipitation_probability");
+        JSONArray daylight = hourly.optJSONArray("is_day");
         List<WeatherForecast.Hour> hours = new ArrayList<>();
         for (int i = 0; i < hourTimes.length(); i++) hours.add(new WeatherForecast.Hour(
-                longAt(hourTimes, i, -1), numberAt(hourTemps, i), integerAt(hourCodes, i), integerAt(precipitation, i)));
+                longAt(hourTimes, i, -1), numberAt(hourTemps, i), integerAt(hourCodes, i), integerAt(precipitation, i), daylightAt(daylight, i)));
         JSONArray dayTimes = daily.getJSONArray("time");
         JSONArray highs = daily.getJSONArray("temperature_2m_max");
         JSONArray lows = daily.getJSONArray("temperature_2m_min");
@@ -282,6 +283,10 @@ public final class WeatherWidget extends LinearLayout {
         return new WeatherForecast(numberAt(current, "temperature_2m"), integerAt(current, "weather_code"), hours, days, zone);
     }
 
+    private static Boolean daylightAt(JSONArray values, int index) {
+        Integer flag = integerAt(values, index);
+        return flag == null || (flag != 0 && flag != 1) ? null : flag == 1;
+    }
     private static Double numberAt(JSONArray values, int index) {
         if (values == null || index < 0 || index >= values.length() || values.isNull(index)) return null;
         Object item = values.opt(index);

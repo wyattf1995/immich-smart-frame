@@ -12,7 +12,12 @@ public final class WeatherForecast {
         public final Double temperature;
         public final Integer code;
         public final Integer precipitationChance;
+        public final Boolean isDay;
         public Hour(long epochSeconds, Double temperature, Integer code, Integer precipitationChance) {
+            this(epochSeconds, temperature, code, precipitationChance, null);
+        }
+        public Hour(long epochSeconds, Double temperature, Integer code, Integer precipitationChance, Boolean isDay) {
+            this.isDay = isDay;
             this.epochSeconds = epochSeconds; this.temperature = temperature; this.code = code;
             this.precipitationChance = precipitationChance;
         }
@@ -77,6 +82,11 @@ public final class WeatherForecast {
         if (code >= 85 && code <= 86) return "Snow showers";
         if (code == 95 || code == 96 || code == 99) return "Storms";
         return "Weather";
+    }
+
+    public static String hourGlyph(Integer code, Boolean isDay) {
+        if (code != null && code == 0 && !Boolean.TRUE.equals(isDay)) return Boolean.FALSE.equals(isDay) ? "☾" : "○";
+        return glyph(code);
     }
 
     public static String glyph(Integer code) {
