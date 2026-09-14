@@ -1,8 +1,10 @@
 # Shared photo playback
 
-The implementation is opt-in and remains **not deployed** until the integrated
-NAS build and two-browser acceptance pass. Neither physical Lenovo frame was
-used for this work. Installed TV and server settings are unchanged.
+The implementation is opt-in and **not deployed**. Server compilation, frontend
+and Go tests, two-browser acceptance, and four source-negative proofs passed on
+the NAS on September 13, 2026. Android build/signing and physical acceptance are
+separate remaining gates. Neither physical Lenovo frame was used for this work.
+Installed TV and server settings are unchanged. See [validation evidence](PHOTO-SYNC-VALIDATION.md).
 
 ## Joining a group
 

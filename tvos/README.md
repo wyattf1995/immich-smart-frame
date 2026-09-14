@@ -133,9 +133,9 @@ was deferred because another operation held the shared runner; it has not been
 built or installed. After testing the Mac rollback, the Frame TV switch was
 reapplied and its resolver/resumed activity verified. The TV was left in standby.
 
-Photo synchronization between the TV and Lenovo frame is a separate proposed
-feature; see [shared playback design](PHOTO-SYNC.md). Giving both viewers the same
-`frame_id` is not synchronization.
+Optional shared photo playback is implemented and has passed server/browser
+validation; see [shared playback](PHOTO-SYNC.md) for configuration and rollout gates.
+Each screen keeps its own `frame_id` and joins the same `sync_group`.
 
 ### Forest home and native forecast (0.3.3)
 
