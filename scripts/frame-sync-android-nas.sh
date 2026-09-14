@@ -148,6 +148,7 @@ output.write_text(json.dumps(payload, indent=2, sort_keys=True)+'\n')
 PY
 
 run_step frameos-js node --test "$frameos_dir/app/src/test/js/photos-playback.test.js"
+run_step frameos-sync-configuration-proof python3 "$root_dir/scripts/verify-frame-photos-sync-proof.py" "$root_dir"
 run_step frameos-guard-initial bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest --tests '$parser_test'"
 
 cp "$parser_source" "$work_dir/FrameSharedPlaybackMetadata.kt.original"
@@ -301,7 +302,7 @@ with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
     for base in (report, root/'frameos/app/build/reports', root/'frameos/app/build/test-results', root/'tvos/app/build/reports', root/'tvos/app/build/test-results', root/'tvos/validation'):
         if base.exists():
             for p in sorted(base.rglob('*')):
-                if p.is_file() and p.suffix in {'.html','.json','.txt','.xml'}:
+                if p.is_file() and p.suffix in {'.html','.json','.txt','.xml','.log'}:
                     archive.write(p, p.relative_to(root))
 PY
 printf 'Frame sync Android NAS validation passed\n' | tee -a "$log_file"
