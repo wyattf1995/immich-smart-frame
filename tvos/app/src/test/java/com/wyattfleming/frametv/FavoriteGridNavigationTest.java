@@ -6,6 +6,15 @@ import org.junit.Test;
 
 public class FavoriteGridNavigationTest {
     @Test
+    public void followsTheTvFiveColumnLayoutWithFullAndPartialRows() {
+        assertEquals(9, neighbor(4, 10, 5, 1));
+        assertEquals(4, neighbor(9, 10, 5, -1));
+        assertEquals(8, neighbor(4, 9, 5, 1));
+        assertEquals(5, neighbor(4, 6, 5, 1));
+        assertEquals(-1, neighbor(4, 5, 5, 1));
+    }
+
+    @Test
     public void movesVerticallyAcrossTwoFullRowsOfSixFavorites() {
         assertEquals(3, neighbor(0, 6, 3, 1));
         assertEquals(1, neighbor(4, 6, 3, -1));
