@@ -120,16 +120,19 @@ This prototype leaves the stock launcher enabled, so launch Frame TV as a normal
 app on this model. Disabling the stock launcher would remove the current Sony
 Home escape and needs a separately designed and verified recovery path.
 
-### Forest home and native forecast (0.3.0 draft)
+### Forest home and native forecast (0.3.3 draft)
 
 The home screen uses one still forest-floor photograph, decoded once at bounded
 resolution (1672 × 941, RGB565). A mild vertical shade keeps text readable without
 an animated background or blur pipeline. Original artwork and the built-in image
 generation prompt are in `artwork/`; the packaged JPEG is in `drawable-nodpi/`.
-The compact forecast sits above a scenic gap; home dashboards and the five-column
-streaming favorites occupy the lower shelf. Inputs and system actions follow;
-All apps is the final section. Physical Sony Home behavior remains as documented
-above. Combined build/device validation is pending.
+The forecast follows the frame's translucent-card styling, with a large current
+temperature and separate hourly/daily columns, condition pictograms, blue rain
+percentages and labeled daily highs/lows. It uses static native views. The home
+order is weather, five-column streaming favorites, Home dashboards, Inputs,
+System, then All apps. There is no scenic-height spacer. Physical Sony Home
+behavior remains as documented above. This layout's build/device validation is
+pending; the preceding forest layout was installed and verified on the Sony.
 
 The native widget uses Open-Meteo over HTTPS: current conditions, next six hours
 and five days in Fahrenheit and the forecast location’s timezone. Select the

@@ -108,10 +108,6 @@ public final class MainActivity extends Activity {
 
         LinearLayout hero = new LinearLayout(this);
         hero.setOrientation(LinearLayout.VERTICAL);
-        // Leave a scenic interval between the small forecast and the bottom app shelf.
-        int heightDp = Math.round(getResources().getDisplayMetrics().heightPixels
-                / getResources().getDisplayMetrics().density);
-        hero.setMinimumHeight(TvUi.dp(this, Math.max(175, heightDp - 300)));
         content.addView(hero);
         LinearLayout masthead = new LinearLayout(this);
         masthead.setGravity(Gravity.CENTER_VERTICAL);
@@ -134,8 +130,8 @@ public final class MainActivity extends Activity {
         focusTargets.put("weather:configure", weather);
 
         List<AppCatalog.App> ordered = orderedApps();
-        addDashboards();
         addAppsRow("Favorites", orderedFavorites(ordered), true);
+        addDashboards();
         addInputs();
         addUtilities();
         addAppsRow("All apps", ordered, false);

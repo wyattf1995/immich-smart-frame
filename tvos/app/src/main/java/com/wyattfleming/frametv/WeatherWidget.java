@@ -11,7 +11,6 @@ import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.LinearLayout;
-import android.widget.TextView;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -21,11 +20,8 @@ import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
-import java.util.Locale;
 import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,10 +32,7 @@ public final class WeatherWidget extends LinearLayout {
     private final WeatherPreferences preferences;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final TextView heading;
-    private final TextView hourly;
-    private final TextView daily;
-    private final TextView attribution;
+    private final WeatherPanel panel;
     private volatile HttpURLConnection activeConnection;
     private boolean resumed;
     private boolean closed;
@@ -58,22 +51,16 @@ public final class WeatherWidget extends LinearLayout {
         super(context);
         preferences = new WeatherPreferences(context);
         setOrientation(VERTICAL);
-        setPadding(TvUi.dp(context, 14), TvUi.dp(context, 7), TvUi.dp(context, 14), TvUi.dp(context, 6));
+        setPadding(0, 0, 0, 0);
         setGravity(Gravity.CENTER_VERTICAL);
         setFocusable(true);
         setClickable(true);
         setTag("weather:configure");
         setBackground(panelBackground(context));
         setOnClickListener(view -> openLocationSetup());
-        setContentDescription("Weather forecast. Press Select to choose a city or ZIP code.");
-        heading = line(16, TvUi.TEXT);
-        hourly = line(12, TvUi.MUTED);
-        daily = line(12, TvUi.MUTED);
-        attribution = line(10, Color.rgb(158, 181, 191));
-        addView(heading);
-        addView(hourly);
-        addView(daily);
-        addView(attribution);
+        setContentDescription("Weather forecast. Press Select to choose Home Assistant or a city.");
+        panel = new WeatherPanel(context);
+        addView(panel, new LinearLayout.LayoutParams(-1, -2));
         showUnconfigured();
     }
 
@@ -102,26 +89,18 @@ public final class WeatherWidget extends LinearLayout {
         main.removeCallbacksAndMessages(null);
     }
 
-    private TextView line(int size, int color) {
-        TextView view = TvUi.text(getContext(), "", size, color);
-        view.setSingleLine(true);
-        view.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        view.setIncludeFontPadding(false);
-        return view;
-    }
-
     private StateListDrawable panelBackground(Context context) {
         StateListDrawable states = new StateListDrawable();
         states.addState(new int[]{android.R.attr.state_pressed}, panel(context, Color.argb(245, 45, 82, 72), TvUi.ACCENT, 2));
         states.addState(new int[]{android.R.attr.state_focused}, panel(context, Color.argb(242, 42, 77, 70), TvUi.ACCENT, 2));
-        states.addState(new int[]{}, panel(context, Color.argb(224, 17, 54, 51), Color.argb(55, 219, 249, 209), 1));
+        states.addState(new int[]{}, panel(context, Color.argb(218, 26, 30, 36), Color.argb(77, 255, 255, 255), 1));
         return states;
     }
 
     private GradientDrawable panel(Context context, int start, int stroke, int width) {
         GradientDrawable panel = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[]{start, Color.argb(218, 21, 38, 68)});
-        panel.setCornerRadius(TvUi.dp(context, 12));
+                new int[]{start, Color.argb(220, 20, 30, 39)});
+        panel.setCornerRadius(TvUi.dp(context, 20));
         panel.setStroke(TvUi.dp(context, width), stroke);
         return panel;
     }
@@ -144,10 +123,7 @@ public final class WeatherWidget extends LinearLayout {
             try { showForecast(parseForecast(preferences.cachedJson()), location.label, preferences.fetchedAt(), true, "Open-Meteo"); }
             catch (JSONException ignored) { usable = false; }
         } else {
-            heading.setText(location.label + " · Loading weather…");
-            hourly.setText("Hourly forecast loading");
-            daily.setText("Daily forecast loading");
-            attribution.setText("Weather data by Open-Meteo");
+            panel.message(location.label, "Loading hourly and daily weather…", "Open-Meteo");
         }
         if (!loading && (!usable || WeatherCachePolicy.shouldRefresh(preferences.fetchedAt(), now))) fetch(location);
     }
@@ -215,50 +191,15 @@ public final class WeatherWidget extends LinearLayout {
     }
 
     private void showUnconfigured() {
-        heading.setText("Weather · choose your city");
-        hourly.setText("Hourly and daily forecast");
-        daily.setText("Press Select to search by city or ZIP");
-        attribution.setText("Weather data by Open-Meteo");
+        panel.message("Weather", "Press Select to use Home Assistant or choose a city.", "Hourly and daily forecast");
     }
 
     private void resultError(WeatherLocation location, String message) {
-        heading.setText(location.label + " · " + message);
-        hourly.setText("Press Select to change location or try again later");
-        daily.setText("");
-        attribution.setText("Weather data by Open-Meteo");
+        panel.message(location.label, message + ". Press Select to try another source.", "Open-Meteo");
     }
 
     private void showForecast(WeatherForecast forecast, String label, long fetchedAt, boolean cached, String provider) {
-        String current = forecast.currentTemperature == null ? "—" : Math.round(forecast.currentTemperature) + "°F";
-        heading.setText(label + "  " + current + " · " + WeatherForecast.condition(forecast.currentCode));
-        TimeZone zone = forecast.timeZone;
-        List<WeatherForecast.Hour> hours = forecast.nextHours(System.currentTimeMillis() / 1000L, 6);
-        StringBuilder hourText = new StringBuilder("Hourly  ");
-        for (WeatherForecast.Hour hour : hours) {
-            if (hourText.length() > 9) hourText.append("   ");
-            hourText.append(format("h a", hour.epochSeconds, zone)).append(" ")
-                    .append(hour.temperature == null ? "—" : Math.round(hour.temperature) + "°")
-                    .append(" ").append(WeatherForecast.hourGlyph(hour.code, hour.isDay))
-                    .append(hour.precipitationChance == null ? "" : " " + hour.precipitationChance + "%");
-        }
-        hourly.setText(hourText);
-        StringBuilder dayText = new StringBuilder("Daily    ");
-        for (WeatherForecast.Day day : forecast.nextDays(System.currentTimeMillis() / 1000L, 5)) {
-            if (dayText.length() > 9) dayText.append("   ");
-            dayText.append(format("EEE", day.epochSeconds, zone)).append(" ")
-                    .append(day.high == null ? "—" : Math.round(day.high) + "°")
-                    .append("/").append(day.low == null ? "—" : Math.round(day.low) + "°")
-                    .append(" ").append(WeatherForecast.glyph(day.code));
-        }
-        daily.setText(dayText);
-        long ageMinutes = Math.max(0, (System.currentTimeMillis() - fetchedAt) / 60000L);
-        attribution.setText("Weather data: " + provider + (cached && ageMinutes > 0 ? " · updated " + ageMinutes + "m ago" : ""));
-    }
-
-    private static String format(String pattern, long epochSeconds, TimeZone zone) {
-        SimpleDateFormat formatter = new SimpleDateFormat(pattern, Locale.getDefault());
-        formatter.setTimeZone(zone);
-        return formatter.format(new Date(epochSeconds * 1000L));
+        panel.forecast(forecast, label, fetchedAt, provider);
     }
 
     private void openLocationSetup() {
