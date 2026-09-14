@@ -6,7 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function loadScript({ connectNative, historyValues = [], frames, push = false, documentReady = true } = {}) {
+function loadScript({ connectNative, historyValues = [], frames, push = false, documentReady = true, sharedSession = "session-1", sharedSlide = "slide-1" } = {}) {
   const events = [];
   const nativeMessages = [];
   const diagnosticMessages = [];
@@ -40,6 +40,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false, d
   kioskContainer.classList = { contains: (name) => push && name === "transition-push" };
   const kiosk = makeElement();
   kiosk.id = "kiosk";
+  kiosk.dataset = { sharedPlaybackSession: sharedSession, sharedPlaybackSlide: sharedSlide };
   kiosk.parentElement = kioskContainer;
   const progress = makeElement();
   const frameList = (frames || []).map(({ images, visible = true, animations = [] }) => {
@@ -114,6 +115,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false, d
       addEventListener(...args) { listeners.push(args); },
       querySelector(selector) {
         if (selector === "#kiosk-history input[name='history']") return history[0] || null;
+        if (selector === "#kiosk") return kiosk;
         if (selector === "#kiosk-container") return kioskContainer;
         if (selector === ".navigation") return navigation;
         if (selector === ".navigation--next-asset") return next;
@@ -438,6 +440,7 @@ test("failed native port connection backs off without exhausting and leaves capt
   assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000]);
   assert.deepEqual(runtime.listeners.map(([type]) => type), [
     "htmx:beforeSend", "htmx:afterSettle", "htmx:responseError", "htmx:sendError", "htmx:sendAbort", "htmx:timeout", "htmx:afterRequest",
+    "frame:shared-playback-state", "frame:shared-photo-settled",
     "load", "transitionend", "animationend",
   ]);
   assert.equal(runtime.observers.length, 2);
@@ -722,4 +725,29 @@ test("a no-content Kiosk response keeps capture closed until a later settled res
     runtime.nativeMessages.slice(-1).map(({ assetId, image }) => ({ assetId, image })),
     [{ assetId: finalId, image: "final" }],
   );
+});
+
+test("authoritative shared state replaces stale native pause desire and duplicate state is idempotent", () => {
+  const runtime = loadScript();
+  runtime.port.listener({ type: "pause", paused: true });
+  runtime.fireRawEvent("frame:shared-playback-state", { target: runtime.kiosk, detail: { sharedPlaybackPaused: false } });
+  runtime.fireRawEvent("frame:shared-playback-state", { target: runtime.kiosk, detail: { sharedPlaybackPaused: false } });
+  assert.equal(runtime.body.classList.contains("polling-paused"), false);
+  assert.equal(runtime.events.filter((event) => event.code === "KeyP").length, 2);
+  assert.deepEqual(runtime.nativeMessages.map(({ type, epoch }) => ({ type, epoch })), [
+    { type: "shared-playback-state", epoch: 0 }, { type: "shared-playback-state", epoch: 0 },
+  ]);
+});
+
+test("shared settlement requires current decoded history-image pair and advances the paused snapshot epoch", () => {
+  const asset = "11111111-1111-4111-8111-111111111111";
+  const runtime = loadScript({ historyValues: [`*${asset}:one`], frames: [{ images: ["data:image/jpeg;base64,one"] }] });
+  runtime.runMicrotasks();
+  runtime.fireRawEvent("frame:shared-photo-settled", { target: runtime.kiosk, detail: { sharedPlaybackPaused: true } });
+  assert.deepEqual(runtime.nativeMessages.map(({ type, epoch }) => ({ type, epoch })), [
+    { type: "loaded-photo", epoch: undefined }, { type: "shared-photo-settled", epoch: 1 },
+  ]);
+  runtime.kiosk.dataset.sharedPlaybackSlide = "bad slide";
+  runtime.fireRawEvent("frame:shared-photo-settled", { target: runtime.kiosk, detail: { sharedPlaybackPaused: false } });
+  assert.equal(runtime.nativeMessages.filter(({ type }) => type === "shared-photo-settled").length, 1);
 });
