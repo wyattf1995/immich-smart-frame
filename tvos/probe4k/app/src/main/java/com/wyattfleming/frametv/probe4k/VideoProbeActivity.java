@@ -251,7 +251,7 @@ public final class VideoProbeActivity extends Activity implements SurfaceHolder.
                 Log.i(TAG, "video_candidate name=" + candidate.getName()
                         + " supports_4k=" + video.isSizeSupported(VideoProbeSpec.WIDTH, VideoProbeSpec.HEIGHT)
                         + " supports_input=" + caps.isFormatSupported(format)
-                        + " tunneled=" + caps.isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_TUNNELED_PLAYBACK)
+                        + " tunneled=" + caps.isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_TunneledPlayback)
                         + " bitrate_range=" + video.getBitrateRange());
             }
         }
