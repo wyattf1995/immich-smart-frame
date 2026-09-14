@@ -10,7 +10,7 @@ The repository's AGPL-3.0 license applies.
 
 ## First version
 
-- Launch installed TV apps from a six-column favorites grid. Plex and common
+- Launch installed TV apps from a five-column favorites grid. Plex and common
   streaming services start as favorites when installed; saved favorites are
   preserved. This does not install apps or create streaming subscriptions.
 - A still gradient landscape follows the FrameOS weather palette. Native paths
@@ -26,6 +26,10 @@ The repository's AGPL-3.0 license applies.
 The launcher creates no WebView. Opening a configured dashboard creates one;
 leaving that activity destroys it immediately. Browser cookies and local storage
 remain in this app's private WebView profile so a dashboard can remember sign-in.
+Dashboards fill the screen. A Menu key can reveal temporary Back/Reload controls;
+Back dismisses that menu, then returns to Frame TV. Loading/error controls overlay
+the page and never reduce the page's viewport. Remote Menu availability varies by
+TV; Back and reopening a card remain the basic navigation and recovery path.
 No setting keeps the display awake, so Android/Sony screensaver and panel
 protection can operate normally.
 

@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.net.http.SslError;
 import android.os.Bundle;
 import android.view.View;
+import android.view.KeyEvent;
 import android.webkit.PermissionRequest;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.SslErrorHandler;
@@ -27,6 +28,9 @@ public final class DashboardActivity extends Activity {
     private FrameLayout surface;
     private WebView web;
     private TextView status;
+    private LinearLayout controls;
+    private LinearLayout bar;
+    private boolean menuRequested;
     private boolean active;
     private boolean loadFailed;
 
@@ -41,10 +45,15 @@ public final class DashboardActivity extends Activity {
             finish();
             return;
         }
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(TvUi.BG);
-        LinearLayout bar = new LinearLayout(this);
+        surface = new FrameLayout(this);
+        root.addView(surface, new FrameLayout.LayoutParams(-1, -1));
+        controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.VERTICAL);
+        controls.setBackgroundColor(TvUi.BG);
+        bar = new LinearLayout(this);
+        bar.setVisibility(View.GONE);
         bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
         bar.setPadding(TvUi.dp(this, 24), TvUi.dp(this, 6), TvUi.dp(this, 24), TvUi.dp(this, 6));
         bar.addView(TvUi.compactButton(this, "‹  Frame TV", this::finish),
@@ -54,13 +63,13 @@ public final class DashboardActivity extends Activity {
         bar.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
         bar.addView(TvUi.compactButton(this, "Reload", this::reload),
                 new LinearLayout.LayoutParams(TvUi.dp(this, 84), TvUi.dp(this, 40)));
-        root.addView(bar);
+        controls.addView(bar);
         status = TvUi.text(this, "Loading…", 14, TvUi.MUTED);
         status.setPadding(TvUi.dp(this, 24), 0, 0, TvUi.dp(this, 6));
         status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-        root.addView(status);
-        surface = new FrameLayout(this);
-        root.addView(surface, new LinearLayout.LayoutParams(-1, 0, 1));
+        controls.addView(status);
+        // Controls overlay the page; they never reduce its viewport or change responsive breakpoints.
+        root.addView(controls, new FrameLayout.LayoutParams(-1, -2, android.view.Gravity.TOP));
         setContentView(root);
     }
 
@@ -111,7 +120,11 @@ public final class DashboardActivity extends Activity {
                     return blockNavigation(url);
                 }
                 @Override public void onPageFinished(WebView view, String url) {
-                    if (view == web && active && !loadFailed && UrlPolicy.navigationAllowed(address, url)) status.setVisibility(View.GONE);
+                    if (view == web && active && !loadFailed && UrlPolicy.navigationAllowed(address, url)) {
+                        status.setVisibility(View.GONE);
+                        updateControls();
+                        if (!menuRequested) web.requestFocus();
+                    }
                 }
                 @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
                     handler.cancel();
@@ -133,6 +146,7 @@ public final class DashboardActivity extends Activity {
                 @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
                     if (view == web) {
                         destroyRenderer();
+                        loadFailed = true;
                         showStatus("Dashboard closed to recover resources. Select Reload to reopen it.");
                     }
                     return true;
@@ -145,19 +159,32 @@ public final class DashboardActivity extends Activity {
             web.loadUrl(address);
         } catch (RuntimeException error) {
             destroyRenderer();
+            loadFailed = true;
             showStatus("Android System WebView is unavailable. Update it in Google Play and reopen this view.");
         }
     }
     private boolean blockNavigation(String destination) {
         if (UrlPolicy.navigationAllowed(address, destination)) return false;
+        menuRequested = true;
         showStatus("This link leaves your dashboard. Open it on another device.");
         return true;
     }
     private void showStatus(String message) {
         status.setText(message);
         status.setVisibility(View.VISIBLE);
+        updateControls();
     }
-    private void reload() { destroyRenderer(); createRenderer(); }
+    private void updateControls() {
+        bar.setVisibility(menuRequested || loadFailed ? View.VISIBLE : View.GONE);
+        controls.setVisibility(bar.getVisibility() == View.VISIBLE || status.getVisibility() == View.VISIBLE
+                ? View.VISIBLE : View.GONE);
+    }
+    private void reload() {
+        menuRequested = false;
+        loadFailed = false;
+        destroyRenderer();
+        createRenderer();
+    }
     private void destroyRenderer() {
         WebView old = web;
         web = null;
@@ -169,5 +196,21 @@ public final class DashboardActivity extends Activity {
             old.destroy();
         }
     }
-    @Override public void onBackPressed() { finish(); }
+    @Override public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_MENU) {
+            menuRequested = !menuRequested;
+            updateControls();
+            if (menuRequested) bar.getChildAt(0).requestFocus();
+            else if (web != null) web.requestFocus();
+            return true;
+        }
+        return super.onKeyUp(keyCode, event);
+    }
+    @Override public void onBackPressed() {
+        if (menuRequested) {
+            menuRequested = false;
+            updateControls();
+            if (web != null) web.requestFocus();
+        } else finish();
+    }
 }

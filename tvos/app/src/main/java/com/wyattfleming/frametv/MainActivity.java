@@ -31,6 +31,7 @@ import java.util.Set;
 
 /** A light HOME activity: app discovery is bounded and dashboards are opened only on request. */
 public final class MainActivity extends Activity {
+    private static final int FAVORITE_COLUMNS = 5;
     private AppCatalog catalog;
     private TvPreferences preferences;
     private final List<AppCatalog.App> apps = new ArrayList<>();
@@ -177,19 +178,19 @@ public final class MainActivity extends Activity {
             tile.setContentDescription(app.label + ". Press Select to open. Hold Select to "
                     + (preferences.favorites().contains(app.packageName) ? "remove favorite" : "add favorite"));
             if (favorites) {
-                addGridTile(strip, tile, id, column, 6, 60);
-                column = (column + 1) % 6;
+                addGridTile(strip, tile, id, column, FAVORITE_COLUMNS, 60);
+                column = (column + 1) % FAVORITE_COLUMNS;
             } else addTile(strip, tile, id);
         }
         if (favorites) {
-            // Empty cells keep a partially filled final row aligned with the six-column grid.
-            while (column > 0 && column < 6) {
-                addGridTile(strip, new View(this), null, column++, 6, 60);
+            // Empty cells keep a partially filled final row aligned with the favorites grid.
+            while (column > 0 && column < FAVORITE_COLUMNS) {
+                addGridTile(strip, new View(this), null, column++, FAVORITE_COLUMNS, 60);
             }
             for (int i = 0; i < row.size(); i++) {
                 View tile = focusTargets.get("favorite:" + row.get(i).packageName);
-                int up = FavoriteGridNavigation.verticalNeighbor(i, row.size(), 6, -1);
-                int down = FavoriteGridNavigation.verticalNeighbor(i, row.size(), 6, 1);
+                int up = FavoriteGridNavigation.verticalNeighbor(i, row.size(), FAVORITE_COLUMNS, -1);
+                int down = FavoriteGridNavigation.verticalNeighbor(i, row.size(), FAVORITE_COLUMNS, 1);
                 if (up >= 0) tile.setNextFocusUpId(focusTargets.get("favorite:" + row.get(up).packageName).getId());
                 if (down >= 0) tile.setNextFocusDownId(focusTargets.get("favorite:" + row.get(down).packageName).getId());
             }
