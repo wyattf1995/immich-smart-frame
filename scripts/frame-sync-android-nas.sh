@@ -96,13 +96,13 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 root, expected = Path(sys.argv[1]), sys.argv[2]
-failed = 0
+assertion_failures = 0
 for report in root.glob('TEST-*.xml'):
     suite = ET.parse(report).getroot()
     if suite.attrib.get('name') == expected:
-        failed += int(suite.attrib.get('failures', '0')) + int(suite.attrib.get('errors', '0'))
-if failed < 1:
-    raise SystemExit('negative run did not record a FrameSharedPlaybackMetadataTest guard failure')
+        assertion_failures += int(suite.attrib.get('failures', '0'))
+if assertion_failures < 1:
+    raise SystemExit('negative run did not record a FrameSharedPlaybackMetadataTest assertion failure')
 PY
 restore_parser_source
 [[ "$(sha256sum "$parser_source" | awk '{print $1}')" == "$before_sha" ]] || { printf 'source-negative proof did not restore exact parser bytes\n' >&2; exit 71; }
