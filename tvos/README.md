@@ -10,10 +10,14 @@ The repository's AGPL-3.0 license applies.
 
 ## First version
 
-- Launch installed TV apps. Plex starts as a favorite when installed.
+- Launch installed TV apps from a six-column favorites grid. Plex and common
+  streaming services start as favorites when installed; saved favorites are
+  preserved. This does not install apps or create streaming subscriptions.
+- A still gradient landscape follows the FrameOS weather palette. Native paths
+  and translucent cards add atmosphere without a background animation loop.
 - Hold Select on an app to add or remove it from Favorites.
 - Open HDMI inputs exposed by the TV's input service.
-- Open Photos, Home, Weather, Cameras and Calendar using your existing dashboard
+- See all five home cards at once: Photos, Home, Weather, Cameras and Calendar use existing dashboard
   addresses. Every feature is optional; streaming works before setup.
 - Reach the TV's settings and original home screen from the System row.
 - Select Refresh apps after installing or removing another application.

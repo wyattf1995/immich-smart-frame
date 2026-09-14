@@ -120,7 +120,7 @@ public final class AppCatalog implements AutoCloseable {
 
     private Drawable smallIcon(Drawable source) {
         if (source == null) return null;
-        int size = Math.max(1, Math.round(40 * appContext.getResources().getDisplayMetrics().density));
+        int size = Math.max(1, Math.round(30 * appContext.getResources().getDisplayMetrics().density));
         Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(bitmap);
         int width = Math.max(1, source.getIntrinsicWidth());

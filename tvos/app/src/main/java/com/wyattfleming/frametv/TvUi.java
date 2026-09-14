@@ -50,6 +50,31 @@ public final class TvUi {
         return view;
     }
 
+    public static Button compactButton(Context context, String label, final Runnable action) {
+        Button view = button(context, label, action);
+        view.setTextSize(14);
+        view.setMinWidth(0);
+        view.setMinimumWidth(0);
+        view.setMinHeight(0);
+        view.setMinimumHeight(0);
+        view.setMaxLines(2);
+        view.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        view.setPadding(dp(context, 12), dp(context, 6), dp(context, 12), dp(context, 6));
+        view.setBackground(compactBackground(context));
+        return view;
+    }
+
+    private static StateListDrawable compactBackground(Context context) {
+        StateListDrawable states = new StateListDrawable();
+        states.addState(new int[]{android.R.attr.state_pressed},
+                rounded(context, Color.rgb(57, 81, 111), 10, ACCENT, 2));
+        states.addState(new int[]{android.R.attr.state_focused},
+                rounded(context, Color.rgb(44, 67, 96), 10, ACCENT, 2));
+        states.addState(new int[]{},
+                rounded(context, Color.argb(185, 15, 28, 47), 10, Color.argb(35, 255, 255, 255), 1));
+        return states;
+    }
+
     public static void window(Activity activity) {
         Window window = activity.getWindow();
         window.setStatusBarColor(BG);

@@ -2,11 +2,17 @@ package com.wyattfleming.frametv;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import java.util.Collections;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 
 public final class TvPreferences {
+    // Only discovered, installed applications are displayed; this is a starting set, not an installer.
+    private static final Set<String> DEFAULT_FAVORITES = new HashSet<>(Arrays.asList(
+            "com.plexapp.android", "com.netflix.ninja", "com.wbd.stream",
+            "com.amazon.amazonvideo.livingroom", "com.disney.disneyplus",
+            "com.hulu.livingroomplus", "com.apple.atve.androidtv.appletv",
+            "com.google.android.youtube.tv", "com.peacocktv.peacockandroid", "com.cbs.ott"));
     private final SharedPreferences preferences;
     public TvPreferences(Context context) {
         preferences = context.getSharedPreferences("frame_tv", Context.MODE_PRIVATE);
@@ -28,7 +34,7 @@ public final class TvPreferences {
         editor.apply();
     }
     public Set<String> favorites() {
-        return new HashSet<>(preferences.getStringSet("favorites", Collections.singleton("com.plexapp.android")));
+        return new HashSet<>(preferences.getStringSet("favorites", DEFAULT_FAVORITES));
     }
     public void toggleFavorite(String packageName) {
         Set<String> favorites = favorites();

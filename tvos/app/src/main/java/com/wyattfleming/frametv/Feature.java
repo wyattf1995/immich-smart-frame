@@ -1,11 +1,11 @@
 package com.wyattfleming.frametv;
 
 public enum Feature {
-    PHOTOS("Photos", "Your photo collection"),
-    HOME("Home", "At a glance and home controls"),
-    WEATHER("Weather", "Conditions and forecast"),
-    CAMERAS("Cameras", "See around home"),
-    CALENDAR("Calendar", "What's coming up");
+    PHOTOS("Photos", "Your collection"),
+    HOME("Home", "Home controls"),
+    WEATHER("Weather", "Your forecast"),
+    CAMERAS("Cameras", "Around home"),
+    CALENDAR("Calendar", "Coming up");
 
     public final String title;
     public final String description;

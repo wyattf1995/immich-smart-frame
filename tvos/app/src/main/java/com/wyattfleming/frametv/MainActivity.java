@@ -19,6 +19,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.TextClock;
+import android.widget.FrameLayout;
 import android.widget.Toast;
 
 import java.util.ArrayList;
@@ -36,6 +37,7 @@ public final class MainActivity extends Activity {
     private final Map<String, View> focusTargets = new LinkedHashMap<>();
     private String focusId;
     private LinearLayout content;
+    private ScrollView scroll;
     private TextClock clock;
 
     @Override public void onCreate(Bundle state) {
@@ -69,20 +71,23 @@ public final class MainActivity extends Activity {
 
     @Override public void onBackPressed() {
         // A HOME activity must not reveal an old streaming task when Back is pressed at its root.
-        if (isTaskRoot()) { focusId = null; restoreFocus(); }
+        if (isTaskRoot()) { focusId = null; restoreFocus(); scroll.scrollTo(0, 0); }
         else super.onBackPressed();
     }
 
     private void buildShell() {
-        ScrollView scroll = new ScrollView(this);
+        scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setClipToPadding(false);
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(TvUi.dp(this, 58), TvUi.dp(this, 42), TvUi.dp(this, 58), TvUi.dp(this, 54));
+        content.setPadding(TvUi.dp(this, 42), TvUi.dp(this, 26), TvUi.dp(this, 42), TvUi.dp(this, 36));
         scroll.addView(content, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        setContentView(scroll);
+        FrameLayout home = new FrameLayout(this);
+        home.setBackground(new HomeBackgroundDrawable());
+        home.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        setContentView(home);
         render();
     }
 
@@ -94,11 +99,11 @@ public final class MainActivity extends Activity {
         LinearLayout masthead = new LinearLayout(this);
         masthead.setGravity(Gravity.CENTER_VERTICAL);
         masthead.setOrientation(LinearLayout.HORIZONTAL);
-        TextView title = TvUi.text(this, "Frame TV", 32, TvUi.TEXT);
+        TextView title = TvUi.text(this, "Frame TV", 26, TvUi.TEXT);
         title.setContentDescription("Frame TV home");
         masthead.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         clock = new TextClock(this);
-        clock.setTextSize(19);
+        clock.setTextSize(17);
         clock.setTextColor(TvUi.MUTED);
         clock.setFormat12Hour("h:mm a");
         clock.setFormat24Hour("HH:mm");
@@ -108,8 +113,8 @@ public final class MainActivity extends Activity {
 
         List<AppCatalog.App> ordered = orderedApps();
         addAppsRow("Favorites", orderedFavorites(ordered), true);
-        addAppsRow("All apps", ordered, false);
         addDashboards();
+        addAppsRow("All apps", ordered, false);
         addInputs();
         addUtilities();
         content.post(this::restoreFocus);
@@ -145,14 +150,21 @@ public final class MainActivity extends Activity {
             content.addView(empty);
             return;
         }
-        HorizontalScrollView scroll = horizontalRow();
-        LinearLayout strip = rowContainer();
+        HorizontalScrollView scroll = favorites ? null : horizontalRow();
+        LinearLayout strip = favorites ? null : rowContainer();
+        int column = 0;
         for (AppCatalog.App app : row) {
+            if (favorites && column == 0) {
+                strip = rowContainer();
+                LinearLayout.LayoutParams line = new LinearLayout.LayoutParams(-1, -2);
+                line.bottomMargin = TvUi.dp(this, 8);
+                content.addView(strip, line);
+            }
             String id = (favorites ? "favorite:" : "all:") + app.packageName;
-            android.widget.Button tile = TvUi.button(this, app.label, () -> launch(app));
+            android.widget.Button tile = TvUi.compactButton(this, app.label, () -> launch(app));
             if (app.icon != null) {
                 tile.setCompoundDrawablesWithIntrinsicBounds(app.icon, null, null, null);
-                tile.setCompoundDrawablePadding(TvUi.dp(this, 10));
+                tile.setCompoundDrawablePadding(TvUi.dp(this, 8));
             }
             tile.setTag(id);
             tile.setOnLongClickListener(view -> {
@@ -164,28 +176,37 @@ public final class MainActivity extends Activity {
             });
             tile.setContentDescription(app.label + ". Press Select to open. Hold Select to "
                     + (preferences.favorites().contains(app.packageName) ? "remove favorite" : "add favorite"));
-            addTile(strip, tile, id);
+            if (favorites) {
+                addGridTile(strip, tile, id, column, 6, 60);
+                column = (column + 1) % 6;
+            } else addTile(strip, tile, id);
         }
-        scroll.addView(strip);
-        content.addView(scroll);
+        if (favorites) {
+            // Empty cells keep a partially filled final row aligned with the six-column grid.
+            while (column > 0 && column < 6) {
+                addGridTile(strip, new View(this), null, column++, 6, 60);
+            }
+        } else {
+            scroll.addView(strip);
+            content.addView(scroll);
+        }
     }
 
     private void addDashboards() {
         addHeading("Home");
-        HorizontalScrollView scroll = horizontalRow();
         LinearLayout strip = rowContainer();
+        int column = 0;
         for (Feature feature : Feature.values()) {
             String id = "feature:" + feature.name();
             boolean configured = preferences.configured(feature);
             String detail = configured ? feature.description : "Set up " + feature.title;
-            android.widget.Button tile = TvUi.button(this, feature.title + "\n" + detail,
+            android.widget.Button tile = TvUi.compactButton(this, feature.title + "\n" + detail,
                     () -> openFeature(feature));
             tile.setContentDescription(feature.title + ". " + detail);
             tile.setTag(id);
-            addTile(strip, tile, id);
+            addGridTile(strip, tile, id, column++, Feature.values().length, 70);
         }
-        scroll.addView(strip);
-        content.addView(scroll);
+        content.addView(strip);
     }
 
     private void addInputs() {
@@ -203,7 +224,7 @@ public final class MainActivity extends Activity {
             CharSequence inputLabel = input.loadLabel(this);
             String label = inputLabel == null ? "HDMI input" : inputLabel.toString();
             String id = "input:" + input.getId();
-            android.widget.Button tile = TvUi.button(this, label, () -> openInput(input));
+            android.widget.Button tile = TvUi.compactButton(this, label, () -> openInput(input));
             tile.setTag(id);
             tile.setContentDescription("Input " + label);
             addTile(strip, tile, id);
@@ -228,14 +249,14 @@ public final class MainActivity extends Activity {
     }
 
     private void addActionTile(LinearLayout strip, String label, String id, Runnable action) {
-        android.widget.Button tile = TvUi.button(this, label, action);
+        android.widget.Button tile = TvUi.compactButton(this, label, action);
         tile.setTag(id);
         addTile(strip, tile, id);
     }
 
     private void addHeading(String label) {
-        TextView heading = TvUi.text(this, label, 19, TvUi.MUTED);
-        heading.setPadding(0, TvUi.dp(this, 34), 0, TvUi.dp(this, 12));
+        TextView heading = TvUi.text(this, label, 16, TvUi.MUTED);
+        heading.setPadding(0, TvUi.dp(this, 18), 0, TvUi.dp(this, 9));
         content.addView(heading);
     }
 
@@ -254,10 +275,17 @@ public final class MainActivity extends Activity {
     }
 
     private void addTile(LinearLayout row, View tile, String id) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(TvUi.dp(this, 220), TvUi.dp(this, 92));
-        params.setMargins(0, 0, TvUi.dp(this, 16), 0);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(TvUi.dp(this, 156), TvUi.dp(this, 60));
+        params.setMargins(0, 0, TvUi.dp(this, 10), 0);
         row.addView(tile, params);
         focusTargets.put(id, tile);
+    }
+
+    private void addGridTile(LinearLayout row, View tile, String id, int column, int columns, int height) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, TvUi.dp(this, height), 1);
+        params.setMargins(0, 0, column == columns - 1 ? 0 : TvUi.dp(this, 10), 0);
+        row.addView(tile, params);
+        if (id != null) focusTargets.put(id, tile);
     }
 
     private void launch(AppCatalog.App app) {
