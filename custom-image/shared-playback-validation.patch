@@ -1,9 +1,9 @@
 diff --git a/ci/shared-playback-nas.sh b/ci/shared-playback-nas.sh
 new file mode 100755
-index 0000000..6d6ce01
+index 0000000..b69e828
 --- /dev/null
 +++ b/ci/shared-playback-nas.sh
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,128 @@
 +#!/usr/bin/env bash
 +# Runs only in the credential-free agent-nas browser runtime. All generated
 +# toolchains, caches, reports, and temporary files stay under /workspace.
@@ -15,7 +15,6 @@ index 0000000..6d6ce01
 +readonly GO_VERSION='1.26.6'
 +readonly GO_SHA256='708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89'
 +readonly GO_URL="https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
-+readonly KIOSK_VERSION='0.1.0'
 +
 +root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 +cd "$root_dir"
@@ -40,8 +39,9 @@ index 0000000..6d6ce01
 +  command -v "$dependency" >/dev/null 2>&1 || { printf 'missing required runtime dependency: %s\n' "$dependency" >&2; exit 64; }
 +done
 +[[ -f "$source_identity" && ! -L "$source_identity" ]] || { printf 'missing runner source identity\n' >&2; exit 66; }
-+[[ -f frontend/package-lock.json && -f go.mod && -f ci/shared-playback.test.ts ]] || { printf 'materialized source or shared playback test is missing\n' >&2; exit 66; }
++[[ -f frontend/package-lock.json && -f go.mod && -f frontend/tests/shared-playback.test.ts ]] || { printf 'materialized source or shared playback test is missing\n' >&2; exit 66; }
 +[[ -f ci/shared-playback-browser.mjs ]] || { printf 'required browser integration script is missing\n' >&2; exit 66; }
++[[ -f ci/shared-playback-proof.sh ]] || { printf 'required source-negative proof script is missing\n' >&2; exit 66; }
 +cp "$source_identity" "$report_dir/source-identity.json"
 +chmod 600 "$report_dir/source-identity.json"
 +
@@ -95,7 +95,7 @@ index 0000000..6d6ce01
 +run_step frontend-polling-recovery bash -c 'cd frontend && node_modules/.bin/esbuild tests/polling-recovery.test.ts --bundle --platform=node --format=esm --alias:htmx.org=./tests/htmx.mock.ts --outfile="$TMPDIR/polling-recovery.test.mjs" && node --test "$TMPDIR/polling-recovery.test.mjs"'
 +run_step frontend-paused-retry bash -c 'cd frontend && node_modules/.bin/esbuild tests/paused-retry.test.ts --bundle --platform=node --format=esm --alias:htmx.org=./tests/htmx.mock.ts --outfile="$TMPDIR/paused-retry.test.mjs" && node --test "$TMPDIR/paused-retry.test.mjs"'
 +run_step frontend-cache-contracts bash -c 'cd frontend && node --test tests/browser-cache-contract.test.mjs tests/offline-cache-contract.test.mjs'
-+run_step frontend-shared-playback bash -c 'cd frontend && node_modules/.bin/esbuild ../ci/shared-playback.test.ts --bundle --platform=node --format=esm --alias:htmx.org=./tests/htmx.mock.ts --outfile="$TMPDIR/shared-playback.test.mjs" && node --test "$TMPDIR/shared-playback.test.mjs"'
++run_step frontend-shared-playback bash -c 'cd frontend && node_modules/.bin/esbuild tests/shared-playback.test.ts --bundle --platform=node --format=esm --alias:htmx.org=./tests/htmx.mock.ts --outfile="$TMPDIR/shared-playback.test.mjs" && node --test "$TMPDIR/shared-playback.test.mjs"'
 +run_step frontend-typecheck bash -c 'cd frontend && node_modules/.bin/tsc --noEmit'
 +run_step frontend-css bash -c 'cd frontend && node_modules/.bin/esbuild --minify --bundle --loader:.css=css --external:*.woff --external:*.woff2 --external:*.ttf --target=chrome106,edge106,firefox107,safari12.1,opera92 src/css/kiosk.css --outfile=./public/assets/css/kiosk.css'
 +run_step frontend-kiosk-js bash -c 'cd frontend && node_modules/.bin/esbuild src/ts/kiosk.ts --format=iife --global-name=kiosk --bundle --minify --target=es6 --outfile=./public/assets/js/kiosk.js'
@@ -104,14 +104,15 @@ index 0000000..6d6ce01
 +run_step templ-generate "$go_bin" tool templ generate
 +run_step go-test bash -c 'CI=1 go test ./...'
 +run_step go-race-routes bash -c 'CI=1 go test -race ./internal/routes'
-+run_step go-build bash -c 'CGO_ENABLED=0 go build -a -installsuffix cgo -ldflags "-X main.version=0.1.0 -s -w" -o dist/kiosk .'
++run_step go-race-playback bash -c 'CI=1 go test -race ./internal/playback'
++source_commit="$($node_bin -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync("/run/agent-source-identity.json", "utf8")); if (!/^[0-9a-f]{40}$/.test(value.commit)) process.exit(64); process.stdout.write(value.commit)')"
++run_step go-build bash -c "CGO_ENABLED=0 go build -a -installsuffix cgo -ldflags '-X main.version=${source_commit} -s -w' -o dist/kiosk ."
 +run_step browser-integration "$node_bin" ci/shared-playback-browser.mjs
++compgen -G "$report_dir/*browser*.json" >/dev/null || { printf 'required browser JSON report is missing\n' >&2; exit 66; }
++compgen -G "$report_dir/*.png" >/dev/null || { printf 'required browser screenshot is missing\n' >&2; exit 66; }
 +
-+if [[ -f ci/shared-playback-proof.sh ]]; then
-+  run_step source-negative-proof bash ci/shared-playback-proof.sh
-+else
-+  printf 'source-negative-proof\tnot-provided\tci/shared-playback-proof.sh\n' >> "$command_report"
-+fi
++run_step source-negative-proof bash ci/shared-playback-proof.sh
++compgen -G "$report_dir/*proof*.json" >/dev/null || { printf 'required source-negative proof JSON report is missing\n' >&2; exit 66; }
 +
 +cat > "$report_dir/resource-ledger.md" <<'EOF'
 +# Task-owned resource ledger
@@ -129,14 +130,14 @@ index 0000000..6d6ce01
 +EOF
 +chmod 600 "$report_dir/resource-ledger.md"
 +
-+run_step reports "$node_bin" ci/shared-playback-report.mjs --report-dir "$report_dir" --source-identity "$report_dir/source-identity.json" --commands "$command_report" --log "$sanitized_log" --node "$node_bin" --go "$go_bin" --zip "$report_zip"
++run_step reports "$node_bin" ci/shared-playback-report.mjs --report-dir "$report_dir" --source-identity "$report_dir/source-identity.json" --commands "$command_report" --log "$sanitized_log" --node "$node_bin" --go "$go_bin" --zip "$report_zip" --artifact dist/kiosk --artifact frontend/public/assets/css/kiosk.css --artifact frontend/public/assets/js/kiosk.js --artifact frontend/public/assets/js/url-builder.js
 +[[ -s dist/kiosk && -s "$report_zip" ]] || { printf 'expected artifacts are missing\n' >&2; exit 66; }
 diff --git a/ci/shared-playback-report.mjs b/ci/shared-playback-report.mjs
 new file mode 100755
-index 0000000..d5436ef
+index 0000000..0c3c642
 --- /dev/null
 +++ b/ci/shared-playback-report.mjs
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,108 @@
 +#!/usr/bin/env node
 +import { createHash } from 'node:crypto';
 +import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
@@ -149,9 +150,12 @@ index 0000000..d5436ef
 +
 +const args = process.argv.slice(2);
 +const values = new Map();
++const artifacts = [];
 +for (let index = 0; index < args.length; index += 2) {
 +  if (!args[index]?.startsWith('--') || args[index + 1] === undefined) usage();
-+  values.set(args[index].slice(2), args[index + 1]);
++  const key = args[index].slice(2);
++  if (key === 'artifact') artifacts.push(args[index + 1]);
++  else values.set(key, args[index + 1]);
 +}
 +for (const key of ['report-dir', 'source-identity', 'commands', 'log', 'node', 'go', 'zip']) {
 +  if (!values.has(key)) usage();
@@ -211,12 +215,27 @@ index 0000000..d5436ef
 +await writeFile(path.join(reportDir, 'tools.json'), `${JSON.stringify(tools, null, 2)}\n`, { mode: 0o600 });
 +const commandLines = (await readFile(commands, 'utf8')).trimEnd().split('\n').filter(Boolean);
 +const failed = commandLines.filter(line => /\tfailed\t/.test(line));
++const sourceIdentityValue = JSON.parse(await readFile(sourceIdentity, 'utf8'));
++const reportFiles = Object.fromEntries(await Promise.all((await readdir(reportDir)).sort().map(async name => {
++  const file = path.join(reportDir, name);
++  const details = await stat(file);
++  if (!details.isFile()) return [name, null];
++  return [name, { bytes: details.size, sha256: await sha256(file) }];
++})));
 +const summary = {
 +  status: failed.length === 0 ? 'passed' : 'failed',
 +  commandCount: commandLines.length,
 +  failedCommands: failed,
 +  sourceIdentitySha256: await sha256(sourceIdentity),
++  sourceIdentity: sourceIdentityValue,
 +  sanitizedLogSha256: await sha256(log),
++  reportFiles,
++  artifacts: Object.fromEntries(await Promise.all(artifacts.map(async artifact => {
++    const file = path.resolve(artifact);
++    const details = await stat(file);
++    if (!details.isFile()) throw new Error(`artifact is not a regular file: ${artifact}`);
++    return [artifact, { bytes: details.size, sha256: await sha256(file) }];
++  }))),
 +};
 +await writeFile(path.join(reportDir, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });
 +
