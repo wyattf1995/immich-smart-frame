@@ -65,5 +65,21 @@ Local Android outputs:
 Cold archive:
 `/mnt/user/agent-archives/frame-sync-android-2-20260913-233037-f5e8c10cde81`.
 
-Local signing is pending the shared Mac resource gate. Actual frame/TV playback
-remains **UNVERIFIED**; physical Lenovo QA requires Wyatt's explicit approval.
+Local signing passed under the shared Mac resource gate. Both APKs have verified
+alignment, package/version/min-SDK metadata, and v3 signatures matching the existing
+device certificate. FrameOS extension 1.0.6 assets match the committed source.
+
+Signed installation files:
+
+- `artifacts/signed/frameos-0.2.9.apk` — SHA-256
+  `a4a07c66d7ac5324e87d489ec03048a72ee6f070c9d25cbcea1fc82cfe1539d7`.
+- `artifacts/signed/tvos-0.4.1.apk` — SHA-256
+  `9421f85c3035958c69c2133fb0db6d339e96874566a64e56eeb8046371722e82`.
+
+Paths above are relative to
+`/Users/wyattfleming/.codex/private/frame-sync-20260913/`.
+The signing receipt is `artifacts/signed/signed-artifacts.json`; the FrameOS R8 map
+remains in the verified Android NAS output/archive above.
+
+Actual frame/TV playback remains **UNVERIFIED**; physical Lenovo QA requires Wyatt's
+explicit approval. No live Kiosk configuration, TV Photos URL, or Lenovo was changed.

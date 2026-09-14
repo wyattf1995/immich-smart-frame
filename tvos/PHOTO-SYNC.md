@@ -3,7 +3,8 @@
 The implementation is opt-in and **not deployed**. Server compilation, frontend
 and Go tests, two-browser acceptance, and four source-negative proofs passed on
 the NAS on September 13, 2026. Both Android apps also compiled and passed JVM/lint
-and source-negative checks there. Local signing and physical acceptance remain.
+and source-negative checks there. Signed FrameOS 0.2.9 and Frame TV 0.4.1 updates
+are ready; deployment and physical acceptance remain.
 Neither physical Lenovo frame was used for this work.
 Installed TV and server settings are unchanged. See [validation evidence](PHOTO-SYNC-VALIDATION.md).
 
