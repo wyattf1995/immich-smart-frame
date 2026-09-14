@@ -89,6 +89,7 @@ COPY shared-playback-player-tests.patch /tmp/shared-playback-player-tests.patch
 COPY shared-playback-validation.patch /tmp/shared-playback-validation.patch
 COPY shared-playback-integration.patch /tmp/shared-playback-integration.patch
 COPY shared-playback-integration-tests.patch /tmp/shared-playback-integration-tests.patch
+COPY shared-playback-density.patch /tmp/shared-playback-density.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -249,7 +250,9 @@ RUN cd /src \
 		&& git apply --check /tmp/shared-playback-integration.patch \
 		&& git apply /tmp/shared-playback-integration.patch \
 		&& git apply --check /tmp/shared-playback-integration-tests.patch \
-		&& git apply /tmp/shared-playback-integration-tests.patch
+		&& git apply /tmp/shared-playback-integration-tests.patch \
+		&& git apply --check /tmp/shared-playback-density.patch \
+		&& git apply /tmp/shared-playback-density.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
