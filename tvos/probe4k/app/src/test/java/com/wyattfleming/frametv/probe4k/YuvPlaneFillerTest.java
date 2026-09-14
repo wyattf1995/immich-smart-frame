@@ -52,7 +52,24 @@ public final class YuvPlaneFillerTest {
     public void invalidImageOrPlaneShapeIsRejectedBeforeWriting() {
         expectIllegalArgument(() -> YuvPlaneFiller.validateImageShape(3841, 2160));
         expectIllegalArgument(() -> YuvPlaneFiller.fillLuma(ByteBuffer.allocate(4), 3, 2, 2, 1, false));
+        expectIllegalArgument(() -> YuvPlaneFiller.fillLuma(ByteBuffer.allocate(16), 3, 2, 4, 2, false));
         expectIllegalArgument(() -> YuvPlaneFiller.fillNeutralChroma(null, 1, 1, 1, 1));
+    }
+
+    @Test
+    public void cancellationStopsBeforeTheNextRowWithoutQueueingMoreWrites() {
+        ByteBuffer buffer = ByteBuffer.allocate(24);
+        fill(buffer, (byte) 7);
+        int[] checks = {0};
+
+        boolean completed = YuvPlaneFiller.fillLuma(buffer, 3, 3, 8, 1, false,
+                () -> checks[0]++ > 0);
+
+        assertEquals(false, completed);
+        assertNotEquals(7, buffer.get(0));
+        assertNotEquals(7, buffer.get(2));
+        assertEquals(7, buffer.get(8));
+        assertEquals(2, checks[0]);
     }
 
     @Test
