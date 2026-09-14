@@ -55,4 +55,24 @@ object FrameControlContract {
     const val EXTRA_COMPANION_URL = "frameos.companion_url"
     const val EXTRA_COMPANION_TOKEN = "frameos.companion_token"
     const val EXTRA_COMPANION_DEVICE_ID = "frameos.companion_device_id"
+    const val EXTRA_PHOTOS_SYNC_GROUP = "frameos.photos_sync_group"
+    const val EXTRA_QUERY_PHOTOS_SYNC_GROUP = "frameos.query_photos_sync_group"
+
+    sealed interface PhotosSyncGroupCommand {
+        data class Set(val group: String) : PhotosSyncGroupCommand
+        data object Query : PhotosSyncGroupCommand
+        data object Invalid : PhotosSyncGroupCommand
+    }
+
+    fun photosSyncGroupCommand(
+        hasSyncGroup: Boolean,
+        syncGroup: String?,
+        querySyncGroup: Boolean,
+    ): PhotosSyncGroupCommand? = when {
+        hasSyncGroup && querySyncGroup -> PhotosSyncGroupCommand.Invalid
+        querySyncGroup -> PhotosSyncGroupCommand.Query
+        hasSyncGroup && syncGroup == null -> PhotosSyncGroupCommand.Invalid
+        hasSyncGroup -> PhotosSyncGroupCommand.Set(requireNotNull(syncGroup))
+        else -> null
+    }
 }

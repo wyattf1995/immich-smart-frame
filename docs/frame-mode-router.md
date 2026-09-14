@@ -135,6 +135,30 @@ Omit `frameos.birds_url` until the BirdNET-Go frame view is reachable. Legacy
 stored configurations remain valid and omit Birds from the cycle. FrameOS
 rejects a Birds URL containing user information or other forbidden URL data.
 
+## Configure shared Photos playback
+
+The same DUMP-protected, explicitly targeted receiver can add, replace, or
+remove the `sync_group` query option on the already configured Photos URL. It
+never accepts a replacement Photos URL. Groups use lowercase letters, digits,
+`_`, and `-`, are 1–48 characters, and an empty value removes the option.
+Restart the activity after a successful change so a currently foreground
+instance cannot retain its previous in-memory Photos URL:
+
+```sh
+adb -s DEVICE_SERIAL shell am broadcast --user 0 --receiver-foreground \
+  -a com.wyattfleming.frameos.CONTROL \
+  -n com.wyattfleming.frameos/.control.FrameControlReceiver \
+  --es frameos.photos_sync_group 'living-room'
+adb -s DEVICE_SERIAL shell am force-stop com.wyattfleming.frameos
+adb -s DEVICE_SERIAL shell am start \
+  -n com.wyattfleming.frameos/.MainActivity
+```
+
+Use `--es frameos.photos_sync_group ''` to remove it. To read back only the
+configured group (never the Photos URL or credentials), send an ordered
+broadcast with `--ez frameos.query_photos_sync_group true`; its result data is
+the group or an empty string when no group is configured.
+
 ## Install the router
 
 Prepare a private config from the example. Set all three `FRAMEOS_*` values:
