@@ -1,9 +1,9 @@
 diff --git a/ci/shared-playback-nas.sh b/ci/shared-playback-nas.sh
 new file mode 100755
-index 0000000..b69e828
+index 0000000..93cf113
 --- /dev/null
 +++ b/ci/shared-playback-nas.sh
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,139 @@
 +#!/usr/bin/env bash
 +# Runs only in the credential-free agent-nas browser runtime. All generated
 +# toolchains, caches, reports, and temporary files stay under /workspace.
@@ -34,6 +34,7 @@ index 0000000..b69e828
 +: > "$command_report"
 +: > "$sanitized_log"
 +chmod 600 "$command_report" "$sanitized_log"
++trap 'tail -n 90 "$sanitized_log" >&2' ERR
 +
 +for dependency in curl sha256sum tar xz; do
 +  command -v "$dependency" >/dev/null 2>&1 || { printf 'missing required runtime dependency: %s\n' "$dependency" >&2; exit 64; }
@@ -102,7 +103,17 @@ index 0000000..b69e828
 +run_step frontend-url-builder-js bash -c 'cd frontend && node_modules/.bin/esbuild src/ts/url-builder.ts --format=iife --global-name=urlBuilder --bundle --minify --target=es6 --outfile=./public/assets/js/url-builder.js'
 +run_step go-mod-download "$go_bin" mod download
 +run_step templ-generate "$go_bin" tool templ generate
-+run_step go-test bash -c 'CI=1 go test ./...'
++# The ext4 workspace root contains a protected lost+found directory. Derive
++# every Go package from the runner's verified source inventory so go test never
++# walks filesystem metadata, while still testing every transported Go package.
++mapfile -t go_test_packages < <("$node_bin" -e '
++const fs=require("fs"),path=require("path");
++const identity=JSON.parse(fs.readFileSync("/run/agent-source-identity.json","utf8"));
++const dirs=[...new Set(Object.keys(identity.files).filter(p=>p.endsWith(".go")).map(p=>path.posix.dirname(p)))].sort();
++if(!dirs.length||dirs.some(p=>p!=="."&&!/^[a-zA-Z0-9_/-]+$/.test(p)))process.exit(64);
++console.log(dirs.map(p=>p==="."?".":"./"+p).join("\n"));')
++[[ ${#go_test_packages[@]} -gt 0 ]] || { printf 'no source Go packages\n' >&2; exit 66; }
++run_step go-test env CI=1 "$go_bin" test "${go_test_packages[@]}"
 +run_step go-race-routes bash -c 'CI=1 go test -race ./internal/routes'
 +run_step go-race-playback bash -c 'CI=1 go test -race ./internal/playback'
 +source_commit="$($node_bin -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync("/run/agent-source-identity.json", "utf8")); if (!/^[0-9a-f]{40}$/.test(value.commit)) process.exit(64); process.stdout.write(value.commit)')"
