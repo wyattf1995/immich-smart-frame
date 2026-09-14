@@ -8,6 +8,8 @@ export JAVA_TOOL_OPTIONS="-XX:ActiveProcessorCount=2 -Djava.io.tmpdir=$TMPDIR"
 export ANDROID_HOME="${ANDROID_SDK_ROOT:?admitted Android SDK required}"
 exec > >(tee reports/build.log) 2>&1
 java -version
+python3 tools/generate-video-fixture.py
+python3 tools/verify-video-fixture.py
 ../gradlew -p . --no-daemon --max-workers=2 :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 python3 tools/source-proof.py
 python3 - <<'INNER'

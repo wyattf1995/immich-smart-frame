@@ -11,6 +11,7 @@ def run(label,test_class=None):
 cases=[
  ('ProbeMode.java','ProbeModeTest',b'UHD(3840, 2160, "4K buffer");',b'UHD(1920, 1080, "4K buffer");'),
  ('YuvPlaneFiller.java','YuvPlaneFillerTest',b'if (rowStride < minimumRowStride) {',b'if (false) {'),
+ ('VideoProbeSpec.java','VideoProbeSpecTest',b'static final int WIDTH = 3840;',b'static final int WIDTH = 1920;'),
 ]
 proofs=[]
 for filename,test_class,needle,replacement in cases:
