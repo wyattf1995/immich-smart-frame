@@ -6,7 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function loadScript({ connectNative, historyValues = [], frames, push = false, documentReady = true, sharedSession = "session-1", sharedSlide = "slide-1" } = {}) {
+function loadScript({ connectNative, historyValues = [], frames, push = false, documentReady = true, sharedSession = "session-1", sharedSlide = "slide-1", sharedPaused = false } = {}) {
   const events = [];
   const nativeMessages = [];
   const diagnosticMessages = [];
@@ -40,7 +40,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false, d
   kioskContainer.classList = { contains: (name) => push && name === "transition-push" };
   const kiosk = makeElement();
   kiosk.id = "kiosk";
-  kiosk.dataset = { sharedPlaybackSession: sharedSession, sharedPlaybackSlide: sharedSlide };
+  kiosk.dataset = { sharedPlaybackSession: sharedSession, sharedPlaybackSlide: sharedSlide, sharedPlaybackPaused: String(sharedPaused) };
   kiosk.parentElement = kioskContainer;
   const progress = makeElement();
   const frameList = (frames || []).map(({ images, visible = true, animations = [] }) => {
@@ -730,8 +730,8 @@ test("a no-content Kiosk response keeps capture closed until a later settled res
 test("authoritative shared state replaces stale native pause desire and duplicate state is idempotent", () => {
   const runtime = loadScript();
   runtime.port.listener({ type: "pause", paused: true });
-  runtime.fireRawEvent("frame:shared-playback-state", { target: runtime.kiosk, detail: { sharedPlaybackPaused: false } });
-  runtime.fireRawEvent("frame:shared-playback-state", { target: runtime.kiosk, detail: { sharedPlaybackPaused: false } });
+  runtime.fireRawEvent("frame:shared-playback-state", { target: runtime.kiosk, detail: JSON.stringify({ sharedPlaybackPaused: false }) });
+  runtime.fireRawEvent("frame:shared-playback-state", { target: runtime.kiosk, detail: JSON.stringify({ sharedPlaybackPaused: false }) });
   assert.equal(runtime.body.classList.contains("polling-paused"), false);
   assert.equal(runtime.events.filter((event) => event.code === "KeyP").length, 2);
   assert.deepEqual(runtime.nativeMessages.map(({ type, epoch }) => ({ type, epoch })), [
@@ -743,11 +743,29 @@ test("shared settlement requires current decoded history-image pair and advances
   const asset = "11111111-1111-4111-8111-111111111111";
   const runtime = loadScript({ historyValues: [`*${asset}:one`], frames: [{ images: ["data:image/jpeg;base64,one"] }] });
   runtime.runMicrotasks();
-  runtime.fireRawEvent("frame:shared-photo-settled", { target: runtime.kiosk, detail: { sharedPlaybackPaused: true } });
+  runtime.kiosk.dataset.sharedPlaybackPaused = "true";
+  runtime.fireRawEvent("frame:shared-photo-settled", { target: runtime.kiosk, detail: JSON.stringify({ sharedPlaybackPaused: true }) });
   assert.deepEqual(runtime.nativeMessages.map(({ type, epoch }) => ({ type, epoch })), [
     { type: "loaded-photo", epoch: undefined }, { type: "shared-photo-settled", epoch: 1 },
   ]);
   runtime.kiosk.dataset.sharedPlaybackSlide = "bad slide";
-  runtime.fireRawEvent("frame:shared-photo-settled", { target: runtime.kiosk, detail: { sharedPlaybackPaused: false } });
+  runtime.kiosk.dataset.sharedPlaybackPaused = "false";
+  runtime.fireRawEvent("frame:shared-photo-settled", { target: runtime.kiosk, detail: JSON.stringify({ sharedPlaybackPaused: false }) });
   assert.equal(runtime.nativeMessages.filter(({ type }) => type === "shared-photo-settled").length, 1);
+});
+
+test("shared playback ignores page-owned, malformed, oversized, throwing, and dataset-mismatched details", () => {
+  const runtime = loadScript();
+  const invalid = [
+    { sharedPlaybackPaused: false },
+    "{",
+    JSON.stringify({ sharedPlaybackPaused: false, padding: "x".repeat(600) }),
+    JSON.stringify({ sharedPlaybackPaused: true }),
+  ];
+  invalid.forEach((detail) => assert.doesNotThrow(() => runtime.fireRawEvent("frame:shared-playback-state", { target: runtime.kiosk, detail })));
+  const throwing = { target: runtime.kiosk };
+  Object.defineProperty(throwing, "detail", { get() { throw new Error("page-owned detail"); } });
+  assert.doesNotThrow(() => runtime.fireRawEvent("frame:shared-playback-state", throwing));
+  assert.equal(runtime.nativeMessages.filter(({ type }) => type === "shared-playback-state").length, 0);
+  assert.equal(runtime.body.classList.contains("polling-paused"), false);
 });
