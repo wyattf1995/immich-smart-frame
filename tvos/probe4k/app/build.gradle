@@ -1,0 +1,30 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.wyattfleming.frametv.probe4k'
+    compileSdk 36
+    // Matches the admitted NAS TV toolchain; do not trigger SDK installation in its read-only SDK.
+    buildToolsVersion '36.0.0'
+
+    defaultConfig {
+        applicationId 'com.wyattfleming.frametv.probe4k'
+        minSdk 28
+        targetSdk 36
+        versionCode 1
+        versionName '0.1.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildTypes {
+        // NAS exports an unsigned development APK. Signing happens only on the Mac.
+        debug { signingConfig null }
+        release { minifyEnabled false }
+    }
+    lint { abortOnError true }
+}
+
+dependencies { testImplementation 'junit:junit:4.13.2' }
