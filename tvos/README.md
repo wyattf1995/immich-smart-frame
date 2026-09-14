@@ -74,7 +74,8 @@ bash tvos/tools/nas-build.sh
 ```
 
 The script runs JVM tests, two source-only negative checks of URL security,
-restores exact source bytes, reruns the tests, compiles an **unsigned** debug APK,
+and a source-only negative check of partial-row remote navigation. It restores
+exact source bytes, reruns the tests, compiles an **unsigned** debug APK,
 and runs Android lint. It emits source hashes, APK identity and test/lint logs.
 No signing key or household configuration belongs in the NAS snapshot. Signing
 is a separate local step.
@@ -100,3 +101,17 @@ that exact component to roll back. Never disable vendor packages as a shortcut.
 On the initial Sony test unit the observed previous component was
 `com.google.android.tvlauncher/.MainActivity`; confirm it again on other TVs.
 An LG webOS television cannot install this Android APK directly.
+
+### Sony XBR-65A8F limitation verified on Android 9
+
+The system launcher has HOME intent priority 2. Android accepts and saves the
+Frame TV preference, but the resolver and physical Home key still choose Sony's
+launcher. Always verify the actual Home key; a `Success` command response is
+insufficient. The tested preference was restored to the stock component.
+
+Android 9 chooses a higher-priority activity before consulting the saved
+preference and caps normal apps' positive filter priorities to zero. See
+[the Android 9 resolver source](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r30/services/core/java/com/android/server/pm/PackageManagerService.java).
+This prototype leaves the stock launcher enabled, so launch Frame TV as a normal
+app on this model. Disabling the stock launcher would remove the current Sony
+Home escape and needs a separately designed and verified recovery path.
