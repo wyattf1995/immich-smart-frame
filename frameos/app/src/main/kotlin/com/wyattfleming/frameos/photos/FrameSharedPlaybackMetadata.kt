@@ -6,7 +6,7 @@ import java.nio.charset.StandardCharsets
 
 /** Strictly recognizes the server-authoritative shared playback URL option. */
 object FrameSharedPlaybackMetadata {
-    private val group = Regex("[a-z0-9][a-z0-9_-]{0,63}")
+    private val group = Regex("[a-z0-9][a-z0-9_-]{0,47}")
 
     fun configuredGroup(photosUrl: String?): String? {
         val query = runCatching { URI(photosUrl ?: return null).rawQuery }.getOrNull() ?: return null
