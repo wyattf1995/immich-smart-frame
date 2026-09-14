@@ -9,6 +9,7 @@ const MAX_PORT_RETRY_DELAY_MS = 60000;
 const MAX_SETTLING_KIOSK_REQUESTS = 4;
 const MAX_DIAGNOSTICS_PER_PAGE = 16;
 const MAX_DIAGNOSTIC_EPOCH = 4096;
+const MAX_SHARED_PLAYBACK_DETAIL_CHARS = 512;
 const SHARED_SCALAR = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 let lastFingerprint = "";
 let inFlightFingerprint = "";
@@ -223,8 +224,26 @@ function sharedPlaybackPayload(event, requireSettled) {
   if (!(kiosk instanceof HTMLElement) || event.target !== kiosk) return null;
   const sessionId = kiosk.dataset.sharedPlaybackSession;
   const slideId = kiosk.dataset.sharedPlaybackSlide;
-  const paused = event.detail && event.detail.sharedPlaybackPaused;
-  if (!SHARED_SCALAR.test(sessionId || "") || !SHARED_SCALAR.test(slideId || "") || typeof paused !== "boolean") return null;
+  const datasetPaused = kiosk.dataset.sharedPlaybackPaused;
+  let serializedDetail;
+  try {
+    serializedDetail = event.detail;
+  } catch (_) {
+    return null;
+  }
+  // Firefox content scripts may not read page-owned CustomEvent detail objects.
+  // A primitive JSON string crosses the isolated-world boundary safely.
+  if (typeof serializedDetail !== "string" || serializedDetail.length > MAX_SHARED_PLAYBACK_DETAIL_CHARS) return null;
+  let detail;
+  try {
+    detail = JSON.parse(serializedDetail);
+  } catch (_) {
+    return null;
+  }
+  const paused = detail && detail.sharedPlaybackPaused;
+  if (!SHARED_SCALAR.test(sessionId || "") || !SHARED_SCALAR.test(slideId || "") ||
+      typeof paused !== "boolean" || (datasetPaused !== "true" && datasetPaused !== "false") ||
+      paused !== (datasetPaused === "true")) return null;
   if (requireSettled) {
     // This is a DOM pair validation only. It does not pretend an HTMX request settled.
     const histories = Array.from(document.querySelectorAll("#kiosk-history input[name='history']"))
