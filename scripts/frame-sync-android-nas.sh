@@ -266,7 +266,7 @@ import zipfile, sys
 from pathlib import Path
 root, report, output = map(Path, sys.argv[1:])
 with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
-    for base in (report, root/'frameos/app/build/reports', root/'frameos/app/build/test-results', root/'tvos/validation'):
+    for base in (report, root/'frameos/app/build/reports', root/'frameos/app/build/test-results', root/'tvos/app/build/reports', root/'tvos/app/build/test-results', root/'tvos/validation'):
         if base.exists():
             for p in sorted(base.rglob('*')):
                 if p.is_file() and p.suffix in {'.html','.json','.txt','.xml'}:
