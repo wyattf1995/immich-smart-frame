@@ -11,7 +11,7 @@ def run(label,test_class=None):
 cases=[
  ('ProbeMode.java','ProbeModeTest',b'UHD(3840, 2160, "4K buffer");',b'UHD(1920, 1080, "4K buffer");'),
  ('YuvPlaneFiller.java','YuvPlaneFillerTest',b'if (rowStride < minimumRowStride) {',b'if (false) {'),
- ('VideoProbeSpec.java','VideoProbeSpecTest',b'static final int WIDTH = 3840;',b'static final int WIDTH = 1920;'),
+ ('VideoProbeSpec.java','VideoProbeSpecTest',b'if (width != WIDTH || height != HEIGHT) {',b'if (false) {'),
 ]
 proofs=[]
 for filename,test_class,needle,replacement in cases:
@@ -36,4 +36,4 @@ for filename,test_class,needle,replacement in cases:
 # Preserve the complete suite results in the exported evidence, not just the last focused test.
 assert (green:=run('all-green'))==0
 (root/'reports/source-proof.json').write_text(json.dumps({'passed':True,'sourceRestoredExactly':True,'testsUnchanged':True,'redExit':proofs[0]['redExit'],'greenExit':green,'proofs':proofs},indent=2)+'\n')
-print('Both source-only regressions failed; exact sources restored; all unchanged tests passed.')
+print('All source-only regressions failed; exact sources restored; all unchanged tests passed.')
