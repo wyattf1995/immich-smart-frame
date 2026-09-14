@@ -51,8 +51,9 @@ https://your-home-assistant.example/wall-panel/cameras?kiosk
 https://your-home-assistant.example/wall-panel/calendar?kiosk
 ```
 
-These views must already exist. Weather currently opens a configured web page;
-the frame's native cached weather integration is not part of this first build.
+These views must already exist. Calendar opens its configured calendar route directly in the existing signed-in
+profile. Weather opens a native full-screen forecast; its legacy web URL is kept
+for configuration compatibility but is not used by the Weather tile.
 Photos opens an existing Immich Kiosk page. It does not copy the frame's offline
 photo reserve, extensions, gesture controls, or native overlays.
 
@@ -116,9 +117,13 @@ insufficient. The tested preference was restored to the stock component.
 Android 9 chooses a higher-priority activity before consulting the saved
 preference and caps normal apps' positive filter priorities to zero. See
 [the Android 9 resolver source](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r30/services/core/java/com/android/server/pm/PackageManagerService.java).
-This prototype leaves the stock launcher enabled, so launch Frame TV as a normal
-app on this model. Disabling the stock launcher would remove the current Sony
-Home escape and needs a separately designed and verified recovery path.
+The stock launcher remains enabled. On 2026-09-13, an activity-only disable
+and re-enable were both rejected by Android with `Shell cannot change component
+state`. The preferred HOME was restored to stock and its resolver verified.
+A full-package disable is a separate, broader choice and has not been performed.
+The host-side restore command successfully enables the stock launcher package,
+sets its HOME preference and verifies the resolver; actual recovery from a disabled
+package and reboot persistence remain unverified until that choice is authorized.
 
 ### Forest home and native forecast (0.3.3)
 
@@ -161,3 +166,18 @@ records on the test TV, and native home displayed Home Assistant attribution.
 This verifies the forecast-only path; it does not imply background HA refresh.
 Official provider documentation: https://open-meteo.com/en/docs and
 https://open-meteo.com/en/docs/geocoding-api.
+
+
+### Direct Weather and Calendar (0.4.0)
+
+The Weather tile opens an API-28 native full-screen activity using the same bounded
+forecast source as the home widget. Its still sky/terrain scene follows conditions;
+current conditions, five daily forecasts and eight hourly entries fit the screen.
+Left/Right page through the hours, Menu opens weather-source setup, and Back exits.
+It creates no WebView, background service or wake lock. The HA snapshot/fallback
+and refresh limits above still apply; opening Weather does not start HA.
+
+Calendar directly loads the configured `/wall-panel/calendar?kiosk` route using
+the existing sign-in profile. The month view was verified on the Sony without
+first visiting the Home dashboard. HA's frontend still loads to display Calendar.
+No Home Assistant server/dashboard configuration was changed.
