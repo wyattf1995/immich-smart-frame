@@ -1,6 +1,6 @@
 diff --git a/ci/shared-playback-nas.sh b/ci/shared-playback-nas.sh
 new file mode 100755
-index 0000000..93cf113
+index 0000000..3fabbaa
 --- /dev/null
 +++ b/ci/shared-playback-nas.sh
 @@ -0,0 +1,139 @@
@@ -109,7 +109,7 @@ index 0000000..93cf113
 +mapfile -t go_test_packages < <("$node_bin" -e '
 +const fs=require("fs"),path=require("path");
 +const identity=JSON.parse(fs.readFileSync("/run/agent-source-identity.json","utf8"));
-+const dirs=[...new Set(Object.keys(identity.files).filter(p=>p.endsWith(".go")).map(p=>path.posix.dirname(p)))].sort();
++const dirs=[...new Set(Object.keys(identity.files).filter(p=>p.endsWith(".go")||p.endsWith(".templ")).map(p=>path.posix.dirname(p)))].sort();
 +if(!dirs.length||dirs.some(p=>p!=="."&&!/^[a-zA-Z0-9_/-]+$/.test(p)))process.exit(64);
 +console.log(dirs.map(p=>p==="."?".":"./"+p).join("\n"));')
 +[[ ${#go_test_packages[@]} -gt 0 ]] || { printf 'no source Go packages\n' >&2; exit 66; }
