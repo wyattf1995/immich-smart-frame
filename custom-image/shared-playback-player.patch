@@ -1,9 +1,9 @@
 diff --git a/frontend/src/ts/shared-playback.ts b/frontend/src/ts/shared-playback.ts
 new file mode 100644
-index 0000000..921a997
+index 0000000..e7cbace
 --- /dev/null
 +++ b/frontend/src/ts/shared-playback.ts
-@@ -0,0 +1,399 @@
+@@ -0,0 +1,400 @@
 +import DOMPurify from "dompurify";
 +
 +export type SharedSlide = {
@@ -276,6 +276,7 @@ index 0000000..921a997
 +    for (const node of holder.querySelectorAll("*")) {
 +        for (const attribute of Array.from(node.attributes)) {
 +            if (/^(on|hx-|data-hx-)/i.test(attribute.name)) node.removeAttribute(attribute.name);
++            if (attribute.name === "style") node.setAttribute("style", attribute.value.replace(/url\([^)]*\)/gi, "none"));
 +            if ((attribute.name === "src" || attribute.name === "href") && node instanceof HTMLImageElement) {
 +                const value = attribute.value;
 +                if (!value.startsWith("data:image/jpeg") && !sameOriginPath(value, origin)) node.removeAttribute(attribute.name);
