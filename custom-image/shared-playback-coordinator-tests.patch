@@ -1,9 +1,9 @@
 diff --git a/internal/playback/coordinator_test.go b/internal/playback/coordinator_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..cf717409faa2496179076b369b0bdbbb16b35073
+index 0000000000000000000000000000000000000000..c27e6f9949875f07e105581745a3c62690882b8c
 --- /dev/null
 +++ b/internal/playback/coordinator_test.go
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,452 @@
 +package playback
 +
 +import (
@@ -371,4 +371,88 @@ index 0000000000000000000000000000000000000000..cf717409faa2496179076b369b0bdbbb
 +		time.Sleep(time.Millisecond)
 +	}
 +	t.Fatal("idle group did not retire")
++}
++
++func TestAutomaticAdvanceKeepsPreparedDeadlineAndAllowsBoundedHistoryRepeat(t *testing.T) {
++	clock := newFakeClock()
++	loader := newQueuedLoader()
++	coordinator := newTestCoordinator(t, clock, loader, GroupConfig{})
++	initial := prepareTwoSlides(t, coordinator, loader)
++	preparedStart := initial.Next.StartsAt
++
++	clock.Advance(13 * time.Second)
++	waitCalls(t, loader, 1)
++	// The loader receives history only as an exclusion hint. A small valid
++	// catalogue may legitimately return asset-a once it is no longer displayed.
++	loader.enqueue("asset-a")
++	advanced := waitState(t, coordinator, func(state State) bool {
++		return state.Current != nil && state.Next != nil && state.Current.AssetID == "asset-b" && state.Next.AssetID == "asset-a"
++	})
++	if !advanced.Current.StartsAt.Equal(preparedStart) {
++		t.Fatalf("automatic advance rewrote prepared deadline: got %s want %s", advanced.Current.StartsAt, preparedStart)
++	}
++}
++
++func TestReplayedAndRestartedCommandsAreRejected(t *testing.T) {
++	clock := newFakeClock()
++	loader := newQueuedLoader()
++	config := GroupConfig{ID: "downstairs", Duration: 10 * time.Second, IdleTimeout: 10 * time.Second}
++	coordinator := newTestCoordinator(t, clock, loader, config)
++	state := prepareTwoSlides(t, coordinator, loader)
++	command := Command{Action: Next, ExpectedEpoch: state.Epoch, ExpectedVersion: state.Version}
++	if _, err := coordinator.Command("downstairs", command); err != nil {
++		t.Fatalf("first next: %v", err)
++	}
++	waitCalls(t, loader, 1)
++	loader.enqueue("asset-c")
++	waitState(t, coordinator, func(state State) bool {
++		return state.Current != nil && state.Next != nil && state.Current.AssetID == "asset-b" && state.Next.AssetID == "asset-c"
++	})
++	if _, err := coordinator.Command("downstairs", command); !errors.Is(err, ErrVersionConflict) {
++		t.Fatalf("replayed next error = %v, want version conflict", err)
++	}
++
++	clock.Advance(10 * time.Second)
++	deadline := time.Now().Add(time.Second)
++	for time.Now().Before(deadline) {
++		coordinator.mu.Lock()
++		retired := len(coordinator.sessions) == 0
++		coordinator.mu.Unlock()
++		if retired {
++			break
++		}
++		time.Sleep(time.Millisecond)
++	}
++	coordinator.mu.Lock()
++	retired := len(coordinator.sessions) == 0
++	coordinator.mu.Unlock()
++	if !retired {
++		t.Fatal("session did not retire before restart check")
++	}
++	if _, err := coordinator.State("downstairs"); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := coordinator.Command("downstairs", command); !errors.Is(err, ErrVersionConflict) {
++		t.Fatalf("old epoch command error = %v, want version conflict", err)
++	}
++}
++
++func TestCloseJoinsBlockedLoader(t *testing.T) {
++	clock := newFakeClock()
++	loader := newQueuedLoader()
++	coordinator := newTestCoordinator(t, clock, loader, GroupConfig{})
++	if _, err := coordinator.State("downstairs"); err != nil {
++		t.Fatal(err)
++	}
++	waitCalls(t, loader, 1)
++	done := make(chan struct{})
++	go func() {
++		coordinator.Close()
++		close(done)
++	}()
++	select {
++	case <-done:
++	case <-time.After(time.Second):
++		t.Fatal("Close did not join the canceled loader")
++	}
 +}

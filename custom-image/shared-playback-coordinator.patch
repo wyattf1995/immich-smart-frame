@@ -1,9 +1,9 @@
 diff --git a/internal/playback/coordinator.go b/internal/playback/coordinator.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..83a18e4507ffc9cd927fe2f7ef5caaedaf28c414
+index 0000000000000000000000000000000000000000..741d2ab7e80f2222819812a1688584dd81758b52
 --- /dev/null
 +++ b/internal/playback/coordinator.go
-@@ -0,0 +1,623 @@
+@@ -0,0 +1,619 @@
 +// Package playback coordinates optional, server-authoritative photo playback
 +// groups. It contains no renderer or device-preference state: routes choose and
 +// render assets around this small, bounded state machine.
@@ -303,7 +303,6 @@ index 0000000000000000000000000000000000000000..83a18e4507ffc9cd927fe2f7ef5caaed
 +		s.mu.Lock()
 +		if !s.retired {
 +			s.markReadLocked()
-+			snapshot := s.snapshotLocked()
 +			s.mu.Unlock()
 +			return s, nil
 +		}
@@ -356,7 +355,7 @@ index 0000000000000000000000000000000000000000..83a18e4507ffc9cd927fe2f7ef5caaed
 +			s.version++
 +		}
 +	case Next:
-+		if !s.promoteNextLocked(now) {
++		if !s.promoteNextLocked(now, true) {
 +			return s.snapshotLocked(), ErrNotReady
 +		}
 +	case Previous:
@@ -441,7 +440,7 @@ index 0000000000000000000000000000000000000000..83a18e4507ffc9cd927fe2f7ef5caaed
 +	s.mu.Lock()
 +	defer s.mu.Unlock()
 +	s.loading = false
-+	if err != nil || asset.ID == "" || s.containsAssetLocked(asset.ID) {
++	if err != nil || asset.ID == "" || s.currentOrPreparedContainsAssetLocked(asset.ID) {
 +		s.attempts++
 +		s.retryAt = s.coordinator.clock.Now().Add(s.config.RetryDelay)
 +		s.version++
@@ -499,10 +498,10 @@ index 0000000000000000000000000000000000000000..83a18e4507ffc9cd927fe2f7ef5caaed
 +	if s.paused || s.next == nil || now.Before(s.next.slide.StartsAt) {
 +		return false
 +	}
-+	return s.promoteNextLocked(now)
++	return s.promoteNextLocked(now, false)
 +}
 +
-+func (s *session) promoteNextLocked(now time.Time) bool {
++func (s *session) promoteNextLocked(now time.Time, explicit bool) bool {
 +	if s.next == nil {
 +		return false
 +	}
@@ -510,7 +509,9 @@ index 0000000000000000000000000000000000000000..83a18e4507ffc9cd927fe2f7ef5caaed
 +		s.pushHistoryLocked(s.current.asset)
 +	}
 +	s.current = s.next
-+	s.current.slide.StartsAt = now.Add(s.config.PreloadLead)
++	if explicit {
++		s.current.slide.StartsAt = now.Add(s.config.PreloadLead)
++	}
 +	s.next = nil
 +	s.attempts = 0
 +	s.version++
@@ -569,17 +570,12 @@ index 0000000000000000000000000000000000000000..83a18e4507ffc9cd927fe2f7ef5caaed
 +	return ids
 +}
 +
-+func (s *session) containsAssetLocked(id string) bool {
++func (s *session) currentOrPreparedContainsAssetLocked(id string) bool {
 +	if s.current != nil && s.current.asset.ID == id {
 +		return true
 +	}
 +	if s.next != nil && s.next.asset.ID == id {
 +		return true
-+	}
-+	for _, asset := range s.history {
-+		if asset.ID == id {
-+			return true
-+		}
 +	}
 +	return false
 +}
