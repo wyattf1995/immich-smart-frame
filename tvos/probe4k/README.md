@@ -7,7 +7,7 @@ The three explicit activities test different routes:
 
 - `.ProbeActivity`: GLES 2 RGB `SurfaceView`, switchable 1920×1080 / 3840×2160.
 - `.YuvProbeActivity`: CPU-filled YV12 `ImageWriter`, switchable HD / UHD.
-- `.VideoProbeActivity`: one 3840×2160 HEVC frame decoded to an opaque `SurfaceView`.
+- `.VideoProbeActivity`: one 3840×2160 HEVC Main 5.1 High-tier frame decoded to an opaque `SurfaceView`.
 
 The package is `com.wyattfleming.frametv.probe4k`. Logs use `Frame4KProbe`.
 Only the GLES activity has a launcher intent; other activities are shell-launchable.
@@ -32,9 +32,15 @@ would establish full-resolution luma detail, not full-resolution RGB photo color
 
 Use the pinned Linux Android NAS runtime and the existing `tvos/gradlew` wrapper.
 Run `bash tvos/probe4k/tools/nas-build.sh` in an admitted clean source transport.
-The script generates its original synthetic HEVC asset with a checksum-pinned
-Linux FFmpeg binary, verifies that decoding exactly reproduces its 4K reference,
-then runs compilation, lint, JVM tests, and source-only negative tests. Each
+The script generates two original synthetic HEVC assets with a checksum-pinned
+Linux FFmpeg binary. The original lossless fixture must decode exactly to its 4K
+reference, but x265 advertises Level 8.5 for that fixture and the Sony did not
+admit a decoder for it. The selected Main 5.1 High-tier fixture uses explicit
+bitrate limits and must preserve luma within eight code values, keep neutral
+chroma exact, and pass independent bitstream profile/level verification. A
+source-only over-compression mutation must fail this unchanged detail guard.
+
+The script then runs compilation, lint, JVM tests, and source-only negative tests. Each
 negative changes only a production guard, requires an assertion failure, restores
 identical source bytes, and reruns unchanged tests. The final full-suite run is
 included in the exported report. No user photos or credentials are build inputs.
@@ -44,9 +50,10 @@ Declare these NAS artifacts and a fresh local output destination:
 - `tvos/probe4k/app/build/outputs/apk/debug/app-debug-unsigned.apk`
 - `tvos/probe4k/reports/validation.zip`
 - `tvos/probe4k/app/src/main/res/raw/probe4k_hevc.mp4`
+- `tvos/probe4k/app/src/main/res/raw/probe4k_hevc_main51.mp4`
 
-The fixture MP4 is generated during the NAS build, not checked-in source. Its
-recipe, encoded checksum, exact decoded comparison, and exported artifact bind it
+The fixture MP4s are generated during the NAS build, not checked-in source. Their
+recipes, encoded checksums, decoded comparisons, and exported artifacts bind them
 to the build. Signing stays local. Check package identity before updating or
 removing the diagnostic app, and verify its buffers are released after exit.
 
