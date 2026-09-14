@@ -24,6 +24,11 @@ final class WeatherSymbol extends View {
         super.onDraw(canvas);
         canvas.save();
         canvas.scale(getWidth() / 32f, getHeight() / 32f);
+        drawSymbol(canvas, paint, path, code, day);
+        canvas.restore();
+    }
+
+    static void drawSymbol(Canvas canvas, Paint paint, Path path, Integer code, Boolean day) {
         paint.setStyle(Paint.Style.FILL);
         if (code == null || code < 0) {
             paint.setColor(0xFFADB7C6);
@@ -42,10 +47,10 @@ final class WeatherSymbol extends View {
             paint.setStrokeWidth(2);
             canvas.drawCircle(16, 16, 8, paint);
         } else if (code <= 2) {
-            if (code == 0 || Boolean.TRUE.equals(day)) sun(canvas, code == 0 ? 16 : 12, code == 0 ? 16 : 12);
-            if (code > 0) cloud(canvas);
+            if (code == 0 || Boolean.TRUE.equals(day)) sun(canvas, paint, code == 0 ? 16 : 12, code == 0 ? 16 : 12);
+            if (code > 0) cloud(canvas, paint);
         } else if (code == 3 || code == 45 || code == 48 || code >= 51 && code <= 99) {
-            cloud(canvas);
+            cloud(canvas, paint);
             paint.setColor(0xFF91C9FF);
             paint.setStrokeWidth(2);
             if (code == 45 || code == 48) {
@@ -62,10 +67,9 @@ final class WeatherSymbol extends View {
                 for (int x = 9; x <= 23; x += 7) canvas.drawLine(x, 24, x - 2, 29, paint);
             }
         }
-        canvas.restore();
     }
 
-    private void sun(Canvas canvas, float x, float y) {
+    private static void sun(Canvas canvas, Paint paint, float x, float y) {
         paint.setColor(0xFFFFDA59);
         canvas.drawCircle(x, y, 6, paint);
         paint.setStrokeWidth(2);
@@ -76,7 +80,7 @@ final class WeatherSymbol extends View {
         }
     }
 
-    private void cloud(Canvas canvas) {
+    private static void cloud(Canvas canvas, Paint paint) {
         paint.setColor(0xFFE5E9F0);
         canvas.drawCircle(9, 16, 5, paint);
         canvas.drawCircle(16, 12, 7, paint);

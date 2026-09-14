@@ -1,93 +1,41 @@
 package com.wyattfleming.frametv;
 
-import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
-import android.os.Handler;
-import android.os.Looper;
-import android.view.Gravity;
-import android.view.View;
 import android.widget.LinearLayout;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
-import java.io.BufferedInputStream;
-import java.io.ByteArrayOutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.TimeZone;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
-/** Compact, native, cached weather summary. It has no WebView, service, cookie, or credential access. */
+/** Compact native forecast; its source is active only while this screen is resumed. */
 public final class WeatherWidget extends LinearLayout {
-    private static final int MAX_RESPONSE_BYTES = 128 * 1024;
-    private final WeatherPreferences preferences;
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private final Handler main = new Handler(Looper.getMainLooper());
     private final WeatherPanel panel;
-    private volatile HttpURLConnection activeConnection;
-    private boolean resumed;
-    private boolean closed;
-    private boolean loading;
-    private long requestNumber;
-    private final Runnable refresh = new Runnable() {
-        @Override public void run() {
-            if (!closed && resumed) {
-                loadIfNeeded();
-                main.postDelayed(this, WeatherCachePolicy.REFRESH_MILLIS);
-            }
-        }
-    };
+    private final WeatherSource source;
 
     public WeatherWidget(Context context) {
         super(context);
-        preferences = new WeatherPreferences(context);
         setOrientation(VERTICAL);
-        setPadding(0, 0, 0, 0);
-        setGravity(Gravity.CENTER_VERTICAL);
         setFocusable(true);
         setClickable(true);
         setTag("weather:configure");
         setBackground(panelBackground(context));
-        setOnClickListener(view -> openLocationSetup());
         setContentDescription("Weather forecast. Press Select to choose Home Assistant or a city.");
+        setOnClickListener(view -> getContext().startActivity(new Intent(getContext(), WeatherSetupActivity.class)));
         panel = new WeatherPanel(context);
-        addView(panel, new LinearLayout.LayoutParams(-1, -2));
-        showUnconfigured();
+        addView(panel, new LayoutParams(-1, -2));
+        source = new WeatherSource(context, new WeatherSource.Listener() {
+            @Override public void onWeather(WeatherForecast forecast, String label, long fetchedAt, String provider) {
+                panel.forecast(forecast, label, fetchedAt, provider);
+            }
+            @Override public void onStatus(String title, String detail, String provider) {
+                panel.message(title, detail, provider);
+            }
+        });
     }
 
-    public void resume() {
-        if (closed) return;
-        resumed = true;
-        loadIfNeeded();
-        main.removeCallbacks(refresh);
-        main.postDelayed(refresh, WeatherCachePolicy.REFRESH_MILLIS);
-    }
-
-    public void pause() {
-        resumed = false;
-        requestNumber++;
-        loading = false;
-        main.removeCallbacks(refresh);
-        HttpURLConnection connection = activeConnection;
-        if (connection != null) connection.disconnect();
-    }
-
-    public void close() {
-        if (closed) return;
-        closed = true;
-        pause();
-        executor.shutdownNow();
-        main.removeCallbacksAndMessages(null);
-    }
+    public void resume() { source.resume(); }
+    public void pause() { source.pause(); }
+    public void close() { source.close(); }
 
     private StateListDrawable panelBackground(Context context) {
         StateListDrawable states = new StateListDrawable();
@@ -105,165 +53,4 @@ public final class WeatherWidget extends LinearLayout {
         return panel;
     }
 
-    private void loadIfNeeded() {
-        WeatherLocation location = preferences.location();
-        long now = System.currentTimeMillis();
-        String homeAddress = new TvPreferences(getContext()).url(Feature.HOME);
-        if (preferences.homeAssistantPreferred() && WeatherCachePolicy.isUsable(homeAddress,
-                preferences.homeAssistantSource(), preferences.homeAssistantFetchedAt(), now)) {
-            try {
-                showForecast(parseForecast(preferences.homeAssistantJson()), location == null ? "Home" : location.label,
-                        preferences.homeAssistantFetchedAt(), true, "Home Assistant");
-                return;
-            } catch (JSONException ignored) { /* Use the public forecast when HA has no usable snapshot. */ }
-        }
-        if (location == null) { showUnconfigured(); return; }
-        boolean usable = WeatherCachePolicy.isUsable(location.sourceKey(), preferences.cachedSource(), preferences.fetchedAt(), now);
-        if (usable) {
-            try { showForecast(parseForecast(preferences.cachedJson()), location.label, preferences.fetchedAt(), true, "Open-Meteo"); }
-            catch (JSONException ignored) { usable = false; }
-        } else {
-            panel.message(location.label, "Loading hourly and daily weather…", "Open-Meteo");
-        }
-        if (!loading && (!usable || WeatherCachePolicy.shouldRefresh(preferences.fetchedAt(), now))) fetch(location);
-    }
-
-    private void fetch(WeatherLocation location) {
-        loading = true;
-        final long request = ++requestNumber;
-        final String sourceKey = location.sourceKey();
-        executor.execute(() -> {
-            String payload = null;
-            Exception failure = null;
-            try { payload = requestForecast(location); }
-            catch (Exception error) { failure = error; }
-            final String response = payload;
-            final Exception result = failure;
-            main.post(() -> {
-                WeatherLocation currentLocation = preferences.location();
-                if (closed || !resumed || request != requestNumber || currentLocation == null
-                        || !sourceKey.equals(currentLocation.sourceKey())) return;
-                loading = false;
-                if (response != null) {
-                    try {
-                        WeatherForecast forecast = parseForecast(response);
-                        preferences.saveForecast(sourceKey, response, System.currentTimeMillis());
-                        showForecast(forecast, location.label, System.currentTimeMillis(), false, "Open-Meteo");
-                        return;
-                    } catch (JSONException malformed) { resultError(location, "Forecast data needs a retry"); return; }
-                }
-                if (!WeatherCachePolicy.isUsable(location.sourceKey(), preferences.cachedSource(), preferences.fetchedAt(), System.currentTimeMillis()))
-                    resultError(location, "Weather is temporarily unavailable");
-            });
-        });
-    }
-
-    private String requestForecast(WeatherLocation location) throws Exception {
-        String address = "https://api.open-meteo.com/v1/forecast?latitude=" + location.latitude
-                + "&longitude=" + location.longitude
-                + "&current=temperature_2m,weather_code"
-                + "&hourly=temperature_2m,weather_code,precipitation_probability,is_day"
-                + "&daily=temperature_2m_max,temperature_2m_min,weather_code"
-                + "&timezone=auto&timeformat=unixtime&temperature_unit=fahrenheit&forecast_days=5";
-        HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
-        activeConnection = connection;
-        connection.setConnectTimeout(7000);
-        connection.setReadTimeout(7000);
-        connection.setRequestProperty("Accept", "application/json");
-        long deadline = System.currentTimeMillis() + 10_000L;
-        try {
-            if (connection.getResponseCode() != 200) throw new java.io.IOException("Weather service response unavailable");
-            try (BufferedInputStream input = new BufferedInputStream(connection.getInputStream());
-                 ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-                byte[] buffer = new byte[4096];
-                int read;
-                while ((read = input.read(buffer)) != -1) {
-                    if (System.currentTimeMillis() > deadline) throw new java.io.IOException("Weather request timed out");
-                    if (output.size() + read > MAX_RESPONSE_BYTES) throw new java.io.IOException("Weather response was too large");
-                    output.write(buffer, 0, read);
-                }
-                return output.toString("UTF-8");
-            }
-        } finally {
-            activeConnection = null;
-            connection.disconnect();
-        }
-    }
-
-    private void showUnconfigured() {
-        panel.message("Weather", "Press Select to use Home Assistant or choose a city.", "Hourly and daily forecast");
-    }
-
-    private void resultError(WeatherLocation location, String message) {
-        panel.message(location.label, message + ". Press Select to try another source.", "Open-Meteo");
-    }
-
-    private void showForecast(WeatherForecast forecast, String label, long fetchedAt, boolean cached, String provider) {
-        panel.forecast(forecast, label, fetchedAt, provider);
-    }
-
-    private void openLocationSetup() {
-        Intent intent = new Intent(getContext(), WeatherSetupActivity.class);
-        if (!(getContext() instanceof Activity)) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        getContext().startActivity(intent);
-    }
-
-    static WeatherForecast parseForecast(String payload) throws JSONException {
-        JSONObject root = new JSONObject(payload);
-        JSONObject current = root.getJSONObject("current");
-        JSONObject hourly = root.getJSONObject("hourly");
-        JSONObject daily = root.getJSONObject("daily");
-        JSONArray hourTimes = hourly.getJSONArray("time");
-        JSONArray hourTemps = hourly.getJSONArray("temperature_2m");
-        JSONArray hourCodes = hourly.optJSONArray("weather_code");
-        JSONArray precipitation = hourly.optJSONArray("precipitation_probability");
-        JSONArray daylight = hourly.optJSONArray("is_day");
-        List<WeatherForecast.Hour> hours = new ArrayList<>();
-        for (int i = 0; i < hourTimes.length(); i++) hours.add(new WeatherForecast.Hour(
-                longAt(hourTimes, i, -1), numberAt(hourTemps, i), integerAt(hourCodes, i), integerAt(precipitation, i), daylightAt(daylight, i)));
-        JSONArray dayTimes = daily.getJSONArray("time");
-        JSONArray highs = daily.getJSONArray("temperature_2m_max");
-        JSONArray lows = daily.getJSONArray("temperature_2m_min");
-        JSONArray dayCodes = daily.optJSONArray("weather_code");
-        List<WeatherForecast.Day> days = new ArrayList<>();
-        for (int i = 0; i < dayTimes.length(); i++) days.add(new WeatherForecast.Day(
-                longAt(dayTimes, i, -1), numberAt(highs, i), numberAt(lows, i), integerAt(dayCodes, i)));
-        String id = root.optString("timezone", "UTC");
-        TimeZone zone = TimeZone.getTimeZone(id);
-        return new WeatherForecast(numberAt(current, "temperature_2m"), integerAt(current, "weather_code"), hours, days, zone);
-    }
-
-    private static Boolean daylightAt(JSONArray values, int index) {
-        Integer flag = integerAt(values, index);
-        return flag == null || (flag != 0 && flag != 1) ? null : flag == 1;
-    }
-    private static Double numberAt(JSONArray values, int index) {
-        if (values == null || index < 0 || index >= values.length() || values.isNull(index)) return null;
-        Object item = values.opt(index);
-        if (!(item instanceof Number)) return null;
-        double value = ((Number) item).doubleValue();
-        return Double.isFinite(value) ? value : null;
-    }
-    private static Integer integerAt(JSONArray values, int index) {
-        if (values == null || index < 0 || index >= values.length() || values.isNull(index)) return null;
-        Object item = values.opt(index);
-        if (!(item instanceof Number)) return null;
-        double value = ((Number) item).doubleValue();
-        return !Double.isFinite(value) || Math.rint(value) != value ? null : (int) value;
-    }
-    private static long longAt(JSONArray values, int index, long fallback) { return values == null || index < 0 || index >= values.length() || values.isNull(index) ? fallback : values.optLong(index, fallback); }
-    private static Double numberAt(JSONObject object, String key) {
-        if (object.isNull(key)) return null;
-        Object item = object.opt(key);
-        if (!(item instanceof Number)) return null;
-        double value = ((Number) item).doubleValue();
-        return Double.isFinite(value) ? value : null;
-    }
-    private static Integer integerAt(JSONObject object, String key) {
-        if (object.isNull(key)) return null;
-        Object item = object.opt(key);
-        if (!(item instanceof Number)) return null;
-        double value = ((Number) item).doubleValue();
-        return !Double.isFinite(value) || Math.rint(value) != value ? null : (int) value;
-    }
 }

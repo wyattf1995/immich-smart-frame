@@ -63,7 +63,7 @@ final class HomeAssistantForecastCapture {
                 String status = value.optString("status");
                 if (status.equals("ready")) {
                     String forecast = value.getJSONObject("forecast").toString();
-                    WeatherWidget.parseForecast(forecast); // Reject malformed data before caching it.
+                    WeatherSource.parseForecast(forecast); // Reject malformed data before caching it.
                     preferences.saveHomeAssistantForecast(source, forecast, System.currentTimeMillis());
                     return;
                 }

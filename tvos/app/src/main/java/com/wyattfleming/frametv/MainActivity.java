@@ -223,7 +223,7 @@ public final class MainActivity extends Activity {
         int column = 0;
         for (Feature feature : Feature.values()) {
             String id = "feature:" + feature.name();
-            boolean configured = preferences.configured(feature);
+            boolean configured = feature == Feature.WEATHER || preferences.configured(feature);
             String detail = configured ? feature.description : "Set up " + feature.title;
             android.widget.Button tile = TvUi.compactButton(this, feature.title + "\n" + detail,
                     () -> openFeature(feature));
@@ -325,6 +325,10 @@ public final class MainActivity extends Activity {
     }
 
     private void openFeature(Feature feature) {
+        if (feature == Feature.WEATHER) {
+            startActivity(new Intent(this, WeatherActivity.class));
+            return;
+        }
         if (!preferences.configured(feature)) {
             configure();
             return;
@@ -367,6 +371,18 @@ public final class MainActivity extends Activity {
     }
 
     private void openOtherHome() {
+        ComponentName stock = new ComponentName("com.google.android.tvlauncher", "com.google.android.tvlauncher.MainActivity");
+        int state;
+        try { state = getPackageManager().getComponentEnabledSetting(stock); }
+        catch (IllegalArgumentException missing) { state = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT; }
+        if (state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                || state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) {
+            new android.app.AlertDialog.Builder(this).setTitle("Frame TV is your homepage")
+                    .setMessage("To bring back Sony Home, run Restore Sony Home.command from your Mac’s Desktop. TV settings are still available here.")
+                    .setPositiveButton("TV settings", (dialog, which) -> openSettings())
+                    .setNegativeButton("Close", null).show();
+            return;
+        }
         Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
         for (ResolveInfo resolve : getPackageManager().queryIntentActivities(home, 0)) {
