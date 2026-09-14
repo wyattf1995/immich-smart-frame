@@ -140,3 +140,11 @@ transitions). The original 0.2.10 failure and screenshots remain retained alongs
 Rollback instructions and exact original APK/config identities are in
 `ROLLBACK.md` under the evidence root. Neither ROM reboot nor physical APK downgrade
 was performed; long-term shutdown/restart resolution is outside these checks.
+
+Final signed APK, signature/badging, R8 map, release manifest, sanitized physical
+acceptance receipts and rollback instructions were separately archived with all
+eight server-side checksums verified:
+`/mnt/user/agent-archives/frame-sync-final-0211-20260914-074815-59a62b4ea278`.
+Original files remain local; private household-photo screenshots were not uploaded.
+The temporary TV DevTools forward was removed, Lenovo ADB was disconnected, and
+both devices remained in automatic Photos mode.
