@@ -1,9 +1,9 @@
 diff --git a/frontend/src/ts/shared-playback.ts b/frontend/src/ts/shared-playback.ts
 new file mode 100644
-index 0000000..06e2c7f
+index 0000000..cc795ed
 --- /dev/null
 +++ b/frontend/src/ts/shared-playback.ts
-@@ -0,0 +1,313 @@
+@@ -0,0 +1,323 @@
 +import DOMPurify from "dompurify";
 +
 +export type SharedSlide = {
@@ -70,6 +70,8 @@ index 0000000..06e2c7f
 +    private readonly prepared = new Map<string, PreparedSlide>();
 +    private renderedId: string | undefined;
 +    private commandInFlight = false;
++    private requestedState = 0;
++    private acceptedState = 0;
 +
 +    constructor(private readonly ports: SharedPlaybackPorts) {}
 +
@@ -101,8 +103,9 @@ index 0000000..06e2c7f
 +        const generation = this.generation;
 +        const expectedVersion = this.state.version;
 +        const sessionId = this.state.sessionId;
++        const requestId = ++this.requestedState;
 +        this.withTimeout((signal) => this.ports.sendCommand(action, expectedVersion, sessionId, signal))
-+            .then((state) => this.accept(state, generation))
++            .then((state) => this.accept(state, generation, requestId))
 +            .catch(() => {
 +                if (this.active(generation)) this.pollSoon(0);
 +            })
@@ -116,6 +119,7 @@ index 0000000..06e2c7f
 +        if (this.disposed || !this.visible) return;
 +        this.pollTimer = undefined;
 +        const generation = this.generation;
++        const requestId = ++this.requestedState;
 +        const sentAt = this.ports.now();
 +        this.withTimeout((signal) => this.ports.fetchState(signal))
 +            .then((state) => {
@@ -125,7 +129,7 @@ index 0000000..06e2c7f
 +                this.offsetMs = state.serverNow - ((sentAt + receivedAt) / 2);
 +                this.retryMs = POLL_MS;
 +                this.ports.status("connected");
-+                this.accept(state, generation);
++                this.accept(state, generation, requestId);
 +            })
 +            .catch(() => {
 +                if (!this.active(generation)) return;
@@ -135,8 +139,14 @@ index 0000000..06e2c7f
 +            });
 +    }
 +
-+    private accept(state: SharedPlaybackState, generation: number): void {
++    private accept(state: SharedPlaybackState, generation: number, requestId: number): void {
 +        if (!this.active(generation) || !validState(state)) return;
++        if (requestId < this.acceptedState) return;
++        if (
++            this.state && state.sessionId === this.state.sessionId &&
++            state.version < this.state.version
++        ) return;
++        this.acceptedState = requestId;
 +        const sessionChanged = this.state && this.state.sessionId !== state.sessionId;
 +        this.state = state;
 +        this.ports.paused(state.paused);
