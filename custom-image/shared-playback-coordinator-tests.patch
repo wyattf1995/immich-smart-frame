@@ -1,9 +1,9 @@
 diff --git a/internal/playback/coordinator_test.go b/internal/playback/coordinator_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..c27e6f9949875f07e105581745a3c62690882b8c
+index 0000000..fc04ad8
 --- /dev/null
 +++ b/internal/playback/coordinator_test.go
-@@ -0,0 +1,452 @@
+@@ -0,0 +1,517 @@
 +package playback
 +
 +import (
@@ -129,6 +129,66 @@ index 0000000000000000000000000000000000000000..c27e6f9949875f07e105581745a3c626
 +	s.mu.Lock()
 +	defer s.mu.Unlock()
 +	return s.snapshotLocked()
++}
++
++func waitRawState(t *testing.T, coordinator *Coordinator, match func(State) bool) State {
++	t.Helper()
++	deadline := time.Now().Add(time.Second)
++	for time.Now().Before(deadline) {
++		state := rawState(coordinator)
++		if match(state) {
++			return state
++		}
++		time.Sleep(time.Millisecond)
++	}
++	state := rawState(coordinator)
++	t.Fatalf("timed out waiting for raw playback state: %+v", state)
++	return State{}
++}
++
++func waitClockWaiter(t *testing.T, clock *fakeClock) {
++	t.Helper()
++	deadline := time.Now().Add(time.Second)
++	for time.Now().Before(deadline) {
++		clock.mu.Lock()
++		armed := len(clock.waiters) > 0
++		clock.mu.Unlock()
++		if armed {
++			return
++		}
++		time.Sleep(time.Millisecond)
++	}
++	t.Fatal("timed out waiting for fake clock waiter")
++}
++
++func waitClockWaiterAt(t *testing.T, clock *fakeClock, due time.Time) {
++	t.Helper()
++	deadline := time.Now().Add(time.Second)
++	for time.Now().Before(deadline) {
++		clock.mu.Lock()
++		armed := false
++		for _, waiter := range clock.waiters {
++			if waiter.at.Equal(due) {
++				armed = true
++				break
++			}
++		}
++		clock.mu.Unlock()
++		if armed {
++			return
++		}
++		time.Sleep(time.Millisecond)
++	}
++	t.Fatalf("timed out waiting for fake clock waiter at %s", due)
++}
++
++func requireNoLoaderCall(t *testing.T, loader *queuedLoader) {
++	t.Helper()
++	select {
++	case request := <-loader.calls:
++		t.Fatalf("unexpected loader call after retry limit: %+v", request)
++	case <-time.After(50 * time.Millisecond):
++	}
 +}
 +
 +func waitCalls(t *testing.T, loader *queuedLoader, count int) []LoadRequest {
@@ -302,24 +362,29 @@ index 0000000000000000000000000000000000000000..c27e6f9949875f07e105581745a3c626
 +	clock.Advance(13 * time.Second)
 +	waitCalls(t, loader, 1)
 +	loader.results <- loaderResult{err: errors.New("offline")}
++	waitRawState(t, coordinator, func(state State) bool {
++		return state.Current != nil && state.Current.AssetID == "asset-b" && state.Next == nil && !state.Loading
++	})
++	// finishLoad records retryAt asynchronously; ensure its fake-clock waiter is
++	// armed before moving test time past that deadline.
++	waitClockWaiterAt(t, clock, clock.Now().Add(time.Second))
 +	clock.Advance(time.Second)
 +	waitCalls(t, loader, 1)
 +	loader.results <- loaderResult{err: errors.New("offline")}
-+	deadline := time.Now().Add(time.Second)
-+	state := rawState(coordinator)
-+	for time.Now().Before(deadline) {
-+		state = rawState(coordinator)
-+		if state.Current != nil && state.Current.AssetID == "asset-b" && !state.Loading {
-+			break
-+		}
-+		time.Sleep(time.Millisecond)
-+	}
++	state := waitRawState(t, coordinator, func(state State) bool {
++		return state.Current != nil && state.Current.AssetID == "asset-b" && state.Next == nil && !state.Loading
++	})
 +	if state.Current == nil || state.Current.AssetID != "asset-b" || state.Loading {
 +		t.Fatalf("failed preload did not settle while retaining current: %+v", state)
 +	}
 +	if state.Next != nil {
 +		t.Fatalf("failed preload should retain current without a next slide: %+v", state)
 +	}
++	// The session must finish planning after the second failure before time moves
++	// again; a remaining retry timer would produce a third loader call here.
++	waitClockWaiter(t, clock)
++	clock.Advance(10 * time.Second)
++	requireNoLoaderCall(t, loader)
 +}
 +
 +func TestEpochAndAssetPrivacyAcrossRestart(t *testing.T) {
