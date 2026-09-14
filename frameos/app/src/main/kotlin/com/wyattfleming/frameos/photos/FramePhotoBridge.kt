@@ -323,8 +323,10 @@ class FramePhotoBridge(
             sharedPlaybackSession = sessionId
             sharedPlaybackEpoch = epochValue
         } else if (sharedPlaybackSession != sessionId || epochValue < sharedPlaybackEpoch) return false
-        // SHARED_SETTLED_PAUSED_SNAPSHOT: only a verified newer server settle may refresh paused capture authority.
+        // BEGIN shared paused snapshot refresh
+        // Only a verified newer server settle may refresh paused capture authority.
         if (type == SHARED_SETTLED_TYPE && paused) issueSharedSettledPausedSnapshot()
+        // END shared paused snapshot refresh
         if (sharedPlaybackPaused == paused) return true
         sharedPlaybackPaused = paused
         onSharedPlaybackState(SharedPlaybackState(sessionId, slideId, paused, epochValue))
