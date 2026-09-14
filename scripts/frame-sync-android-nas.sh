@@ -66,7 +66,8 @@ bootstrap_api37_sdk() {
   python3 - "$sdk_dir" "$sdk_bootstrap_report" "$platform_url" "$platform_sha256" "$build_tools_url" "$build_tools_sha256" <<'PY'
 import hashlib, json, sys
 from pathlib import Path
-sdk, report, platform_url, platform_sha, tools_url, tools_sha = map(Path, sys.argv[1:])
+sdk, report = map(Path, sys.argv[1:3])
+platform_url, platform_sha, tools_url, tools_sha = sys.argv[3:]
 def props(path):
     return dict(line.split('=', 1) for line in path.read_text().splitlines() if '=' in line)
 platform = props(sdk/'platforms/android-37.0/source.properties')
