@@ -3,6 +3,7 @@ package com.wyattfleming.frameos.control
 import com.wyattfleming.frameos.navigation.FrameMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FrameControlCommandCodecTest {
@@ -33,5 +34,26 @@ class FrameControlCommandCodecTest {
         assertEquals(FrameControlCommand.Show(FrameMode.CALENDAR), command)
         assertEquals(command, codec.decodeStored(codec.encode(requireNotNull(command))))
         assertNull(codec.decodeStored("unknown"))
+    }
+
+    @Test
+    fun `Photos sync group contract only admits one bounded receiver operation`() {
+        assertEquals(
+            FrameControlContract.PhotosSyncGroupCommand.Set("living-room"),
+            FrameControlContract.photosSyncGroupCommand(hasSyncGroup = true, syncGroup = "living-room", querySyncGroup = false),
+        )
+        assertEquals(
+            FrameControlContract.PhotosSyncGroupCommand.Set(""),
+            FrameControlContract.photosSyncGroupCommand(hasSyncGroup = true, syncGroup = null, querySyncGroup = false),
+        )
+        assertEquals(
+            FrameControlContract.PhotosSyncGroupCommand.Query,
+            FrameControlContract.photosSyncGroupCommand(hasSyncGroup = false, syncGroup = null, querySyncGroup = true),
+        )
+        assertEquals(
+            FrameControlContract.PhotosSyncGroupCommand.Invalid,
+            FrameControlContract.photosSyncGroupCommand(hasSyncGroup = true, syncGroup = "living-room", querySyncGroup = true),
+        )
+        assertTrue(FrameControlContract.photosSyncGroupCommand(false, null, false) == null)
     }
 }
