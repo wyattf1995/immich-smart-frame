@@ -234,6 +234,7 @@ restore_bridge_source
 printf 'source-negative shared playback reconnect guard failed as expected and restored exact bytes\n' | tee -a "$report_dir/source-negative-proof.txt"
 run_step frameos-reconnect-guard-green bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest --tests '$parser_test'"
 
+run_step frameos-shared-settle-proof python3 "$root_dir/scripts/verify-frame-shared-settle-proof.py" "$root_dir"
 run_step frameos-unit-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 testDebugUnitTest lintDebug assembleRelease"
 # AGP may install an SDK-managed duplicate of the manually extracted API 37.
 # Verify every candidate platform's payload against the reviewed archive, so
