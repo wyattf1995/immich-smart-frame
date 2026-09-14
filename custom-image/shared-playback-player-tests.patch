@@ -1,9 +1,9 @@
 diff --git a/frontend/tests/shared-playback.test.ts b/frontend/tests/shared-playback.test.ts
 new file mode 100644
-index 0000000..99427ee
+index 0000000..701cefd
 --- /dev/null
 +++ b/frontend/tests/shared-playback.test.ts
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,158 @@
 +import assert from "node:assert/strict";
 +import test from "node:test";
 +
@@ -93,6 +93,22 @@ index 0000000..99427ee
 +    const h = harness([state({ loading: true })]);
 +    h.controller.start(); await settle();
 +    assert.deepEqual(h.rendered, ["a"]);
++});
++
++test("a failing next prefetch does not delay the decoded current photo", async () => {
++    const rendered: string[] = [];
++    const controller = new SharedPlaybackController({
++        now: () => 1_000,
++        setTimer: () => 1 as unknown as ReturnType<typeof setTimeout>, clearTimer: () => undefined,
++        fetchState: async () => state(), sendCommand: async () => state(),
++        prepare: async (value) => {
++            if (value.id === "b") throw new Error("next unavailable");
++            return { id: value.id };
++        },
++        render: (value) => rendered.push(value.id), status: () => undefined, paused: () => undefined,
++    });
++    controller.start(); await settle();
++    assert.deepEqual(rendered, ["a"]);
 +});
 +
 +test("stale fetches, hidden pages, and disposal cannot render newer work", async () => {
