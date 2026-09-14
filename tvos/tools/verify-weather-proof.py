@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove weather-cache tests reject reusing a forecast for a different city."""
+"""Prove the cache source and local-day forecast guards have executable tests."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path.cwd()
 SOURCE = ROOT / "app/src/main/java/com/wyattfleming/frametv/WeatherCachePolicy.java"
+FORECAST_SOURCE = ROOT / "app/src/main/java/com/wyattfleming/frametv/WeatherForecast.java"
 RESULTS = ROOT / "app/build/test-results/testDebugUnitTest"
 VALIDATION = ROOT / "validation"
 TEST_CLASS = "com.wyattfleming.frametv.WeatherForecastTest"
@@ -35,6 +36,12 @@ def make_source_unsafe(source: bytes) -> bytes:
         raise RuntimeError("the expected cache-source guard was not found exactly once")
     return source.replace(old, b"// unsafe proof mutation: accepts a cached forecast from another location")
 
+def make_day_filter_unsafe(source: bytes) -> bytes:
+    old = b"localDay(day.epochSeconds).compareTo(today) < 0"
+    if source.count(old) != 1:
+        raise RuntimeError("the expected local-day filter was not found exactly once")
+    return source.replace(old, b"false")
+
 def combine_logs(paths: tuple[Path, ...], destination: Path) -> None:
     with destination.open("wb") as combined:
         for path in paths:
@@ -42,33 +49,42 @@ def combine_logs(paths: tuple[Path, ...], destination: Path) -> None:
             if path.exists(): combined.write(path.read_bytes())
 
 def main() -> int:
-    if not SOURCE.is_file() or not (ROOT / "gradlew").is_file():
+    if not SOURCE.is_file() or not FORECAST_SOURCE.is_file() or not (ROOT / "gradlew").is_file():
         print("Run from the tvos directory containing gradlew and app/.", file=sys.stderr)
         return 2
     VALIDATION.mkdir(exist_ok=True)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     initial_log = VALIDATION / ("weather-proof-initial-" + stamp + ".log")
-    negative_log = VALIDATION / ("weather-proof-negative-" + stamp + ".log")
+    cache_negative_log = VALIDATION / ("weather-proof-cache-negative-" + stamp + ".log")
+    day_negative_log = VALIDATION / ("weather-proof-day-negative-" + stamp + ".log")
     final_log = VALIDATION / ("weather-proof-final-" + stamp + ".log")
     receipt, combined_log = VALIDATION / "weather-proof.json", VALIDATION / "weather-proof.log"
-    original = SOURCE.read_bytes()
-    outcome = {"timestamp_utc": stamp, "source": str(SOURCE.relative_to(ROOT))}
+    original, forecast_original = SOURCE.read_bytes(), FORECAST_SOURCE.read_bytes()
+    outcome = {"timestamp_utc": stamp, "sources": [str(SOURCE.relative_to(ROOT)), str(FORECAST_SOURCE.relative_to(ROOT))]}
     try:
         outcome["initial_full_test_exit"] = run(GRADLE, initial_log)
         if outcome["initial_full_test_exit"] != 0: raise RuntimeError("initial full unit test run was not green")
         SOURCE.write_bytes(make_source_unsafe(original))
-        outcome["negative_targeted_test_exit"] = run(GRADLE + ["--tests", TEST_CLASS], negative_log)
-        outcome["negative_test_failures"] = actual_failures()
-        if outcome["negative_targeted_test_exit"] == 0: raise RuntimeError("unsafe cache source unexpectedly passed")
-        if outcome["negative_test_failures"] < 1: raise RuntimeError("negative run did not record a weather test failure")
+        outcome["cache_negative_targeted_test_exit"] = run(GRADLE + ["--tests", TEST_CLASS + ".cacheRejectsAChangedLocationAndExpiredOrFutureSnapshots"], cache_negative_log)
+        outcome["cache_negative_test_failures"] = actual_failures()
+        if outcome["cache_negative_targeted_test_exit"] == 0: raise RuntimeError("unsafe cache source unexpectedly passed")
+        if outcome["cache_negative_test_failures"] < 1: raise RuntimeError("cache negative run did not record a weather test failure")
+        SOURCE.write_bytes(original)
+        FORECAST_SOURCE.write_bytes(make_day_filter_unsafe(forecast_original))
+        outcome["day_negative_targeted_test_exit"] = run(GRADLE + ["--tests", TEST_CLASS + ".dropsYesterdayWhenAReusableSnapshotCrossesLocalMidnight"], day_negative_log)
+        outcome["day_negative_test_failures"] = actual_failures()
+        if outcome["day_negative_targeted_test_exit"] == 0: raise RuntimeError("unsafe local-day filter unexpectedly passed")
+        if outcome["day_negative_test_failures"] < 1: raise RuntimeError("day negative run did not record a weather test failure")
     finally:
         SOURCE.write_bytes(original)
-        outcome["source_restored_exactly"] = SOURCE.read_bytes() == original
+        FORECAST_SOURCE.write_bytes(forecast_original)
+        outcome["source_restored_exactly"] = SOURCE.read_bytes() == original and FORECAST_SOURCE.read_bytes() == forecast_original
         outcome["final_full_test_exit"] = run(GRADLE, final_log)
         outcome["passed"] = (outcome.get("initial_full_test_exit") == 0
-            and outcome.get("negative_targeted_test_exit") != 0 and outcome.get("negative_test_failures", 0) >= 1
+            and outcome.get("cache_negative_targeted_test_exit") != 0 and outcome.get("cache_negative_test_failures", 0) >= 1
+            and outcome.get("day_negative_targeted_test_exit") != 0 and outcome.get("day_negative_test_failures", 0) >= 1
             and outcome["source_restored_exactly"] and outcome["final_full_test_exit"] == 0)
-        logs = (initial_log, negative_log, final_log)
+        logs = (initial_log, cache_negative_log, day_negative_log, final_log)
         combine_logs(logs, combined_log)
         outcome["logs"] = [str(path.relative_to(ROOT)) for path in (*logs, combined_log)]
         receipt.write_text(json.dumps(outcome, indent=2, sort_keys=True) + "\n", encoding="utf-8")
