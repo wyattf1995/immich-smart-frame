@@ -148,3 +148,49 @@ eight server-side checksums verified:
 Original files remain local; private household-photo screenshots were not uploaded.
 The temporary TV DevTools forward was removed, Lenovo ADB was disconnected, and
 both devices remained in automatic Photos mode.
+
+
+## Shared-photo density correction — verified September 14, 2026
+
+The Sony photo page measured 960×540 CSS pixels at DPR 2. Shared playback had
+requested that CSS size directly, so the TV enlarged under-resolution photos.
+Source commit `64af09d` applies device pixel ratio before the existing 3840×2160
+clamps. Tests are separate in `ca1ed7b8`; proof/CI wiring is in `7226810f`.
+Product patch commits are `3451d9c` (source) and `cb052f2` (tests/proof wiring).
+
+NAS job `frame-photo-quality-20260914-081322-9f7c24a22f33` passed frontend tests,
+TypeScript/build, all Go package tests, targeted race checks, shared browser tests,
+and DPR1/DPR2/DPR3 image-request/decode checks. All five source-only proofs passed.
+In the density proof, forcing pixelRatio=1 failed the unchanged Sony1920×1080
+assertion with actual960×540; restoring exact source bytes passed. The decoded
+source fixture was not upscaled in the capped DPR3 case.
+
+Validated source: `7226810f99f976aaeea3cc2b28b93d7e1af04512`.
+Binary SHA256: `106f4caf6c7793373ca3467cfd516540ed4c95e53fcd0a678e076fbcae4176ae`.
+Live image: `local/immich-smart-frame:quality-7226810f-20260914`, ID
+`sha256:835d0be4d25f4a54f2926fe55783b760f1e746083bfcd22942e727f7e2bbabb1`.
+The server activated at2026-09-14T15:30:35Z, healthy, with byte-identical config.yaml
+and Compose; AI-caption admission and renderer/source limits remain intact.
+
+The TV photo WebView alone was reloaded. Eight observations spanning three
+automatic photos confirmed1920×1080 requests, decoded810×1080 portrait and
+1620×1080 landscape photos, connected status, and a displayed-slide match to the
+shared server state. A1920×1080 device screenshot was visually reviewed. This
+matches the TV's current Android render surface, not native4K panel output.
+No APK update or Lenovo access occurred. The exact temporary screenshot file and
+ADB forward were removed; the shared ADB server and other devices were untouched.
+
+Rollback image: `local/immich-smart-frame:rollback-pre-quality-20260914`.
+Prior environment/config/Compose/Dockerfile backup:
+`/mnt/user/appdata/immich-kiosk/backups/pre-quality-20260914`.
+Restore the prior KIOSK_IMAGE selection and recreate only immich-kiosk with
+`docker compose up -d --no-build --no-deps --force-recreate immich-kiosk`; keep
+config.yaml in place. Physical rollback was not exercised after this activation.
+
+Evidence root: `/Users/wyattfleming/.codex/private/frame-performance-audit-20260914`.
+`QUALITY-RELEASE.json`, `quality-validation.json`, `tv-quality-after.json` and
+`tv-sync-after.json` record the source, proofs, release and actual-device results.
+NAS archive: `/mnt/user/agent-archives/frame-photo-quality-20260914-081841-20af02bc43aa`.
+Export/archive checksums passed and the build workspace was retired. The ZIP
+contains proof logs and pass/fail receipts, but its existing flat exporter omitted
+nested density screenshots/JSON; those are not claimed as retained evidence.
