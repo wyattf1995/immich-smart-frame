@@ -204,6 +204,7 @@ public final class VideoProbeActivity extends Activity implements SurfaceHolder.
             extractor.setDataSource(asset.getFileDescriptor(), asset.getStartOffset(), asset.getLength());
             MediaFormat inputFormat = select4kVideoTrack(extractor);
             String mime = inputFormat.getString(MediaFormat.KEY_MIME);
+            logCandidateCapabilities(inputFormat, mime);
             String decoderName = new MediaCodecList(MediaCodecList.REGULAR_CODECS).findDecoderForFormat(inputFormat);
             if (decoderName == null) throw new IllegalStateException("no decoder for " + mime);
             if (!logDecoderCapabilities(decoderName, mime)) {
@@ -235,6 +236,25 @@ public final class VideoProbeActivity extends Activity implements SurfaceHolder.
             }
         }
         throw new IllegalStateException("4K HEVC asset has no video track");
+    }
+
+    private void logCandidateCapabilities(MediaFormat format, String mime) {
+        for (String key : new String[] {"profile", "level", "bitrate", "max-input-size"}) {
+            if (format.containsKey(key)) Log.i(TAG, "video_input_" + key + '=' + format.getInteger(key));
+        }
+        for (MediaCodecInfo candidate : new MediaCodecList(MediaCodecList.ALL_CODECS).getCodecInfos()) {
+            if (candidate.isEncoder()) continue;
+            for (String type : candidate.getSupportedTypes()) {
+                if (!type.equals(mime)) continue;
+                MediaCodecInfo.CodecCapabilities caps = candidate.getCapabilitiesForType(type);
+                MediaCodecInfo.VideoCapabilities video = caps.getVideoCapabilities();
+                Log.i(TAG, "video_candidate name=" + candidate.getName()
+                        + " supports_4k=" + video.isSizeSupported(VideoProbeSpec.WIDTH, VideoProbeSpec.HEIGHT)
+                        + " supports_input=" + caps.isFormatSupported(format)
+                        + " tunneled=" + caps.isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_TUNNELED_PLAYBACK)
+                        + " bitrate_range=" + video.getBitrateRange());
+            }
+        }
     }
 
     private boolean logDecoderCapabilities(String decoderName, String mime) {

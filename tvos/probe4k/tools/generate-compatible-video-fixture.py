@@ -8,7 +8,7 @@ command=[str(work/'ffmpeg'),'-hide_banner','-y','-threads','2','-filter_threads'
  '-stream_loop','7','-f','rawvideo','-pixel_format','yuv420p','-video_size','3840x2160',
  '-framerate','15','-i',str(work/'reference.yuv'),'-frames:v','8','-an','-c:v','libx265',
  '-preset','medium','-crf','0','-threads','2','-x265-params',
- 'pools=1:frame-threads=1:wpp=0:level-idc=5.1:high-tier=1:vbv-maxrate=120000:vbv-bufsize=120000',
+ 'pools=1:frame-threads=1:wpp=0:level-idc=5.1:high-tier=1:vbv-maxrate=50000:vbv-bufsize=50000',
  '-tag:v','hvc1','-movflags','+faststart',str(output)]
 p=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=90)
 (root/'reports/video-compatible-encode.log').write_text(p.stdout)
