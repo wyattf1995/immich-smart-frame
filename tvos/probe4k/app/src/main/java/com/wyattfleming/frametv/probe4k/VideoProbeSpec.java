@@ -12,7 +12,7 @@ final class VideoProbeSpec {
 
     static void requireExpectedDimensions(int width, int height) {
         if (width != WIDTH || height != HEIGHT) {
-            throw new IllegalArgumentException("expected 3840x2160 input, got " + width + "x" + height);
+            throw new IllegalArgumentException("expected 3840x2160 dimensions, got " + width + "x" + height);
         }
     }
 

@@ -206,7 +206,9 @@ public final class VideoProbeActivity extends Activity implements SurfaceHolder.
             String mime = inputFormat.getString(MediaFormat.KEY_MIME);
             String decoderName = new MediaCodecList(MediaCodecList.REGULAR_CODECS).findDecoderForFormat(inputFormat);
             if (decoderName == null) throw new IllegalStateException("no decoder for " + mime);
-            logDecoderCapabilities(decoderName, mime);
+            if (!logDecoderCapabilities(decoderName, mime)) {
+                throw new IllegalStateException("decoder does not report 3840x2160 support: " + decoderName);
+            }
             codec = MediaCodec.createByCodecName(decoderName);
             codec.configure(inputFormat, outputSurface, null, 0);
             codec.start();
@@ -235,7 +237,7 @@ public final class VideoProbeActivity extends Activity implements SurfaceHolder.
         throw new IllegalStateException("4K HEVC asset has no video track");
     }
 
-    private void logDecoderCapabilities(String decoderName, String mime) {
+    private boolean logDecoderCapabilities(String decoderName, String mime) {
         MediaCodecInfo info = null;
         for (MediaCodecInfo candidate : new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
             if (candidate.getName().equals(decoderName)) {
@@ -245,8 +247,10 @@ public final class VideoProbeActivity extends Activity implements SurfaceHolder.
         }
         if (info == null) throw new IllegalStateException("decoder vanished from codec list: " + decoderName);
         MediaCodecInfo.VideoCapabilities video = info.getCapabilitiesForType(mime).getVideoCapabilities();
+        boolean supported = video.isSizeSupported(VideoProbeSpec.WIDTH, VideoProbeSpec.HEIGHT);
         Log.i(TAG, "video_decoder name=" + decoderName + " supports_3840x2160="
-                + video.isSizeSupported(VideoProbeSpec.WIDTH, VideoProbeSpec.HEIGHT));
+                + supported);
+        return supported;
     }
 
     private void feedAndRenderFirstFrame(long workGeneration) {
@@ -307,9 +311,13 @@ public final class VideoProbeActivity extends Activity implements SurfaceHolder.
         int top = VideoProbeSpec.cropStartOrDefault(topValue, height);
         int right = VideoProbeSpec.cropEndOrDefault(rightValue, width);
         int bottom = VideoProbeSpec.cropEndOrDefault(bottomValue, height);
+        int visibleWidth = VideoProbeSpec.cropSize(left, right);
+        int visibleHeight = VideoProbeSpec.cropSize(top, bottom);
+        // A coded 2176-pixel height is acceptable only when its crop is precisely 2160 pixels.
+        VideoProbeSpec.requireExpectedDimensions(visibleWidth, visibleHeight);
         Log.i(TAG, "video_output dimensions=" + width + "x" + height + " crop="
                 + left + ',' + top + '-' + right + ',' + bottom + " visible="
-                + VideoProbeSpec.cropSize(left, right) + 'x' + VideoProbeSpec.cropSize(top, bottom));
+                + visibleWidth + 'x' + visibleHeight);
     }
 
     private void releaseCodecOnWorker() {
