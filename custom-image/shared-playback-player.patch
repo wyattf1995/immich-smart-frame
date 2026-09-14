@@ -1,0 +1,319 @@
+diff --git a/frontend/src/ts/shared-playback.ts b/frontend/src/ts/shared-playback.ts
+new file mode 100644
+index 0000000..06e2c7f
+--- /dev/null
++++ b/frontend/src/ts/shared-playback.ts
+@@ -0,0 +1,313 @@
++import DOMPurify from "dompurify";
++
++export type SharedSlide = {
++    id: string;
++    assetId: string;
++    startsAt: number;
++    url: string;
++};
++
++export type SharedPlaybackState = {
++    sessionId: string;
++    version: number;
++    serverNow: number;
++    paused: boolean;
++    loading: boolean;
++    current: SharedSlide | null;
++    next: SharedSlide | null;
++};
++
++export type SharedPlaybackAction = "next" | "previous" | "pause" | "resume";
++
++export type PreparedSlide = { id: string };
++
++export type SharedPlaybackPorts = {
++    now(): number;
++    setTimer(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>;
++    clearTimer(timer: ReturnType<typeof setTimeout>): void;
++    fetchState(signal: AbortSignal): Promise<SharedPlaybackState>;
++    sendCommand(
++        action: SharedPlaybackAction,
++        expectedVersion: number,
++        sessionId: string,
++        signal: AbortSignal,
++    ): Promise<SharedPlaybackState>;
++    prepare(slide: SharedSlide, signal: AbortSignal): Promise<PreparedSlide>;
++    render(prepared: PreparedSlide): void;
++    status(message: "connected" | "offline" | "error"): void;
++    paused(paused: boolean): void;
++};
++
++const POLL_MS = 1_000;
++const RETRY_MAX_MS = 15_000;
++const REQUEST_TIMEOUT_MS = 8_000;
++
++function validState(value: SharedPlaybackState): boolean {
++    return Boolean(
++        value && typeof value.sessionId === "string" &&
++        typeof value.version === "number" && typeof value.serverNow === "number" &&
++        typeof value.paused === "boolean" && typeof value.loading === "boolean",
++    );
++}
++
++/** A server-authoritative player. It intentionally never rotates from a local queue. */
++export class SharedPlaybackController {
++    private pollTimer: ReturnType<typeof setTimeout> | undefined;
++    private displayTimer: ReturnType<typeof setTimeout> | undefined;
++    private readonly requests = new Set<AbortController>();
++    private generation = 0;
++    private visible = true;
++    private disposed = false;
++    private retryMs = POLL_MS;
++    private state: SharedPlaybackState | undefined;
++    private offsetMs = 0;
++    private readonly prepared = new Map<string, PreparedSlide>();
++    private renderedId: string | undefined;
++    private commandInFlight = false;
++
++    constructor(private readonly ports: SharedPlaybackPorts) {}
++
++    start(): void {
++        if (this.disposed || !this.visible || this.pollTimer) return;
++        this.poll();
++    }
++
++    setVisible(visible: boolean): void {
++        if (this.disposed || this.visible === visible) return;
++        this.visible = visible;
++        this.generation++;
++        this.cancelWork();
++        if (visible) this.start();
++    }
++
++    dispose(): void {
++        if (this.disposed) return;
++        this.disposed = true;
++        this.visible = false;
++        this.generation++;
++        this.cancelWork();
++        this.prepared.clear();
++    }
++
++    command(action: SharedPlaybackAction): void {
++        if (this.disposed || !this.visible || this.commandInFlight || !this.state) return;
++        this.commandInFlight = true;
++        const generation = this.generation;
++        const expectedVersion = this.state.version;
++        const sessionId = this.state.sessionId;
++        this.withTimeout((signal) => this.ports.sendCommand(action, expectedVersion, sessionId, signal))
++            .then((state) => this.accept(state, generation))
++            .catch(() => {
++                if (this.active(generation)) this.pollSoon(0);
++            })
++            .finally(() => { this.commandInFlight = false; });
++    }
++
++    currentId(): string | undefined { return this.state?.current?.id; }
++    currentSessionId(): string | undefined { return this.state?.sessionId; }
++
++    private poll(): void {
++        if (this.disposed || !this.visible) return;
++        this.pollTimer = undefined;
++        const generation = this.generation;
++        const sentAt = this.ports.now();
++        this.withTimeout((signal) => this.ports.fetchState(signal))
++            .then((state) => {
++                const receivedAt = this.ports.now();
++                if (!this.active(generation) || !validState(state)) return;
++                // Midpoint minimizes asymmetry from request latency.
++                this.offsetMs = state.serverNow - ((sentAt + receivedAt) / 2);
++                this.retryMs = POLL_MS;
++                this.ports.status("connected");
++                this.accept(state, generation);
++            })
++            .catch(() => {
++                if (!this.active(generation)) return;
++                this.ports.status("offline");
++                this.pollSoon(this.retryMs);
++                this.retryMs = Math.min(RETRY_MAX_MS, this.retryMs * 2);
++            });
++    }
++
++    private accept(state: SharedPlaybackState, generation: number): void {
++        if (!this.active(generation) || !validState(state)) return;
++        const sessionChanged = this.state && this.state.sessionId !== state.sessionId;
++        this.state = state;
++        this.ports.paused(state.paused);
++        if (sessionChanged) {
++            this.generation++;
++            generation = this.generation;
++            this.prepared.clear();
++            this.renderedId = undefined;
++            this.cancelWork();
++        }
++        const wanted = [state.current, state.next].filter((slide): slide is SharedSlide => slide !== null);
++        const wantedIds = new Set(wanted.map((slide) => slide.id));
++        for (const id of this.prepared.keys()) if (!wantedIds.has(id)) this.prepared.delete(id);
++        Promise.all(wanted.filter((slide) => !this.prepared.has(slide.id)).map((slide) =>
++            this.withTimeout((signal) => this.ports.prepare(slide, signal)).then((prepared) => {
++                if (this.active(generation)) this.prepared.set(slide.id, prepared);
++            }),
++        )).then(() => {
++            if (!this.active(generation)) return;
++            this.showCurrent(state, generation);
++        }).catch(() => {
++            if (this.active(generation)) this.ports.status("error");
++        });
++        this.pollSoon(POLL_MS);
++    }
++
++    private showCurrent(state: SharedPlaybackState, generation: number): void {
++        const current = state.current;
++        if (!current || state.loading) return;
++        const prepared = this.prepared.get(current.id);
++        if (!prepared) return;
++        const delay = Math.max(0, current.startsAt - (this.ports.now() + this.offsetMs));
++        if (delay > 0) {
++            if (this.displayTimer) this.ports.clearTimer(this.displayTimer);
++            this.displayTimer = this.ports.setTimer(
++                () => this.showCurrent(state, generation), delay,
++            );
++            return;
++        }
++        if (this.renderedId !== current.id) {
++            this.ports.render(prepared);
++            this.renderedId = current.id;
++        }
++    }
++
++    private pollSoon(delay: number): void { this.schedule(() => this.poll(), delay); }
++
++    private schedule(callback: () => void, delay: number): void {
++        if (this.pollTimer) this.ports.clearTimer(this.pollTimer);
++        this.pollTimer = this.ports.setTimer(callback, Math.max(0, delay));
++    }
++
++    private cancelWork(): void {
++        if (this.pollTimer) this.ports.clearTimer(this.pollTimer);
++        if (this.displayTimer) this.ports.clearTimer(this.displayTimer);
++        this.pollTimer = undefined;
++        this.displayTimer = undefined;
++        for (const request of this.requests) request.abort();
++        this.requests.clear();
++    }
++
++    private active(generation: number): boolean {
++        return !this.disposed && this.visible && generation === this.generation;
++    }
++
++    private withTimeout<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
++        const request = new AbortController();
++        this.requests.add(request);
++        const timeout = this.ports.setTimer(() => request.abort(), REQUEST_TIMEOUT_MS);
++        return work(request.signal).finally(() => {
++            this.requests.delete(request);
++            this.ports.clearTimer(timeout);
++        });
++    }
++}
++
++type DomPreparedSlide = PreparedSlide & { frame: HTMLElement };
++export type StartSharedPlaybackOptions = { group?: string; root?: HTMLElement; document?: Document };
++
++function sameOriginPath(raw: string, base: string): string | undefined {
++    try {
++        const url = new URL(raw, base);
++        return url.origin === new URL(base).origin && /^\/(?!\/)/.test(url.pathname) ? url.toString() : undefined;
++    } catch { return undefined; }
++}
++
++function sanitizeFrame(html: string, document: Document): HTMLElement | undefined {
++    const clean = DOMPurify.sanitize(html, { FORBID_TAGS: ["script"], FORBID_ATTR: ["style"] });
++    const holder = document.createElement("div");
++    holder.innerHTML = clean;
++    for (const node of holder.querySelectorAll("*")) {
++        for (const attribute of Array.from(node.attributes)) {
++            if (/^(on|hx-|data-hx-)/i.test(attribute.name)) node.removeAttribute(attribute.name);
++        }
++    }
++    const frame = holder.matches(".frame") ? holder : holder.querySelector<HTMLElement>(".frame");
++    return frame?.cloneNode(true) as HTMLElement | undefined;
++}
++
++async function decodeFrame(frame: HTMLElement): Promise<void> {
++    await Promise.all(Array.from(frame.querySelectorAll("img")).map(async (image) => {
++        if (typeof image.decode === "function") {
++            try { await image.decode(); return; } catch { /* wait for the load event */ }
++        }
++        if (image.complete) return;
++        await new Promise<void>((resolve, reject) => {
++            image.addEventListener("load", () => resolve(), { once: true });
++            image.addEventListener("error", () => reject(new Error("image decode failed")), { once: true });
++        });
++    }));
++}
++
++/** Starts the browser adapter. Supplying no group is intentionally a no-op. */
++export function startSharedPlayback(options: StartSharedPlaybackOptions = {}): () => void {
++    const document = options.document ?? window.document;
++    const group = options.group ?? new URL(window.location.href).searchParams.get("sync_group") ?? undefined;
++    const root = options.root ?? document.querySelector<HTMLElement>("#kiosk") ?? undefined;
++    if (!group || !root) return () => undefined;
++    const origin = window.location.origin;
++    const endpoint = `/api/playback/${encodeURIComponent(group)}`;
++    const fetchJSON = async (url: string, init: RequestInit, acceptConflict = false): Promise<SharedPlaybackState> => {
++        const response = await fetch(url, { ...init, credentials: "same-origin" });
++        const length = Number(response.headers.get("content-length") ?? 0);
++        if ((!response.ok && !(acceptConflict && response.status === 409)) || length > 65_536) throw new Error(`playback request failed: ${response.status}`);
++        const body = await response.text();
++        if (body.length > 65_536) throw new Error("playback response too large");
++        return JSON.parse(body) as SharedPlaybackState;
++    };
++    const controller = new SharedPlaybackController({
++        now: () => Date.now(), setTimer: (fn, delay) => window.setTimeout(fn, delay), clearTimer: window.clearTimeout,
++        fetchState: (signal) => fetchJSON(endpoint, { signal }),
++        sendCommand: (action, expectedVersion, sessionId, signal) => fetchJSON(`${endpoint}/control`, {
++            method: "POST", signal, headers: { "content-type": "application/json" },
++            body: JSON.stringify({ action, expectedVersion, sessionId }),
++        }, true),
++        prepare: async (slide, signal) => {
++            const url = sameOriginPath(slide.url, origin);
++            if (!url) throw new Error("unsafe slide URL");
++            const response = await fetch(url, { signal, credentials: "same-origin" });
++            if (!response.ok) throw new Error("slide request failed");
++            const html = await response.text();
++            if (html.length > 262_144) throw new Error("slide partial too large");
++            const frame = sanitizeFrame(html, document);
++            if (!frame) throw new Error("slide has no frame");
++            await decodeFrame(frame);
++            return { id: slide.id, frame } as DomPreparedSlide;
++        },
++        render: (prepared) => {
++            const frame = (prepared as DomPreparedSlide).frame;
++            root.replaceChildren(frame);
++            const history = document.querySelector<HTMLInputElement>(".kiosk-history--entry");
++            if (history && controller.currentId() === prepared.id) history.value = prepared.id;
++            root.dataset.sharedPlaybackSession = controller.currentSessionId() ?? "";
++            root.dataset.sharedPlaybackSlide = prepared.id;
++            root.dispatchEvent(new Event("frame:shared-photo-settled"));
++        },
++        status: (status) => root.dataset.sharedPlaybackStatus = status,
++        paused: (paused) => document.body.classList.toggle("polling-paused", paused),
++    });
++    const command = (action: SharedPlaybackAction) => controller.command(action);
++    const onNext = () => command("next"); const onPrevious = () => command("previous");
++    document.querySelector(".navigation--next-asset")?.addEventListener("click", onNext);
++    document.querySelector(".navigation--prev-asset")?.addEventListener("click", onPrevious);
++    const onKey = (event: KeyboardEvent) => {
++        if (event.type === "keydown" && event.key.toLowerCase() === "p") command(event.shiftKey ? "resume" : "pause");
++        if (event.type === "keyup" && event.key === "ArrowRight") command("next");
++        if (event.type === "keyup" && event.key === "ArrowLeft") command("previous");
++        if (event.type === "keyup" && event.key === " ") command("pause");
++    };
++    const onVisibility = () => controller.setVisible(document.visibilityState === "visible");
++    document.addEventListener("keydown", onKey); document.addEventListener("keyup", onKey); document.addEventListener("visibilitychange", onVisibility);
++    controller.start();
++    return () => {
++        controller.dispose(); document.querySelector(".navigation--next-asset")?.removeEventListener("click", onNext);
++        document.querySelector(".navigation--prev-asset")?.removeEventListener("click", onPrevious);
++        document.removeEventListener("keydown", onKey); document.removeEventListener("keyup", onKey); document.removeEventListener("visibilitychange", onVisibility);
++    };
++}
++
++export { sameOriginPath, sanitizeFrame };
