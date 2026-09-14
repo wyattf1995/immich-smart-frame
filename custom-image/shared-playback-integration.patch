@@ -341,16 +341,17 @@ index 0000000..5e27d5f
 +}
 diff --git a/internal/routes/routes_shared_playback_assets.go b/internal/routes/routes_shared_playback_assets.go
 new file mode 100644
-index 0000000..b577553
+index 0000000..d061899
 --- /dev/null
 +++ b/internal/routes/routes_shared_playback_assets.go
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,107 @@
 +package routes
 +
 +import (
 +	"context"
 +	"fmt"
 +	"net/http"
++	"strconv"
 +	"strings"
 +
 +	"github.com/damongolding/immich-kiosk/internal/common"
@@ -406,11 +407,23 @@ index 0000000..b577553
 +// Revalidation prevents an asset newly excluded by classification from leaking
 +// back through prepared/history state. Rendering never selects another photo.
 +func renderSharedPhoto(c *echo.Context, base *config.Config, com *common.Common, group string, asset playback.Asset) error {
++	// Viewport dimensions are this endpoint's required transport fields, even
++	// when general URL configuration overrides are disabled on the server.
++	widths, heights := c.QueryParams()["client_width"], c.QueryParams()["client_height"]
++	if len(widths) != 1 || len(heights) != 1 {
++		return echo.NewHTTPError(http.StatusBadRequest, "one pair of display dimensions is required")
++	}
++	width, widthErr := strconv.Atoi(widths[0])
++	height, heightErr := strconv.Atoi(heights[0])
++	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 || int64(width) > maxRenderedOutputPixels/int64(height) {
++		return echo.NewHTTPError(http.StatusBadRequest, "valid display dimensions are required")
++	}
 +	request, err := InitializeRequestData(c, base)
 +	if err != nil || request == nil {
 +		return err
 +	}
 +	cfg := request.RequestConfig
++	cfg.ClientData.Width, cfg.ClientData.Height = width, height
 +	cfg.SelectedUser = asset.SelectedUser()
 +	cfg.ShowVideos = false
 +	cfg.LivePhotos = false
@@ -515,3 +528,25 @@ index a5a77cb..f9e865a 100644
  	e.POST("/asset/new", routes.NewAsset(baseConfig, c))
  
  	e.POST("/asset/offline", routes.OfflineMode(baseConfig, c))
+diff --git a/frontend/src/ts/shared-playback.ts b/frontend/src/ts/shared-playback.ts
+index ce856f0..05668cd 100644
+--- a/frontend/src/ts/shared-playback.ts
++++ b/frontend/src/ts/shared-playback.ts
+@@ -390,7 +390,7 @@ export function startSharedPlayback(options: StartSharedPlaybackOptions = {}): (
+             root.dataset.sharedPlaybackPaused = `${controller.isPaused()}`;
+             root.dispatchEvent(new CustomEvent("frame:shared-photo-settled", {
+                 bubbles: true,
+-                detail: { sharedPlaybackPaused: controller.isPaused() },
++                detail: JSON.stringify({ sharedPlaybackPaused: controller.isPaused() }),
+             }));
+         },
+         status: (status) => root.dataset.sharedPlaybackStatus = status,
+@@ -403,7 +403,7 @@ export function startSharedPlayback(options: StartSharedPlaybackOptions = {}): (
+             root.dataset.sharedPlaybackPaused = `${paused}`;
+             root.dispatchEvent(new CustomEvent("frame:shared-playback-state", {
+                 bubbles: true,
+-                detail: { sharedPlaybackPaused: paused },
++                detail: JSON.stringify({ sharedPlaybackPaused: paused }),
+             }));
+         },
+     });
