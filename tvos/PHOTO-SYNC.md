@@ -1,56 +1,72 @@
-# Shared photo playback proposal
+# Shared photo playback
 
-Requested September 13, 2026: when the living-room TV and Lenovo frame are both
-in Photos, show the same photograph and advance together. This is a proposed
-feature, not an installed capability. No frame or slideshow server was changed
-during this investigation.
+The implementation is opt-in and remains **not deployed** until the integrated
+NAS build and two-browser acceptance pass. Neither physical Lenovo frame was
+used for this work. Installed TV and server settings are unchanged.
 
-## Existing behavior
+## Joining a group
 
-Frame TV embeds the configured Immich Kiosk page in `DashboardActivity`. Each
-page currently requests its own photos and advances on its own timer. Using the
-same album or curation profile does not synchronize playback.
+Configure the Kiosk server with an existing curation profile and an interval:
 
-`frame_id` identifies a physical frame. The custom Kiosk uses it for preferences
-and recent-photo history (`custom-image/photo-variety.patch`); FrameOS supplies
-its Companion device ID (`FrameControlReceiver.kt`). Sharing that value would
-mix preferences and selection history. Keep a unique device ID for each display.
+```yaml
+kiosk:
+  sync_groups:
+    living-room:
+      curation_profile: balanced
+      duration: 45
+```
 
-Cross-frame repeat suppression in `custom-image/burst-variety.patch` currently
-tries to avoid showing the same recent asset across independent displays. Shared
-playback must explicitly select once for the group and distribute that result,
-rather than asking that selector separately for each group member.
+Restart Kiosk after adding or changing groups. Use the same group in each
+participating Photos URL, for example:
 
-## Proposed behavior
+```text
+http://KIOSK_HOST:3000/?sync_group=living-room&frame_id=tv-living-room
+http://KIOSK_HOST:3000/?sync_group=living-room&frame_id=lenovo-living-room
+```
 
-- Add an optional named group, initially “Living room,” separately from device ID.
-- A server-owned session selects one photo through the existing curation path and
-  publishes a revision, photo identity, start time, next transition time and pause
-  state. Immich credentials remain on the server.
-- Both viewers preload the same photo and display it at the scheduled time.
-  Modest network/decoder timing differences are expected; frame-perfect playback
-  is not the target.
-- A display entering Photos joins the group's current revision. Reconnecting
-  adopts the current photo rather than replaying every missed transition.
-- Leaving Photos releases that display's subscription and renderer; streaming,
-  casting, and other modes must continue to work independently.
-- Next and pause operate on the group. Duplicate requests/reconnects cannot
-  advance the session twice. Individual preferences stay device-scoped until
-  group-preference behavior is explicitly designed.
-- If the group server is unavailable, retain the last complete photo and retry
-  with bounded backoff. Do not secretly switch to an independent sequence.
-- Devices outside a group retain their current independent slideshow behavior.
+Keep `frame_id` unique; FrameOS can supply its configured Companion identity.
+The server permits at most eight groups with 1–48 lowercase letters, numbers,
+hyphens or underscores (first character letter/number), and 10–3600 seconds per
+photo. Unknown groups fail closed. No group is allocated from arbitrary URLs.
 
-The natural implementation point is the shared Kiosk backend and web viewer so
-both Android clients can reuse it. Confirm compatibility with FrameOS photo
-controls/recovery before adopting a TV-only wrapper or changing deployed URLs.
-Do not modify either physical Lenovo frame merely to test the TV.
+The group profile chooses the same photo for everyone. It does not merge each
+screen's individual preference history or cross-frame repeat suppression;
+those continue to apply to independent slideshows. Existing ungrouped URLs keep
+the independent slideshow. Remove `sync_group` to leave shared mode.
 
-## Acceptance checks before deployment
+## Playback and controls
 
-Use two independent browser clients first: matching asset and revision across
-multiple transitions; late join; one viewer offline; reconnection; simultaneous
-Next; pause/resume; independent device histories; unchanged ungrouped selection.
-Verify no credentials enter client URLs or session payloads, lifecycle cleanup,
-and existing frame control behavior. Physical frame plus TV acceptance is a
-separate, explicitly authorized step.
+The server selects and preloads current/next photo IDs with shared deadlines.
+Each screen renders the selected image at its own bounded dimensions and
+corrects for its local clock. A late join displays the current photo; reconnect
+catches up without replaying a backlog. Small network/decoder timing differences
+are expected; this is coordinated photo playback, not frame-accurate video.
+
+Next, Previous, Pause and Resume apply to the group. Browser controls use the
+existing buttons, Left/Right, P to pause and Shift+P to resume; Space toggles.
+A command includes its session and version, so duplicate or stale commands cannot
+advance twice. Native FrameOS pause state follows shared state idempotently.
+
+Leaving Photos suspends the web player. A disconnected shared participant keeps
+its last complete image and retries; FrameOS does not rotate its local offline
+reserve in shared mode. This is intentional so disconnected screens never start
+a different sequence. Shared mode currently displays still JPEG photos; video,
+live-photo playback, the independent progress bar and More Info overlay are not
+part of this first implementation. Image captions and per-display layouts remain.
+
+## Architecture and validation
+
+Seven `custom-image/shared-playback-*.patch` files are applied in Dockerfile order
+on the pinned upstream source. The coordinator stores bounded IDs/routing data,
+not decoded photos or credentials. Per-screen rendering uses the existing work
+gate, request cancellation, classification revalidation and dimension limits.
+The wire API is under `/api/playback/:group`; commands require same-origin JSON
+and compare-and-swap session/version. No credentials enter playback payloads.
+
+`ci/shared-playback-nas.sh` in the materialized source runs the frontend tests,
+Go tests/race checks, compilation, two-browser synthetic-photo acceptance and
+source-only negative proofs. It exports the binary and validation evidence.
+`scripts/frame-sync-android-nas.sh` runs FrameOS and TV Android checks and emits
+unsigned APKs, mapping, identity, test reports and proof logs. Local signing and
+physical frame/TV acceptance are separate steps. Actual hardware playback is
+**UNVERIFIED** until explicitly approved and exercised.
