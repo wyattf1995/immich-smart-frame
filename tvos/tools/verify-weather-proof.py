@@ -57,6 +57,7 @@ def main() -> int:
     initial_log = VALIDATION / ("weather-proof-initial-" + stamp + ".log")
     cache_negative_log = VALIDATION / ("weather-proof-cache-negative-" + stamp + ".log")
     day_negative_log = VALIDATION / ("weather-proof-day-negative-" + stamp + ".log")
+    night_negative_log = VALIDATION / ("weather-proof-night-negative-" + stamp + ".log")
     final_log = VALIDATION / ("weather-proof-final-" + stamp + ".log")
     receipt, combined_log = VALIDATION / "weather-proof.json", VALIDATION / "weather-proof.log"
     original, forecast_original = SOURCE.read_bytes(), FORECAST_SOURCE.read_bytes()
@@ -75,6 +76,12 @@ def main() -> int:
         outcome["day_negative_test_failures"] = actual_failures()
         if outcome["day_negative_targeted_test_exit"] == 0: raise RuntimeError("unsafe local-day filter unexpectedly passed")
         if outcome["day_negative_test_failures"] < 1: raise RuntimeError("day negative run did not record a weather test failure")
+        FORECAST_SOURCE.write_bytes(forecast_original.replace(
+            b"code != null && code == 0 && !Boolean.TRUE.equals(isDay)", b"false"))
+        outcome["night_negative_targeted_test_exit"] = run(GRADLE + ["--tests", TEST_CLASS + ".clearHourlySymbolsRespectDaylightAndUnknownCacheData"], night_negative_log)
+        outcome["night_negative_test_failures"] = actual_failures()
+        if outcome["night_negative_targeted_test_exit"] == 0 or outcome["night_negative_test_failures"] < 1:
+            raise RuntimeError("night-symbol negative run did not record a weather test failure")
     finally:
         SOURCE.write_bytes(original)
         FORECAST_SOURCE.write_bytes(forecast_original)
@@ -83,8 +90,9 @@ def main() -> int:
         outcome["passed"] = (outcome.get("initial_full_test_exit") == 0
             and outcome.get("cache_negative_targeted_test_exit") != 0 and outcome.get("cache_negative_test_failures", 0) >= 1
             and outcome.get("day_negative_targeted_test_exit") != 0 and outcome.get("day_negative_test_failures", 0) >= 1
+            and outcome.get("night_negative_targeted_test_exit") != 0 and outcome.get("night_negative_test_failures", 0) >= 1
             and outcome["source_restored_exactly"] and outcome["final_full_test_exit"] == 0)
-        logs = (initial_log, cache_negative_log, day_negative_log, final_log)
+        logs = (initial_log, cache_negative_log, day_negative_log, night_negative_log, final_log)
         combine_logs(logs, combined_log)
         outcome["logs"] = [str(path.relative_to(ROOT)) for path in (*logs, combined_log)]
         receipt.write_text(json.dumps(outcome, indent=2, sort_keys=True) + "\n", encoding="utf-8")

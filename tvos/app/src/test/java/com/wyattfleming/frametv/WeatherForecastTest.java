@@ -60,6 +60,14 @@ public class WeatherForecastTest {
         assertEquals("⚡", WeatherForecast.glyph(95));
     }
 
+    @Test public void clearHourlySymbolsRespectDaylightAndUnknownCacheData() {
+        assertEquals("☀", WeatherForecast.hourGlyph(0, true));
+        assertEquals("☾", WeatherForecast.hourGlyph(0, false));
+        assertEquals("○", WeatherForecast.hourGlyph(0, null));
+        assertEquals("☁", WeatherForecast.hourGlyph(3, false));
+        assertEquals("✳", WeatherForecast.glyph(73));
+    }
+
     private static WeatherForecast.Hour hour(long time, Double temperature) {
         return new WeatherForecast.Hour(time, temperature, 0, 0);
     }
