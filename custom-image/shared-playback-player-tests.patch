@@ -1,9 +1,9 @@
 diff --git a/frontend/tests/shared-playback.test.ts b/frontend/tests/shared-playback.test.ts
 new file mode 100644
-index 0000000..701cefd
+index 0000000..0f879cf
 --- /dev/null
 +++ b/frontend/tests/shared-playback.test.ts
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,169 @@
 +import assert from "node:assert/strict";
 +import test from "node:test";
 +
@@ -17,7 +17,9 @@ index 0000000..701cefd
 +const slide = (id: string, startsAt = 0) => ({ id, assetId: `asset-${id}`, startsAt, url: `/slide/${id}` });
 +const state = (overrides: Partial<SharedPlaybackState> = {}): SharedPlaybackState => ({
 +    sessionId: "one", version: 1, serverNow: 1_000, paused: false, loading: false,
-+    current: slide("a"), next: slide("b"), ...overrides,
++    // Production state advertises the next transition in the future. Due-next
++    // behavior is exercised explicitly below so current-slide assertions remain meaningful.
++    current: slide("a"), next: slide("b", 2_000), ...overrides,
 +});
 +
 +async function settle(): Promise<void> {
@@ -79,7 +81,7 @@ index 0000000..701cefd
 +});
 +
 +test("offline keeps the last image and reconnect resumes authoritative polling", async () => {
-+    const h = harness([state(), new Error("offline"), state({ version: 2, current: slide("b"), next: slide("c") })]);
++    const h = harness([state(), new Error("offline"), state({ version: 2, current: slide("b"), next: slide("c", 2_000) })]);
 +    h.controller.start(); await settle();
 +    h.runNextTimer(); await settle(); // offline poll
 +    assert.deepEqual(h.rendered, ["a"]);
@@ -109,6 +111,15 @@ index 0000000..701cefd
 +    });
 +    controller.start(); await settle();
 +    assert.deepEqual(rendered, ["a"]);
++});
++
++test("a repeated snapshot cannot rewind a displayed due next slide", async () => {
++    const due = state({ current: slide("a", 0), next: slide("b", 0) });
++    const h = harness([due, due]);
++    h.controller.start(); await settle();
++    assert.deepEqual(h.rendered, ["b"]);
++    h.runNextTimer(); await settle();
++    assert.deepEqual(h.rendered, ["b"]);
 +});
 +
 +test("stale fetches, hidden pages, and disposal cannot render newer work", async () => {
@@ -142,19 +153,19 @@ index 0000000..701cefd
 +            calls++;
 +            return calls === 1 ? Promise.resolve(state()) : new Promise((resolve) => { resolvePoll = resolve; });
 +        },
-+        sendCommand: async () => state({ version: 2, current: slide("b"), next: slide("c") }),
++        sendCommand: async () => state({ version: 2, current: slide("b"), next: slide("c", 2_000) }),
 +        prepare: async (value) => ({ id: value.id }), render: (value) => rendered.push(value.id),
 +        status: () => undefined, paused: () => undefined,
 +    });
 +    controller.start(); await settle();
 +    timers.shift()?.(); await settle(); // begin a second, deliberately late poll
 +    controller.command("next"); await settle();
-+    resolvePoll(state({ version: 1, current: slide("a"), next: slide("b") })); await settle();
++    resolvePoll(state({ version: 1, current: slide("a"), next: slide("b", 2_000) })); await settle();
 +    assert.deepEqual(rendered, ["a", "b"]);
 +});
 +
 +test("duplicate commands use one compare-and-swap version and session resets decode cache", async () => {
-+    const h = harness([state(), state({ sessionId: "two", version: 1, current: slide("x"), next: slide("y") })]);
++    const h = harness([state(), state({ sessionId: "two", version: 1, current: slide("x"), next: slide("y", 2_000) })]);
 +    h.controller.start(); await settle();
 +    h.controller.command("next"); h.controller.command("next"); await settle();
 +    assert.deepEqual(h.commands, [{ action: "next", version: 1, sessionId: "one" }]);
