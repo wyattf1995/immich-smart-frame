@@ -1,12 +1,11 @@
 # Shared photo playback
 
-The implementation is opt-in and **not deployed**. Server compilation, frontend
-and Go tests, two-browser acceptance, and four source-negative proofs passed on
-the NAS on September 13, 2026. Both Android apps also compiled and passed JVM/lint
-and source-negative checks there. Signed FrameOS 0.2.9 and Frame TV 0.4.1 updates
-are ready; deployment and physical acceptance remain.
-Neither physical Lenovo frame was used for this work.
-Installed TV and server settings are unchanged. See [validation evidence](PHOTO-SYNC-VALIDATION.md).
+Shared playback is deployed to the household Kiosk server, Sony TV (Frame TV
+0.4.1), and Lenovo HPW0FAX1 (FrameOS 0.2.11), verified September 14, 2026 with
+Wyatt's explicit rollout and physical-QA approval. Both physical screens showed
+the same photos. Shared controls, automatic transitions, paused hold, and leaving /
+rejoining Photos passed. The existing apps, device identities, grants and settings
+were preserved. See [validation evidence](PHOTO-SYNC-VALIDATION.md).
 
 ## Joining a group
 
@@ -72,5 +71,4 @@ Go tests/race checks, compilation, two-browser synthetic-photo acceptance and
 source-only negative proofs. It exports the binary and validation evidence.
 `scripts/frame-sync-android-nas.sh` runs FrameOS and TV Android checks and emits
 unsigned APKs, mapping, identity, test reports and proof logs. Local signing and
-physical frame/TV acceptance are separate steps. Actual hardware playback is
-**UNVERIFIED** until explicitly approved and exercised.
+physical frame/TV acceptance are separate steps. Physical acceptance and its remaining limits are recorded in the validation document.

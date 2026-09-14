@@ -1,7 +1,7 @@
 # Shared playback validation
 
-Verified September 13, 2026. This evidence covers the built server and synthetic
-browser clients. No live server, TV Photos URL, or physical Lenovo was changed.
+Initial build validation: September 13, 2026. Rollout/physical acceptance began
+September 14 with explicit approval; see the dated rollout section below.
 
 ## Server and browser
 
@@ -81,5 +81,62 @@ Paths above are relative to
 The signing receipt is `artifacts/signed/signed-artifacts.json`; the FrameOS R8 map
 remains in the verified Android NAS output/archive above.
 
-Actual frame/TV playback remains **UNVERIFIED**; physical Lenovo QA requires Wyatt's
-explicit approval. No live Kiosk configuration, TV Photos URL, or Lenovo was changed.
+These initial artifacts preceded deployment. FrameOS 0.2.9 was superseded by0.2.10
+for a narrow DUMP-protected group setting before any Lenovo installation.
+
+## September 14 rollout
+
+Evidence root: `/Users/wyattfleming/.codex/private/frame-sync-20260913/rollout-20260914`.
+Server source 433ea1b is deployed in image
+`sha256:47061ec8b33f7d09457ddbf6949f051f8cdf48556e8aa72479f1a79f953942f4`;
+the staged runtime changed only the tested `/kiosk` binary. Existing filtering,
+container limits and private settings were preserved; no live-host compilation.
+
+Frame TV 0.4.1 and FrameOS 0.2.10 were installed with matching existing certificates,
+verified device APK hashes, unchanged UIDs/first-install times and retained app data.
+The group is `living-room`, balanced profile, 45 seconds. FrameOS 0.2.10 product source 9b33ad1 was validated as transport
+`b303736019a38236300c215fdd92cbaf2779771a`: 257 FrameOS JVM tests, 24 TV JVM tests,
+30 JS tests, no skipped JVM tests or lint errors. FrameOS lint had no warnings;
+TV retained 18 warnings. Three new source-only configuration proofs passed.
+Artifacts were exported/archived with verified hashes and the NAS workspace retired.
+
+Physical0.2.10 acceptance verified matching screenshots, shared Companion pause /
+Next / Previous, four matching automatically selected photos (three transitions),
+and independent mode followed by rejoin without identity/configuration loss.
+TV remoteNext while paused changed both actual images but left the frame's native
+current-photo report stale; failure `qa-failed-1789395432.json` and paired screenshots
+are retained. FrameOS 0.2.11 fixes the stale report by issuing a fresh native one-shot snapshot
+only after an accepted paused shared settle. The exact guarding test failed when
+that source block was removed and passed after restoring the identical source;
+tests were unchanged during the proof. Product source:
+`40cf414e0502e59e798b9a332e403ee8b636b3a0`; Android transport:
+`2bcd14dfcfb75742fb30b48b11a34c9a33c1157e`.
+
+Final build: 258 FrameOS JVM tests, 24 TV JVM tests, 30 JS tests; no JVM skips,
+failures or errors. FrameOS lint remained warning/error-free; TV retained 18
+warnings and no errors. All configuration, parser, reconnect, paused-settle and TV
+source-only proofs passed. NAS job
+`frame-shared-settle-android-20260914-072830-cb45905daf86` was exported, checksum
+verified, archived and retired. Cold archive:
+`/mnt/user/agent-archives/frame-shared-settle-android-20260914-073632-430cee7ca199`.
+Local final build evidence: `settle-android-nas/` under the rollout evidence root.
+
+Signed and installed FrameOS 0.2.11 SHA-256:
+`38e04e1dca3828cc064ade8a8df7add643484c0246ea0b9773aaa7008a018b8a`.
+The device APK, existing certificate, UID10104 and full first-install timestamp
+were verified. HOME role, overlay grant, package grants and exact DuraSpeed
+configuration were preserved. Frame TV remains the Sony HOME resolver; Plex,
+Netflix, Prime Video, HBO and the Cast receiver remain enabled. This is package
+state verification, not a fresh Cast session or streaming-provider login test.
+
+On installed 0.2.11, TV-remote Next/Previous while paused updated both displayed
+photos and the frame's native photo identity; the exact previously failing case
+passed. A 55-second pause held the same photo on both screens. TV Back returned to
+Frame TV Home; reopening Photos rejoined the same image. Resume propagated to both.
+The final 0.2.11 automatic check also observed four matching photos (three
+transitions). The original 0.2.10 failure and screenshots remain retained alongside the final
+`final-*.json` acceptance receipts. Physical screenshot comparisons remain private.
+
+Rollback instructions and exact original APK/config identities are in
+`ROLLBACK.md` under the evidence root. Neither ROM reboot nor physical APK downgrade
+was performed; long-term shutdown/restart resolution is outside these checks.

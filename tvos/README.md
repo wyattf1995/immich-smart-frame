@@ -123,15 +123,13 @@ HOME preference, verified the resolver and sent Home successfully. Screenshots
 show the system app-information page also offers Enable; the full remote recovery
 flow and boot persistence require their own device checks.
 
-The installed version remains 0.4.0. Draft source for 0.4.1 adds a Sony Home
-helper that detects package-level disabling and
-opens the original launcher's app settings with instructions to choose Enable
-and press Home. The Mac restore script remains the alternate recovery path and
-requires the authorized network ADB connection. No APK changes package states
-itself, and no Cast receiver/service package is disabled. The 0.4.1 NAS build
-was deferred because another operation held the shared runner; it has not been
-built or installed. After testing the Mac rollback, the Frame TV switch was
-reapplied and its resolver/resumed activity verified. The TV was left in standby.
+Frame TV 0.4.1 was installed and the native Home/Photos screens verified on
+September 14, 2026. Its Sony Home helper detects package-level disabling and opens
+the original launcher's app settings with instructions to choose Enable and press
+Home. The tested Mac restore script remains an alternate recovery path and requires
+the authorized network ADB connection. No APK changes package states itself;
+streaming applications and the Cast receiver remain enabled. The remote Enable
+flow and boot persistence have not been physically re-tested.
 
 Optional shared photo playback is implemented and has passed server/browser
 validation; see [shared playback](PHOTO-SYNC.md) for configuration and rollout gates.
