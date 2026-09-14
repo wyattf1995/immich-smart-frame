@@ -58,7 +58,8 @@ object FramePhotosSyncGroupUrl {
 
     private fun segment(raw: String): QuerySegment {
         val separator = raw.indexOf('=')
-        val name = if (separator >= 0) raw.substring(0, separator) else raw
+        val rawName = if (separator >= 0) raw.substring(0, separator) else raw
+        val name = decode(rawName)
         return QuerySegment(raw, name, if (separator >= 0) raw.substring(separator + 1) else null)
     }
 
@@ -66,7 +67,7 @@ object FramePhotosSyncGroupUrl {
         URLDecoder.decode(value, StandardCharsets.UTF_8.name())
     }.getOrNull()
 
-    private data class QuerySegment(val raw: String, val name: String, val value: String? = null)
+    private data class QuerySegment(val raw: String, val name: String?, val value: String? = null)
     private data class Parsed(
         val base: String,
         val fragment: String,

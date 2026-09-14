@@ -71,7 +71,8 @@ object FrameControlContract {
     ): PhotosSyncGroupCommand? = when {
         hasSyncGroup && querySyncGroup -> PhotosSyncGroupCommand.Invalid
         querySyncGroup -> PhotosSyncGroupCommand.Query
-        hasSyncGroup -> PhotosSyncGroupCommand.Set(syncGroup.orEmpty())
+        hasSyncGroup && syncGroup == null -> PhotosSyncGroupCommand.Invalid
+        hasSyncGroup -> PhotosSyncGroupCommand.Set(requireNotNull(syncGroup))
         else -> null
     }
 }
