@@ -41,7 +41,7 @@ public final class DashboardActivity extends Activity {
         try { feature = Feature.valueOf(getIntent().getStringExtra("feature")); }
         catch (IllegalArgumentException | NullPointerException error) { finish(); return; }
         address = new TvPreferences(this).url(feature);
-        if (feature == Feature.HOME || feature == Feature.WEATHER) forecastCapture = new HomeAssistantForecastCapture(this);
+        if (feature == Feature.HOME) forecastCapture = new HomeAssistantForecastCapture(this);
         if (address.isEmpty()) {
             startActivity(new Intent(this, SetupActivity.class));
             finish();

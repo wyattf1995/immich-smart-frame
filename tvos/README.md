@@ -137,6 +137,17 @@ widget to search and choose a city/ZIP. Configuration and a small cache live in
 private preferences; no location or credentials are bundled with the APK. Cache
 reuse is bounded to six hours, with a 30-minute refresh only while the launcher
 is resumed. Source-scoping and midnight rollover have source-negative JVM proofs.
-The existing Home Assistant dashboard login is independent of this native feed.
+Home Assistant is preferred after its Home dashboard supplies a forecast-only
+snapshot. While that dashboard is open, the bundled reader requests only the
+current weather entity and its hourly/daily forecasts through HA's existing
+connection; it does not read/copy authentication, create a JavaScript native
+interface, or deploy anything to HA. The native widget reuses the snapshot for
+at most six hours, scoped to the exact configured Home URL. It refreshes when
+Home Assistant is opened, not through a background browser. If no usable HA
+snapshot exists, the labeled Open-Meteo city forecast is the fallback.
+Select the widget → Use Home Assistant forecast to refresh; choosing a city
+explicitly selects Open-Meteo. Provider and cached age are visible on home.
+The HA normalizer's local Node tests include a real source-negative Celsius
+conversion check; compilation and JVM guard tests run on the NAS.
 Official provider documentation: https://open-meteo.com/en/docs and
 https://open-meteo.com/en/docs/geocoding-api.

@@ -23,9 +23,14 @@ final class HomeAssistantForecastCapture {
         preferences = new WeatherPreferences(context);
         String loaded = "";
         try (InputStream input = context.getAssets().open("ha-weather-snapshot.js")) {
-            byte[] data = new byte[16384];
-            int count = input.read(data);
-            if (count > 0 && count < data.length) loaded = new String(data, 0, count, StandardCharsets.UTF_8);
+            java.io.ByteArrayOutputStream data = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                if (data.size() + count > 16384) throw new java.io.IOException("Script exceeds bound");
+                data.write(buffer, 0, count);
+            }
+            loaded = new String(data.toByteArray(), StandardCharsets.UTF_8);
         } catch (java.io.IOException ignored) { }
         script = loaded;
     }
