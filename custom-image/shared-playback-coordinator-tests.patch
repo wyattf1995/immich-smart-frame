@@ -1,0 +1,374 @@
+diff --git a/internal/playback/coordinator_test.go b/internal/playback/coordinator_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..cf717409faa2496179076b369b0bdbbb16b35073
+--- /dev/null
++++ b/internal/playback/coordinator_test.go
+@@ -0,0 +1,368 @@
++package playback
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"sync"
++	"testing"
++	"time"
++)
++
++type fakeClock struct {
++	mu      sync.Mutex
++	now     time.Time
++	waiters []fakeWaiter
++}
++
++type fakeWaiter struct {
++	at time.Time
++	ch chan time.Time
++}
++
++func newFakeClock() *fakeClock { return &fakeClock{now: time.Unix(1_700_000_000, 0).UTC()} }
++func (f *fakeClock) Now() time.Time {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	return f.now
++}
++func (f *fakeClock) After(delay time.Duration) <-chan time.Time {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	ch := make(chan time.Time, 1)
++	at := f.now.Add(delay)
++	if !at.After(f.now) {
++		ch <- f.now
++		return ch
++	}
++	f.waiters = append(f.waiters, fakeWaiter{at: at, ch: ch})
++	return ch
++}
++func (f *fakeClock) Advance(delay time.Duration) {
++	f.mu.Lock()
++	f.now = f.now.Add(delay)
++	remaining := f.waiters[:0]
++	for _, waiter := range f.waiters {
++		if !waiter.at.After(f.now) {
++			waiter.ch <- f.now
++		} else {
++			remaining = append(remaining, waiter)
++		}
++	}
++	f.waiters = remaining
++	f.mu.Unlock()
++}
++
++type loaderResult struct {
++	asset Asset
++	err   error
++}
++
++type queuedLoader struct {
++	calls   chan LoadRequest
++	results chan loaderResult
++}
++
++func newQueuedLoader() *queuedLoader {
++	return &queuedLoader{calls: make(chan LoadRequest, 64), results: make(chan loaderResult, 64)}
++}
++func (l *queuedLoader) load(ctx context.Context, request LoadRequest) (Asset, error) {
++	select {
++	case l.calls <- request:
++	case <-ctx.Done():
++		return Asset{}, ctx.Err()
++	}
++	select {
++	case result := <-l.results:
++		return result.asset, result.err
++	case <-ctx.Done():
++		return Asset{}, ctx.Err()
++	}
++}
++func (l *queuedLoader) enqueue(id string) { l.results <- loaderResult{asset: NewAsset(id, "user-"+id)} }
++
++func newTestCoordinator(t *testing.T, clock *fakeClock, loader *queuedLoader, overrides GroupConfig) *Coordinator {
++	t.Helper()
++	config := GroupConfig{ID: "downstairs", SelectionKey: "balanced", Duration: 10 * time.Second, IdleTimeout: time.Hour}
++	if overrides.ID != "" {
++		config = overrides
++	}
++	coordinator, err := New([]GroupConfig{config}, loader.load, Options{Clock: clock})
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(coordinator.Close)
++	return coordinator
++}
++
++func waitState(t *testing.T, coordinator *Coordinator, match func(State) bool) State {
++	t.Helper()
++	deadline := time.Now().Add(time.Second)
++	for time.Now().Before(deadline) {
++		state, err := coordinator.State("downstairs")
++		if err != nil {
++			t.Fatal(err)
++		}
++		if match(state) {
++			return state
++		}
++		time.Sleep(time.Millisecond)
++	}
++	state, _ := coordinator.State("downstairs")
++	t.Fatalf("timed out waiting for playback state: %+v", state)
++	return State{}
++}
++
++func rawState(coordinator *Coordinator) State {
++	coordinator.mu.Lock()
++	s := coordinator.sessions["downstairs"]
++	coordinator.mu.Unlock()
++	if s == nil {
++		return State{}
++	}
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	return s.snapshotLocked()
++}
++
++func waitCalls(t *testing.T, loader *queuedLoader, count int) []LoadRequest {
++	t.Helper()
++	requests := make([]LoadRequest, 0, count)
++	deadline := time.After(time.Second)
++	for len(requests) < count {
++		select {
++		case request := <-loader.calls:
++			requests = append(requests, request)
++		case <-deadline:
++			t.Fatalf("timed out waiting for loader call %d", len(requests)+1)
++		}
++	}
++	return requests
++}
++
++func prepareTwoSlides(t *testing.T, coordinator *Coordinator, loader *queuedLoader) State {
++	t.Helper()
++	_, err := coordinator.State("downstairs")
++	if err != nil {
++		t.Fatal(err)
++	}
++	waitCalls(t, loader, 1)
++	loader.enqueue("asset-a")
++	waitCalls(t, loader, 1)
++	loader.enqueue("asset-b")
++	return waitState(t, coordinator, func(state State) bool { return state.Current != nil && state.Next != nil && !state.Loading })
++}
++
++func TestNewRequiresFiniteConfiguredGroups(t *testing.T) {
++	clock := newFakeClock()
++	loader := newQueuedLoader()
++	coordinator, err := New(nil, loader.load, Options{Clock: clock, MaxConfiguredGroups: 1})
++	if err != nil {
++		t.Fatalf("empty allowlist should be a disabled coordinator: %v", err)
++	}
++	coordinator.Close()
++	if _, err := New([]GroupConfig{{ID: "a", Duration: time.Second}, {ID: "b", Duration: time.Second}}, loader.load, Options{Clock: clock, MaxConfiguredGroups: 1}); err == nil {
++		t.Fatal("expected configured-group capacity rejection")
++	}
++	if _, err := New([]GroupConfig{{ID: "a", Duration: 3 * time.Second, PreloadLead: 3 * time.Second}}, loader.load, Options{Clock: clock}); err == nil {
++		t.Fatal("expected invalid preload lead rejection")
++	}
++}
++
++func TestUnknownGroupDoesNotStartLoader(t *testing.T) {
++	clock := newFakeClock()
++	loader := newQueuedLoader()
++	coordinator := newTestCoordinator(t, clock, loader, GroupConfig{})
++	if _, err := coordinator.State("unknown"); !errors.Is(err, ErrUnknownGroup) {
++		t.Fatalf("got %v, want unknown group", err)
++	}
++	select {
++	case request := <-loader.calls:
++		t.Fatalf("unexpected loader request: %+v", request)
++	default:
++	}
++}
++
++func TestConcurrentReadsUseOneInitialLoader(t *testing.T) {
++	clock := newFakeClock()
++	loader := newQueuedLoader()
++	coordinator := newTestCoordinator(t, clock, loader, GroupConfig{})
++	var group sync.WaitGroup
++	for range 24 {
++		group.Add(1)
++		go func() {
++			defer group.Done()
++			_, _ = coordinator.State("downstairs")
++		}()
++	}
++	waitCalls(t, loader, 1)
++	select {
++	case request := <-loader.calls:
++		t.Fatalf("selection was not singleflight: %+v", request)
++	default:
++	}
++	loader.enqueue("asset-a")
++	group.Wait()
++}
++
++func TestAutomaticAdvancePreloadsDistinctNextSlide(t *testing.T) {
++	clock := newFakeClock()
++	loader := newQueuedLoader()
++	coordinator := newTestCoordinator(t, clock, loader, GroupConfig{})
++	initial := prepareTwoSlides(t, coordinator, loader)
++	if initial.Current.AssetID != "asset-a" || initial.Next.AssetID != "asset-b" || initial.Current.ID == initial.Next.ID {
++		t.Fatalf("unexpected prepared state: %+v", initial)
++	}
++	clock.Advance(13 * time.Second)
++	waitCalls(t, loader, 1)
++	loader.enqueue("asset-c")
++	advanced := waitState(t, coordinator, func(state State) bool {
++		return state.Current != nil && state.Next != nil && state.Current.AssetID == "asset-b" && state.Next.AssetID == "asset-c"
++	})
++	if advanced.Version <= initial.Version {
++		t.Fatalf("version did not advance: %d -> %d", initial.Version, advanced.Version)
++	}
++}
++
++func TestPauseResumeAndCASNext(t *testing.T) {
++	clock := newFakeClock()
++	loader := newQueuedLoader()
++	coordinator := newTestCoordinator(t, clock, loader, GroupConfig{})
++	state := prepareTwoSlides(t, coordinator, loader)
++	paused, err := coordinator.Command("downstairs", Command{Action: Pause, ExpectedEpoch: state.Epoch, ExpectedVersion: state.Version})
++	if err != nil || !paused.Paused {
++		t.Fatalf("pause: state=%+v err=%v", paused, err)
++	}
++	clock.Advance(time.Minute)
++	stillPaused := waitState(t, coordinator, func(state State) bool {
++		return state.Paused && state.Current != nil && state.Current.AssetID == "asset-a"
++	})
++	resumed, err := coordinator.Command("downstairs", Command{Action: Resume, ExpectedEpoch: stillPaused.Epoch, ExpectedVersion: stillPaused.Version})
++	if err != nil || resumed.Paused {
++		t.Fatalf("resume: state=%+v err=%v", resumed, err)
++	}
++
++	var successes int
++	var lock sync.Mutex
++	var group sync.WaitGroup
++	for range 12 {
++		group.Add(1)
++		go func(version uint64) {
++			defer group.Done()
++			_, commandErr := coordinator.Command("downstairs", Command{Action: Next, ExpectedEpoch: resumed.Epoch, ExpectedVersion: version})
++			if commandErr == nil {
++				lock.Lock()
++				successes++
++				lock.Unlock()
++			}
++		}(resumed.Version)
++	}
++	group.Wait()
++	if successes != 1 {
++		t.Fatalf("CAS next succeeded %d times, want 1", successes)
++	}
++}
++
++func TestPreviousThenNextReturnsToCurrentAsset(t *testing.T) {
++	clock := newFakeClock()
++	loader := newQueuedLoader()
++	coordinator := newTestCoordinator(t, clock, loader, GroupConfig{})
++	state := prepareTwoSlides(t, coordinator, loader)
++	next, err := coordinator.Command("downstairs", Command{Action: Next, ExpectedEpoch: state.Epoch, ExpectedVersion: state.Version})
++	if err != nil || next.Current == nil || next.Current.AssetID != "asset-b" {
++		t.Fatalf("next: state=%+v err=%v", next, err)
++	}
++	waitCalls(t, loader, 1)
++	loader.enqueue("asset-c")
++	ready := waitState(t, coordinator, func(state State) bool {
++		return state.Current != nil && state.Next != nil && state.Next.AssetID == "asset-c"
++	})
++	previous, err := coordinator.Command("downstairs", Command{Action: Previous, ExpectedEpoch: ready.Epoch, ExpectedVersion: ready.Version})
++	if err != nil || previous.Current.AssetID != "asset-a" || previous.Next.AssetID != "asset-b" {
++		t.Fatalf("previous: state=%+v err=%v", previous, err)
++	}
++	back, err := coordinator.Command("downstairs", Command{Action: Next, ExpectedEpoch: previous.Epoch, ExpectedVersion: previous.Version})
++	if err != nil || back.Current.AssetID != "asset-b" {
++		t.Fatalf("next after previous: state=%+v err=%v", back, err)
++	}
++}
++
++func TestFailureRetainsCurrentAndStopsAfterBoundedRetries(t *testing.T) {
++	clock := newFakeClock()
++	loader := newQueuedLoader()
++	config := GroupConfig{ID: "downstairs", Duration: 10 * time.Second, IdleTimeout: time.Hour, RetryLimit: 2, RetryDelay: time.Second}
++	coordinator := newTestCoordinator(t, clock, loader, config)
++	prepareTwoSlides(t, coordinator, loader)
++	clock.Advance(13 * time.Second)
++	waitCalls(t, loader, 1)
++	loader.results <- loaderResult{err: errors.New("offline")}
++	clock.Advance(time.Second)
++	waitCalls(t, loader, 1)
++	loader.results <- loaderResult{err: errors.New("offline")}
++	deadline := time.Now().Add(time.Second)
++	state := rawState(coordinator)
++	for time.Now().Before(deadline) {
++		state = rawState(coordinator)
++		if state.Current != nil && state.Current.AssetID == "asset-b" && !state.Loading {
++			break
++		}
++		time.Sleep(time.Millisecond)
++	}
++	if state.Current == nil || state.Current.AssetID != "asset-b" || state.Loading {
++		t.Fatalf("failed preload did not settle while retaining current: %+v", state)
++	}
++	if state.Next != nil {
++		t.Fatalf("failed preload should retain current without a next slide: %+v", state)
++	}
++}
++
++func TestEpochAndAssetPrivacyAcrossRestart(t *testing.T) {
++	clock := newFakeClock()
++	loaderOne := newQueuedLoader()
++	first := newTestCoordinator(t, clock, loaderOne, GroupConfig{})
++	stateOne := prepareTwoSlides(t, first, loaderOne)
++	asset, found, err := first.AssetForSlide("downstairs", stateOne.Current.ID)
++	if err != nil || !found || asset.SelectedUser() != "user-asset-a" {
++		t.Fatalf("asset lookup: asset=%+v found=%v err=%v", asset, found, err)
++	}
++	encoded, err := json.Marshal(asset)
++	if err != nil || string(encoded) != `{"assetId":"asset-a"}` {
++		t.Fatalf("asset privacy marshal=%s err=%v", encoded, err)
++	}
++	first.Close()
++
++	loaderTwo := newQueuedLoader()
++	second := newTestCoordinator(t, clock, loaderTwo, GroupConfig{})
++	stateTwo := prepareTwoSlides(t, second, loaderTwo)
++	if stateOne.Epoch == stateTwo.Epoch {
++		t.Fatal("new coordinator reused epoch")
++	}
++}
++
++func TestIdleGroupRetiresWithoutFurtherSelection(t *testing.T) {
++	clock := newFakeClock()
++	loader := newQueuedLoader()
++	config := GroupConfig{ID: "downstairs", Duration: 10 * time.Second, IdleTimeout: 10 * time.Second}
++	coordinator := newTestCoordinator(t, clock, loader, config)
++	_, err := coordinator.State("downstairs")
++	if err != nil {
++		t.Fatal(err)
++	}
++	waitCalls(t, loader, 1)
++	loader.enqueue("asset-a")
++	waitCalls(t, loader, 1)
++	loader.enqueue("asset-b")
++	waitState(t, coordinator, func(state State) bool { return state.Current != nil && state.Next != nil })
++	clock.Advance(10 * time.Second)
++	deadline := time.Now().Add(time.Second)
++	for time.Now().Before(deadline) {
++		coordinator.mu.Lock()
++		remaining := len(coordinator.sessions)
++		coordinator.mu.Unlock()
++		if remaining == 0 {
++			return
++		}
++		time.Sleep(time.Millisecond)
++	}
++	t.Fatal("idle group did not retire")
++}
