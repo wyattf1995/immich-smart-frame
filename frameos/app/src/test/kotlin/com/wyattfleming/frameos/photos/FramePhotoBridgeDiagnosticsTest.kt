@@ -88,14 +88,17 @@ class FramePhotoBridgeDiagnosticsTest {
         message: Any,
         sender: FramePhotoBridge.Sender?,
     ): GeckoBundle {
-        var value: GeckoBundle? = null
+        var value: Any? = null
         val latch = CountDownLatch(1)
         val immediate = bridge.handleNativeMessage(nativeApp, message, sender) { response ->
             value = response
             latch.countDown()
         }
-        if (immediate != null) return immediate
+        if (immediate != null) return requireGeckoBundle(immediate)
         assertTrue("native response did not complete", latch.await(2, TimeUnit.SECONDS))
-        return value ?: throw AssertionError("native response completed without a GeckoBundle")
+        return requireGeckoBundle(value)
     }
+
+    private fun requireGeckoBundle(value: Any?): GeckoBundle =
+        value as? GeckoBundle ?: throw AssertionError("expected GeckoBundle response, got ${value?.javaClass?.name}")
 }
