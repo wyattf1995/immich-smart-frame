@@ -64,6 +64,20 @@ class FrameWebWatchdogRecoveryStateTest {
         assertEquals(3, consecutiveWatchdogTimeouts(state))
     }
 
+    @Test
+    fun `activation failure after opening a replacement leaves the next retry pending for replacement`() {
+        val state = state()
+
+        repeat(3) { recordWatchdogTimeout(state) }
+        assertTrue(requiresSessionRecreation(state))
+
+        // Opening succeeded, but activation failed before the replacement could be committed.
+        state.javaClass.getMethod("recordNavigationStart").invoke(state)
+
+        assertTrue(requiresSessionRecreation(state))
+        assertEquals(3, consecutiveWatchdogTimeouts(state))
+    }
+
     private fun state(): Any = Class.forName("com.wyattfleming.frameos.web.FrameWebWatchdogRecoveryState")
         .getConstructor()
         .newInstance()
