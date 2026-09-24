@@ -248,6 +248,46 @@ class FrameWebSurfaceContractTest {
     }
 
     @Test
+    fun `third watchdog timeout replaces only the displayed session at the next eligible retry`() {
+        val source = source()
+        val request = methodBody(source, "fun request(url: String)")
+        val retry = methodBody(source, "private fun scheduleRecovery(managed: ManagedSession)")
+        val recreate = methodBody(source, "private fun recreateSessionAfterWatchdogTimeout()")
+
+        assertContainsInOrder(
+            request,
+            listOf(
+                "recordNavigationStart()",
+                "requiresSessionRecreation",
+                "isEligibleForWatchdogSessionRecovery()",
+                "recreateSessionAfterWatchdogTimeout()",
+                "session.loadUri(url)",
+            ),
+        )
+        assertContainsInOrder(
+            retry,
+            listOf(
+                "managed.lifecycleSuspended",
+                "!displayedSurfaceVisible()",
+                "managed !== displayedManagedSession()",
+                "managed.request(url)",
+            ),
+        )
+        assertContainsInOrder(
+            recreate,
+            listOf(
+                "val retiredSession = session",
+                "detachManagedSessionForReplacement(this)",
+                "photoBridge?.detach(retiredSession)",
+                "retiredSession.close()",
+                "openSession()",
+                "reattachManagedSessionAfterReplacement(this)",
+            ),
+        )
+        assertTrue("old Gecko callbacks must be fenced after replacement", source.contains("if (session !== this@ManagedSession.session) return"))
+    }
+
+    @Test
     fun `suspendAllContent cancels recovery callbacks before suspending sessions without evicting warm home`() {
         val suspendAllContent = methodBody(source(), "fun suspendAllContent()")
 

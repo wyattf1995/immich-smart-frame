@@ -65,9 +65,11 @@ class FrameWebSurface(
     ) {
         lateinit var session: GeckoSession
             private set
+        private var retiringSession: GeckoSession? = null
         val loadState = FrameWebSessionState()
         val renderedState = FrameWebRenderedState()
         val crashRecovery = FrameWebCrashRecoveryState()
+        private val watchdogRecovery = FrameWebWatchdogRecoveryState()
         var recoveryAttempts = 0
         var retryPending = false
         var lifecycleSuspended = false
@@ -96,6 +98,12 @@ class FrameWebSurface(
                     session: GeckoSession,
                     request: GeckoSession.NavigationDelegate.LoadRequest,
                 ): GeckoResult<AllowOrDeny> {
+                    if (session !== this@ManagedSession.session) {
+                        return GeckoResult.fromValue(AllowOrDeny.DENY)
+                    }
+                    if (session === retiringSession) {
+                        return GeckoResult.fromValue(AllowOrDeny.DENY)
+                    }
                     val allowed = urlPolicy.isAllowedTopLevelNavigation(configuredUrls, request.uri)
                     if (!allowed) reportUnavailable(this@ManagedSession)
                     return GeckoResult.fromValue(if (allowed) AllowOrDeny.ALLOW else AllowOrDeny.DENY)
@@ -110,6 +118,8 @@ class FrameWebSurface(
             }
             session.progressDelegate = object : GeckoSession.ProgressDelegate {
                 override fun onPageStart(session: GeckoSession, url: String) {
+                    if (session !== this@ManagedSession.session) return
+                    if (session === retiringSession) return
                     renderedState.recordPageStart()
                     trace("page_start")
                     listener.onPageRenderInvalidated(label)
@@ -118,6 +128,8 @@ class FrameWebSurface(
                 }
 
                 override fun onPageStop(session: GeckoSession, success: Boolean) {
+                    if (session !== this@ManagedSession.session) return
+                    if (session === retiringSession) return
                     listener.onPageLoading(label, false)
                     if (!success) {
                         trace("page_stop_failure")
@@ -133,12 +145,16 @@ class FrameWebSurface(
             }
             session.contentDelegate = object : GeckoSession.ContentDelegate {
                 override fun onFirstContentfulPaint(session: GeckoSession) {
+                    if (session !== this@ManagedSession.session) return
+                    if (session === retiringSession) return
                     val newlyRendered = renderedState.recordFirstContentfulPaint()
                     trace("first_contentful_paint")
                     maybeReportRendered(newlyRendered)
                 }
 
                 override fun onFirstComposite(session: GeckoSession) {
+                    if (session !== this@ManagedSession.session) return
+                    if (session === retiringSession) return
                     if (tracedCompositeGeneration != traceGeneration) {
                         tracedCompositeGeneration = traceGeneration
                         trace("first_composite")
@@ -146,6 +162,8 @@ class FrameWebSurface(
                 }
 
                 override fun onPaintStatusReset(session: GeckoSession) {
+                    if (session !== this@ManagedSession.session) return
+                    if (session === retiringSession) return
                     val invalidatedRenderedContent = renderedState.recordPaintStatusReset()
                     trace("paint_status_reset")
                     listener.onPageRenderInvalidated(label)
@@ -162,12 +180,16 @@ class FrameWebSurface(
                 }
 
                 override fun onCrash(session: GeckoSession) {
+                    if (session !== this@ManagedSession.session) return
+                    if (session === retiringSession) return
                     disarmPageLoadWatchdog()
                     crashRecovery.markClosedByContentProcess()
                     reportUnavailable(this@ManagedSession)
                 }
 
                 override fun onKill(session: GeckoSession) {
+                    if (session !== this@ManagedSession.session) return
+                    if (session === retiringSession) return
                     disarmPageLoadWatchdog()
                     crashRecovery.markClosedByContentProcess()
                     reportUnavailable(this@ManagedSession)
@@ -182,6 +204,10 @@ class FrameWebSurface(
         fun request(url: String): Boolean {
             require(urlPolicy.isAllowedTopLevelNavigation(configuredUrls, url)) { "Unsafe $label navigation" }
             lifecycleSuspended = false
+            watchdogRecovery.recordNavigationStart()
+            if (watchdogRecovery.requiresSessionRecreation && isEligibleForWatchdogSessionRecovery()) {
+                recreateSessionAfterWatchdogTimeout()
+            }
             traceGeneration += 1
             val fragmentOnly = loadState.isExactFragmentOnlyRequest(url)
             loadState.recordRequest(url)
@@ -246,7 +272,7 @@ class FrameWebSurface(
         }
 
         private fun onPhotoBridgeReady(observedSession: GeckoSession, attachmentEpoch: Long, ready: Boolean) {
-            if (observedSession !== session) return
+            if (observedSession !== session || observedSession === retiringSession) return
             if (!ready) {
                 if (photoLoadGate.markFailed(attachmentEpoch) && photoLoadGate.dropPending()) {
                     loadState.recordFailure()
@@ -280,6 +306,7 @@ class FrameWebSurface(
                 return
             }
             loadState.recordSuccess()
+            watchdogRecovery.recordRendered()
             resetRecovery(this)
             listener.onPageRecovered(label)
             this@FrameWebSurface.reportRenderedIfDisplayed(this)
@@ -352,16 +379,44 @@ class FrameWebSurface(
             }
         }
 
+        private fun isEligibleForWatchdogSessionRecovery(): Boolean =
+            !lifecycleSuspended && this === displayedManagedSession() && displayedSurfaceVisible()
+
+        private fun recreateSessionAfterWatchdogTimeout() {
+            val retiredSession = session
+            trace("watchdog_session_recreate")
+            retiringSession = retiredSession
+            try {
+                detachManagedSessionForReplacement(this)
+                if (label == "Photos") photoBridge?.detach(retiredSession)
+                disarmPageLoadWatchdog()
+                FrameWebSessionDisposal.prepare(
+                    clearFocus = { retiredSession.setFocused(false) },
+                    deactivate = { retiredSession.setActive(false) },
+                    stop = { retiredSession.stop() },
+                )
+                runCatching { retiredSession.close() }
+                openSession()
+                if (label == "Photos") restorePhotoBridgeState()
+                session.setActive(true)
+                session.setFocused(false)
+                reattachManagedSessionAfterReplacement(this)
+            } finally {
+                retiringSession = null
+            }
+        }
+
         private fun armPageLoadWatchdog(observedSession: GeckoSession) {
             pageLoadWatchdog?.let(this@FrameWebSurface::removeCallbacks)
             pageLoadWatchdog = null
             val load = pageLoadWatchdogState.arm(elapsedRealtime())
             trace("watchdog_armed")
             val watchdog = Runnable {
-                if (session !== observedSession) return@Runnable
+                if (session !== observedSession || observedSession === retiringSession) return@Runnable
                 val startedAtMillis = pageLoadWatchdogState.markTimedOut(load.generation) ?: return@Runnable
                 pageLoadWatchdog = null
                 trace("watchdog_timeout")
+                watchdogRecovery.recordWatchdogTimeout()
                 operationLogger.log(
                     FrameOperationLogEntry(
                         route = label,
@@ -664,6 +719,30 @@ class FrameWebSurface(
         setSession(managed.session)
         foregroundAttachedSession = managed
         foregroundSlot = slot
+    }
+
+    private fun detachManagedSessionForReplacement(managed: ManagedSession) {
+        if (foregroundAttachedSession === managed) {
+            if (session != null) runCatching(::releaseSession)
+            foregroundAttachedSession = null
+        }
+        if (warmHomeAttachedSession === managed) releaseWarmHomeAttachedSession()
+    }
+
+    private fun reattachManagedSessionAfterReplacement(managed: ManagedSession) {
+        if (
+            foregroundSlot != null &&
+            foregroundSlot != FrameWebSlot.HOME_ASSISTANT &&
+            displayedManagedSession() === managed
+        ) {
+            setSession(managed.session)
+            foregroundAttachedSession = managed
+        }
+        if (displayedSlot == FrameWebSlot.HOME_ASSISTANT && homeAssistantSession === managed) {
+            warmHomeAssistantView.setSession(managed.session)
+            warmHomeAttachedSession = managed
+            warmHomeAssistantView.visibility = View.VISIBLE
+        }
     }
 
     private fun ensureWarmHomeAttached(managed: ManagedSession) {
