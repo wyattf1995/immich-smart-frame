@@ -4,7 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import org.json.JSONObject
-import org.mozilla.geckoview.GeckoBundle
+import org.mozilla.gecko.util.GeckoBundle
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
@@ -422,7 +422,12 @@ class FramePhotoBridge(
      * Converts every native-message outcome to Gecko's supported bundle response type.
      * WebExtension callbacks reject JSONObject values, even though received messages use them.
      */
-    internal fun nativeMessageResponse(nativeApp: String, message: Any, sender: Sender?): GeckoResult<Any> {
+    internal fun handleNativeMessage(
+        nativeApp: String,
+        message: Any,
+        sender: Sender?,
+        onCaptureComplete: (GeckoBundle) -> Unit,
+    ): GeckoBundle? {
         if (nativeApp != NATIVE_APP || sender == null) return acceptedResponse(false)
         if ((message as? JSONObject)?.optString("type") == DIAGNOSTIC_TYPE) {
             return acceptedResponse(acceptDiagnostic(message, sender))
@@ -431,19 +436,24 @@ class FramePhotoBridge(
             return acceptedResponse(acceptSharedPlayback(message, sender))
         }
         val capture = captureFrom(message, sender) ?: return acceptedResponse(false)
-        val result = GeckoResult<Any>()
         try {
             decodeWorker.execute {
                 val accepted = reserve.persist(capture.assetId, capture.image, capture.capturedAt, capture.scope.key) { canCommit(capture) } && reportIfCurrent(capture)
-                result.complete(acceptedBundle(accepted))
+                onCaptureComplete(acceptedBundle(accepted))
             }
         } catch (_: RejectedExecutionException) {
-            result.complete(acceptedBundle(false))
+            return acceptedBundle(false)
         }
-        return result
+        return null
     }
 
-    private fun acceptedResponse(accepted: Boolean): GeckoResult<Any> = GeckoResult.fromValue(acceptedBundle(accepted))
+    private fun nativeMessageResponse(nativeApp: String, message: Any, sender: Sender?): GeckoResult<Any> {
+        val result = GeckoResult<Any>()
+        val immediate = handleNativeMessage(nativeApp, message, sender, result::complete)
+        return immediate?.let { GeckoResult.fromValue<Any>(it) } ?: result
+    }
+
+    private fun acceptedResponse(accepted: Boolean): GeckoBundle = acceptedBundle(accepted)
 
     private fun acceptedBundle(accepted: Boolean): GeckoBundle = GeckoBundle(1).apply {
         putBoolean("accepted", accepted)
