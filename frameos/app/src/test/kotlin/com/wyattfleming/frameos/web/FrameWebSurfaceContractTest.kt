@@ -288,6 +288,32 @@ class FrameWebSurfaceContractTest {
     }
 
     @Test
+    fun `replacement is committed only after activation and reattachment succeed`() {
+        val source = source()
+        val request = methodBody(source, "fun request(url: String)")
+        val recreate = methodBody(source, "private fun recreateSessionAfterWatchdogTimeout()")
+
+        assertContainsInOrder(
+            request,
+            listOf(
+                "watchdogRecovery.requiresSessionRecreation",
+                "recreateSessionAfterWatchdogTimeout()",
+                "crashRecovery.reopenIfRequired",
+            ),
+        )
+        assertContainsInOrder(
+            recreate,
+            listOf(
+                "openSession()",
+                "crashRecovery.markFreshSessionOpened()",
+                "session.setActive(true)",
+                "reattachManagedSessionAfterReplacement(this)",
+                "watchdogRecovery.markSessionRecreated()",
+            ),
+        )
+    }
+
+    @Test
     fun `suspendAllContent cancels recovery callbacks before suspending sessions without evicting warm home`() {
         val suspendAllContent = methodBody(source(), "fun suspendAllContent()")
 
