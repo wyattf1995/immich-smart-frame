@@ -32,6 +32,22 @@ class FrameWebWatchdogRecoveryStateTest {
         assertEquals(0, consecutiveWatchdogTimeouts(state))
     }
 
+    @Test
+    fun `consuming a pending recreation does not reset timeout history or recreate again before the next threshold`() {
+        val state = state()
+
+        repeat(3) { recordWatchdogTimeout(state) }
+        state.javaClass.getMethod("markSessionRecreated").invoke(state)
+
+        assertFalse(requiresSessionRecreation(state))
+        assertEquals(3, consecutiveWatchdogTimeouts(state))
+        assertFalse(recordWatchdogTimeout(state))
+        assertFalse(recordWatchdogTimeout(state))
+        assertTrue(recordWatchdogTimeout(state))
+        assertTrue(requiresSessionRecreation(state))
+        assertEquals(6, consecutiveWatchdogTimeouts(state))
+    }
+
     private fun state(): Any = Class.forName("com.wyattfleming.frameos.web.FrameWebWatchdogRecoveryState")
         .getConstructor()
         .newInstance()

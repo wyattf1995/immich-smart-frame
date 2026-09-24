@@ -50,4 +50,16 @@ class FrameWebCrashRecoveryStateTest {
         assertEquals(1, state.generation)
         assertTrue(state.canUseSession)
     }
+
+    @Test
+    fun `fresh replacement session clears a stale crash reopen requirement`() {
+        val state = FrameWebCrashRecoveryState()
+        state.markClosedByContentProcess()
+
+        state.javaClass.getMethod("markFreshSessionOpened").invoke(state)
+
+        assertEquals(1, state.generation)
+        assertFalse(state.requiresReopen)
+        assertTrue(state.canUseSession)
+    }
 }
