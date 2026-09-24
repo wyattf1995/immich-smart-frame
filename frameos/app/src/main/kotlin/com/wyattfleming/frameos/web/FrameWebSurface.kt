@@ -205,9 +205,6 @@ class FrameWebSurface(
             require(urlPolicy.isAllowedTopLevelNavigation(configuredUrls, url)) { "Unsafe $label navigation" }
             lifecycleSuspended = false
             watchdogRecovery.recordNavigationStart()
-            if (watchdogRecovery.requiresSessionRecreation && isEligibleForWatchdogSessionRecovery()) {
-                recreateSessionAfterWatchdogTimeout()
-            }
             traceGeneration += 1
             val fragmentOnly = loadState.isExactFragmentOnlyRequest(url)
             loadState.recordRequest(url)
@@ -218,6 +215,9 @@ class FrameWebSurface(
             }
             trace("request")
             try {
+                if (watchdogRecovery.requiresSessionRecreation && isEligibleForWatchdogSessionRecovery()) {
+                    recreateSessionAfterWatchdogTimeout()
+                }
                 if (crashRecovery.reopenIfRequired { session.open(frameRuntime) }) {
                     val active = label != "Photos" ||
                         (photosContentActive && this === displayedManagedSession() && displayedSurfaceVisible())
@@ -397,10 +397,15 @@ class FrameWebSurface(
                 )
                 runCatching { retiredSession.close() }
                 openSession()
+                crashRecovery.markFreshSessionOpened()
+                watchdogRecovery.markSessionRecreated()
                 if (label == "Photos") restorePhotoBridgeState()
                 session.setActive(true)
                 session.setFocused(false)
                 reattachManagedSessionAfterReplacement(this)
+            } catch (error: RuntimeException) {
+                crashRecovery.markClosedByContentProcess()
+                throw error
             } finally {
                 retiringSession = null
             }

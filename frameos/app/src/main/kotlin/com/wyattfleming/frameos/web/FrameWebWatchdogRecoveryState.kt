@@ -10,12 +10,16 @@ class FrameWebWatchdogRecoveryState(
 
     var consecutiveWatchdogTimeouts = 0
         private set
+    private var recreationPending = false
 
     val requiresSessionRecreation: Boolean
-        get() = consecutiveWatchdogTimeouts >= sessionRecreationThreshold
+        get() = recreationPending
 
     fun recordWatchdogTimeout(): Boolean {
         consecutiveWatchdogTimeouts += 1
+        if (consecutiveWatchdogTimeouts % sessionRecreationThreshold == 0) {
+            recreationPending = true
+        }
         return requiresSessionRecreation
     }
 
@@ -25,6 +29,12 @@ class FrameWebWatchdogRecoveryState(
     /** Called only after successful page stop and first contentful paint. */
     fun recordRendered() {
         consecutiveWatchdogTimeouts = 0
+        recreationPending = false
+    }
+
+    /** A fresh session is already open; wait for the next threshold before replacing it again. */
+    fun markSessionRecreated() {
+        recreationPending = false
     }
 
     private companion object {
