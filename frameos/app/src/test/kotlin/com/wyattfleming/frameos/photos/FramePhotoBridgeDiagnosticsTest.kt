@@ -1,7 +1,7 @@
 package com.wyattfleming.frameos.photos
 
 import org.json.JSONObject
-import org.mozilla.geckoview.GeckoBundle
+import org.mozilla.gecko.util.GeckoBundle
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -88,16 +88,17 @@ class FramePhotoBridgeDiagnosticsTest {
         message: Any,
         sender: FramePhotoBridge.Sender?,
     ): GeckoBundle {
-        val response = bridge.nativeMessageResponse(nativeApp, message, sender)
-        val latch = CountDownLatch(1)
         var value: Any? = null
-        var failure: Throwable? = null
-        response.accept(
-            { returned -> value = returned; latch.countDown() },
-            { error -> failure = error; latch.countDown() },
-        )
+        val latch = CountDownLatch(1)
+        val immediate = bridge.handleNativeMessage(nativeApp, message, sender) { response ->
+            value = response
+            latch.countDown()
+        }
+        if (immediate != null) return requireGeckoBundle(immediate)
         assertTrue("native response did not complete", latch.await(2, TimeUnit.SECONDS))
-        failure?.let { throw AssertionError("native response failed", it) }
-        return value as? GeckoBundle ?: throw AssertionError("expected GeckoBundle response, got ${value?.javaClass?.name}")
+        return requireGeckoBundle(value)
     }
+
+    private fun requireGeckoBundle(value: Any?): GeckoBundle =
+        value as? GeckoBundle ?: throw AssertionError("expected GeckoBundle response, got ${value?.javaClass?.name}")
 }
