@@ -398,11 +398,11 @@ class FrameWebSurface(
                 runCatching { retiredSession.close() }
                 openSession()
                 crashRecovery.markFreshSessionOpened()
-                watchdogRecovery.markSessionRecreated()
                 if (label == "Photos") restorePhotoBridgeState()
                 session.setActive(true)
                 session.setFocused(false)
                 reattachManagedSessionAfterReplacement(this)
+                watchdogRecovery.markSessionRecreated()
             } catch (error: RuntimeException) {
                 crashRecovery.markClosedByContentProcess()
                 throw error
