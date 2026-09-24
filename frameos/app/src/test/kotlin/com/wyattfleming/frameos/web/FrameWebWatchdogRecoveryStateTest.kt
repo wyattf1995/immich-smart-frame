@@ -48,6 +48,22 @@ class FrameWebWatchdogRecoveryStateTest {
         assertEquals(6, consecutiveWatchdogTimeouts(state))
     }
 
+    @Test
+    fun `bridge ready continuation after replacement loads without a second replacement before paint`() {
+        val state = state()
+
+        repeat(3) { recordWatchdogTimeout(state) }
+        assertTrue(requiresSessionRecreation(state))
+
+        // The visible retry opened a replacement session. Its Photos bridge may become ready
+        // before Gecko reports page stop plus paint and continue the deferred load immediately.
+        state.javaClass.getMethod("markSessionRecreated").invoke(state)
+        state.javaClass.getMethod("recordNavigationStart").invoke(state)
+
+        assertFalse(requiresSessionRecreation(state))
+        assertEquals(3, consecutiveWatchdogTimeouts(state))
+    }
+
     private fun state(): Any = Class.forName("com.wyattfleming.frameos.web.FrameWebWatchdogRecoveryState")
         .getConstructor()
         .newInstance()
