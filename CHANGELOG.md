@@ -11,6 +11,11 @@ changes will still be called out explicitly.
 
 ### Fixed
 
+- FrameOS 0.2.12 returns supported GeckoBundle payloads from its native photo
+  bridge, preventing repeated callback conversion errors during shared playback.
+- FrameOS replaces a stalled browser session after three watchdog timeouts,
+  preserves photo playback state, and ignores callbacks from the retired session.
+  A successful rendered page clears the timeout history.
 - FrameOS pause and resume commands keep the web slideshow toolbar hidden,
   including repeated pause commands, while preserving native Next/Previous
   actions and paused-photo capture. FrameOS 0.2.8 packages extension 1.0.4,
