@@ -14,6 +14,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.WindowInsets;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -31,7 +32,8 @@ public final class TouchProbeActivity extends Activity {
     private static final int TEXT = Color.rgb(244, 247, 242);
     private static final int GREEN = Color.rgb(111, 207, 117);
     private final int paddingDp = 18;
-    private LinearLayout content;
+    private WebView activeWebView;
+    private String webViewError;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -40,6 +42,7 @@ public final class TouchProbeActivity extends Activity {
     }
 
     private void showDiagnostics() {
+        destroyActiveWebView();
         LinearLayout page = page();
         page.addView(title("FrameOS Touch Probe"));
         page.addView(body("This stays on the device. It uses no network, credentials, or persistent diagnostic log."));
@@ -48,6 +51,10 @@ public final class TouchProbeActivity extends Activity {
         }));
         page.addView(section("Device capabilities"));
         page.addView(body(diagnosticReport()));
+        if (webViewError != null) {
+            page.addView(section("Offline WebView check"));
+            page.addView(body(webViewError));
+        }
         page.addView(section("Touch visualizer"));
         page.addView(body("Touch the panel with one or more fingers. The count and coordinates update while you touch it."));
         TouchVisualizer visualizer = new TouchVisualizer(this);
@@ -58,28 +65,63 @@ public final class TouchProbeActivity extends Activity {
     }
 
     private void showWebViewCheck() {
-        FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(DARK);
-        WebView webView = new WebView(this);
-        WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(false);
-        settings.setDatabaseEnabled(false);
-        settings.setAllowFileAccess(true);
-        settings.setAllowContentAccess(false);
-        webView.setWebViewClient(new WebViewClient());
-        webView.loadUrl("file:///android_asset/webview-capability.html");
-        root.addView(webView, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        Button back = button("Back to diagnostics", new View.OnClickListener() {
-            @Override public void onClick(View view) { showDiagnostics(); }
-        });
-        FrameLayout.LayoutParams buttonParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(56), Gravity.TOP | Gravity.END);
-        buttonParams.setMargins(dp(12), dp(12), dp(12), dp(12));
-        root.addView(back, buttonParams);
-        applySystemBarInsets(root);
-        setContentView(root);
+        destroyActiveWebView();
+        webViewError = null;
+        try {
+            FrameLayout root = new FrameLayout(this);
+            root.setBackgroundColor(DARK);
+            WebView webView = new WebView(this);
+            activeWebView = webView;
+            WebSettings settings = webView.getSettings();
+            settings.setJavaScriptEnabled(true);
+            settings.setDomStorageEnabled(false);
+            settings.setDatabaseEnabled(false);
+            settings.setAllowFileAccess(true);
+            settings.setAllowContentAccess(false);
+            settings.setAllowFileAccessFromFileURLs(false);
+            settings.setAllowUniversalAccessFromFileURLs(false);
+            webView.setWebViewClient(new WebViewClient() {
+                @Override public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                    return !"file:///android_asset/webview-capability.html".equals(url);
+                }
+            });
+            webView.loadUrl("file:///android_asset/webview-capability.html");
+            root.addView(webView, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            Button back = button("Back to diagnostics", new View.OnClickListener() {
+                @Override public void onClick(View view) { showDiagnostics(); }
+            });
+            FrameLayout.LayoutParams buttonParams = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(56), Gravity.TOP | Gravity.END);
+            buttonParams.setMargins(dp(12), dp(12), dp(12), dp(12));
+            root.addView(back, buttonParams);
+            applySystemBarInsets(root);
+            setContentView(root);
+        } catch (RuntimeException error) {
+            destroyActiveWebView();
+            webViewError = "Offline WebView could not start: " + error.getClass().getSimpleName();
+            showDiagnostics();
+        }
+    }
+
+    @Override protected void onDestroy() {
+        destroyActiveWebView();
+        super.onDestroy();
+    }
+
+    private void destroyActiveWebView() {
+        WebView webView = activeWebView;
+        activeWebView = null;
+        if (webView == null) return;
+        try {
+            webView.stopLoading();
+            webView.clearHistory();
+            ViewParent parent = webView.getParent();
+            if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(webView);
+            webView.destroy();
+        } catch (RuntimeException ignored) {
+            // The diagnostic screen reports provider initialization failures without crashing.
+        }
     }
 
     private String diagnosticReport() {
@@ -144,11 +186,11 @@ public final class TouchProbeActivity extends Activity {
     }
 
     private LinearLayout page() {
-        content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(paddingDp), dp(paddingDp), dp(paddingDp), dp(paddingDp));
-        content.setBackgroundColor(DARK);
-        return content;
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setPadding(dp(paddingDp), dp(paddingDp), dp(paddingDp), dp(paddingDp));
+        page.setBackgroundColor(DARK);
+        return page;
     }
 
     private TextView title(String value) {
@@ -212,15 +254,57 @@ public final class TouchProbeActivity extends Activity {
         }
 
         @Override public boolean onTouchEvent(MotionEvent event) {
-            pointerCount = Math.min(event.getPointerCount(), xs.length);
-            for (int index = 0; index < pointerCount; index++) {
-                xs[index] = event.getX(index);
-                ys[index] = event.getY(index);
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                ViewParent parent = getParent();
+                if (parent != null) parent.requestDisallowInterceptTouchEvent(true);
             }
-            status = pointerCount + (pointerCount == 1 ? " touch point" : " touch points")
-                    + " · action " + actionName(event.getActionMasked());
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                status = "Last touch at x=" + Math.round(event.getX()) + " y=" + Math.round(event.getY())
+                        + " · action " + actionName(action);
+                clearActivePoints();
+                ViewParent parent = getParent();
+                if (parent != null) parent.requestDisallowInterceptTouchEvent(false);
+                if (action == MotionEvent.ACTION_UP) performClick();
+            } else {
+                copyActivePoints(event, action == MotionEvent.ACTION_POINTER_UP ? event.getActionIndex() : -1);
+                status = pointSummary(action);
+            }
             invalidate();
             return true;
+        }
+
+        @Override public boolean performClick() {
+            super.performClick();
+            return true;
+        }
+
+        private void copyActivePoints(MotionEvent event, int excludedIndex) {
+            pointerCount = 0;
+            for (int index = 0; index < event.getPointerCount() && pointerCount < xs.length; index++) {
+                if (index == excludedIndex) continue;
+                xs[pointerCount] = event.getX(index);
+                ys[pointerCount] = event.getY(index);
+                pointerCount += 1;
+            }
+        }
+
+        private void clearActivePoints() {
+            for (int index = 0; index < pointerCount; index++) {
+                xs[index] = 0f;
+                ys[index] = 0f;
+            }
+            pointerCount = 0;
+        }
+
+        private String pointSummary(int action) {
+            StringBuilder result = new StringBuilder();
+            result.append(pointerCount).append(pointerCount == 1 ? " touch point" : " touch points");
+            for (int index = 0; index < pointerCount; index++) {
+                result.append(" · ").append(index + 1).append(": x=")
+                        .append(Math.round(xs[index])).append(" y=").append(Math.round(ys[index]));
+            }
+            return result.append(" · action ").append(actionName(action)).toString();
         }
 
         @Override protected void onDraw(Canvas canvas) {

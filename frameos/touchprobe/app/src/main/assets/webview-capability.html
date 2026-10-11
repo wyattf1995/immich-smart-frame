@@ -18,12 +18,30 @@
     <p id="result">Loading bundled page…</p>
     <button id="touch">Tap here</button>
   </div>
+  <p id="capabilities"></p>
   <p><code id="agent"></code></p>
   <script>
-    document.getElementById('result').textContent = 'Bundled HTML, CSS, JavaScript, and touch events are available.';
+    var result = document.getElementById('result');
+    var capabilities = document.getElementById('capabilities');
+    var canvas = document.createElement('canvas');
+    var canvas2d = false;
+    var grid = false;
+    var flex = false;
+    try { canvas2d = canvas.getContext('2d') !== null; } catch (error) {}
+    try {
+      grid = typeof CSS !== 'undefined' && CSS.supports('display', 'grid');
+      flex = typeof CSS !== 'undefined' && CSS.supports('display', 'flex');
+    } catch (error) {}
+    result.textContent = 'Bundled HTML, CSS, and JavaScript loaded. Touch the button to test touch delivery.';
+    capabilities.textContent = 'Promise: ' + typeof Promise + ' · fetch: ' + typeof fetch
+      + ' · WebSocket: ' + typeof WebSocket + ' · Canvas 2D: ' + canvas2d
+      + ' · CSS grid: ' + grid + ' · CSS flex: ' + flex;
     document.getElementById('agent').textContent = navigator.userAgent;
+    document.addEventListener('touchstart', function (event) {
+      result.textContent = 'Touch event received: ' + event.touches.length + ' active touch point(s).';
+    }, false);
     document.getElementById('touch').addEventListener('click', function () {
-      this.textContent = 'Touch received';
+      this.textContent = 'Tap or click received';
     });
   </script>
 </body>
