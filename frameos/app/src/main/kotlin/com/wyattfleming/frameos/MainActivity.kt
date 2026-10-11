@@ -374,10 +374,8 @@ class MainActivity : Activity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (!hasFocus) {
-            volumeInput.reset()
-            root.resetTouchNavigation()
-        }
+        if (!hasFocus) volumeInput.reset()
+        if (!hasFocus) root.resetTouchNavigation()
     }
 
     override fun onStop() {
