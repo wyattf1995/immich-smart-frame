@@ -9,7 +9,7 @@ android {
     defaultConfig {
         applicationId = "com.wyattfleming.frameos.touchprobe"
         minSdk = 23
-        targetSdk = 23
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
     }

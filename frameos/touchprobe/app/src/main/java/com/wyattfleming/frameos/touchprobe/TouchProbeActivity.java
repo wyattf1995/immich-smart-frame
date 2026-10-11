@@ -14,6 +14,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -77,6 +78,7 @@ public final class TouchProbeActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(56), Gravity.TOP | Gravity.END);
         buttonParams.setMargins(dp(12), dp(12), dp(12), dp(12));
         root.addView(back, buttonParams);
+        applySystemBarInsets(root);
         setContentView(root);
     }
 
@@ -122,8 +124,23 @@ public final class TouchProbeActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(DARK);
+        applySystemBarInsets(scroll);
         scroll.addView(page);
         return scroll;
+    }
+
+    private void applySystemBarInsets(final View view) {
+        view.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+            @Override public WindowInsets onApplyWindowInsets(View target, WindowInsets insets) {
+                target.setPadding(
+                        insets.getSystemWindowInsetLeft(),
+                        insets.getSystemWindowInsetTop(),
+                        insets.getSystemWindowInsetRight(),
+                        insets.getSystemWindowInsetBottom());
+                return insets;
+            }
+        });
+        view.requestApplyInsets();
     }
 
     private LinearLayout page() {
