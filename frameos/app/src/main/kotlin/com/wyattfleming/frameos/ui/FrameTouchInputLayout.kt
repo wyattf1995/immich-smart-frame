@@ -1,6 +1,7 @@
 package com.wyattfleming.frameos.ui
 
 import android.content.Context
+import android.util.AttributeSet
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.widget.FrameLayout
@@ -14,10 +15,20 @@ import com.wyattfleming.frameos.navigation.TouchModeNavigationRouter
  * Gives a physical touchscreen an edge-only mode switch without taking normal
  * web content taps, scrolling, or center-originated gestures from its child.
  */
-internal class FrameTouchInputLayout(
+internal class FrameTouchInputLayout private constructor(
     context: Context,
+    attrs: AttributeSet?,
     private val onModeGesture: (ModeGestureDirection, Long) -> Unit,
-) : FrameLayout(context) {
+) : FrameLayout(context, attrs) {
+    constructor(context: Context) : this(context, null, { _, _ -> })
+
+    constructor(context: Context, attrs: AttributeSet?) : this(context, attrs, { _, _ -> })
+
+    constructor(
+        context: Context,
+        onModeGesture: (ModeGestureDirection, Long) -> Unit,
+    ) : this(context, null, onModeGesture)
+
     private val router = TouchModeNavigationRouter(
         edgeStartPx = context.dp(EDGE_START_DP).toFloat(),
         minimumTravelPx = context.dp(MINIMUM_TRAVEL_DP).toFloat(),
