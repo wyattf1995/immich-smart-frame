@@ -359,6 +359,7 @@ class MainActivity : Activity() {
         invalidateCompanionPoll()
         cancelPendingBootRecoveryConfirmation()
         volumeInput.reset()
+        root.resetTouchNavigation()
         cancelModeGesture()
         handler.removeCallbacks(refreshVisibleWeather)
         handler.removeCallbacks(preloadCalendar)
@@ -373,7 +374,10 @@ class MainActivity : Activity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (!hasFocus) volumeInput.reset()
+        if (!hasFocus) {
+            volumeInput.reset()
+            root.resetTouchNavigation()
+        }
     }
 
     override fun onStop() {
@@ -591,7 +595,7 @@ class MainActivity : Activity() {
             isFocusableInTouchMode = true
             setOnClickListener { }
             setOnTouchListener { view, event ->
-                if (consumeInterceptedModeGesture(event)) return@setOnTouchListener true
+                if (consumesCurrentModeGesture()) return@setOnTouchListener true
                 val handled = gestureDetector.onTouchEvent(event)
                 if (event.action == MotionEvent.ACTION_UP) view.performClick()
                 handled
