@@ -15,6 +15,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.net.Uri
 import android.view.GestureDetector
+import android.view.InputDevice
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -76,6 +77,7 @@ import com.wyattfleming.frameos.photos.FrameSharedPlaybackMetadata
 import com.wyattfleming.frameos.control.FrameRemoteSettings
 import com.wyattfleming.frameos.security.FrameExternalControlPolicy
 import com.wyattfleming.frameos.diagnostics.FrameDiagnosticStore
+import com.wyattfleming.frameos.ui.FrameTouchInputLayout
 import com.wyattfleming.frameos.ui.WeatherContentView
 import com.wyattfleming.frameos.ui.dp
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherEndpoint
@@ -127,7 +129,7 @@ class MainActivity : Activity() {
         )
     }
 
-    private lateinit var root: FrameLayout
+    private lateinit var root: FrameTouchInputLayout
     private lateinit var weatherContent: WeatherContentView
     private lateinit var hud: LinearLayout
     private lateinit var hudLabel: TextView
@@ -247,7 +249,10 @@ class MainActivity : Activity() {
                     velocityX: Float,
                     velocityY: Float,
                 ): Boolean {
-                    if (start == null) return false
+                    if (start == null ||
+                        start.isFromSource(InputDevice.SOURCE_TOUCHSCREEN) ||
+                        end.isFromSource(InputDevice.SOURCE_TOUCHSCREEN)
+                    ) return false
                     val horizontalDistance = end.x - start.x
                     if (abs(horizontalDistance) < dp(96) || abs(velocityX) < abs(velocityY)) return false
                     queueModeGesture(
@@ -354,6 +359,7 @@ class MainActivity : Activity() {
         invalidateCompanionPoll()
         cancelPendingBootRecoveryConfirmation()
         volumeInput.reset()
+        root.resetTouchNavigation()
         cancelModeGesture()
         handler.removeCallbacks(refreshVisibleWeather)
         handler.removeCallbacks(preloadCalendar)
@@ -369,6 +375,7 @@ class MainActivity : Activity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (!hasFocus) volumeInput.reset()
+        if (!hasFocus) root.resetTouchNavigation()
     }
 
     override fun onStop() {
@@ -578,12 +585,15 @@ class MainActivity : Activity() {
     }
 
     private fun buildUi() {
-        root = FrameLayout(this).apply {
+        root = FrameTouchInputLayout(this, onModeGesture = { direction, eventTimeMillis ->
+            queueModeGesture(direction, eventTimeMillis, repeatCount = 0)
+        }).apply {
             setBackgroundColor(getColor(R.color.frame_dark))
             isFocusable = true
             isFocusableInTouchMode = true
             setOnClickListener { }
             setOnTouchListener { view, event ->
+                if (consumesCurrentModeGesture()) return@setOnTouchListener true
                 val handled = gestureDetector.onTouchEvent(event)
                 if (event.action == MotionEvent.ACTION_UP) view.performClick()
                 handled
