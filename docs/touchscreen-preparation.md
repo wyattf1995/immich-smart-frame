@@ -37,6 +37,31 @@ FrameOS mapping, `reports/frame-sync-android-validation.zip`, and
 No household configuration, credentials, signing keys, or personal media belong
 in the source upload. Do not deploy these artifacts automatically.
 
+### Verified overnight build — 2026-10-11 UTC
+
+NAS job `frameos-touchscreen-prep-20261010-230330-d1b466847f3d` passed at
+06:21 UTC. Built integration source: `bf6620cca8eb231c58a0b71bc072af577c5f8222`;
+build-only transport: `44ab7a3a15e8992a986bb5ac48d4adee2eb063d2`. The FrameOS
+and TV Git subtrees are identical between those commits. All 295 source hashes
+in the exported report also match the committed transport.
+
+Compilation and lint passed, with 267 FrameOS JVM tests, 24 TV JVM tests and
+30 JavaScript tests passing. The nine touch guards passed initially, failed on
+a deliberate source-only input-gate reversal (including the named routing test),
+then passed again after exact source restoration with unchanged test hashes.
+This is JVM proof; the Android dispatch checks below remain outstanding.
+
+Both unsigned APKs, FrameOS mapping and two report ZIPs were exported and
+verified, archived with server-side checksum verification, and the completed
+NAS workspace was retired. Local evidence and artifacts are under
+`/Users/wyattfleming/frameos-hardware/2026-10-10-pf1007/overnight-prep/retained/`:
+`verified-summary.json`, `verification-supplement.json`, `CLOSEOUT.json` and
+`MANIFEST.sha256`. The NAS archive is
+`/mnt/user/agent-archives/frameos-touchscreen-prep-20261010-232051-a82d05842244`.
+
+No frame installation, firmware change, launcher replacement or production
+signing occurred. The camera-card backup remains paused.
+
 ## Device acceptance once access is available
 
 1. Record the physical model, API, ABI, memory, screen size/density and current
