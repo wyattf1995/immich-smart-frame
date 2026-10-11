@@ -47,6 +47,17 @@ class TouchModeNavigationRouterTest {
     }
 
     @Test
+    fun `cancel releases intercepted touch ownership`() {
+        router.route(down(x = 10f))
+        assertEquals(
+            TouchModeNavigationRoute.Intercept(ModeGestureDirection.PREVIOUS),
+            router.route(move(x = 106f)),
+        )
+        assertEquals(TouchModeNavigationRoute.ConsumeIntercepted, router.route(cancel()))
+        assertEquals(TouchModeNavigationRoute.PassToChild, router.route(down(x = 500f)))
+    }
+
+    @Test
     fun `center scrolls and multi touch remain with the child`() {
         assertEquals(TouchModeNavigationRoute.PassToChild, router.route(down(x = 500f)))
         assertEquals(TouchModeNavigationRoute.PassToChild, router.route(move(x = 350f)))
@@ -72,6 +83,15 @@ class TouchModeNavigationRouterTest {
         width = 1_000f,
         pointerCount = pointerCount,
         isTouchscreen = touchscreen,
+    )
+
+    private fun cancel() = TouchInputSample(
+        action = TouchInputAction.CANCEL,
+        x = 106f,
+        y = 500f,
+        width = 1_000f,
+        pointerCount = 1,
+        isTouchscreen = true,
     )
 
     private fun up() = TouchInputSample(
