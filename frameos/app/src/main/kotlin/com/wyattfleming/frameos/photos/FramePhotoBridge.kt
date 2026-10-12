@@ -203,6 +203,21 @@ class FramePhotoBridge(
         return playbackPort?.let { dispatchPlayback(it, pauseCommand(paused), queuePauseWhenOffMain = true) } ?: false
     }
 
+    /**
+     * Starts a new top-level Photos document generation. This invalidates a
+     * decoded callback from the preceding document before its result can be
+     * delivered to the surface readiness gate.
+     */
+    @Synchronized
+    internal fun beginPageLoad(session: Any): Long? {
+        if (configuredSession !== session) return null
+        generation += 1
+        clearPausedSnapshot()
+        if (photosVisible && desiredPlaybackPaused) issuePausedSnapshot()
+        clearPlaybackPort()
+        return generation
+    }
+
     private fun issuePausedSnapshot() {
         if (!photosVisible || !desiredPlaybackPaused) return
         pauseSnapshotNonce = UUID.randomUUID().toString()
@@ -507,7 +522,7 @@ class FramePhotoBridge(
         private const val MAX_DIAGNOSTICS_PER_SESSION = 32
         private const val MAX_DIAGNOSTIC_EPOCH = 4096L
         private const val MAX_DIAGNOSTIC_TRACKED_COUNT = 4L
-        private val DIAGNOSTIC_STAGES = setOf("pause", "step", "htmx_before", "htmx_primary_settle", "htmx_error")
+        private val DIAGNOSTIC_STAGES = setOf("pause", "step", "htmx_before", "htmx_primary_settle", "htmx_error", "htmx_no_content")
         private val SHARED_SCALAR = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
     }
 }
