@@ -98,7 +98,7 @@
       const events = calendars.length ? calendars.map((event) => `<div class="fch-event"><time>${safe(eventLabel(event, typeof options.now === "function" ? options.now() : new Date()))}</time><span>${safe(event.title)}</span></div>`).join("") : '<div class="fch-event"><span>No upcoming calendar events</span></div>';
       const forecastUnit = forecast ? hass.forecast.temperatureUnit : weatherUnit;
       const forecastMarkup = forecast ? forecast.map((day) => `<span class="fch-forecast-day"><b>${safe(day.label)}</b><i>${weatherIcon(day.condition)}</i><strong>${day.temperature}${safe(forecastUnit)}</strong><small>${day.low === null ? "" : `L ${day.low}${safe(forecastUnit)}`}${day.precipitation === null ? "" : ` ${day.precipitation}%`}</small></span>`).join("") : `<small class="fch-forecast-status">Forecast ${forecastStatus === "loading" ? "loading…" : "unavailable"}</small>`;
-      const signature = JSON.stringify({ night:now.night, connected:connected(hass), climate, draft, dirty, pending, feedback, weather:weather?.state, weatherTemp, weatherUnit, forecast, forecastStatus, family, calendars, cameras });
+      const signature = JSON.stringify({ night:now.night, calendarDateKey:now.date, connected:connected(hass), climate, draft, dirty, pending, feedback, weather:weather?.state, weatherTemp, weatherUnit, forecast, forecastUnit, forecastStatus, family, calendars, cameras });
       if (!force && signature === lastSignature) { updateClock(now); return; }
       lastSignature = signature;
       const active = root.ownerDocument?.activeElement;
