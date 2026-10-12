@@ -3,13 +3,22 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Modern remains the default. Legacy is deliberately opt-in for the verified
+// API23/ARMv7 PF1007 and never changes the normal release artifact.
+val frameosTarget = providers.gradleProperty("frameosTarget").orElse("modern").get()
+val legacyArmv7 = when (frameosTarget) {
+    "modern" -> false
+    "legacyArmv7" -> true
+    else -> error("Unsupported frameosTarget '$frameosTarget'; use modern or legacyArmv7")
+}
+
 android {
     namespace = "com.wyattfleming.frameos"
     compileSdk = 37
 
     defaultConfig {
         applicationId = "com.wyattfleming.frameos"
-        minSdk = 29
+        minSdk = if (legacyArmv7) 23 else 29
         targetSdk = 37
         // Retain 1: the verified signed 0.2.8 rollback artifact uses it, and
         // direct-device rollback installs must remain possible.
@@ -32,6 +41,9 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // The NIO flavor covers the existing java.time and java.nio.file uses
+        // on the API23 legacy target. Modern keeps its current platform behavior.
+        isCoreLibraryDesugaringEnabled = legacyArmv7
     }
 
     testOptions {
@@ -49,7 +61,19 @@ android {
 }
 
 dependencies {
-    implementation("org.mozilla.geckoview:geckoview-arm64-v8a:154.0.20260814215756")
+    implementation(
+        if (legacyArmv7) {
+            // Mozilla AAR manifest verified: 144 is the newest armeabi-v7a
+            // release with minSdk 21; 145 and newer require minSdk 26.
+            "org.mozilla.geckoview:geckoview-armeabi-v7a:144.0.20251027123126"
+        } else {
+            "org.mozilla.geckoview:geckoview-arm64-v8a:154.0.20260814215756"
+        },
+    )
+    if (legacyArmv7) {
+        // Android's documented Java 11 NIO desugaring artifact for API23.
+        coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.1")
+    }
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20260814")
