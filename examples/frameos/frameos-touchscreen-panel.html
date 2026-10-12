@@ -99,7 +99,7 @@
             if (!live?.states || typeof live.callService !== "function") return null;
             // Expose data needed by this view, not HA's auth/connection object.
             const ids = ["climate.entryway_entryway", "weather.home", "calendar.family",
-              "calendar.wyattf1995_gmail_com", "calendar.birthdays", "calendar.holidays_in_united_states",
+              ...Object.keys(live.states).filter((id) => id.startsWith("calendar.") && id !== "calendar.family").sort().slice(0, 3),
               "camera.backyard_backyard_camera", "camera.dining_room_dining_room_camera",
               "camera.garage_garage_camera", "camera.living_room_living_room_camera"];
             const keys = ["friendly_name", "current_temperature", "current_humidity", "temperature",
