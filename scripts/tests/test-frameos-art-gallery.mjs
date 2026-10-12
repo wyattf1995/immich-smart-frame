@@ -14,6 +14,8 @@ const collection = () => ({ version:1, title:"Impressionist landscapes", artwork
 
 assert.equal(validateCollection(collection()).artworks.length, 2, "valid local collection is accepted");
 assert.equal(validateCollection({ ...collection(), artworks:[] }), null, "empty collections are unavailable, never family fallback");
+assert.equal(validateCollection({ ...collection(), artworks:[{ ...artwork("a"), year:"", sourceUrl:"" }] }).artworks.length, 1, "local Takeout artwork accepts omitted year and attribution URL");
+assert.equal(validateCollection({ ...collection(), artworks:[{ ...artwork("a"), sourceUrl:"http://museum.example.invalid/a" }] }), null, "provided attribution URLs must remain safe HTTPS URLs");
 assert.equal(validateCollection({ ...collection(), artworks:[{ ...artwork("a"), image:"https://evil.example/a.jpg" }] }), null, "external image URLs are refused");
 assert.equal(validateCollection({ ...collection(), artworks:[{ ...artwork("a"), image:"images/../family.jpg" }] }), null, "escaping image paths are refused");
 assert.equal(validateCollection({ ...collection(), artworks:[{ ...artwork("a"), sourceUrl:"https://museum.example.invalid/a?token=x" }] }), null, "credential-like source queries are refused");
@@ -33,6 +35,8 @@ gallery.loadImage = async (entry) => ({ src:entry.image });
 gallery.display = (entry) => { gallery.currentId = entry.id; };
 await gallery.advance(1, true);
 assert.equal(gallery.currentId, "a", "next renders the first shuffled local artwork");
+await gallery.advance(-1);
+assert.equal(gallery.currentId, "a", "previous at the beginning preserves the current local artwork");
 await gallery.advance(1);
 assert.equal(gallery.currentId, "b", "next advances without touching family Photos");
 await gallery.advance(-1);
@@ -70,7 +74,7 @@ assert.match(source, /fetch\(this\.collectionUrl/, "only the same-origin local c
 assert.doesNotMatch(source, /fetch\([^)]*sourceUrl/, "museum attribution is metadata, not an external image request");
 assert.match(source, /EDGE_GUARD_PX/, "edge gestures are deliberately left to native navigation");
 assert.match(source, /\[\["Previous"/, "tap-revealed controls include previous navigation");
-assert.match(source, /\["Pause"/, "tap-revealed controls include pause");
+assert.match(source, /"Resume"\s*:\s*"Pause"/, "tap-revealed controls include pause and resume");
 assert.match(source, /this\.paused \? "Resume" : "Pause"/, "pause control reports Resume when cycling is paused");
 assert.match(source, /\["Next"/, "tap-revealed controls include next navigation");
 assert.match(stylesheet, /object-fit:contain/, "artwork is fit without cropping");
