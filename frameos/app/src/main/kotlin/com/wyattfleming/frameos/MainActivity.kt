@@ -377,7 +377,9 @@ class MainActivity : Activity() {
         refreshLocalProvisioning()
         unregisterDashboardBack?.invoke()
         unregisterDashboardBack = if (touchDashboardEnabled && configuration != null) {
-            TouchDashboardBackNavigation.register(this) { showDashboard() }
+            TouchDashboardBackNavigation.register(this) {
+                if (oauthSurface != null) closeWeatherAuthorization(consumeState = true) else showDashboard()
+            }
         } else null
         applyBrightness(state.brightnessOverridePercent)
         enterImmersiveMode()
@@ -1601,6 +1603,7 @@ class MainActivity : Activity() {
 
     private fun beginWeatherAuthorization() {
         if (oauthSurface != null) return
+        if (callbackVerifier == null) return
         val endpoint = oauthEndpoint ?: return
         val callbackPageUrl = oauthCallbackPageUrl ?: return
         val pendingStateStore = pendingOAuthStateStore ?: return
@@ -1642,6 +1645,7 @@ class MainActivity : Activity() {
             overlay.addView(surface, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             root.addView(overlay, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             surface.requestFocus()
+            surface.start()
         } catch (_: RuntimeException) {
             closeWeatherAuthorization(consumeState = true)
         }
@@ -1673,7 +1677,10 @@ class MainActivity : Activity() {
     }
 
     private fun handleOAuthCallbackUrl(callbackUrl: String) {
-        val verifier = callbackVerifier ?: return
+        val verifier = callbackVerifier ?: run {
+            pendingOAuthStateStore?.consume()
+            return
+        }
         val code = verifier.verify(callbackUrl) ?: run {
             pendingOAuthStateStore?.consume()
             setIntent(Intent(this, MainActivity::class.java))
