@@ -3,6 +3,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const source = fs.readFileSync("examples/frameos-art/art.js", "utf8");
+const stylesheet = fs.readFileSync("examples/frameos-art/art.css", "utf8");
 const document = { hidden:false, addEventListener() {}, removeEventListener() {}, getElementById() { return null; } };
 const window = { document, fetch: async () => ({ ok:false }), Image: class {}, setInterval, clearInterval, setTimeout, clearTimeout };
 vm.runInNewContext(source, { window, document, URL, console, setInterval, clearInterval, setTimeout, clearTimeout });
@@ -57,4 +58,8 @@ assert.doesNotMatch(source, /innerHTML/, "captions are assigned with textContent
 assert.match(source, /fetch\(this\.collectionUrl/, "only the same-origin local collection is fetched");
 assert.doesNotMatch(source, /fetch\([^)]*sourceUrl/, "museum attribution is metadata, not an external image request");
 assert.match(source, /EDGE_GUARD_PX/, "edge gestures are deliberately left to native navigation");
+assert.match(source, /\[\["Previous"/, "tap-revealed controls include previous navigation");
+assert.match(source, /\["Pause"/, "tap-revealed controls include pause");
+assert.match(source, /\["Next"/, "tap-revealed controls include next navigation");
+assert.match(stylesheet, /object-fit:contain/, "artwork is fit without cropping");
 console.log("FrameOS Art gallery tests passed");
