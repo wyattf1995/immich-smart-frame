@@ -141,7 +141,7 @@ def kotlin_proof(
     original: bytes,
     before: str,
     after: str,
-    expected_failure: str,
+    expected_failures: set[str],
     proof: dict,
 ) -> None:
     replace_once(path, original, before, after)
@@ -150,11 +150,11 @@ def kotlin_proof(
         red_summary = copy_junit(f"{name}-red", proof)
         if (
             red["exit"] == 0 or red_summary["tests"] != EXPECTED_KOTLIN_TESTS or
-            red_summary["failures"] != 1 or red_summary["errors"] or red_summary["skipped"] or
-            expected_failure not in red_summary["cases"] or
-            red_summary["failure_details"][0]["type"] != "java.lang.AssertionError"
+            red_summary["failures"] != len(expected_failures) or red_summary["errors"] or red_summary["skipped"] or
+            red_summary["cases"] != expected_failures or
+            any(detail["type"] != "java.lang.AssertionError" for detail in red_summary["failure_details"])
         ):
-            raise RuntimeError(f"{name} did not fail the expected test {expected_failure!r}: {red_summary}")
+            raise RuntimeError(f"{name} did not fail exactly the expected tests {expected_failures!r}: {red_summary}")
     finally:
         path.write_bytes(original)
     restored = sha256(path)
@@ -167,7 +167,7 @@ def kotlin_proof(
         "source": str(path.relative_to(ROOT)),
         "original_sha256": hashlib.sha256(original).hexdigest(),
         "restored_sha256": restored,
-        "expected_failure": expected_failure,
+        "expected_failures": sorted(expected_failures),
         "red_tests": red_summary["tests"],
         "red_failures": red_summary["failures"],
         "restored_tests": green_summary["tests"],
@@ -265,19 +265,22 @@ def main() -> int:
             "old-generation", state, originals[state],
             "if (expectedGeneration != generation) return false",
             "if (expectedGeneration == null) return false",
-            "a new request rejects its old observation and requires a new one", proof,
+            {
+                "a new request rejects its old observation and requires a new one",
+                "outer paint cannot qualify Photos until the current bridge generation is observed",
+            }, proof,
         )
         kotlin_proof(
             "outer-paint-gate", surface, originals[surface],
             "if (!hasCurrentPhotoObservation()) {",
             "if (false) {",
-            "render readiness requires both a successful stop and contentful paint", proof,
+            {"render readiness requires both a successful stop and contentful paint"}, proof,
         )
         kotlin_proof(
             "main-activity-ready-hook", activity, originals[activity],
             "webSurface?.onCurrentPhotoObserved(photo)",
             "Unit",
-            "only a current visible photo observation can satisfy web readiness", proof,
+            {"only a current visible photo observation can satisfy web readiness"}, proof,
         )
         js_proof(javascript, originals[javascript], proof)
         if proof["test_sha256"] != {str(path.relative_to(ROOT)): sha256(path) for path in test_paths}:
