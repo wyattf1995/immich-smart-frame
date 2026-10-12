@@ -26,10 +26,13 @@ class TouchDashboardContractTest {
     fun visibleRailIsLargeTouchAndUsesOnlyConfiguredModes() {
         assertTrue(rail.contains("minimumWidth = context.dp(88)"))
         assertTrue(rail.contains("minimumTouchTarget(context)"))
-        assertTrue(rail.contains("this.modes = modes.distinct()"))
+        assertTrue(rail.contains("val next = modes.distinct()"))
         assertTrue(rail.contains("fun setSelection(mode: FrameMode?)"))
         assertTrue(rail.contains("fun updateTime(now: ZonedDateTime)"))
-        assertTrue(rail.contains("onDashboard()"))
+        assertTrue(rail.contains("onOpenSettings()"))
+        assertTrue(rail.contains("item(null, \"Settings\", false)"))
+        assertTrue(rail.contains("if (this.modes == next) return"))
+        assertTrue(rail.contains("if (selected == mode) return"))
         assertFalse("Birds is never added independently of setModes", rail.contains("FrameMode.BIRDS"))
     }
 

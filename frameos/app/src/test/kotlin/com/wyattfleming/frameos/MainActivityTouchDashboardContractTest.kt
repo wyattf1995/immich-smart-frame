@@ -6,93 +6,75 @@ import org.junit.Test
 import java.nio.file.Files
 import java.nio.file.Path
 
+/** Compatibility filename retained while the native dashboard integration is retired. */
 class MainActivityTouchDashboardContractTest {
     @Test
-    fun `startup reads the local touchscreen opt in and physical touch is the dashboard front door`() {
+    fun `touch startup opens authenticated Home unless Photos startup is configured`() {
         val source = mainActivity()
-        val settings = touchscreenSettings()
-        val receiver = controlReceiver()
 
         assertContainsInOrder(
             source,
             listOf(
-                "touchscreenStore = FrameTouchscreenSettingsStore(this)",
                 "touchscreenSettings = touchscreenStore.read()",
-                "dashboardVisible = touchDashboardEnabled && !touchscreenSettings.startWithPhotos",
+                "if (touchNavigationEnabled && !touchscreenSettings.startWithPhotos) {",
+                "state = state.copy(mode = FrameMode.HOME)",
             ),
         )
         assertTrue(source.contains("packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)"))
-        assertTrue(settings.contains("fun showsDashboard(hasTouchscreen: Boolean): Boolean = dashboardEnabled && hasTouchscreen"))
-        assertTrue(settings.contains("val startWithPhotos: Boolean = false"))
-        assertTrue(receiver.contains("FrameTouchscreenSettingsStore(context)"))
-        assertTrue(controlContract().contains("EXTRA_START_WITH_PHOTOS = \"frameos.start_with_photos\""))
-        assertTrue(receiver.contains("startWithPhotos = intent.getBooleanExtra(FrameControlContract.EXTRA_START_WITH_PHOTOS, current.startWithPhotos)"))
-        assertFalse("hardware preferences must not be read from companion state", receiver.substringBefore("val configurationStore").contains("FrameCompanion"))
+        assertFalse(source.contains("dashboardVisible"))
     }
 
     @Test
-    fun `dashboard render hides and suspends browser content`() {
-        val render = methodBody(mainActivity(), "private fun render(next: FrameState, announce: Boolean)")
+    fun `rail presents the existing Home mode and Settings without a native Today destination`() {
+        val source = mainActivity()
+        val buildUi = methodBody(source, "private fun buildUi()")
 
         assertContainsInOrder(
-            render,
+            buildUi,
             listOf(
-                "if (dashboardVisible && touchDashboard != null)",
-                "photoBridge.setCaptureEnabled(false, true)",
-                "hideWebRecovery()",
-                "weatherContent.visibility = View.GONE",
-                "webSurface?.hide()",
-                "webSurface?.suspendAllContent()",
-                "handler.removeCallbacks(preloadCalendar)",
+                "TouchNavigationRail(this,",
+                "onOpenSettings = { showFrameSettings() }",
+                "onOpenMode = { showMode(it, announceHud = false) }",
+                "it.setModes(TouchNavigationRailPolicy.ordered(availableModes()))",
             ),
         )
+        assertTrue(source.contains("tap Home to return here"))
+        assertFalse(source.contains("TouchDashboardView(this"))
     }
 
     @Test
-    fun `Photos and directional mode routes can leave the dashboard`() {
+    fun `Back and Home controls route to the existing Home mode`() {
         val source = mainActivity()
-        val showMode = methodBody(source, "private fun showMode(mode: FrameMode, announceHud: Boolean = true)")
+        val resume = methodBody(source, "override fun onResume()")
+        val pause = methodBody(source, "override fun onPause()")
+        val back = methodBody(source, "override fun onBackPressed()")
         val dispatch = methodBody(source, "private fun dispatch(intent: FrameIntent)")
 
-        assertContainsInOrder(
-            showMode,
-            listOf(
-                "dashboardVisible = false",
-                "cancelDashboardPhoto()",
-                "render(state, announce = changed)",
-            ),
-        )
-        assertContainsInOrder(
-            dispatch,
-            listOf(
-                "if (intent == FrameIntent.IdleExpired && state.mode.persistsAcrossIdle) return",
-                "if (touchDashboardEnabled && (intent == FrameIntent.GoHome || intent == FrameIntent.IdleExpired))",
-            ),
-        )
-        assertTrue(dispatch.contains("if (intent == FrameIntent.NextMode || intent == FrameIntent.PreviousMode) dashboardVisible = false"))
-        assertTrue(source.contains("onOpenMode = { showMode(it, announceHud = false) }"))
+        assertContainsInOrder(resume, listOf(
+            "unregisterHomeBack?.invoke()",
+            "FrameHomeBackNavigation.register(this)",
+            "if (oauthSurface != null) closeWeatherAuthorization(consumeState = true)",
+            "else showMode(FrameMode.HOME, announceHud = false)",
+        ))
+        assertContainsInOrder(pause, listOf("unregisterHomeBack?.invoke()", "unregisterHomeBack = null"))
+        assertTrue(back.contains("touchNavigationEnabled && configuration != null"))
+        assertTrue(back.contains("showMode(FrameMode.HOME, announceHud = false)"))
+        assertContainsInOrder(dispatch, listOf(
+            "if (intent == FrameIntent.IdleExpired && state.mode.persistsAcrossIdle) return",
+            "if (touchNavigationEnabled && (intent == FrameIntent.GoHome || intent == FrameIntent.IdleExpired))",
+            "showMode(FrameMode.HOME, announceHud = false)",
+        ))
     }
 
     @Test
-    fun `current dashboard photo completion clears its future before rejecting its entry`() {
-        val refresh = methodBody(mainActivity(), "private fun refreshDashboardPhoto()")
+    fun `render always selects a real mode and keeps native Weather separate`() {
+        val render = methodBody(mainActivity(), "private fun render(next: FrameState, announce: Boolean)")
 
-        assertContainsInOrder(
-            refresh,
-            listOf(
-                "if (generation == dashboardPhotoGeneration) dashboardPhotoFuture = null",
-                "if (generation != dashboardPhotoGeneration || !activityResumed || !dashboardVisible ||",
-                "photoReserve.entries().none { it.assetId == entry.assetId }",
-                "bitmap?.recycle()",
-                "return@post",
-            ),
-        )
+        assertContainsInOrder(render, listOf("touchRail?.setSelection(next.mode)", "FrameSurfaceTarget.NativeWeather ->"))
+        assertFalse(render.contains("suspendAllContent()"))
     }
 
     private fun mainActivity(): String = readSource("MainActivity.kt")
-    private fun touchscreenSettings(): String = readSource("config/FrameTouchscreenSettings.kt")
-    private fun controlReceiver(): String = readSource("control/FrameControlReceiver.kt")
-    private fun controlContract(): String = readSource("control/FrameControlCommand.kt")
 
     private fun readSource(relative: String): String {
         val root = Path.of("src/main/kotlin/com/wyattfleming/frameos")
