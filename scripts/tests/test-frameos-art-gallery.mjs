@@ -39,7 +39,7 @@ assert.equal(validateCollection({ ...collection(), artworks:[{ ...artwork("a"), 
 assert.equal(validateCollection({ ...collection(), artworks:[{ ...artwork("a"), image:"images/../family.jpg" }] }), null, "escaping image paths are refused");
 assert.equal(validateCollection({ ...collection(), artworks:[{ ...artwork("a"), sourceUrl:"https://museum.example.invalid/a?token=x" }] }), null, "credential-like source queries are refused");
 assert.deepEqual([...shuffledIds(collection().artworks, () => 0.99)].sort(), ["a", "b"], "shuffle bag preserves every artwork exactly once");
-assert.equal(validateCollection({ version:1, title:"Too many", artworks:Array.from({ length:MAX_ARTWORKS + 1 }, (_, index) => indexedArtwork(index)) }), null, "an oversized local collection is refused before it can grow rotation state");
+assert.equal(Boolean(validateCollection({ version:1, title:"Too many", artworks:Array.from({ length:MAX_ARTWORKS + 1 }, (_, index) => indexedArtwork(index)) })), false, "an oversized local collection is refused before it can grow rotation state");
 const escapedBoundaryId = escapedIdAtStorageCap(0);
 assert.equal(JSON.stringify(escapedBoundaryId).length, MAX_SERIALIZED_ID_CHARS, "control and quote escapes can exactly fill the serialized ID bound");
 assert.match(JSON.stringify(escapedBoundaryId), /\\u0000/, "the boundary ID includes escaped controls");
