@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove the late Home bootstrap liveness handoff with a source-only mutation."""
+"""Prove bounded late Home bootstrap recovery and hidden-start suppression by source mutation."""
 import hashlib
 import json
 from pathlib import Path
@@ -13,36 +13,56 @@ out = root / 'reports/frameos-legacy'
 out.mkdir(parents=True, exist_ok=True)
 original = source.read_bytes()
 test_hash = hashlib.sha256(test.read_bytes()).hexdigest()
-needle = b"if (connectedHomeHass(bootstrap.root) && mountCustomHome(bootstrap.root, getHass)) return;"
-replacement = b"if (false && connectedHomeHass(bootstrap.root) && mountCustomHome(bootstrap.root, getHass)) return;"
+checks = [
+    (
+        'late-healthy-mount',
+        b'if (connectedHomeHass(bootstrap.root) && mountCustomHome(bootstrap.root, getHass)) return;',
+        b'if (false && connectedHomeHass(bootstrap.root) && mountCustomHome(bootstrap.root, getHass)) return;',
+        'healthy Home Assistant that appears after the initial window mounts once',
+    ),
+    (
+        'initial-hidden-suppression',
+        b'if (document.visibilityState === "hidden") return false;',
+        b'if (false && document.visibilityState === "hidden") return false;',
+        'an already-hidden document never starts the fast Home discovery probe',
+    ),
+]
+
 
 def run(label):
     result = subprocess.run(['node', 'scripts/tests/test-frameos-home-late-bootstrap.mjs'], cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
-    log = out / f'{label}.log'
+    log = out / f'home-late-bootstrap-{label}.log'
     log.write_text(result.stdout, encoding='utf-8')
     return result.returncode, log.name, result.stdout
 
-try:
-    source.write_bytes(original.replace(needle, replacement))
-    red_exit, red_log, red_output = run('home-late-bootstrap-source-red')
-    assert red_exit != 0
-    assert 'healthy Home Assistant that appears after the initial window mounts once' in red_output
-finally:
-    source.write_bytes(original)
-    assert source.read_bytes() == original
+results = []
+for label, needle, replacement, assertion in checks:
+    assert original.count(needle) == 1
+    try:
+        source.write_bytes(original.replace(needle, replacement))
+        red_exit, red_log, red_output = run(f'{label}-source-red')
+        assert red_exit != 0
+        assert assertion in red_output
+    finally:
+        source.write_bytes(original)
+        assert source.read_bytes() == original
+    green_exit, green_log, _ = run(f'{label}-restored-green')
+    assert green_exit == 0
+    results.append({
+        'name': label,
+        'negative_exit': red_exit,
+        'negative_assertion_failures': 1,
+        'negative_expected_assertion': assertion,
+        'negative_log': red_log,
+        'restored_green_exit': green_exit,
+        'restored_log': green_log,
+    })
 
-green_exit, green_log, _ = run('home-late-bootstrap-restored-green')
-assert green_exit == 0
 assert hashlib.sha256(test.read_bytes()).hexdigest() == test_hash
 receipt = {
     'passed': True,
-    'recipe': 'preserve the 12-second native fallback and mount a healthy same-origin Home Assistant shell after bounded late discovery',
-    'negative_exit': red_exit,
-    'negative_assertion_failures': 1,
-    'negative_expected_assertion': 'healthy Home Assistant that appears after the initial window mounts once',
-    'negative_log': red_log,
-    'restored_green_exit': green_exit,
-    'restored_log': green_log,
+    'recipe': 'bounded late Home discovery mounts only after a healthy existing shell and never starts while hidden',
+    'checks': results,
     'restored_source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
     'unchanged_test_sha256': test_hash,
 }
