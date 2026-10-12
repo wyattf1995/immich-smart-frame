@@ -34,7 +34,11 @@ class TouchMediaNavigationTest {
         assertFalse(navigation.acceptsEdgeSwipe(ModeGestureDirection.PREVIOUS))
         assertFalse(navigation.acceptsEdgeSwipe(ModeGestureDirection.NEXT))
 
+        // Today was removed: return from an open Photos menu to the unified Home.
+        // Photos itself stays fullscreen (covered above), while Home restores its rail.
         navigation.setScreen(navigationEnabled = true, mode = FrameMode.PHOTOS)
+        navigation.revealMenu()
+        navigation.setScreen(navigationEnabled = true, mode = FrameMode.HOME)
         assertFalse(navigation.immersiveMedia)
         assertTrue(navigation.contentHasRailInset)
         assertTrue(navigation.railVisible)
