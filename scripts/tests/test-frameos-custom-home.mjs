@@ -48,6 +48,7 @@ assert.match(source, /addEventListener\("click"/, "writes require a direct click
 assert.doesNotMatch(source, /fch-rail/, "the native rail is the only top-level navigation");
 assert.match(source, /data-nav="cameras"/, "in-content Cameras navigation remains available");
 assert.match(source, /fch-forecast/, "the Home weather area has a compact forecast surface");
+assert.match(source, /safe\(eventLabel\(event,/, "calendar rows render the date-aware event label");
 assert.match(source, /Weather unavailable/, "missing weather is shown honestly rather than fabricated");
 assert.doesNotMatch(source, /fetch\(/, "the custom view never fetches or handles credentials");
 assert.doesNotMatch(source, /localStorage|sessionStorage|document\.cookie/, "the custom view never reads browser identity data");
