@@ -5,7 +5,7 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 
 /** Keep API 33 types out of the legacy class-loading path. */
-internal object TouchDashboardBackNavigation {
+internal object FrameHomeBackNavigation {
     fun register(activity: Activity, onBack: () -> Unit): () -> Unit =
         if (Build.VERSION.SDK_INT >= 33) ModernBack.register(activity, onBack) else ({})
 

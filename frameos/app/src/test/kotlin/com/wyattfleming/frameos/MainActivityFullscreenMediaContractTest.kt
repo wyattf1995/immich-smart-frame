@@ -17,7 +17,7 @@ class MainActivityFullscreenMediaContractTest {
         assertContainsInOrder(
             update,
             listOf(
-                "touchMediaNavigation.setScreen(touchDashboardEnabled && configuration != null, dashboardVisible, state.mode)",
+                "touchMediaNavigation.setScreen(touchNavigationEnabled && configuration != null, state.mode)",
                 "val inset = if (touchMediaNavigation.contentHasRailInset) dp(88) else 0",
                 "insetContentViews.forEach { view ->",
                 "params.leftMargin = inset",
@@ -57,13 +57,11 @@ class MainActivityFullscreenMediaContractTest {
     }
 
     @Test
-    fun `explicit mode and Today navigation discard a stale media menu`() {
-        val source = mainActivity()
-        val showMode = methodBody(source, "private fun showMode(mode: FrameMode, announceHud: Boolean = true)")
-        val showDashboard = methodBody(source, "private fun showDashboard()")
+    fun `explicit mode navigation discards a stale media menu`() {
+        val showMode = methodBody(mainActivity(), "private fun showMode(mode: FrameMode, announceHud: Boolean = true)")
 
-        assertContainsInOrder(showMode, listOf("touchMediaNavigation.dismissMenu()", "dashboardVisible = false", "render(state, announce = changed)"))
-        assertContainsInOrder(showDashboard, listOf("touchMediaNavigation.dismissMenu()", "dashboardVisible = true", "render(state, announce = false)"))
+        assertContainsInOrder(showMode, listOf("touchMediaNavigation.dismissMenu()", "render(state, announce = changed)"))
+        assertFalse(showMode.contains("dashboardVisible"))
     }
 
     @Test

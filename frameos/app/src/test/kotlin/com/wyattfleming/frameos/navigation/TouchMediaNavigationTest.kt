@@ -23,10 +23,10 @@ class TouchMediaNavigationTest {
     }
 
     @Test
-    fun `normal modes and Today retain their inset visible rail with no edge navigation`() {
+    fun `normal modes retain their inset visible rail with no edge navigation`() {
         val navigation = TouchMediaNavigation()
 
-        navigation.setScreen(navigationEnabled = true, dashboardVisible = false, mode = FrameMode.HOME)
+        navigation.setScreen(navigationEnabled = true, mode = FrameMode.HOME)
         assertFalse(navigation.immersiveMedia)
         assertTrue(navigation.contentHasRailInset)
         assertTrue(navigation.railVisible)
@@ -34,7 +34,11 @@ class TouchMediaNavigationTest {
         assertFalse(navigation.acceptsEdgeSwipe(ModeGestureDirection.PREVIOUS))
         assertFalse(navigation.acceptsEdgeSwipe(ModeGestureDirection.NEXT))
 
-        navigation.setScreen(navigationEnabled = true, dashboardVisible = true, mode = FrameMode.PHOTOS)
+        // Today was removed: return from an open Photos menu to the unified Home.
+        // Photos itself stays fullscreen (covered above), while Home restores its rail.
+        navigation.setScreen(navigationEnabled = true, mode = FrameMode.PHOTOS)
+        navigation.revealMenu()
+        navigation.setScreen(navigationEnabled = true, mode = FrameMode.HOME)
         assertFalse(navigation.immersiveMedia)
         assertTrue(navigation.contentHasRailInset)
         assertTrue(navigation.railVisible)
@@ -44,14 +48,14 @@ class TouchMediaNavigationTest {
     @Test
     fun `mode change dismisses an open media menu while same screen refresh retains it`() {
         val navigation = TouchMediaNavigation()
-        navigation.setScreen(navigationEnabled = true, dashboardVisible = false, mode = FrameMode.PHOTOS)
+        navigation.setScreen(navigationEnabled = true, mode = FrameMode.PHOTOS)
         navigation.revealMenu()
 
-        navigation.setScreen(navigationEnabled = true, dashboardVisible = false, mode = FrameMode.PHOTOS)
+        navigation.setScreen(navigationEnabled = true, mode = FrameMode.PHOTOS)
         assertTrue(navigation.railVisible)
         assertTrue(navigation.dismissLayerVisible)
 
-        navigation.setScreen(navigationEnabled = true, dashboardVisible = false, mode = FrameMode.ART)
+        navigation.setScreen(navigationEnabled = true, mode = FrameMode.ART)
         assertTrue(navigation.immersiveMedia)
         assertFalse(navigation.railVisible)
         assertFalse(navigation.dismissLayerVisible)
@@ -61,7 +65,7 @@ class TouchMediaNavigationTest {
     fun `disabled dashboard exposes neither rail nor dismiss layer and preserves legacy edge routes`() {
         val navigation = TouchMediaNavigation()
 
-        navigation.setScreen(navigationEnabled = false, dashboardVisible = false, mode = FrameMode.PHOTOS)
+        navigation.setScreen(navigationEnabled = false, mode = FrameMode.PHOTOS)
 
         assertFalse(navigation.immersiveMedia)
         assertFalse(navigation.contentHasRailInset)
@@ -72,7 +76,7 @@ class TouchMediaNavigationTest {
     }
 
     private fun assertImmersiveMenuClosed(navigation: TouchMediaNavigation, mode: FrameMode) {
-        navigation.setScreen(navigationEnabled = true, dashboardVisible = false, mode = mode)
+        navigation.setScreen(navigationEnabled = true, mode = mode)
         assertTrue(navigation.immersiveMedia)
         assertFalse(navigation.contentHasRailInset)
         assertFalse(navigation.railVisible)

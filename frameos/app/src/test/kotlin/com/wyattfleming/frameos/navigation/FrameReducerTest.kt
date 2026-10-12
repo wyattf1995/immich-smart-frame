@@ -86,7 +86,7 @@ class FrameReducerTest {
     }
 
     @Test
-    fun `idle expiry always restores an unpaused photo frame`() {
+    fun `idle expiry restores an unpaused photo frame for non-touch routing`() {
         val state = FrameState(
             mode = FrameMode.CAMERAS,
             photosPaused = true,

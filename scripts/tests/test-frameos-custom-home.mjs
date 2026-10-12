@@ -3,6 +3,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const source = fs.readFileSync(new URL("../../examples/frameos/frameos-custom-home.js", import.meta.url), "utf8");
+const css = fs.readFileSync(new URL("../../examples/frameos/frameos-custom-home.css", import.meta.url), "utf8");
 const timers = [];
 const context = { window: {} };
 context.window.window = context.window;
@@ -13,7 +14,7 @@ context.window.clearTimeout = (timer) => { timer.cleared = true; };
 vm.runInNewContext(source, context, { filename: "frameos-custom-home.js" });
 const api = context.window.FrameOSCustomHome;
 assert.ok(api?.__test, "custom home exposes pure test helpers");
-const { clampTemperature, climateModel, modePayload, setpointPayload, isWritable } = api.__test;
+const { clampTemperature, climateModel, modePayload, setpointPayload, isWritable, eventLabel, forecastModel } = api.__test;
 
 assert.equal(clampTemperature(68, { min: 60, max: 80, step: 1 }), 68);
 assert.equal(clampTemperature(99, { min: 60, max: 80, step: 1 }), 80, "drafts never exceed the device maximum");
@@ -23,6 +24,10 @@ assert.equal(api.__test.finite(""), null, "empty strings never coerce into zero"
 assert.equal(api.__test.finite(false), null, "boolean values never coerce into zero");
 assert.equal(api.__test.eventTime("not-a-date"), "Time unavailable", "bad calendar dates are rendered safely");
 assert.equal(api.__test.eventTime("2026-10-12"), "All day", "all-day calendar items retain their semantics");
+assert.equal(eventLabel({ start: "2026-10-13T11:30:00", allDay: false }, new Date(2026, 9, 12, 9)), "Tue Oct 13 · 11:30 AM", "calendar rows retain weekday, date, and time");
+assert.equal(eventLabel({ start: "2026-10-12", allDay: true }, new Date(2026, 9, 12, 9)), "Today · All day", "all-day events retain date context");
+assert.deepEqual(JSON.parse(JSON.stringify(forecastModel({ days: [{ datetime: "2026-10-12T12:00:00", condition: "sunny", temperature: 71, templow: 53, precipitation_probability: 10 }], temperatureUnit: "°F" }, new Date(2026, 9, 12)))), [{ label: "Today", condition: "sunny", temperature: 71, low: 53, precipitation: 10 }], "forecast accepts only finite, bounded day values");
+assert.equal(forecastModel({ days: [{ datetime: "bad", condition: "sunny", temperature: 71 }], temperatureUnit: "°F" }), null, "malformed forecast dates are unavailable rather than fabricated");
 
 const off = climateModel({ state: "off", attributes: { hvac_modes: ["off", "heat", "cool"], min_temp: 50, max_temp: 90, target_temp_step: 1, temperature: 68 } }, "°F");
 assert.equal(off.temperatureEnabled, false, "off disables temperature changes until a mode is explicitly selected");
@@ -41,7 +46,13 @@ assert.equal(isWritable({ connected: true, pending: false, state: "unknown" }), 
 assert.match(source, /callService\("climate", "set_temperature"/, "temperature changes use Home Assistant's service API");
 assert.match(source, /callService\("climate", "set_hvac_mode"/, "mode changes use Home Assistant's service API");
 assert.match(source, /addEventListener\("click"/, "writes require a direct click event");
-assert.match(source, /data-nav="home">Home</, "the web dashboard uses an accurate Home rail label");
+assert.doesNotMatch(source, /fch-rail/, "the native rail is the only top-level navigation");
+assert.match(source, /data-nav="cameras"/, "in-content Cameras navigation remains available");
+assert.match(source, /fch-forecast/, "the Home weather area has a compact forecast surface");
+assert.match(source, /safe\(eventLabel\(event,/, "calendar rows render the date-aware event label");
+assert.match(source, /forecast, forecastUnit, forecastStatus/, "a forecast unit-only change repaints the compact forecast");
+assert.match(source, /calendarDateKey:now\.date/, "calendar labels refresh at the local day boundary");
+assert.match(css, /\.fch-event time\{min-width:160px;white-space:nowrap/, "calendar date-and-time labels have a non-wrapping, legible column");
 assert.match(source, /Weather unavailable/, "missing weather is shown honestly rather than fabricated");
 assert.doesNotMatch(source, /fetch\(/, "the custom view never fetches or handles credentials");
 assert.doesNotMatch(source, /localStorage|sessionStorage|document\.cookie/, "the custom view never reads browser identity data");
@@ -64,22 +75,33 @@ assert.equal(timers.at(-1).cleared, true, "destroy cancels the render tick to pr
 assert.equal(root.replaceChildrenCalls, 1, "destroy clears the mounted custom view");
 
 const makeInteractiveRoot = () => {
-  const root = { nodes: [], writes: 0, replaceChildrenCalls: 0, _html: "" };
+  const root = { nodes: [], clockNodes: new Map(), writes: 0, replaceChildrenCalls: 0, _html: "" };
   Object.defineProperty(root, "innerHTML", {
     get() { return this._html; },
     set(markup) {
-      this._html = markup; this.writes += 1; this.nodes = [];
+      this._html = markup; this.writes += 1; this.nodes = []; this.clockNodes = new Map();
       const matches = markup.matchAll(/<button([^>]*)>/g);
       for (const match of matches) {
         const attributes = match[1], listeners = new Map(), dataset = {};
         for (const data of attributes.matchAll(/data-([a-z-]+)(?:="([^"]*)")?/g)) dataset[data[1].replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = data[2] ?? "";
         this.nodes.push({ dataset, disabled: /\sdisabled(?:\s|>|$)/.test(attributes), addEventListener(type, callback) { listeners.set(type, callback); }, click() { return listeners.get("click")?.(); } });
       }
+      for (const match of markup.matchAll(/<(span|small)([^>]*)>([^<]*)<\/\1>/g)) {
+        const marker = match[2].match(/data-frameos-clock-(time|period|date)/)?.[1];
+        if (marker) {
+          const node = { _textContent: match[3], assignments: 0 };
+          Object.defineProperty(node, "textContent", {
+            get() { return this._textContent; },
+            set(value) { this.assignments += 1; this._textContent = value; },
+          });
+          this.clockNodes.set(marker, node);
+        }
+      }
     },
   });
-  root.replaceChildren = () => { root.replaceChildrenCalls += 1; root.nodes = []; root._html = ""; };
+  root.replaceChildren = () => { root.replaceChildrenCalls += 1; root.nodes = []; root.clockNodes = new Map(); root._html = ""; };
   root.querySelectorAll = (selector) => { const key = selector.match(/^\[data-([^\]]+)\]$/)?.[1]?.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()); return key ? root.nodes.filter((node) => Object.hasOwn(node.dataset, key)) : []; };
-  root.querySelector = (selector) => root.querySelectorAll(selector)[0] || null;
+  root.querySelector = (selector) => root.clockNodes.get(selector.match(/^\[data-frameos-clock-(time|period|date)\]$/)?.[1]) || root.querySelectorAll(selector)[0] || null;
   return root;
 };
 const interactiveRoot = makeInteractiveRoot();
@@ -117,6 +139,38 @@ interactive.destroy();
 deferredReject(new Error("late failure"));
 await pendingAction;
 assert.equal(interactiveRoot.replaceChildrenCalls, 1, "a late async failure cannot resurrect a destroyed view");
+
+// Clock-only changes must update the visible clock without replacing the control
+// tree. The clock is injected here only to make a minute transition deterministic.
+const clockRoot = makeInteractiveRoot();
+let displayNow = new Date(2026, 9, 12, 9, 5);
+const clockHandle = api.mount(clockRoot, {
+  getHass: () => liveHass,
+  now: () => displayNow,
+});
+const clockWrites = clockRoot.writes;
+const clockTime = clockRoot.querySelector("[data-frameos-clock-time]");
+const clockPeriod = clockRoot.querySelector("[data-frameos-clock-period]");
+const clockDate = clockRoot.querySelector("[data-frameos-clock-date]");
+const initialClockText = clockTime?.textContent;
+assert.ok(initialClockText, "the mounted Home exposes an updateable time node");
+const clockControl = clockRoot.querySelectorAll("[data-mode]").find((button) => button.dataset.mode === "cool");
+timers.filter((timer) => timer.delay === 1000 && !timer.cleared).at(-1).callback();
+assert.equal(clockTime.assignments, 0, "an unchanged clock tick does not assign the existing time node");
+assert.equal(clockPeriod.assignments, 0, "an unchanged clock tick does not assign the existing period node");
+assert.equal(clockDate.assignments, 0, "an unchanged clock tick does not assign the existing date node");
+displayNow = new Date(2026, 9, 12, 9, 6);
+timers.filter((timer) => timer.delay === 1000 && !timer.cleared).at(-1).callback();
+assert.equal(clockRoot.writes, clockWrites, "a minute tick does not replace the interactive Home tree");
+assert.notEqual(clockRoot.querySelector("[data-frameos-clock-time]")?.textContent, initialClockText, "a minute tick updates the visible time in place");
+assert.equal(clockTime.assignments, 1, "a minute transition updates the changed time node once");
+assert.equal(clockPeriod.assignments, 0, "a minute transition does not assign an unchanged period");
+assert.equal(clockDate.assignments, 0, "a minute transition does not assign an unchanged date");
+assert.equal(clockRoot.querySelectorAll("[data-mode]").find((button) => button.dataset.mode === "cool"), clockControl, "a minute tick preserves the existing climate control node");
+displayNow = new Date(2026, 9, 13, 0, 1);
+timers.filter((timer) => timer.delay === 1000 && !timer.cleared).at(-1).callback();
+assert.equal(clockRoot.writes, clockWrites + 1, "a local day transition rebuilds calendar labels while preserving ordinary ticks");
+clockHandle.destroy();
 
 const temperatureRoot = makeInteractiveRoot();
 const temperatureServices = [];
@@ -157,8 +211,9 @@ guarded.destroy();
 
 const calendarRoot=makeInteractiveRoot();
 const calendarHass={connected:true,states:{'calendar.family':{state:'on',attributes:{message:'Holiday',start_time:'2026-10-12 00:00:00',all_day:true}}},callService(){throw new Error('render cannot write');}};
-const calendarHandle=api.mount(calendarRoot,{getHass:()=>calendarHass});
+const calendarHandle=api.mount(calendarRoot,{getHass:()=>calendarHass,now:()=>new Date(2026,9,12,9)});
 assert.match(calendarRoot.innerHTML,/All day/,'HA all_day boolean labels midnight events correctly');
+assert.match(calendarRoot.innerHTML,/Today · All day/,'calendar content retains day and date context in the rendered row');
 assert.doesNotMatch(calendarRoot.innerHTML,/fch-weather-icon">☀/,'missing weather must not claim sunshine');
 calendarHandle.destroy();
 
@@ -169,9 +224,14 @@ const weatherHass={connected:true,config:{unit_system:{temperature:'°F'}},state
  'weather.home':{state:'sunny',attributes:{temperature:80,temperature_unit:'°F'}},
  'weather.parents_weather':{state:'sunny',attributes:{temperature:99,temperature_unit:'°F'}}
 },callService(){throw new Error('weather render cannot write');}};
+weatherHass.forecast={days:[{datetime:'2026-10-12T12:00:00',condition:'rainy',temperature:17,templow:12,precipitation_probability:60}],temperatureUnit:'°C'};weatherHass.forecastStatus='ready';
 const weatherHandle=api.mount(weatherRoot,{getHass:()=>weatherHass});
 assert.match(weatherRoot.innerHTML,/fch-weather-temp">17°C</,'installed household forecast and its own unit win');
 assert.match(weatherRoot.innerHTML,/fch-weather-state">rainy</);
+assert.match(weatherRoot.innerHTML,/fch-forecast-day[^>]*><b>Today<\/b>/,'ready forecast exposes a compact dated forecast row');
+assert.match(weatherRoot.innerHTML,/17°C/,'forecast preserves the bounded household temperature unit');
+weatherHass.forecast.temperatureUnit='°F';weatherHandle.refresh();
+assert.match(weatherRoot.innerHTML,/fch-forecast-day[^>]*><b>Today<\/b>[\s\S]*?17°F/,'a forecast unit-only update repaints the forecast row');
 weatherHass.states['weather.forecast_home'].state='unavailable';weatherHandle.refresh();
 assert.match(weatherRoot.innerHTML,/fch-weather-temp">—°C</,'stale weather temperatures are hidden when unavailable');
 delete weatherHass.states['weather.forecast_home'];weatherHandle.refresh();

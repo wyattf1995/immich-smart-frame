@@ -711,6 +711,7 @@ test("a no-content Kiosk response keeps capture closed until a later settled res
   runtime.runMicrotasks();
   runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: empty });
   runtime.fireEvent("htmx:afterRequest", { target: runtime.kiosk, xhr: Object.assign(empty, { status: 204 }) });
+  assert.deepEqual(runtime.diagnosticMessages.slice(-1).map(({ stage }) => stage), ["htmx_no_content"]);
   runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
   runtime.runMicrotasks();
   assert.equal(runtime.nativeMessages.length, 1);

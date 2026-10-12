@@ -8,7 +8,7 @@ class FrameTouchscreenSettingsStore(context: Context) {
     fun read() = FrameTouchscreenSettings(
         dashboardEnabled = preferences.getBoolean("dashboard_enabled", false),
         detachHiddenHome = preferences.getBoolean("detach_hidden_home", false),
-        startWithPhotos = preferences.getBoolean("start_with_photos", false),
+        startWithPhotos = preferences.getBoolean("start_with_photos", true),
     )
 
     fun write(settings: FrameTouchscreenSettings) {

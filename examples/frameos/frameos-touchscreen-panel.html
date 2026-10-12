@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#101722">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'">
     <title>FrameOS touchscreen panel</title>
-    <link rel="stylesheet" href="/local/frameos-custom-home.css?v=92bcd235c908">
+    <link rel="stylesheet" href="/local/frameos-custom-home.css?v=290c6b35a378">
     <style>
       html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #102025; color: #f1ede4; font-family: system-ui, sans-serif; }
       #panel { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #102025; }
@@ -30,7 +30,8 @@
     <header id="home-chrome" hidden><span id="home-title">Home</span><span id="home-hint">Swipe from the left edge for photos</span></header>
     <div id="loading">Opening Home…</div>
     <p id="status" aria-live="polite" aria-atomic="true"></p>
-    <script src="/local/frameos-custom-home.js?v=02045bc29e92"></script>
+    <script src="/local/frameos-home-forecast.js?v=0f231d991fbe"></script>
+    <script src="/local/frameos-custom-home.js?v=02f6ccc29915"></script>
     <script>
       (() => {
         "use strict";
@@ -47,6 +48,7 @@
         });
         const READY_TIMEOUT_MILLIS = 12_000;
         const HOME_STYLE_PROBE_TIMEOUT_MILLIS = 12_000;
+        const MAX_NAVIGATION_GUARD_NODES = 4096;
         const HOME_STYLE_SHADOW_LEAVES = new Set(["ha-markdown-element"]);
         const validView = (value) => Object.prototype.hasOwnProperty.call(routes, value);
         const normalizeView = (value) => validView(value) ? value : "home";
@@ -74,8 +76,47 @@
         let homeStyleWork = null;
         let customHomeWork = null;
         let customHomeProbe = null;
+        let forecastOwner = null;
+        const FORECAST_ENTITY = "weather.forecast_home";
+        const disposeForecast = () => {
+          forecastOwner?.controller.destroy();
+          forecastOwner = null;
+        };
+        const homeForecast = (root, live) => {
+          const unavailable = { forecast: null, forecastStatus: "unavailable" };
+          if (!window.FrameOSHomeForecast || !live.connection || typeof live.callWS !== "function") return unavailable;
+          if (forecastOwner?.root !== root || forecastOwner?.connection !== live.connection) {
+            disposeForecast();
+            const connection = live.connection;
+            const currentLive = () => {
+              if (panel.contentDocument !== root || iframeView() !== "home" || currentView !== "home" || document.visibilityState === "hidden") return null;
+              const fresh = root.querySelector?.("home-assistant")?.hass;
+              return fresh?.connection === connection && fresh.connected !== false && connection.connected === true ? fresh : null;
+            };
+            const controller = window.FrameOSHomeForecast.create({
+              readForecast: async () => {
+                const fresh = currentLive();
+                if (!fresh || typeof fresh.callWS !== "function") throw new Error("Forecast unavailable");
+                // Read-only weather response through HA's existing authenticated socket.
+                const result = await fresh.callWS({ type: "call_service", domain: "weather", service: "get_forecasts",
+                  target: { entity_id: FORECAST_ENTITY }, service_data: { type: "daily" }, return_response: true });
+                if (!currentLive()) throw new Error("Forecast unavailable");
+                return result?.response?.[FORECAST_ENTITY]?.forecast;
+              },
+              temperatureUnit: () => currentLive()?.states?.[FORECAST_ENTITY]?.attributes?.temperature_unit || "",
+              onUpdate: () => {
+                if (forecastOwner?.controller === controller && currentLive()) customHomeWork?.instance.refresh();
+              },
+            });
+            forecastOwner = { root, connection, controller };
+          }
+          forecastOwner.controller.setActive(document.visibilityState !== "hidden" && live.connected !== false && live.connection.connected === true);
+          forecastOwner.controller.refreshIfNeeded();
+          return forecastOwner.controller.snapshot();
+        };
 
         const disposeCustomHome = () => {
+          forecastOwner?.controller.setActive(false);
           if (customHomeProbe) window.clearTimeout(customHomeProbe.timer);
           customHomeProbe = null;
           if (customHomeWork) customHomeWork.instance.destroy();
@@ -117,7 +158,10 @@
               });
               states[id] = Object.freeze({ entity_id: id, state: entity.state, attributes: Object.freeze(attributes) });
             });
+            const forecast = homeForecast(root, live);
             return Object.freeze({
+              forecast: forecast.forecast,
+              forecastStatus: forecast.forecastStatus,
               states: Object.freeze(states),
               connected: live.connected !== false && live.connection?.connected !== false,
               config: Object.freeze({ unit_system: Object.freeze({ temperature: live.config?.unit_system?.temperature }) }),
@@ -309,6 +353,7 @@
         };
         const showSignInRequired = () => {
           disposeCustomHome();
+          disposeForecast();
           disposeRouteWork();
           disposeHomeStyles();
           loading.hidden = true;
@@ -447,6 +492,49 @@
           scheduleShadowProbe(state);
         };
 
+        const hasActiveHaNavigationGuard = (root) => {
+          const selector = "ha-dialog[open],ha-dialog:not([hidden]),ha-more-info-dialog[open],ha-more-info-dialog:not([hidden]),[data-unsaved-changes='true'],[data-dirty='true']";
+          const roots = [root];
+          let inspected = 0;
+          try {
+            while (roots.length) {
+              const candidate = roots.pop();
+              if (++inspected > MAX_NAVIGATION_GUARD_NODES) return true;
+              if (candidate?.querySelector?.(selector)) return true;
+              const elements = candidate?.querySelectorAll?.("*") || [];
+              for (const element of elements) {
+                if (++inspected > MAX_NAVIGATION_GUARD_NODES) return true;
+                if (element.shadowRoot) roots.push(element.shadowRoot);
+              }
+            }
+          } catch (_error) {
+            return true;
+          }
+          return false;
+        };
+
+        const trySpaNavigation = (view) => {
+          try {
+            const childWindow = panel.contentWindow;
+            const root = panel.contentDocument;
+            if (!childWindow || childWindow !== spaWindow || !root) return false;
+            if (childWindow.location.origin !== window.location.origin || childWindow.location.search !== "?kiosk" || isAuthenticationRoute()) return false;
+            const sourceView = iframeView();
+            if (!sourceView || !validView(view) || hasActiveHaNavigationGuard(root)) return false;
+            const hass = root.querySelector?.("home-assistant")?.hass;
+            if (!hass?.states || hass.connected === false || hass.connection?.connected !== true) return false;
+            const sourcePath = `${childWindow.location.pathname}${childWindow.location.search}`;
+            const target = routeFor(view);
+            childWindow.history.pushState({ from: sourcePath }, "", target);
+            const event = new childWindow.Event("location-changed", { bubbles: true, composed: true });
+            event.detail = { replace: false };
+            childWindow.dispatchEvent(event);
+            return true;
+          } catch (_error) {
+            return false;
+          }
+        };
+
         const navigate = (rawView) => {
           const view = normalizeView(rawView);
           if (location.hash !== `#${view}`) history.replaceState(null, "", `${location.pathname}${location.search}#${view}`);
@@ -455,6 +543,7 @@
           disposeRouteWork();
           if (view !== "home") disposeHomeStyles();
           showLoading(view);
+          if (trySpaNavigation(view)) return;
           panel.src = routeFor(view);
         };
 
@@ -491,6 +580,7 @@
         window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
         window.addEventListener("pagehide", () => {
           disposeCustomHome();
+          disposeForecast();
           disposeRouteWork();
           disposeHomeStyles();
           if (detachSpaNavigation) detachSpaNavigation();
