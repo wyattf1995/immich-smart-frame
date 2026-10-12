@@ -8,6 +8,11 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ElementTree
 
+if not __debug__:
+    raise RuntimeError("optimized Python is not permitted for proof validation")
+if len(sys.argv) != 2:
+    raise SystemExit("usage: verify-frameos-embedded-oauth-proof.py <repository-root>")
+
 root = Path(sys.argv[1]).resolve()
 frame = root / "frameos"
 out = root / "reports" / "frameos-legacy"
