@@ -215,9 +215,12 @@ const weatherHass={connected:true,config:{unit_system:{temperature:'°F'}},state
  'weather.home':{state:'sunny',attributes:{temperature:80,temperature_unit:'°F'}},
  'weather.parents_weather':{state:'sunny',attributes:{temperature:99,temperature_unit:'°F'}}
 },callService(){throw new Error('weather render cannot write');}};
+weatherHass.forecast={days:[{datetime:'2026-10-12T12:00:00',condition:'rainy',temperature:17,templow:12,precipitation_probability:60}],temperatureUnit:'°C'};weatherHass.forecastStatus='ready';
 const weatherHandle=api.mount(weatherRoot,{getHass:()=>weatherHass});
 assert.match(weatherRoot.innerHTML,/fch-weather-temp">17°C</,'installed household forecast and its own unit win');
 assert.match(weatherRoot.innerHTML,/fch-weather-state">rainy</);
+assert.match(weatherRoot.innerHTML,/fch-forecast-day[^>]*><b>Today<\/b>/,'ready forecast exposes a compact dated forecast row');
+assert.match(weatherRoot.innerHTML,/17°C/,'forecast preserves the bounded household temperature unit');
 weatherHass.states['weather.forecast_home'].state='unavailable';weatherHandle.refresh();
 assert.match(weatherRoot.innerHTML,/fch-weather-temp">—°C</,'stale weather temperatures are hidden when unavailable');
 delete weatherHass.states['weather.forecast_home'];weatherHandle.refresh();
