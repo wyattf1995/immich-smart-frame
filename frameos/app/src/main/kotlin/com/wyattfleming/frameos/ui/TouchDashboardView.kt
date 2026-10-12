@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -12,6 +13,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.wyattfleming.frameos.R
 import com.wyattfleming.frameos.navigation.FrameMode
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -21,11 +23,26 @@ import java.util.Locale
  * Native overview with only caller-supplied photo/weather content. It neither
  * fabricates events/forecast values nor recycles the caller-owned bitmap.
  */
-class TouchDashboardView(
+class TouchDashboardView private constructor(
     context: Context,
+    attrs: AttributeSet?,
+    defStyleAttr: Int,
     private val onOpenMode: (FrameMode) -> Unit,
     private val onOpenSettings: () -> Unit,
-) : FrameLayout(context) {
+) : FrameLayout(context, attrs, defStyleAttr) {
+    constructor(context: Context) : this(context, null, 0, {}, {})
+
+    constructor(context: Context, attrs: AttributeSet?) : this(context, attrs, 0, {}, {})
+
+    constructor(context: Context, attrs: AttributeSet?, defStyleAttr: Int) :
+        this(context, attrs, defStyleAttr, {}, {})
+
+    constructor(
+        context: Context,
+        onOpenMode: (FrameMode) -> Unit,
+        onOpenSettings: () -> Unit,
+    ) : this(context, null, 0, onOpenMode, onOpenSettings)
+
     private var style = TouchDashboardStyle.forHour(12)
     private var modes = FrameMode.cycleModes(false)
     private val time = text(52f, true)
@@ -36,7 +53,9 @@ class TouchDashboardView(
         scaleType = ImageView.ScaleType.CENTER_CROP
         contentDescription = "Latest cached photo"
     }
-    private val photoEmpty = text(16f, false).apply { text = "Your latest photo will appear here" }
+    private val photoEmpty = text(16f, false).apply {
+        text = context.getString(R.string.touch_dashboard_latest_photo)
+    }
     private val content = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private var photoBitmap: Bitmap? = null
 
@@ -116,7 +135,7 @@ class TouchDashboardView(
         addView(photo, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(photoEmpty, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER))
         addView(text(16f, true).apply {
-            text = "Photos"
+            text = context.getString(R.string.touch_dashboard_photos)
             background = GradientDrawable().apply {
                 setColor(0xb30d1d31.toInt())
                 cornerRadius = context.dp(12).toFloat()
@@ -130,7 +149,7 @@ class TouchDashboardView(
         contentDescription = "Open Weather"; isClickable = true; isFocusable = true; minimumTouchTarget(context)
         background = style.card(context.dp(22).toFloat()); setPadding(context.dp(20), context.dp(14), context.dp(20), context.dp(14))
         setOnClickListener { onOpenMode(FrameMode.WEATHER) }
-        addView(text(13f, true).apply { text = "Weather" }); addView(weatherSummary); addView(weatherDetail)
+        addView(text(13f, true).apply { text = context.getString(R.string.touch_dashboard_weather) }); addView(weatherSummary); addView(weatherDetail)
     }
 
     private fun actionsColumn(): View = LinearLayout(context).apply {
@@ -163,7 +182,7 @@ class TouchDashboardView(
         }
 
     private fun settingsButton(): View = TextView(context).apply {
-        text = "Settings"
+        text = context.getString(R.string.touch_dashboard_settings)
         gravity = Gravity.CENTER
         contentDescription = "Open Settings"
         isClickable = true
