@@ -13,18 +13,20 @@ const status = { textContent: "" };
 let observerCount = 0;
 const root = {
   querySelector(selector) {
-    return selector === "ha-full-calendar" && root.calendar ? { localName: "ha-full-calendar" } : null;
+    if (selector === "ha-full-calendar" && root.calendar) return { localName: "ha-full-calendar" };
+    return selector === "hui-picture-entity-card" && root.camera ? { localName: "hui-picture-entity-card" } : null;
   },
   querySelectorAll() {
     return root.headings.map((text) => ({ heading: text, textContent: text, getAttribute() { return null; } }));
   },
   headings: ["Today", "Up next", "Home status", "Comfort"],
   calendar: false,
+  camera: false,
 };
 const panel = {
   src: "",
   contentDocument: root,
-  contentWindow: { focus() {} },
+  contentWindow: { focus() {}, location: { pathname: "/frameos-touchscreen/home" } },
   addEventListener(type, callback) { panelListeners.set(type, callback); },
   focus() {},
 };
@@ -63,6 +65,13 @@ listeners.get("hashchange")();
 assert.equal(panel.src, "/frameos-touchscreen/calendar?kiosk");
 panelListeners.get("load")();
 assert.ok(observerCount > cameraObserverCount, "route switch creates a fresh bounded observer");
+
+root.calendar = false;
+root.camera = true;
+panel.contentWindow.location.pathname = "/frameos-touchscreen/camera-1";
+panelListeners.get("load")();
+assert.equal(loading.hidden, true, "a camera subview becomes ready only with its single live card");
+assert.equal(status.textContent, "Camera ready");
 
 const cameras = context.FrameOSTouchscreenPanel.createCameraMountController();
 assert.equal(cameras.select("camera.entryway"), "camera.entryway");

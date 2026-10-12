@@ -17,7 +17,7 @@ required_html = [
   "default-src 'none'", "frame-src 'self'", "referrerpolicy=\"same-origin\"",
   '"/frameos-touchscreen/home?kiosk"', '"/frameos-touchscreen/cameras?kiosk"',
   '"/frameos-touchscreen/calendar?kiosk"', "READY_TIMEOUT_MILLIS", "MutationObserver",
-  "createCameraMountController", "disposeRouteWork", "still connecting"
+  "createCameraMountController", "disposeRouteWork", "iframeView", "hui-picture-entity-card", "still connecting"
 ]
 required_html.each { |value| abort("touchscreen wrapper missing #{value}") unless html.include?(value) }
 abort("touchscreen wrapper must have exactly one iframe") unless html.scan(/<iframe\b/).size == 1
@@ -41,9 +41,15 @@ camera_chooser = views[1].to_s
 abort("camera chooser must not mount live video") if camera_chooser.include?("camera_view: live")
 camera_views = views[2, 4]
 abort("need four camera detail views") unless camera_views.length == 4
+camera_entities = %w[
+  camera.backyard_backyard_camera
+  camera.dining_room_dining_room_camera
+  camera.garage_garage_camera
+  camera.living_room_living_room_camera
+]
 camera_views.each_with_index do |view, index|
   text = view.to_s
-  entity = "camera.frameos_camera_#{index + 1}"
+  entity = camera_entities.fetch(index)
   abort("camera detail lacks #{entity}") unless text.include?(entity)
   live_cards = view.fetch("cards").select { |card| card["camera_view"] == "live" }
   abort("camera detail must mount exactly one live stream") unless live_cards.length == 1
