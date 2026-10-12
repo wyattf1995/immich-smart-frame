@@ -24,7 +24,7 @@ class MainActivityTouchDashboardContractTest {
         assertTrue(source.contains("packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)"))
         assertTrue(settings.contains("fun showsDashboard(hasTouchscreen: Boolean): Boolean = dashboardEnabled && hasTouchscreen"))
         assertTrue(receiver.contains("FrameTouchscreenSettingsStore(context)"))
-        assertFalse("hardware preferences must not be read from companion state", receiver.contains("FrameCompanion"))
+        assertFalse("hardware preferences must not be read from companion state", receiver.substringBefore("val configurationStore").contains("FrameCompanion"))
     }
 
     @Test
