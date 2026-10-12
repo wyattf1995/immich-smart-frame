@@ -16,12 +16,14 @@ class FrameControlReceiver : BroadcastReceiver() {
 
         // This receiver is DUMP-protected. Keep hardware opt-ins independent of companion policy.
         if (intent.hasExtra(FrameControlContract.EXTRA_TOUCH_DASHBOARD_ENABLED) ||
-            intent.hasExtra(FrameControlContract.EXTRA_DETACH_HIDDEN_HOME)) {
+            intent.hasExtra(FrameControlContract.EXTRA_DETACH_HIDDEN_HOME) ||
+            intent.hasExtra(FrameControlContract.EXTRA_START_WITH_PHOTOS)) {
             val store = FrameTouchscreenSettingsStore(context)
             val current = store.read()
             store.write(current.copy(
                 dashboardEnabled = intent.getBooleanExtra(FrameControlContract.EXTRA_TOUCH_DASHBOARD_ENABLED, current.dashboardEnabled),
                 detachHiddenHome = intent.getBooleanExtra(FrameControlContract.EXTRA_DETACH_HIDDEN_HOME, current.detachHiddenHome),
+                startWithPhotos = intent.getBooleanExtra(FrameControlContract.EXTRA_START_WITH_PHOTOS, current.startWithPhotos),
             ))
         }
 

@@ -311,7 +311,7 @@ class MainActivity : Activity() {
         experienceStore = FrameExperienceStore(this)
         touchscreenStore = FrameTouchscreenSettingsStore(this)
         touchscreenSettings = touchscreenStore.read()
-        dashboardVisible = touchDashboardEnabled
+        dashboardVisible = touchDashboardEnabled && !touchscreenSettings.startWithPhotos
         diagnosticStore = FrameDiagnosticStore(this)
         photoReserve = com.wyattfleming.frameos.photos.FrameOfflineReserve(java.io.File(filesDir, "frame-offline-reserve"))
         photoBridge = com.wyattfleming.frameos.photos.FramePhotoBridge(photoReserve, onPhotoObserved = { photo ->
@@ -1484,7 +1484,7 @@ class MainActivity : Activity() {
         val touchscreenChanged = updatedTouchscreen != touchscreenSettings
         if (touchscreenChanged) {
             touchscreenSettings = updatedTouchscreen
-            dashboardVisible = touchDashboardEnabled
+            dashboardVisible = touchDashboardEnabled && !touchscreenSettings.startWithPhotos
         }
         val updated = configurationStore.read() ?: return
         if (updated != configuration || touchscreenChanged) {

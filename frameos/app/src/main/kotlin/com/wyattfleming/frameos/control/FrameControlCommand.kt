@@ -49,6 +49,7 @@ object FrameControlContract {
     const val EXTRA_MODE = "frameos.mode"
     const val EXTRA_TOUCH_DASHBOARD_ENABLED = "frameos.touch_dashboard_enabled"
     const val EXTRA_DETACH_HIDDEN_HOME = "frameos.detach_hidden_home"
+    const val EXTRA_START_WITH_PHOTOS = "frameos.start_with_photos"
     const val EXTRA_PHOTOS_URL = "frameos.photos_url"
     const val EXTRA_HOME_ASSISTANT_URL = "frameos.home_assistant_url"
     const val EXTRA_HOME_ASSISTANT_FALLBACK_URL = "frameos.home_assistant_fallback_url"
