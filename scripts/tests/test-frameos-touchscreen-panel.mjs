@@ -109,6 +109,19 @@ childWindow.location.pathname = "/frameos-touchscreen/camera-1";
 childListeners.get("location-changed")();
 assert.equal(status.textContent, "Camera ready", "SPA watcher can restart readiness after a bounded timeout");
 
+root.nodes = [];
+childWindow.location.pathname = "/frameos-touchscreen/camera-3";
+childListeners.get("location-changed")();
+const lateHost = makeElement("ha-late-camera-host");
+const lateHostObserver = observers.at(-1);
+const shadowProbeCountBefore = timers.filter((timer) => timer.delay === 50).length;
+lateHostObserver.callback([{ type: "childList", addedNodes: [lateHost] }]);
+const lateShadowProbe = timers.filter((timer) => timer.delay === 50).at(-1);
+assert.ok(timers.filter((timer) => timer.delay === 50).length > shadowProbeCountBefore, "a custom host added after an initially empty route arms a shadow probe");
+lateHost.shadowRoot = { nodeType: 11, querySelectorAll() { return [cameraCard]; } };
+lateShadowProbe.callback();
+assert.equal(status.textContent, "Camera ready", "a late-attached camera shadow root is inspected by its bounded probe");
+
 childWindow.location.pathname = "/auth/authorize";
 loading.hidden = false;
 panelListeners.get("load")();
