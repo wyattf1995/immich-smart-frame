@@ -4,7 +4,6 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
-import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.Color
@@ -16,7 +15,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.net.Uri
 import android.view.GestureDetector
 import android.view.InputDevice
 import android.view.Gravity
@@ -105,6 +103,7 @@ import com.wyattfleming.frameos.web.FrameSurfaceTarget
 import com.wyattfleming.frameos.web.FrameWebCompositionPolicy
 import com.wyattfleming.frameos.web.FrameWebSlot
 import com.wyattfleming.frameos.web.FrameWebSurface
+import com.wyattfleming.frameos.web.FrameOAuthWebSurface
 import org.mozilla.geckoview.GeckoView
 import java.net.URI
 import java.security.SecureRandom
@@ -200,6 +199,9 @@ class MainActivity : Activity() {
     private var pendingAuthorizationPreviousAuthEpoch: String? = null
     private var surfaceRouter: FrameSurfaceRouter? = null
     private var webSurface: FrameWebSurface? = null
+    private var oauthSurface: FrameOAuthWebSurface? = null
+    private var oauthOverlay: LinearLayout? = null
+    private var embeddedAuthorizationPending = false
     private lateinit var photoReserve: com.wyattfleming.frameos.photos.FrameOfflineReserve
     private lateinit var photoBridge: com.wyattfleming.frameos.photos.FramePhotoBridge
     private var currentPhotoAssetId: String? = null
@@ -398,6 +400,7 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         activityResumed = false
+        closeWeatherAuthorization(consumeState = true)
         unregisterDashboardBack?.invoke()
         unregisterDashboardBack = null
         invalidateCompanionPoll()
@@ -430,6 +433,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        closeWeatherAuthorization(consumeState = true)
         invalidateCompanionPoll()
         cancelHomeAssistantWork(stage = "activity_destroy", clearPendingAuthorizationCode = true)
         weatherWorkerExecutor.shutdownNow()
@@ -459,7 +463,9 @@ class MainActivity : Activity() {
     // API 33+ uses TouchDashboardBackNavigation; this callback serves API 23–32 only.
     @SuppressLint("GestureBackNavigation")
     override fun onBackPressed() {
-        if (touchDashboardEnabled && configuration != null) showDashboard() else super.onBackPressed()
+        if (oauthSurface != null) {
+            closeWeatherAuthorization(consumeState = true)
+        } else if (touchDashboardEnabled && configuration != null) showDashboard() else super.onBackPressed()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -1153,6 +1159,7 @@ class MainActivity : Activity() {
     }
 
     private fun showMode(mode: FrameMode, announceHud: Boolean = true) {
+        closeWeatherAuthorization(consumeState = true)
         cancelModeGesture()
         dashboardVisible = false
         cancelDashboardPhoto()
@@ -1175,6 +1182,7 @@ class MainActivity : Activity() {
 
     private fun showDashboard() {
         if (!touchDashboardEnabled || configuration == null) return
+        closeWeatherAuthorization(consumeState = true)
         cancelModeGesture()
         dashboardVisible = true
         render(state, announce = false)
@@ -1345,7 +1353,7 @@ class MainActivity : Activity() {
 
     private fun refreshWeather() {
         val coordinator = weatherCoordinator ?: return
-        if (weatherAuthorizationInProgress || weatherRefreshInProgress || pendingAuthorizationCode != null) return
+        if (oauthSurface != null || weatherAuthorizationInProgress || weatherRefreshInProgress || pendingAuthorizationCode != null) return
         weatherRefreshInProgress = true
         weatherRefreshStartedAtUptimeMillis = SystemClock.uptimeMillis()
         handler.removeCallbacks(refreshVisibleWeather)
@@ -1384,7 +1392,7 @@ class MainActivity : Activity() {
             weatherVisible = state.mode == FrameMode.WEATHER || dashboardVisible,
             activityResumed = activityResumed,
             authenticationRequired = weatherNeedsAuthentication,
-            authorizationInProgress = weatherAuthorizationInProgress || weatherRefreshInProgress || pendingAuthorizationCode != null,
+            authorizationInProgress = oauthSurface != null || weatherAuthorizationInProgress || weatherRefreshInProgress || pendingAuthorizationCode != null,
         )?.let { delay -> handler.postDelayed(refreshVisibleWeather, delay) }
     }
 
@@ -1576,6 +1584,7 @@ class MainActivity : Activity() {
     }
 
     private fun rebuildExperienceUi() {
+        closeWeatherAuthorization(consumeState = true)
         cancelPhotoWork()
         clearDashboardPhoto()
         hideOfflinePhoto()
@@ -1591,28 +1600,82 @@ class MainActivity : Activity() {
     }
 
     private fun beginWeatherAuthorization() {
+        if (oauthSurface != null) return
         val endpoint = oauthEndpoint ?: return
         val callbackPageUrl = oauthCallbackPageUrl ?: return
         val pendingStateStore = pendingOAuthStateStore ?: return
+        val homeUrl = configuration?.homeAssistantUrl ?: return
         val randomBytes = ByteArray(OAUTH_STATE_BYTES).also(secureRandom::nextBytes)
         val state = OAuthState.fromCryptographicBytes(randomBytes)
+        embeddedAuthorizationPending = true
         pendingStateStore.write(state)
         val authorization = endpoint.authorizationRequest(callbackPageUrl, state)
-        weatherContent.presentation = WeatherPresentation(emptyMessage = "Continue sign-in in the browser")
+        weatherContent.presentation = WeatherPresentation(emptyMessage = "Sign in to Home Assistant")
         weatherNeedsAuthentication = false
+        handler.removeCallbacks(expireIdle)
+        handler.removeCallbacks(refreshVisibleWeather)
+        webSurface?.hide()
+        webSurface?.suspendAllContent()
         try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(authorization.url)))
-        } catch (error: ActivityNotFoundException) {
-            pendingStateStore.consume()
-            weatherNeedsAuthentication = true
-            weatherContent.presentation = WeatherPresentation(emptyMessage = "Weather needs Home Assistant sign-in")
+            val overlay = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.BLACK)
+            }
+            val cancel = android.widget.Button(this).apply {
+                setText(R.string.frame_oauth_cancel)
+                setOnClickListener { closeWeatherAuthorization(consumeState = true) }
+            }
+            overlay.addView(cancel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+            val surface = FrameOAuthWebSurface(
+                context = this,
+                runtime = (application as FrameOsApplication).geckoRuntime,
+                authorizationUrl = authorization.url,
+                configuredHomeAssistantUrl = homeUrl,
+                onCallback = { callback ->
+                    closeWeatherAuthorization(consumeState = false)
+                    handleOAuthCallbackUrl(callback)
+                },
+                onFailure = { closeWeatherAuthorization(consumeState = true) },
+            )
+            oauthSurface = surface
+            oauthOverlay = overlay
+            overlay.addView(surface, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            root.addView(overlay, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            surface.requestFocus()
+        } catch (_: RuntimeException) {
+            closeWeatherAuthorization(consumeState = true)
+        }
+    }
+
+    private fun closeWeatherAuthorization(consumeState: Boolean) {
+        val hadSurface = oauthSurface != null || oauthOverlay != null
+        val hadAuthorization = hadSurface || embeddedAuthorizationPending
+        embeddedAuthorizationPending = false
+        oauthSurface?.close()
+        oauthSurface = null
+        oauthOverlay?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        oauthOverlay = null
+        if (consumeState && hadAuthorization) {
+            // Never retain an abandoned embedded authorization challenge.
+            pendingOAuthStateStore?.consume()
+            if (hadSurface || !weatherAuthorizationInProgress) {
+                weatherNeedsAuthentication = true
+                if (::weatherContent.isInitialized) {
+                    weatherContent.presentation = WeatherPresentation(emptyMessage = "Weather needs Home Assistant sign-in")
+                }
+            }
         }
     }
 
     private fun handleOAuthCallback(intent: Intent) {
         val callbackUrl = intent.dataString ?: return
+        handleOAuthCallbackUrl(callbackUrl)
+    }
+
+    private fun handleOAuthCallbackUrl(callbackUrl: String) {
         val verifier = callbackVerifier ?: return
         val code = verifier.verify(callbackUrl) ?: run {
+            pendingOAuthStateStore?.consume()
             setIntent(Intent(this, MainActivity::class.java))
             pendingAuthorizationCode = null
             pendingAuthorizationPreviousAuthEpoch = null
@@ -1623,6 +1686,7 @@ class MainActivity : Activity() {
             return
         }
         setIntent(Intent(this, MainActivity::class.java))
+        dashboardVisible = false
         state = state.copy(mode = FrameMode.WEATHER)
         render(state, announce = false)
         weatherContent.presentation = WeatherPresentation(emptyMessage = "Connecting to Home Assistant")
