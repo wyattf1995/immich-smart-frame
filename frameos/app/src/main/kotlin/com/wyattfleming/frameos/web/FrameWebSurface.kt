@@ -80,8 +80,7 @@ class FrameWebSurface(
         private var traceEvents = 0
         private var tracedCompositeGeneration = -1L
         private val photoLoadGate = FramePhotoLoadGate()
-        private var expectedPhotoObservationGeneration: Long? = null
-        private var observedPhotoGeneration: Long? = null
+        private val photoReadiness = FrameWebPhotosReadinessState()
         private val pageLoadWatchdogState = FrameWebPageLoadWatchdogState()
         private var pageLoadWatchdog: Runnable? = null
 
@@ -221,8 +220,7 @@ class FrameWebSurface(
                     return true
                 }
                 if (label == "Photos" && !fragmentOnly) {
-                    expectedPhotoObservationGeneration = photoBridge?.beginPageLoad(session)
-                    observedPhotoGeneration = null
+                    photoReadiness.begin(photoBridge?.beginPageLoad(session))
                 }
                 session.loadUri(url)
                 return true
@@ -285,20 +283,18 @@ class FrameWebSurface(
             if (
                 label != "Photos" ||
                 photoBridge?.isCurrentObservation(photo) != true ||
-                expectedPhotoObservationGeneration != photo.generation ||
                 lifecycleSuspended ||
                 this !== displayedManagedSession() ||
                 !photosContentActive ||
                 !displayedSurfaceVisible()
             ) return false
-            observedPhotoGeneration = photo.generation
+            if (!photoReadiness.recordObservation(photo.generation)) return false
             maybeReportRendered(newlyRendered = false, photoObserved = true)
             return true
         }
 
         private fun hasCurrentPhotoObservation(): Boolean =
-            label != "Photos" || photoBridge == null ||
-                expectedPhotoObservationGeneration != null && expectedPhotoObservationGeneration == observedPhotoGeneration
+            label != "Photos" || photoBridge == null || photoReadiness.isReady()
 
         fun isReadyForDisplay(): Boolean = renderedState.rendered && hasCurrentPhotoObservation()
 
