@@ -72,6 +72,31 @@
         };
 
         const textFor = (element) => [element.heading, element.getAttribute?.("heading"), element.textContent, element.shadowRoot?.textContent].filter((value) => typeof value === "string").join(" ").toLowerCase();
+        const applyHeadingContrast = (element, state) => {
+          if (state.view !== "home" || element.localName !== "hui-heading-card") return;
+          if (!state.styledHeadings.has(element)) {
+            element.style.setProperty(
+              "background",
+              "linear-gradient(90deg, rgba(9, 15, 24, 0.82), rgba(9, 15, 24, 0.58))",
+              "important",
+            );
+            element.style.setProperty("border-radius", "14px", "important");
+            element.style.setProperty("box-shadow", "inset 0 0 0 1px rgba(255,255,255,.1)", "important");
+            element.style.setProperty("--primary-text-color", "#fff", "important");
+            element.style.setProperty("--secondary-text-color", "rgba(255,255,255,.92)", "important");
+            state.styledHeadings.add(element);
+          }
+          const headingShadow = element.shadowRoot;
+          if (headingShadow && !state.styledHeadingShadows.has(headingShadow)) {
+            if (!headingShadow.querySelector("#frameos-heading-contrast")) {
+              const style = element.ownerDocument.createElement("style");
+              style.id = "frameos-heading-contrast";
+              style.textContent = ":host,*{color:#fff!important;text-shadow:0 1px 3px rgba(0,0,0,.9)}";
+              headingShadow.append(style);
+            }
+            state.styledHeadingShadows.add(headingShadow);
+          }
+        };
         const isActiveElement = (element, state) => Boolean(element && element.isConnected && element.ownerDocument === state.root && panel.contentDocument === state.root);
         const pruneEvidence = (state) => {
           state.headings.forEach((element, heading) => { if (!isActiveElement(element, state)) state.headings.delete(heading); });
@@ -114,6 +139,7 @@
             scheduleShadowProbe(state);
           }
           const text = textFor(element);
+          applyHeadingContrast(element, state);
           if (/^camera-[1-4]$/.test(state.view) && element.localName === "hui-picture-entity-card") state.cameraCards.add(element);
           if (state.view === "calendar" && element.localName === "ha-full-calendar") state.calendarRoot = element;
           if (readiness[state.view]) readiness[state.view].forEach((heading) => { if (text.includes(heading)) state.headings.set(heading, element); });
@@ -152,7 +178,7 @@
           disposeRouteWork();
           const root = panel.contentDocument;
           if (!root) return;
-          const state = { view, root, ready: false, timeout: null, shadowProbeTimer: null, shadowProbeExpired: false, observers: [], observedRoots: new WeakSet(), pendingShadowHosts: new Set(), headings: new Map(), calendarRoot: null, cameraCards: new Set() };
+          const state = { view, root, ready: false, timeout: null, shadowProbeTimer: null, shadowProbeExpired: false, observers: [], observedRoots: new WeakSet(), pendingShadowHosts: new Set(), styledHeadings: new WeakSet(), styledHeadingShadows: new WeakSet(), headings: new Map(), calendarRoot: null, cameraCards: new Set() };
           activeWork = state;
           activeWork.timeout = window.setTimeout(() => {
             if (activeWork?.view !== view) return;
