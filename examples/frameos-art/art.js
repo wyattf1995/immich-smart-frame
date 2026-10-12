@@ -8,7 +8,14 @@
   const MAX_ARTWORKS = 2048;
   const MAX_HISTORY_ENTRIES = 200;
   const MAX_ROTATION_STORAGE_BYTES = 256 * 1024;
+  // Shown IDs are JSON-encoded in browser storage. This caps their serialized
+  // representation, including control-character and quote escapes, rather than
+  // imposing an ID format on the local collection.
+  const MAX_SERIALIZED_ID_CHARS = 96;
+  const MAX_ROTATION_STATE_OVERHEAD_CHARS = 128;
+  const MAX_ROTATION_PAYLOAD_CHARS = MAX_ARTWORKS * (MAX_SERIALIZED_ID_CHARS + 1) + MAX_SERIALIZED_ID_CHARS + MAX_ROTATION_STATE_OVERHEAD_CHARS;
   const MAX_ROTATION_SHOWN_IDS = MAX_ARTWORKS;
+  if (MAX_ROTATION_PAYLOAD_CHARS > MAX_ROTATION_STORAGE_BYTES) throw new Error("Art rotation bounds exceed local storage cap");
   const ROTATION_STORAGE_PREFIX = "frameos-art-rotation-v1:";
   const IMAGE_PATH = /^images\/[a-f0-9]{64}\.jpg$/;
   const text = (value) => typeof value === "string" ? value.trim() : "";
@@ -24,7 +31,7 @@
     const artworks = [];
     for (const entry of input.artworks) {
       const id = text(entry?.id), image = text(entry?.image), artworkTitle = text(entry?.title), artist = text(entry?.artist), year = text(entry?.year), sourceUrl = text(entry?.sourceUrl);
-      if (!id || seen.has(id) || !IMAGE_PATH.test(image) || !artworkTitle || !artist || (sourceUrl && !validSourceUrl(sourceUrl))) return null;
+      if (!id || JSON.stringify(id).length > MAX_SERIALIZED_ID_CHARS || seen.has(id) || !IMAGE_PATH.test(image) || !artworkTitle || !artist || (sourceUrl && !validSourceUrl(sourceUrl))) return null;
       seen.add(id); artworks.push(Object.freeze({ id, image, title:artworkTitle, artist, year, sourceUrl }));
     }
     return Object.freeze({ version:1, title, artworks:Object.freeze(artworks) });
@@ -208,7 +215,7 @@
     }
     destroy() { this.destroyed = true; ++this.actionToken; this.stopAutoplay(); this.currentImage = null; this.nextImage = null; if (this.controlsTimer !== null) window.clearTimeout(this.controlsTimer); this.document.removeEventListener("visibilitychange", this.onVisibility); this.root.replaceChildren(); }
   }
-  const api = Object.freeze({ ArtGallery, validateCollection, shuffledIds, rotationStorageKey, CYCLE_MILLIS, EDGE_GUARD_PX, MAX_ARTWORKS, MAX_HISTORY_ENTRIES, MAX_ROTATION_STORAGE_BYTES });
+  const api = Object.freeze({ ArtGallery, validateCollection, shuffledIds, rotationStorageKey, CYCLE_MILLIS, EDGE_GUARD_PX, MAX_ARTWORKS, MAX_HISTORY_ENTRIES, MAX_ROTATION_STORAGE_BYTES, MAX_SERIALIZED_ID_CHARS, MAX_ROTATION_PAYLOAD_CHARS });
   window.FrameOSArtGallery = api;
   document.addEventListener("DOMContentLoaded", () => { const root = document.getElementById("art-gallery"); if (root) new ArtGallery(root).start(); }, { once:true });
 })();
