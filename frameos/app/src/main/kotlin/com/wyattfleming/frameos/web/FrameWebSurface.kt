@@ -523,6 +523,7 @@ class FrameWebSurface(
         homeAssistantSession?.setFocused(false)
         if (deactivateHiddenHomeAssistant) homeAssistantSession?.setActive(false)
         detachWarmHomeWhenRequired(slot = null)
+        if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()
         warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         displayedSlot = null
         scheduleHiddenHomeEviction()
