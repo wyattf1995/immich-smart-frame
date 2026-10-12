@@ -65,7 +65,10 @@ def copy_and_assert_junit(label: str, expected_failures: int) -> str:
         for failure in failures:
             detail = (failure.get("message") or "") + (failure.text or "")
             assert failure.get("type") == "org.junit.ComparisonFailure", detail
-            assert "frameos-touchscreen-panel.html" in detail.replace("[", "").replace("]", ""), detail
+            # JUnit compacts the identical URL prefix in ComparisonFailure.
+            # Verify the actual cache-token mismatch rather than its elided context.
+            assert "expected:<" in detail and "but was:<" in detail, detail
+            assert "[d9c1b399af73]" in detail and "[touchscreen-1]" in detail, detail
     return copied.name
 
 
