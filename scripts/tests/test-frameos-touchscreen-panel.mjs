@@ -19,6 +19,11 @@ assert.doesNotMatch(html, /pointer-events\s*:\s*none[^}]*hui-thermostat-card|hui
 const root = {
   nodeType: 9,
   nodes: [],
+  navigationBlocker: null,
+  querySelector(selector) {
+    if (selector === "home-assistant") return this.nodes.find((node) => node.localName === "home-assistant") || null;
+    return this.navigationBlocker;
+  },
   querySelectorAll() { return this.nodes; },
   createElement() {
     let textContent = "";
@@ -79,6 +84,12 @@ const statusCard = makeElement("hui-markdown-card", { shadowRoot: makeShadow([st
 const sectionsView = makeElement("hui-sections-view", { shadowRoot: makeShadow([markdownCard, statusCard]) });
 const headingShadow = { nodeType: 11, querySelectorAll() { return [...headingCards, sectionsView]; } };
 root.nodes = [makeElement("home-assistant", { shadowRoot: headingShadow })];
+root.nodes[0].hass = {
+  states: {},
+  connected: true,
+  connection: { connected: true },
+  callService() {},
+};
 
 const windowListeners = new Map();
 const childListeners = new Map();
@@ -88,9 +99,29 @@ const timers = [];
 const loading = { hidden: false, textContent: "", classList: { add() {}, remove() {} } };
 const status = { textContent: "" };
 const homeChrome = { hidden: true };
+const childHistoryCalls = [];
+const childEvents = [];
 const childWindow = {
-  location: { pathname: "/frameos-touchscreen/home" },
+  location: { origin: "https://frame.example", pathname: "/frameos-touchscreen/home", search: "" },
+  history: {
+    state: null,
+    pushState(state, _title, target) {
+      childHistoryCalls.push({ state, target });
+      this.state = state;
+      const parsed = new URL(target, "https://frame.example");
+      childWindow.location.pathname = parsed.pathname;
+      childWindow.location.search = parsed.search;
+    },
+  },
+  Event: class {
+    constructor(type, options = {}) { this.type = type; this.bubbles = options.bubbles; this.composed = options.composed; }
+  },
   focus() {},
+  dispatchEvent(event) {
+    childEvents.push(event);
+    childListeners.get(event.type)?.(event);
+    return true;
+  },
   addEventListener(type, callback) { childListeners.set(type, callback); },
   removeEventListener(type, callback) { if (childListeners.get(type) === callback) childListeners.delete(type); },
 };
@@ -108,7 +139,7 @@ const context = {
     getElementById(id) { return ({ panel, loading, status, "home-chrome": homeChrome })[id]; },
     createElement() { return { id: "", textContent: "" }; },
   },
-  location: { hash: "", pathname: "/local/frameos-touchscreen-panel.html", search: "" },
+  location: { origin: "https://frame.example", hash: "", pathname: "/local/frameos-touchscreen-panel.html", search: "" },
   history: { replaceState(_state, _title, value) { context.location.hash = value.slice(value.indexOf("#")); } },
   MutationObserver: class {
     constructor(callback) { this.callback = callback; this.disconnected = false; observers.push(this); }
@@ -243,4 +274,38 @@ panelListeners.get("load")();
 assert.equal(loading.hidden, true, "an HA sign-in load removes the opaque loading overlay immediately");
 assert.equal(status.textContent, "Sign-in required");
 
-console.log("FrameOS touchscreen panel shadow readiness and camera lifecycle tests passed");
+root.nodes = [makeElement("home-assistant", { shadowRoot: headingShadow })];
+root.nodes[0].hass = { states: {}, connected: true, connection: { connected: true }, callService() {} };
+root.navigationBlocker = null;
+childWindow.location.origin = "https://frame.example";
+childWindow.location.pathname = "/frameos-touchscreen/home";
+childWindow.location.search = "?kiosk";
+panel.src = "";
+const historyBeforeFastPath = childHistoryCalls.length;
+context.location.hash = "#calendar";
+windowListeners.get("hashchange")();
+assert.equal(panel.src, "", "an authenticated same-origin HA shell reuses the iframe rather than assigning src");
+assert.equal(childHistoryCalls.length, historyBeforeFastPath + 1, "SPA navigation writes one HA-style child history entry");
+assert.equal(childHistoryCalls.at(-1).state.from, "/frameos-touchscreen/home?kiosk", "SPA history preserves the previous route for Back");
+assert.equal(childHistoryCalls.at(-1).target, "/frameos-touchscreen/calendar?kiosk", "SPA navigation can target only the fixed Calendar route");
+assert.equal(childEvents.at(-1).type, "location-changed", "SPA navigation emits Home Assistant's route event");
+assert.equal(childEvents.at(-1).detail.replace, false, "SPA event carries the Home Assistant replace detail");
+assert.equal(childEvents.at(-1).bubbles, true, "SPA route event matches Home Assistant bubbling semantics");
+assert.equal(childEvents.at(-1).composed, true, "SPA route event matches Home Assistant composed semantics");
+
+root.navigationBlocker = { localName: "ha-dialog" };
+const historyBeforeDialog = childHistoryCalls.length;
+context.location.hash = "#home";
+windowListeners.get("hashchange")();
+assert.equal(panel.src, "/frameos-touchscreen/home?kiosk", "an active HA dialog forces the conservative iframe reload");
+assert.equal(childHistoryCalls.length, historyBeforeDialog, "dialog fallback does not mutate HA history");
+root.navigationBlocker = null;
+
+childWindow.location.origin = "https://other.example";
+panel.src = "";
+context.location.hash = "#cameras";
+windowListeners.get("hashchange")();
+assert.equal(panel.src, "/frameos-touchscreen/cameras?kiosk", "cross-origin uncertainty keeps the full iframe reload fallback");
+childWindow.location.origin = "https://frame.example";
+
+console.log("FrameOS touchscreen panel shadow readiness and guarded SPA navigation tests passed");
