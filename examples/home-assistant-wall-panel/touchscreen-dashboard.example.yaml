@@ -85,6 +85,7 @@ views:
   - title: Camera 1
     path: camera-1
     type: panel
+    subview: true
     visible: false
     cards:
       - type: picture-entity
@@ -98,6 +99,7 @@ views:
   - title: Camera 2
     path: camera-2
     type: panel
+    subview: true
     visible: false
     cards:
       - type: picture-entity
@@ -111,6 +113,7 @@ views:
   - title: Camera 3
     path: camera-3
     type: panel
+    subview: true
     visible: false
     cards:
       - type: picture-entity
@@ -124,6 +127,7 @@ views:
   - title: Camera 4
     path: camera-4
     type: panel
+    subview: true
     visible: false
     cards:
       - type: picture-entity

@@ -46,18 +46,7 @@
           }
         };
 
-        // Explicitly tracks one selected camera. The dashboard itself uses navigation
-        // cards on its chooser and has exactly one live camera card per camera subview.
-        const createCameraMountController = () => {
-          let mountedCamera = null;
-          return Object.freeze({
-            select(camera) { mountedCamera = typeof camera === "string" && camera ? camera : null; return mountedCamera; },
-            dispose() { mountedCamera = null; },
-            mounted() { return mountedCamera; },
-          });
-        };
-
-        window.FrameOSTouchscreenPanel = Object.freeze({ normalizeView, routeFor, createCameraMountController });
+        window.FrameOSTouchscreenPanel = Object.freeze({ normalizeView, routeFor });
 
         const panel = document.getElementById("panel");
         const loading = document.getElementById("loading");
@@ -75,35 +64,87 @@
         const disposeRouteWork = () => {
           if (!activeWork) return;
           window.clearTimeout(activeWork.timeout);
-          activeWork.observer.disconnect();
+          window.clearTimeout(activeWork.shadowProbeTimer);
+          activeWork.observers.forEach((observer) => observer.disconnect());
           activeWork = null;
         };
 
         const textFor = (element) => [element.heading, element.getAttribute?.("heading"), element.textContent].filter((value) => typeof value === "string").join(" ").toLowerCase();
-        const routeReady = (view, root) => {
-          if (/^camera-[1-4]$/.test(view)) return Boolean(root.querySelector("hui-picture-entity-card"));
-          if (view === "calendar") return Boolean(root.querySelector("ha-full-calendar"));
-          const wanted = readiness[view];
-          const headings = [...root.querySelectorAll("hui-heading-card, ha-card, h1, h2")].map(textFor);
-          return wanted.every((heading) => headings.some((text) => text.includes(heading)));
+        const isActiveElement = (element, state) => Boolean(element && element.isConnected && element.ownerDocument === state.root && panel.contentDocument === state.root);
+        const pruneEvidence = (state) => {
+          state.headings.forEach((element, heading) => { if (!isActiveElement(element, state)) state.headings.delete(heading); });
+          if (!isActiveElement(state.calendarRoot, state)) state.calendarRoot = null;
+          state.cameraCards.forEach((element) => { if (!isActiveElement(element, state)) state.cameraCards.delete(element); });
+          state.pendingShadowHosts.forEach((element) => { if (!isActiveElement(element, state)) state.pendingShadowHosts.delete(element); });
+        };
+        const routeReady = (state) => {
+          pruneEvidence(state);
+          if (/^camera-[1-4]$/.test(state.view)) return state.cameraCards.size === 1;
+          if (state.view === "calendar") return Boolean(state.calendarRoot);
+          return readiness[state.view].every((heading) => state.headings.has(heading));
+        };
+        const observeRoot = (root, state) => {
+          if (state.observedRoots.has(root)) return;
+          state.observedRoots.add(root);
+          const observer = new MutationObserver(() => {
+            if (activeWork !== state) return;
+            const activeView = iframeView() || currentView;
+            if (activeView !== state.view) { observeReadiness(activeView); return; }
+            inspectAddedSubtree(root, state);
+          });
+          observer.observe(root, { childList: true, subtree: true });
+          state.observers.push(observer);
+        };
+        const inspectElement = (element, state) => {
+          if (!isActiveElement(element, state)) return;
+          if (element.shadowRoot) {
+            state.pendingShadowHosts.delete(element);
+            observeRoot(element.shadowRoot, state);
+            inspectAddedSubtree(element.shadowRoot, state);
+          } else if (!state.ready && element.localName?.includes("-")) {
+            state.pendingShadowHosts.add(element);
+          }
+          const text = textFor(element);
+          if (/^camera-[1-4]$/.test(state.view) && element.localName === "hui-picture-entity-card") state.cameraCards.add(element);
+          if (state.view === "calendar" && element.localName === "ha-full-calendar") state.calendarRoot = element;
+          if (readiness[state.view]) readiness[state.view].forEach((heading) => { if (text.includes(heading)) state.headings.set(heading, element); });
+        };
+        const inspectAddedSubtree = (node, state) => {
+          if (!node || !node.querySelectorAll) return;
+          if (node.nodeType === 1) inspectElement(node, state);
+          node.querySelectorAll("*").forEach((element) => inspectElement(element, state));
+          finishIfReady(state);
+        };
+        const scheduleShadowProbe = (state) => {
+          if (activeWork !== state || state.ready || state.shadowProbeTimer || state.pendingShadowHosts.size === 0) return;
+          state.shadowProbeTimer = window.setTimeout(() => {
+            state.shadowProbeTimer = null;
+            if (activeWork !== state || state.ready) return;
+            state.pendingShadowHosts.forEach((host) => {
+              if (host.shadowRoot) { state.pendingShadowHosts.delete(host); observeRoot(host.shadowRoot, state); inspectAddedSubtree(host.shadowRoot, state); }
+            });
+            scheduleShadowProbe(state);
+          }, 50);
+        };
+        const finishIfReady = (state) => {
+          if (activeWork !== state || state.ready || !routeReady(state)) return;
+          state.ready = true;
+          disposeRouteWork();
+          showReady(state.view);
         };
 
         const observeReadiness = (view) => {
           disposeRouteWork();
           const root = panel.contentDocument;
           if (!root) return;
-          const finish = () => {
-            if (!activeWork || activeWork.view !== view || !routeReady(view, root)) return;
-            disposeRouteWork();
-            showReady(view);
-          };
-          const observer = new MutationObserver(finish);
-          activeWork = { view, observer, timeout: null };
-          observer.observe(root, { childList: true, subtree: true });
+          const state = { view, root, ready: false, timeout: null, shadowProbeTimer: null, observers: [], observedRoots: new WeakSet(), pendingShadowHosts: new Set(), headings: new Map(), calendarRoot: null, cameraCards: new Set() };
+          activeWork = state;
           activeWork.timeout = window.setTimeout(() => {
             if (activeWork?.view === view) showStillConnecting(view);
           }, READY_TIMEOUT_MILLIS);
-          finish();
+          observeRoot(root, state);
+          inspectAddedSubtree(root, state);
+          scheduleShadowProbe(state);
         };
 
         const navigate = (rawView) => {
