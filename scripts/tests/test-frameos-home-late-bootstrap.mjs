@@ -75,7 +75,7 @@ function reachStillConnecting(h) {
 }
 
 for (const [label, cancel] of [
-  ['route change', (h) => { h.context.location.hash = '#photos'; h.listeners.get('hashchange')(); }],
+  ['route change', (h) => { h.context.location.hash = '#cameras'; h.listeners.get('hashchange')(); }],
   ['stale iframe', (h) => { h.panel.contentDocument = { querySelector() { return null; }, querySelectorAll() { return []; } }; }],
   ['authentication route', (h) => { h.panel.contentWindow.location.pathname = '/auth/authorize'; h.childListeners.get('location-changed')(); }],
   ['pagehide', (h) => h.listeners.get('pagehide')()],
