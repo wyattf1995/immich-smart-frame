@@ -6,13 +6,18 @@ import org.junit.Test
 
 class FrameTouchscreenSettingsTest {
     @Test
-    fun `defaults opt out of dashboard hidden Home detachment and Photos startup`() {
+    fun `defaults keep dashboard and hidden Home detachment opted out but start Photos`() {
         val settings = FrameTouchscreenSettings()
 
         assertFalse(settings.dashboardEnabled)
         assertFalse(settings.detachHiddenHome)
-        assertFalse(settings.startWithPhotos)
+        assertTrue(settings.startWithPhotos)
         assertFalse(settings.showsDashboard(hasTouchscreen = true))
+    }
+
+    @Test
+    fun `an explicit Home startup preference remains available`() {
+        assertFalse(FrameTouchscreenSettings(startWithPhotos = false).startWithPhotos)
     }
 
     @Test
