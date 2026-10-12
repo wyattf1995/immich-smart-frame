@@ -69,7 +69,10 @@ def mutation(label: str, before: str, after: str, failed_name: str) -> None:
 mutation(
     "legacy-tls-api23-gate",
     "sdkInt == Build.VERSION_CODES.M",
-    "false",
+    # A literal false makes Kotlin discard the following HTTPS smart cast,
+    # causing a compiler error instead of exercising the guarding JUnit test.
+    # Keep a runtime predicate that rejects all SDKs covered by the test.
+    "sdkInt == -1",
     "legacy socket factory is applied only to app scoped pre26 HTTPS connections",
 )
 mutation(
