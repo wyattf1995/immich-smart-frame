@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Prove the richer Home content with a source-only Node mutation."""
-
+"""Prove each richer Home content requirement through source-only Node negatives."""
 import hashlib
 import json
 from pathlib import Path
@@ -14,36 +13,40 @@ out = root / "reports/frameos-legacy"
 out.mkdir(parents=True, exist_ok=True)
 original = source.read_bytes()
 test_hash = hashlib.sha256(test.read_bytes()).hexdigest()
-needle = b'const forecastMarkup = forecast ?'
-replacement = b'const forecastMarkup = false ?'
-assert original.count(needle) == 1
+cases = [
+    ("nav", b"  const CLIMATE", b"  // fch-rail regression\n  const CLIMATE", "native rail is the only top-level navigation"),
+    ("calendar", b"safe(eventLabel(event,", b"safe(eventTime(event.start,", "calendar rows render the date-aware event label"),
+    ("forecast", b"const forecastMarkup = forecast ?", b"const forecastMarkup = false ?", "ready forecast exposes a compact dated forecast row"),
+]
 
 def run(label):
     result = subprocess.run(["node", "scripts/tests/test-frameos-custom-home.mjs"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
-    log = out / f"{label}.log"
+    log = out / f"custom-home-content-{label}.log"
     log.write_text(result.stdout)
     return result.returncode, log.name
 
+negatives = []
 try:
-    source.write_bytes(original.replace(needle, replacement))
-    red_exit, red_log = run("custom-home-content-source-red")
-    assert red_exit != 0
-    assert "ready forecast exposes a compact dated forecast row" in (out / red_log).read_text()
+    for name, needle, replacement, assertion in cases:
+        assert original.count(needle) == 1, name
+        source.write_bytes(original.replace(needle, replacement))
+        exit_code, log = run(f"{name}-red")
+        assert exit_code != 0, name
+        assert assertion in (out / log).read_text(), name
+        negatives.append({"name": name, "exit": exit_code, "log": log, "assertion": assertion})
+        source.write_bytes(original)
+        assert source.read_bytes() == original
 finally:
     source.write_bytes(original)
     assert source.read_bytes() == original
 
-green_exit, green_log = run("custom-home-content-restored-green")
+green_exit, green_log = run("restored-green")
 assert green_exit == 0
 assert hashlib.sha256(test.read_bytes()).hexdigest() == test_hash
 (out / "custom-home-content-source-proof.json").write_text(json.dumps({
-    "passed": True,
-    "negative_exit": red_exit,
-    "negative_assertion_failures": 1,
+    "passed": True, "negatives": negatives, "negative_assertion_failures": 3,
     "restored_green_exit": green_exit,
     "restored_source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-    "unchanged_test_sha256": test_hash,
-    "negative_log": red_log,
-    "restored_log": green_log,
+    "unchanged_test_sha256": test_hash, "restored_log": green_log,
 }, indent=2) + "\n")
-print("custom Home content source-only red / exact restore green verified")
+print("custom Home content source-only negatives / exact restore green verified")
