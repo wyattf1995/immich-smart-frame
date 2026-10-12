@@ -36,6 +36,20 @@ home_text = home.to_s
   abort("Home dashboard missing #{value}") unless home_text.include?(value)
 end
 abort("dashboard must not automate thermostat service calls") if home_text.match?(/service:|service_data:|perform-action/)
+%w[binary_sensor.internet_status sensor.last_successful_backup].each do |entity|
+  abort("Home dashboard must not retain unverified #{entity}") if home_text.include?(entity)
+end
+home_status_markdown = home.dig("sections", 1, "cards")&.find { |card| card["type"] == "markdown" }&.fetch("content", "")
+abort("Home status must use the verified thermostat state") unless home_status_markdown&.include?("climate.entryway_entryway")
+camera_status_entities = %w[
+  camera.backyard_backyard_camera
+  camera.dining_room_dining_room_camera
+  camera.garage_garage_camera
+  camera.living_room_living_room_camera
+]
+unless home_status_markdown&.include?("select('has_value')") && camera_status_entities.all? { |entity| home_status_markdown.include?(entity) }
+  abort("Home status must derive camera availability from the four verified camera entities")
+end
 
 camera_chooser = views[1]
 camera_chooser_cards = camera_chooser.fetch("sections").flat_map { |section| section.fetch("cards") }
