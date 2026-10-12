@@ -137,7 +137,7 @@ class TouchDashboardView private constructor(
         addView(text(16f, true).apply {
             text = context.getString(R.string.touch_dashboard_photos)
             background = GradientDrawable().apply {
-                setColor(0xb30d1d31.toInt())
+                setColor(style.surface)
                 cornerRadius = context.dp(12).toFloat()
             }
             setPadding(context.dp(12), context.dp(8), context.dp(12), context.dp(8))
@@ -222,7 +222,10 @@ class TouchDashboardView private constructor(
             )
         }
         if (view is android.view.ViewGroup) {
-            for (index in 0 until view.childCount) tintText(view.getChildAt(index), selectedHome)
+            for (index in 0 until view.childCount) {
+                val child = view.getChildAt(index)
+                tintText(child, selectedHome || child.tag == true)
+            }
         }
     }
 }
