@@ -16,6 +16,7 @@ assert.match(html, /#d8c390/, "Home uses the requested muted-gold accent");
 assert.match(html, /#182a2c/, "Home uses the requested deep-green card surface");
 assert.doesNotMatch(html, /pointer-events\s*:\s*none[^}]*hui-thermostat-card|hui-thermostat-card[^}]*pointer-events\s*:\s*none/, "thermostat controls remain interactive");
 assert.match(html, /MAX_NAVIGATION_GUARD_NODES/, "SPA navigation bounds shadow-DOM guard inspection conservatively");
+assert.match(html, /MAX_NAVIGATION_GUARD_NODES = 4096/, "SPA guard inspection admits a normal HA dashboard before failing closed");
 assert.match(html, /childWindow\.location\.search !== "\?kiosk"/, "SPA navigation accepts only the exact kiosk route query");
 assert.match(html, /hass\.connection\?\.connected !== true/, "SPA navigation requires a positively connected HA session");
 
@@ -341,5 +342,16 @@ panel.src = "";
 context.location.hash = "#calendar";
 windowListeners.get("hashchange")();
 assert.equal(panel.src, "/frameos-touchscreen/calendar?kiosk", "an uncertain HA connection forces a full reload");
+
+root.nodes = [makeElement("home-assistant", { shadowRoot: headingShadow }), ...Array.from({ length: 4097 }, () => makeElement("ha-dashboard-node"))];
+root.nodes[0].hass = { states: {}, connected: true, connection: { connected: true }, callService() {} };
+childWindow.location.pathname = "/frameos-touchscreen/home";
+childWindow.location.search = "?kiosk";
+panel.src = "";
+const historyBeforeGuardBudget = childHistoryCalls.length;
+context.location.hash = "#cameras";
+windowListeners.get("hashchange")();
+assert.equal(panel.src, "/frameos-touchscreen/cameras?kiosk", "a guard traversal beyond the bounded dashboard budget fails closed");
+assert.equal(childHistoryCalls.length, historyBeforeGuardBudget, "budget exhaustion does not mutate HA history");
 
 console.log("FrameOS touchscreen panel shadow readiness and guarded SPA navigation tests passed");
