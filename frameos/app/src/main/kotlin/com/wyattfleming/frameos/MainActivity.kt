@@ -83,6 +83,7 @@ import com.wyattfleming.frameos.control.FrameRemoteSettings
 import com.wyattfleming.frameos.security.FrameExternalControlPolicy
 import com.wyattfleming.frameos.diagnostics.FrameDiagnosticStore
 import com.wyattfleming.frameos.ui.FrameTouchInputLayout
+import com.wyattfleming.frameos.ui.FrameHomeBackNavigation
 import com.wyattfleming.frameos.ui.WeatherContentView
 import com.wyattfleming.frameos.ui.TouchNavigationRail
 import com.wyattfleming.frameos.ui.dp
@@ -153,6 +154,7 @@ class MainActivity : Activity() {
     private var touchscreenSettings = FrameTouchscreenSettings()
     private val touchNavigationEnabled: Boolean
         get() = packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
+    private var unregisterHomeBack: (() -> Unit)? = null
     private val refreshNavigationRailClock = object : Runnable {
         override fun run() {
             if (!activityResumed || !touchNavigationEnabled) return
@@ -369,6 +371,13 @@ class MainActivity : Activity() {
         super.onResume()
         activityResumed = true
         refreshLocalProvisioning()
+        unregisterHomeBack?.invoke()
+        unregisterHomeBack = if (touchNavigationEnabled && configuration != null) {
+            FrameHomeBackNavigation.register(this) {
+                if (oauthSurface != null) closeWeatherAuthorization(consumeState = true)
+                else showMode(FrameMode.HOME, announceHud = false)
+            }
+        } else null
         applyBrightness(state.brightnessOverridePercent)
         enterImmersiveMode()
         render(state, announce = false)
@@ -391,6 +400,8 @@ class MainActivity : Activity() {
     override fun onPause() {
         activityResumed = false
         closeWeatherAuthorization(consumeState = true)
+        unregisterHomeBack?.invoke()
+        unregisterHomeBack = null
         invalidateCompanionPoll()
         cancelPendingBootRecoveryConfirmation()
         volumeInput.reset()
@@ -451,7 +462,7 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
         if (oauthSurface != null) {
             closeWeatherAuthorization(consumeState = true)
-        } else if (configuration != null) {
+        } else if (touchNavigationEnabled && configuration != null) {
             showMode(FrameMode.HOME, announceHud = false)
         } else {
             super.onBackPressed()
@@ -961,6 +972,10 @@ class MainActivity : Activity() {
     private fun dispatch(intent: FrameIntent) {
         cancelModeGesture()
         if (intent == FrameIntent.IdleExpired && state.mode.persistsAcrossIdle) return
+        if (touchNavigationEnabled && (intent == FrameIntent.GoHome || intent == FrameIntent.IdleExpired)) {
+            showMode(FrameMode.HOME, announceHud = false)
+            return
+        }
         if (intent == FrameIntent.PrimaryAction && state.mode == FrameMode.PHOTOS) {
             handler.removeCallbacks(resumePhotosAfterHold)
         }
