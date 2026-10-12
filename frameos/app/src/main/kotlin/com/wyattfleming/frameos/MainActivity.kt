@@ -313,9 +313,10 @@ class MainActivity : Activity() {
         photoBridge = com.wyattfleming.frameos.photos.FramePhotoBridge(photoReserve, onPhotoObserved = { photo ->
             handler.post {
                 if (!photoBridge.isCurrentObservation(photo)) return@post
-                if (!activityResumed || state.mode != FrameMode.PHOTOS ||
-                    (state.photosPaused && photo.pauseSnapshotNonce == null &&
-                        (!manualPhotoStepPending || !isNewManualPhotoStepAsset(manualPhotoStepPreviousAssetId, photo.assetId)))
+                if (!activityResumed || state.mode != FrameMode.PHOTOS) return@post
+                webSurface?.onCurrentPhotoObserved(photo)
+                if (state.photosPaused && photo.pauseSnapshotNonce == null &&
+                    (!manualPhotoStepPending || !isNewManualPhotoStepAsset(manualPhotoStepPreviousAssetId, photo.assetId))
                 ) return@post
                 currentPhotoAssetId = photo.assetId
                 lastPhotoAt = photo.capturedAt
@@ -1201,7 +1202,7 @@ class MainActivity : Activity() {
     private fun showFrameSettings() {
         AlertDialog.Builder(this)
             .setTitle("Your frame")
-            .setMessage("Home opens your authenticated Home Assistant dashboard.\n\nPhotos and Art fill the screen. Swipe inward from the left edge to open the menu, then tap Home to return here.")
+            .setMessage("Home brings together your calendar, weather and home controls.\n\nPhotos and Art fill the screen. Swipe inward from the left edge to open the menu, then tap Home to return here.")
             .setPositiveButton("Done", null)
             .setNeutralButton("Wi-Fi settings") { _, _ ->
                 runCatching { startActivity(Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)) }
