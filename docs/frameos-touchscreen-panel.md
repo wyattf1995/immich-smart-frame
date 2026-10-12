@@ -4,9 +4,9 @@
 for a Home Assistant dashboard mounted at `/frameos-touchscreen`. It deliberately
 does not replace the existing `/wall-panel` deployment.
 
-The companion YAML is a separate dashboard definition. It needs the live entity
-registry before use: replace `camera.frameos_camera_1` through
-`camera.frameos_camera_4` with the four chosen non-doorbell camera entities.
+The companion YAML is a separate dashboard definition. It uses the verified
+Backyard, Dining room, Garage, and Living room Nest camera entity IDs. Its source
+is deliberately separate from the existing wall-panel dashboard.
 The camera chooser uses tiles only. Each hidden camera subview contains exactly
 one `picture-entity` card with `camera_view: live`, so visiting a camera mounts
 one live stream rather than four concurrent streams on the 1 GiB PF1007.

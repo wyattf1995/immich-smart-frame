@@ -37,6 +37,14 @@
         const validView = (value) => Object.prototype.hasOwnProperty.call(routes, value);
         const normalizeView = (value) => validView(value) ? value : "home";
         const routeFor = (value) => routes[normalizeView(value)];
+        const iframeView = () => {
+          try {
+            const match = panel.contentWindow.location.pathname.match(/^\/frameos-touchscreen\/(camera-[1-4])\/?$/);
+            return match ? match[1] : null;
+          } catch (_error) {
+            return null;
+          }
+        };
 
         // Explicitly tracks one selected camera. The dashboard itself uses navigation
         // cards on its chooser and has exactly one live camera card per camera subview.
@@ -72,6 +80,7 @@
 
         const textFor = (element) => [element.heading, element.getAttribute?.("heading"), element.textContent].filter((value) => typeof value === "string").join(" ").toLowerCase();
         const routeReady = (view, root) => {
+          if (/^camera-[1-4]$/.test(view)) return Boolean(root.querySelector("hui-picture-entity-card"));
           if (view === "calendar") return Boolean(root.querySelector("ha-full-calendar"));
           const wanted = readiness[view];
           const headings = [...root.querySelectorAll("hui-heading-card, ha-card, h1, h2")].map(textFor);
@@ -105,7 +114,7 @@
           panel.src = routeFor(view);
         };
 
-        panel.addEventListener("load", () => { if (currentView) observeReadiness(currentView); });
+        panel.addEventListener("load", () => { if (currentView) observeReadiness(iframeView() || currentView); });
         window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
         navigate(location.hash.slice(1));
       })();

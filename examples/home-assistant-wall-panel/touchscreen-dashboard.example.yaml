@@ -1,5 +1,5 @@
 # Opt-in dashboard for the low-memory PF1007 touchscreen frame.
-# Replace only the four camera.* placeholders after checking the live registry.
+# These four camera entities were verified enabled in the Home Assistant registry.
 title: FrameOS Touchscreen
 views:
   - title: Home
@@ -60,12 +60,12 @@ views:
             heading: Camera chooser
             icon: mdi:camera-control
           - type: tile
-            entity: camera.frameos_camera_1
-            name: Camera 1
+            entity: camera.backyard_backyard_camera
+            name: Backyard
             tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/camera-1?kiosk" }
           - type: tile
-            entity: camera.frameos_camera_2
-            name: Camera 2
+            entity: camera.dining_room_dining_room_camera
+            name: Dining room
             tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/camera-2?kiosk" }
       - type: grid
         cards:
@@ -73,12 +73,12 @@ views:
             heading: Camera chooser
             icon: mdi:camera-control
           - type: tile
-            entity: camera.frameos_camera_3
-            name: Camera 3
+            entity: camera.garage_garage_camera
+            name: Garage
             tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/camera-3?kiosk" }
           - type: tile
-            entity: camera.frameos_camera_4
-            name: Camera 4
+            entity: camera.living_room_living_room_camera
+            name: Living room
             tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/camera-4?kiosk" }
     animated_background: neutral
 
@@ -88,7 +88,7 @@ views:
     visible: false
     cards:
       - type: picture-entity
-        entity: camera.frameos_camera_1
+        entity: camera.backyard_backyard_camera
         camera_view: live
         show_name: true
         show_state: false
@@ -101,7 +101,7 @@ views:
     visible: false
     cards:
       - type: picture-entity
-        entity: camera.frameos_camera_2
+        entity: camera.dining_room_dining_room_camera
         camera_view: live
         show_name: true
         show_state: false
@@ -114,7 +114,7 @@ views:
     visible: false
     cards:
       - type: picture-entity
-        entity: camera.frameos_camera_3
+        entity: camera.garage_garage_camera
         camera_view: live
         show_name: true
         show_state: false
@@ -127,7 +127,7 @@ views:
     visible: false
     cards:
       - type: picture-entity
-        entity: camera.frameos_camera_4
+        entity: camera.living_room_living_room_camera
         camera_view: live
         show_name: true
         show_state: false
