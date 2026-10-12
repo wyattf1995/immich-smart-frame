@@ -40,6 +40,8 @@
           calendar: Object.freeze(["ha-full-calendar"]),
         });
         const READY_TIMEOUT_MILLIS = 12_000;
+        const HOME_STYLE_PROBE_TIMEOUT_MILLIS = 12_000;
+        const HOME_STYLE_SHADOW_HOSTS = new Set(["hui-sections-view", "hui-heading-card", "hui-markdown-card", "hui-thermostat-card", "ha-markdown"]);
         const validView = (value) => Object.prototype.hasOwnProperty.call(routes, value);
         const normalizeView = (value) => validView(value) ? value : "home";
         const routeFor = (value) => routes[normalizeView(value)];
@@ -87,6 +89,8 @@
         const removeHomeStyles = () => {
           if (!homeStyleWork) return;
           homeStyleWork.observers.forEach((observer) => observer.disconnect());
+          window.clearTimeout(homeStyleWork.shadowProbeTimer);
+          window.clearTimeout(homeStyleWork.shadowProbeDeadlineTimer);
           homeStyleWork.styleRoots.forEach((root) => root.querySelector?.("#frameos-home-redesign")?.remove?.());
           homeStyleWork.cardRoots.forEach((root) => root.querySelector?.("#frameos-home-card")?.remove?.());
           homeStyleWork.markdownRoots.forEach((root) => root.querySelector?.("#frameos-home-markdown")?.remove?.());
@@ -135,12 +139,34 @@
           if (node.nodeType === 1) {
             styleHomeElement(node, work);
             if (node.shadowRoot) observeHomeStyleRoot(node.shadowRoot, work);
+            else queueHomeShadowHost(node, work);
           }
           if (!node.querySelectorAll) return;
           node.querySelectorAll("*").forEach((element) => {
             styleHomeElement(element, work);
             if (element.shadowRoot) observeHomeStyleRoot(element.shadowRoot, work);
+            else queueHomeShadowHost(element, work);
           });
+        };
+        const queueHomeShadowHost = (element, work) => {
+          if (element.ownerDocument !== work.root || !HOME_STYLE_SHADOW_HOSTS.has(element.localName)) return;
+          work.pendingShadowHosts.add(element);
+          scheduleHomeShadowProbe(work);
+        };
+        const scheduleHomeShadowProbe = (work) => {
+          if (homeStyleWork !== work || work.shadowProbeExpired || work.shadowProbeTimer || work.pendingShadowHosts.size === 0) return;
+          work.shadowProbeTimer = window.setTimeout(() => {
+            work.shadowProbeTimer = null;
+            if (homeStyleWork !== work || work.shadowProbeExpired) return;
+            work.pendingShadowHosts.forEach((host) => {
+              if (host.shadowRoot) {
+                work.pendingShadowHosts.delete(host);
+                styleHomeElement(host, work);
+                observeHomeStyleRoot(host.shadowRoot, work);
+              }
+            });
+            scheduleHomeShadowProbe(work);
+          }, 50);
         };
         const observeHomeStyleRoot = (root, work) => {
           if (work.observedRoots.has(root)) return;
@@ -159,8 +185,15 @@
         const activateHomeStyles = (root) => {
           if (homeStyleWork?.root === root) return;
           removeHomeStyles();
-          const work = { root, observers: [], observedRoots: new WeakSet(), styleRoots: new Set(), cardRoots: new Set(), markdownRoots: new Set() };
+          const work = { root, observers: [], observedRoots: new WeakSet(), styleRoots: new Set(), cardRoots: new Set(), markdownRoots: new Set(), pendingShadowHosts: new Set(), shadowProbeTimer: null, shadowProbeDeadlineTimer: null, shadowProbeExpired: false };
           homeStyleWork = work;
+          work.shadowProbeDeadlineTimer = window.setTimeout(() => {
+            if (homeStyleWork !== work) return;
+            work.shadowProbeExpired = true;
+            window.clearTimeout(work.shadowProbeTimer);
+            work.shadowProbeTimer = null;
+            work.pendingShadowHosts.clear();
+          }, HOME_STYLE_PROBE_TIMEOUT_MILLIS);
           observeHomeStyleRoot(root, work);
         };
         const disposeHomeStyles = () => { removeHomeStyles(); setHomeChrome(null); };
