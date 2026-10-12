@@ -7,11 +7,15 @@ const stylesheet = fs.readFileSync("examples/frameos-art/art.css", "utf8");
 const document = { hidden:false, addEventListener() {}, removeEventListener() {}, getElementById() { return null; } };
 const window = { document, fetch: async () => ({ ok:false }), Image: class {}, setInterval, clearInterval, setTimeout, clearTimeout };
 vm.runInNewContext(source, { window, document, URL, console, setInterval, clearInterval, setTimeout, clearTimeout });
-const { ArtGallery, validateCollection, shuffledIds, rotationStorageKey, CYCLE_MILLIS } = window.FrameOSArtGallery;
+const { ArtGallery, validateCollection, shuffledIds, rotationStorageKey, CYCLE_MILLIS, MAX_ARTWORKS, MAX_HISTORY_ENTRIES, MAX_ROTATION_STORAGE_BYTES } = window.FrameOSArtGallery;
 const hash = (character) => character.repeat(64);
 const artwork = (id) => ({ id, image:`images/${hash(id)}.jpg`, title:`<${id}> title`, artist:"Artist", year:"1890", sourceUrl:`https://museum.example.invalid/${id}` });
 const collection = () => ({ version:1, title:"Impressionist landscapes", artworks:[artwork("a"), artwork("b")] });
 const namedCollection = (title, ids) => ({ version:1, title, artworks:ids.map(artwork) });
+const indexedArtwork = (index) => {
+  const id = index.toString(16).padStart(64, "0");
+  return { id, image:`images/${id}.jpg`, title:`Artwork ${index}`, artist:"Artist", year:"1890", sourceUrl:"" };
+};
 const idleInterval = () => 1;
 const idleClear = () => {};
 const memoryStorage = () => {
@@ -33,6 +37,7 @@ assert.equal(validateCollection({ ...collection(), artworks:[{ ...artwork("a"), 
 assert.equal(validateCollection({ ...collection(), artworks:[{ ...artwork("a"), image:"images/../family.jpg" }] }), null, "escaping image paths are refused");
 assert.equal(validateCollection({ ...collection(), artworks:[{ ...artwork("a"), sourceUrl:"https://museum.example.invalid/a?token=x" }] }), null, "credential-like source queries are refused");
 assert.deepEqual([...shuffledIds(collection().artworks, () => 0.99)].sort(), ["a", "b"], "shuffle bag preserves every artwork exactly once");
+assert.equal(validateCollection({ version:1, title:"Too many", artworks:Array.from({ length:MAX_ARTWORKS + 1 }, (_, index) => indexedArtwork(index)) }), null, "an oversized local collection is refused before it can grow rotation state");
 
 const root = { ownerDocument:document, replaceChildren() {} };
 const scheduled = []; const cleared = [];
@@ -78,6 +83,15 @@ assert.notEqual(nextCycle.currentId, thirdRotationId, "the next cycle avoids rep
 const corruptStorage = memoryStorage(); corruptStorage.setItem(rotationStorageKey(validateCollection(rotationCollection)), "not-json");
 const recoveredFromCorruptState = testGallery(rotationCollection, corruptStorage);
 assert.equal(recoveredFromCorruptState.bag.length, 3, "corrupt rotation state is ignored without losing the local collection");
+const oversizedStateStorage = memoryStorage();
+const rotationKey = rotationStorageKey(validateCollection(rotationCollection));
+oversizedStateStorage.setItem(rotationKey, JSON.stringify({ version:1, shownIds:["a"], lastDisplayedId:"a", padding:"x".repeat(MAX_ROTATION_STORAGE_BYTES) }));
+const ignoredOversizedState = testGallery(rotationCollection, oversizedStateStorage);
+assert.ok(ignoredOversizedState.bag.includes("a"), "oversized valid storage is ignored before JSON parsing");
+const oversizedShownStorage = memoryStorage();
+oversizedShownStorage.setItem(rotationKey, JSON.stringify({ version:1, shownIds:Array(MAX_ARTWORKS + 1).fill("a"), lastDisplayedId:"a" }));
+const ignoredOversizedShown = testGallery(rotationCollection, oversizedShownStorage);
+assert.ok(ignoredOversizedShown.bag.includes("a"), "overlong shown-ID state is ignored without iterating it");
 const changedCollection = namedCollection("Rotation test", ["a", "b", "c", "d"]);
 const changedGallery = testGallery(changedCollection, storage);
 assert.ok(changedGallery.bag.includes("d"), "new collection artwork joins the unfinished rotation");
@@ -114,13 +128,23 @@ assert.equal(failures.currentId, "b", "a failed local image advances to another 
 assert.equal(failures.failed.has("a"), true, "a failed image is not retried in a tight loop");
 
 const racing = new ArtGallery(root, { Image: class {}, setInterval:idleInterval, clearInterval:idleClear });
-racing.collection = validateCollection(collection()); racing.bag = ["a", "b"]; racing.preloadNext = () => {};
-const pending = new Map();
+racing.collection = validateCollection(namedCollection("Race coverage", ["a", "b", "c"])); racing.bag = ["a", "b", "c"]; racing.preloadNext = () => {};
+const pending = new Map(); const renderedRaceIds = [];
 racing.loadImage = (entry) => new Promise((resolve) => pending.set(entry.id, () => resolve({ src:entry.image })));
-racing.display = (entry) => { racing.currentId = entry.id; };
+racing.display = (entry) => { racing.currentId = entry.id; renderedRaceIds.push(entry.id); };
 const earlier = racing.advance(1, true); const later = racing.advance(1, false);
 pending.get("b")(); await later; pending.get("a")(); await earlier;
 assert.equal(racing.currentId, "b", "a slower stale load cannot overwrite the latest navigation action");
+racing.loadImage = async (entry) => ({ src:entry.image });
+await racing.advance(1); await racing.advance(1);
+assert.deepEqual(renderedRaceIds, ["b", "c", "a"], "fast Next still returns every unseen viable artwork before repeating the cycle");
+
+const boundedHistory = testGallery(namedCollection("History bound", ["a", "b", "c"]), memoryStorage());
+for (let index = 0; index < MAX_HISTORY_ENTRIES + 7; index += 1) await boundedHistory.advance(1, true);
+assert.equal(boundedHistory.history.length, MAX_HISTORY_ENTRIES, "rotation history retains only the bounded manual-navigation window");
+const latestHistoryId = boundedHistory.currentId;
+await boundedHistory.advance(-1); assert.notEqual(boundedHistory.currentId, latestHistoryId, "Previous still works at the retained history boundary");
+await boundedHistory.advance(1); assert.equal(boundedHistory.currentId, latestHistoryId, "Next returns through retained history without changing the cycle");
 
 const retiring = new ArtGallery(root, { Image: class {}, setInterval:idleInterval, clearInterval:idleClear });
 retiring.collection = validateCollection(collection()); retiring.bag = ["a"]; retiring.preloadNext = () => {};
