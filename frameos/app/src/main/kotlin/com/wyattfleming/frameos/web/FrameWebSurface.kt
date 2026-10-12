@@ -44,7 +44,7 @@ class FrameWebSurface(
     // Default false preserves the established warm Home Assistant behavior.
     private val detachHiddenHomeAssistant: Boolean = false,
     private val elapsedRealtime: () -> Long = { SystemClock.uptimeMillis() },
-    private val pageLoadWatchdogMillis: Long = PAGE_LOAD_WATCHDOG_MILLIS,
+    private val pageLoadWatchdogMillis: Long? = null,
 ) : GeckoView(context) {
     interface Listener {
         fun onPageLoading(label: String, loading: Boolean)
@@ -56,6 +56,7 @@ class FrameWebSurface(
     }
 
     private val frameRuntime = runtime
+    private val pageLoadBudget = FrameWebPageLoadBudget()
     private val retentionPolicy = FrameWebSessionRetentionPolicy()
     private val homeAttachmentPolicy = FrameWebHomeAttachmentPolicy(detachHiddenHomeAssistant)
     private val requiresFullAccessibilityTree = context.getSystemService(AccessibilityManager::class.java)
@@ -79,6 +80,7 @@ class FrameWebSurface(
         private var traceGeneration = 0L
         private var traceEvents = 0
         private var tracedCompositeGeneration = -1L
+        private var tracedPaintGeneration = -1L
         private val photoLoadGate = FramePhotoLoadGate()
         private val photoReadiness = FrameWebPhotosReadinessState()
         private val pageLoadWatchdogState = FrameWebPageLoadWatchdogState()
@@ -406,7 +408,7 @@ class FrameWebSurface(
                 reportUnavailable(this)
             }
             pageLoadWatchdog = watchdog
-            this@FrameWebSurface.postDelayed(watchdog, pageLoadWatchdogMillis)
+            this@FrameWebSurface.postDelayed(watchdog, pageLoadBudget.millisFor(label, pageLoadWatchdogMillis))
         }
 
         private fun disarmPageLoadWatchdog(): FrameWebPageLoadDisarm {
@@ -417,6 +419,12 @@ class FrameWebSurface(
 
         fun trace(event: String) {
             if (!Log.isLoggable(SURFACE_TRACE_TAG, Log.DEBUG) || traceEvents >= MAX_SURFACE_TRACE_EVENTS) return
+            // Gecko may repeat FCP while a slow document is loading. Preserve the
+            // bounded trace budget for page-stop, watchdog and recovery evidence.
+            if (event == "first_contentful_paint") {
+                if (tracedPaintGeneration == traceGeneration) return
+                tracedPaintGeneration = traceGeneration
+            }
             traceEvents += 1
             val current = this === displayedManagedSession()
             val visible = displayedSurfaceVisible()
@@ -938,7 +946,6 @@ class FrameWebSurface(
 
     private companion object {
         const val PHOTO_TAP_MILLIS = 36L
-        const val PAGE_LOAD_WATCHDOG_MILLIS = 20_000L
         const val SURFACE_TRACE_TAG = "FrameSurfaceTrace"
         const val MAX_SURFACE_TRACE_EVENTS = 128
     }
