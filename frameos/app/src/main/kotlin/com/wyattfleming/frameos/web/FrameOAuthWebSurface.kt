@@ -94,12 +94,17 @@ class FrameOAuthWebSurface(
             override fun onCrash(session: GeckoSession) = failAndClose()
             override fun onKill(session: GeckoSession) = failAndClose()
         }
-        oauthSession.open(runtime)
-        oauthSession.setActive(true)
-        oauthSession.setFocused(true)
-        setSession(oauthSession)
-        postDelayed(timeout, timeoutMillis)
-        oauthSession.loadUri(authorizationUrl)
+        try {
+            oauthSession.open(runtime)
+            oauthSession.setActive(true)
+            oauthSession.setFocused(true)
+            setSession(oauthSession)
+            postDelayed(timeout, timeoutMillis)
+            oauthSession.loadUri(authorizationUrl)
+        } catch (error: RuntimeException) {
+            close()
+            throw error
+        }
     }
 
     /** Idempotent lifecycle close; it never reports a failure by itself. */
