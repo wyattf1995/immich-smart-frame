@@ -20,7 +20,15 @@ const root = {
   nodeType: 9,
   nodes: [],
   querySelectorAll() { return this.nodes; },
-  createElement() { return { id: "", textContent: "" }; },
+  createElement() {
+    let textContent = "";
+    return {
+      id: "",
+      textAssignmentCount: 0,
+      get textContent() { return textContent; },
+      set textContent(value) { this.textAssignmentCount += 1; textContent = value; },
+    };
+  },
 };
 const makeElement = (localName, options = {}) => {
   const element = {
@@ -125,12 +133,16 @@ assert.equal(sectionsView.shadowRoot.styles.filter((style) => style.id === "fram
 assert.equal(markdown.shadowRoot.styles.filter((style) => style.id === "frameos-home-markdown").length, 1, "empty markdown gets a normal placeholder style while Home Assistant renders asynchronously");
 assert.doesNotMatch(markdown.shadowRoot.styles.find((style) => style.id === "frameos-home-markdown").textContent, /display:block/, "an empty markdown card is never prematurely styled as a clock");
 assert.doesNotMatch(statusMarkdown.shadowRoot.styles.find((style) => style.id === "frameos-home-markdown").textContent, /display:block/, "ordinary status strong text never receives clock typography");
-clockStrong.textContent = "07:16";
-markdownElement.textContent = "07:16 Sunday";
 const markdownObserver = observers.find((observer) => observer.target === markdown.shadowRoot);
 assert.ok(markdownObserver, "the ha-markdown shadow root is observed for asynchronous content");
-markdownObserver.callback([{ type: "characterData", target: { parentElement: markdownElement } }]);
-assert.match(markdown.shadowRoot.styles.find((style) => style.id === "frameos-home-markdown").textContent, /display:block;[^}]*6\.25rem/, "delayed clock text refreshes the existing deep shadow style");
+clockStrong.textContent = "07:16";
+markdownElement.textContent = "07:16 Sunday";
+markdownObserver.callback([{ type: "childList", addedNodes: [clockStrong] }]);
+const clockStyle = markdown.shadowRoot.styles.find((style) => style.id === "frameos-home-markdown");
+assert.match(clockStyle.textContent, /display:block;[^}]*6\.25rem/, "a child-list clock insertion refreshes the existing deep shadow style");
+const clockStyleAssignments = clockStyle.textAssignmentCount;
+markdownObserver.callback([{ type: "childList", addedNodes: [clockStrong] }]);
+assert.equal(clockStyle.textAssignmentCount, clockStyleAssignments, "identical child-list updates do not rewrite the existing clock style");
 headingCards.forEach((card) => { card.shadowRoot.textContent = card.expectedShadowText; });
 const characterDataObserver = observers.at(-1);
 headingCards.forEach((card) => characterDataObserver.callback([{ type: "characterData", target: { parentElement: card } }]));
@@ -142,6 +154,11 @@ headingCards.forEach((card) => {
 const firstSpaListener = childListeners.get("location-changed");
 panelListeners.get("load")();
 assert.notEqual(childListeners.get("location-changed"), firstSpaListener, "a full iframe load reattaches navigation listeners even when WindowProxy identity is stable");
+
+childWindow.location.pathname = "/auth/authorize";
+panelListeners.get("load")();
+assert.equal(homeChrome.hidden, true, "an authentication load removes the Home-only header");
+assert.ok(!panel.classList.classes.has("home-layout"), "an authentication load restores full-frame iframe geometry");
 
 const oldObservers = observers.slice();
 const cameraCard = makeElement("hui-picture-entity-card");
