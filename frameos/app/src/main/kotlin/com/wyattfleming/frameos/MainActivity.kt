@@ -2,6 +2,7 @@ package com.wyattfleming.frameos
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -85,6 +86,7 @@ import com.wyattfleming.frameos.ui.FrameTouchInputLayout
 import com.wyattfleming.frameos.ui.WeatherContentView
 import com.wyattfleming.frameos.ui.TouchDashboardView
 import com.wyattfleming.frameos.ui.TouchNavigationRail
+import com.wyattfleming.frameos.ui.TouchDashboardBackNavigation
 import com.wyattfleming.frameos.ui.dp
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherEndpoint
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherParser
@@ -151,6 +153,7 @@ class MainActivity : Activity() {
     private val touchDashboardEnabled: Boolean
         get() = touchscreenSettings.showsDashboard(packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN))
     private var dashboardVisible = false
+    private var unregisterDashboardBack: (() -> Unit)? = null
     private var dashboardBitmap: Bitmap? = null
     private var dashboardPhotoId: String? = null
     @Volatile private var dashboardPhotoGeneration = 0L
@@ -370,6 +373,10 @@ class MainActivity : Activity() {
         super.onResume()
         activityResumed = true
         refreshLocalProvisioning()
+        unregisterDashboardBack?.invoke()
+        unregisterDashboardBack = if (touchDashboardEnabled && configuration != null) {
+            TouchDashboardBackNavigation.register(this) { showDashboard() }
+        } else null
         applyBrightness(state.brightnessOverridePercent)
         enterImmersiveMode()
         render(state, announce = false)
@@ -391,6 +398,8 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         activityResumed = false
+        unregisterDashboardBack?.invoke()
+        unregisterDashboardBack = null
         invalidateCompanionPoll()
         cancelPendingBootRecoveryConfirmation()
         volumeInput.reset()
@@ -447,6 +456,8 @@ class MainActivity : Activity() {
     }
 
     @Deprecated("Deprecated in Java")
+    // API 33+ uses TouchDashboardBackNavigation; this callback serves API 23–32 only.
+    @SuppressLint("GestureBackNavigation")
     override fun onBackPressed() {
         if (touchDashboardEnabled && configuration != null) showDashboard() else super.onBackPressed()
     }
