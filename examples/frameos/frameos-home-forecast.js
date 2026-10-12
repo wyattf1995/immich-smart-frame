@@ -66,9 +66,9 @@
       if (lastSuccess !== null && current - lastSuccess < SUCCESS_TTL) return Promise.resolve(false);
       if (lastError !== null && current - lastError < ERROR_TTL) return Promise.resolve(false);
       const epoch = ++requestEpoch;
-      status = "loading"; notify();
       const request = Promise.resolve().then(options.readForecast);
       inFlight = request;
+      status = "loading"; notify();
       timeout = timers.setTimeout(() => finish(epoch, true), REQUEST_TIMEOUT);
       request.then((result) => finish(epoch, false, result), () => finish(epoch, true));
       return request;
