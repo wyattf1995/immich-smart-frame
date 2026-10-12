@@ -17,9 +17,8 @@ class TouchDashboardBackNavigationContractTest {
         assertTrue(navigation.contains("if (Build.VERSION.SDK_INT >= 33) ModernBack.register(activity, onBack) else ({})"))
         assertTrue(navigation.contains("dispatcher.registerOnBackInvokedCallback"))
         assertTrue(navigation.contains("dispatcher.unregisterOnBackInvokedCallback(callback)"))
-        assertTrue(activity.contains("unregisterDashboardBack = if (touchDashboardEnabled && configuration != null)"))
-        assertTrue(activity.contains("unregisterDashboardBack?.invoke()"))
         assertTrue(activity.contains("override fun onBackPressed()"))
-        assertTrue(activity.contains("API 33+ uses TouchDashboardBackNavigation; this callback serves API 23–32 only."))
+        assertTrue(activity.contains("showMode(FrameMode.HOME, announceHud = false)"))
+        assertTrue("legacy dashboard back helper is isolated from the unified Home activity", !activity.contains("TouchDashboardBackNavigation"))
     }
 }
