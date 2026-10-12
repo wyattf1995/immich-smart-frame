@@ -6,11 +6,12 @@ import org.junit.Test
 
 class FrameTouchscreenSettingsTest {
     @Test
-    fun `defaults opt out of dashboard and hidden Home detachment`() {
+    fun `defaults opt out of dashboard hidden Home detachment and Photos startup`() {
         val settings = FrameTouchscreenSettings()
 
         assertFalse(settings.dashboardEnabled)
         assertFalse(settings.detachHiddenHome)
+        assertFalse(settings.startWithPhotos)
         assertFalse(settings.showsDashboard(hasTouchscreen = true))
     }
 
