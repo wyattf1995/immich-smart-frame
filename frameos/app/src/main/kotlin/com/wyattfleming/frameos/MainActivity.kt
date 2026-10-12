@@ -413,6 +413,8 @@ class MainActivity : Activity() {
         cancelPendingBootRecoveryConfirmation()
         volumeInput.reset()
         root.resetTouchNavigation()
+        touchMediaNavigation.dismissMenu()
+        updateTouchNavigation()
         cancelModeGesture()
         handler.removeCallbacks(refreshVisibleWeather)
         handler.removeCallbacks(preloadCalendar)
