@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.FrameOS.Base" parent="android:style/Theme.Material.NoActionBar">
+    <style name="Base.Theme.FrameOS" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowBackground">@color/frame_dark</item>
@@ -12,5 +12,5 @@
         <item name="android:windowLightStatusBar">false</item>
     </style>
 
-    <style name="Theme.FrameOS" parent="@style/Theme.FrameOS.Base" />
+    <style name="Theme.FrameOS" parent="@style/Base.Theme.FrameOS" />
 </resources>
