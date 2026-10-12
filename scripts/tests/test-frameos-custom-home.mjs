@@ -77,7 +77,14 @@ const makeInteractiveRoot = () => {
       }
       for (const match of markup.matchAll(/<(span|small)([^>]*)>([^<]*)<\/\1>/g)) {
         const marker = match[2].match(/data-frameos-clock-(time|period|date)/)?.[1];
-        if (marker) this.clockNodes.set(marker, { textContent: match[3] });
+        if (marker) {
+          const node = { _textContent: match[3], assignments: 0 };
+          Object.defineProperty(node, "textContent", {
+            get() { return this._textContent; },
+            set(value) { this.assignments += 1; this._textContent = value; },
+          });
+          this.clockNodes.set(marker, node);
+        }
       }
     },
   });
@@ -131,12 +138,24 @@ const clockHandle = api.mount(clockRoot, {
   now: () => displayNow,
 });
 const clockWrites = clockRoot.writes;
-const initialClockText = clockRoot.querySelector("[data-frameos-clock-time]")?.textContent;
+const clockTime = clockRoot.querySelector("[data-frameos-clock-time]");
+const clockPeriod = clockRoot.querySelector("[data-frameos-clock-period]");
+const clockDate = clockRoot.querySelector("[data-frameos-clock-date]");
+const initialClockText = clockTime?.textContent;
 assert.ok(initialClockText, "the mounted Home exposes an updateable time node");
+const clockControl = clockRoot.querySelectorAll("[data-mode]").find((button) => button.dataset.mode === "cool");
+timers.filter((timer) => timer.delay === 1000 && !timer.cleared).at(-1).callback();
+assert.equal(clockTime.assignments, 0, "an unchanged clock tick does not assign the existing time node");
+assert.equal(clockPeriod.assignments, 0, "an unchanged clock tick does not assign the existing period node");
+assert.equal(clockDate.assignments, 0, "an unchanged clock tick does not assign the existing date node");
 displayNow = new Date(2026, 9, 12, 9, 6);
 timers.filter((timer) => timer.delay === 1000 && !timer.cleared).at(-1).callback();
 assert.equal(clockRoot.writes, clockWrites, "a minute tick does not replace the interactive Home tree");
 assert.notEqual(clockRoot.querySelector("[data-frameos-clock-time]")?.textContent, initialClockText, "a minute tick updates the visible time in place");
+assert.equal(clockTime.assignments, 1, "a minute transition updates the changed time node once");
+assert.equal(clockPeriod.assignments, 0, "a minute transition does not assign an unchanged period");
+assert.equal(clockDate.assignments, 0, "a minute transition does not assign an unchanged date");
+assert.equal(clockRoot.querySelectorAll("[data-mode]").find((button) => button.dataset.mode === "cool"), clockControl, "a minute tick preserves the existing climate control node");
 clockHandle.destroy();
 
 const temperatureRoot = makeInteractiveRoot();
