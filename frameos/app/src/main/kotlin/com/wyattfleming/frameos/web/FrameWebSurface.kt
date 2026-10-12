@@ -483,6 +483,7 @@ class FrameWebSurface(
         if (slot == FrameWebSlot.HOME_ASSISTANT) {
             preloadDeactivation?.let(::removeCallbacks)
             preloadDeactivation = null
+            if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()
             ensureWarmHomeAttached(managed)
             visibility = View.GONE
             warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
@@ -522,6 +523,7 @@ class FrameWebSurface(
         homeAssistantSession?.setFocused(false)
         if (deactivateHiddenHomeAssistant) homeAssistantSession?.setActive(false)
         detachWarmHomeWhenRequired(slot = null)
+        if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()
         warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         displayedSlot = null
         scheduleHiddenHomeEviction()
