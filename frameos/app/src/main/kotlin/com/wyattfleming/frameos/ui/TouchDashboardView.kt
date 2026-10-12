@@ -3,6 +3,7 @@ package com.wyattfleming.frameos.ui
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -108,11 +109,19 @@ class TouchDashboardView(
 
     private fun photoCard(): View = FrameLayout(context).apply {
         contentDescription = "Open Photos"; isClickable = true; isFocusable = true; minimumTouchTarget(context)
-        background = style.card(context.dp(22).toFloat()); setOnClickListener { onOpenMode(FrameMode.PHOTOS) }
+        val radius = context.dp(22).toFloat()
+        background = style.card(radius)
+        clipToOutline = true
+        setOnClickListener { onOpenMode(FrameMode.PHOTOS) }
         addView(photo, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(photoEmpty, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER))
         addView(text(16f, true).apply {
-            text = "Photos"; setPadding(context.dp(18), context.dp(14), context.dp(18), context.dp(14))
+            text = "Photos"
+            background = GradientDrawable().apply {
+                setColor(0xb30d1d31.toInt())
+                cornerRadius = context.dp(12).toFloat()
+            }
+            setPadding(context.dp(12), context.dp(8), context.dp(12), context.dp(8))
         }, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START))
     }
 

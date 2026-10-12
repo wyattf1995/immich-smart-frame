@@ -5,6 +5,7 @@ import android.graphics.Typeface
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.wyattfleming.frameos.navigation.FrameMode
 import java.time.ZonedDateTime
@@ -17,6 +18,14 @@ class TouchNavigationRail(
     private var style = TouchDashboardStyle.forHour(12)
     private var selected: FrameMode? = null
     private var modes: List<FrameMode> = FrameMode.cycleModes(false)
+    private val items = LinearLayout(context).apply {
+        orientation = VERTICAL
+    }
+    private val scroller = ScrollView(context).apply {
+        isFillViewport = true
+        isVerticalScrollBarEnabled = true
+        addView(items, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+    }
 
     init {
         orientation = VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
@@ -31,9 +40,10 @@ class TouchNavigationRail(
         if (next != style) { style = next; rebuild() }
     }
     private fun rebuild() {
-        removeAllViews(); setBackgroundColor(style.background)
-        addView(item(null, "Today", selected == null) { onDashboard() })
-        modes.forEach { mode -> addView(item(mode, mode.label, selected == mode) { onOpenMode(mode) }) }
+        removeAllViews(); items.removeAllViews(); setBackgroundColor(style.background)
+        addView(scroller, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+        items.addView(item(null, "Today", selected == null) { onDashboard() })
+        modes.forEach { mode -> items.addView(item(mode, mode.label, selected == mode) { onOpenMode(mode) }) }
     }
     private fun item(mode: FrameMode?, label: String, active: Boolean, action: () -> Unit): View =
         LinearLayout(context).apply {
