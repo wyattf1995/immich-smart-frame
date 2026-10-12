@@ -4,12 +4,16 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#101722">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'">
     <title>FrameOS touchscreen panel</title>
+    <link rel="stylesheet" href="/local/frameos-custom-home.css?v=92bcd235c908">
     <style>
       html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #102025; color: #f1ede4; font-family: system-ui, sans-serif; }
       #panel { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #102025; }
       #panel.home-layout { top: 78px; height: calc(100% - 78px); }
+      #panel.custom-home-backend { visibility: hidden; pointer-events: none; }
+      #custom-home { position: fixed; inset: 0; z-index: 1; overflow: auto; }
+      #custom-home[hidden] { display: none !important; }
       #home-chrome { position: fixed; z-index: 1; inset: 0 0 auto; height: 78px; display: flex; align-items: center; justify-content: space-between; box-sizing: border-box; padding: 0 28px; background: #102025; color: #f1ede4; pointer-events: none; }
       #home-chrome[hidden] { display: none; }
       #home-title { font-size: 1rem; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: #d8c390; }
@@ -22,9 +26,11 @@
   </head>
   <body>
     <iframe id="panel" title="FrameOS touchscreen Home Assistant panel" allow="autoplay; fullscreen" referrerpolicy="same-origin"></iframe>
+    <main id="custom-home" hidden aria-label="Home controls"></main>
     <header id="home-chrome" hidden><span id="home-title">Home</span><span id="home-hint">Swipe from the left edge for photos</span></header>
     <div id="loading">Opening Home…</div>
     <p id="status" aria-live="polite" aria-atomic="true"></p>
+    <script src="/local/frameos-custom-home.js?v=726dc4574b2e"></script>
     <script>
       (() => {
         "use strict";
@@ -58,6 +64,7 @@
 
         const panel = document.getElementById("panel");
         const homeChrome = document.getElementById("home-chrome");
+        const customHomeRoot = document.getElementById("custom-home");
         const loading = document.getElementById("loading");
         const status = document.getElementById("status");
         let currentView = null;
@@ -65,6 +72,106 @@
         let spaWindow = null;
         let detachSpaNavigation = null;
         let homeStyleWork = null;
+        let customHomeWork = null;
+        let customHomeProbe = null;
+
+        const disposeCustomHome = () => {
+          if (customHomeProbe) window.clearTimeout(customHomeProbe.timer);
+          customHomeProbe = null;
+          if (customHomeWork) customHomeWork.instance.destroy();
+          customHomeWork = null;
+          if (customHomeRoot) customHomeRoot.hidden = true;
+          panel.classList?.toggle("custom-home-backend", false);
+        };
+        const discoverCustomHome = (root) => {
+          if (!customHomeRoot || !window.FrameOSCustomHome) return false;
+          if (customHomeWork?.root === root) {
+            setHomeChrome(null);
+            loading.hidden = true;
+            return true;
+          }
+          disposeCustomHome();
+          // The same-origin HA frontend owns authentication and the connection.
+          // Never read credentials or create a second connection from this UI.
+          const getHass = () => {
+            if (panel.contentDocument !== root || iframeView() !== "home" || currentView !== "home") return null;
+            const live = root.querySelector?.("home-assistant")?.hass;
+            if (!live?.states || typeof live.callService !== "function") return null;
+            // Expose data needed by this view, not HA's auth/connection object.
+            const ids = ["climate.entryway_entryway", "weather.home", "calendar.family",
+              ...Object.keys(live.states).filter((id) => id.startsWith("calendar.") && id !== "calendar.family").sort().slice(0, 3),
+              "camera.backyard_backyard_camera", "camera.dining_room_dining_room_camera",
+              "camera.garage_garage_camera", "camera.living_room_living_room_camera"];
+            const keys = ["friendly_name", "current_temperature", "current_humidity", "temperature",
+              "min_temp", "max_temp", "target_temp_step", "target_temp_low", "target_temp_high",
+              "hvac_modes", "hvac_action", "temperature_unit", "humidity", "message", "start_time", "end_time", "all_day"];
+            const states = {};
+            ids.forEach((id) => {
+              const entity = live.states[id];
+              if (!entity) return;
+              const attributes = {};
+              keys.forEach((key) => {
+                const value = entity.attributes?.[key];
+                if (["string", "number", "boolean"].includes(typeof value) || value === null) attributes[key] = value;
+                else if (key === "hvac_modes" && Array.isArray(value)) attributes[key] = Object.freeze(value.filter((item) => typeof item === "string"));
+              });
+              states[id] = Object.freeze({ entity_id: id, state: entity.state, attributes: Object.freeze(attributes) });
+            });
+            return Object.freeze({
+              states: Object.freeze(states),
+              connected: live.connected !== false && live.connection?.connected !== false,
+              config: Object.freeze({ unit_system: Object.freeze({ temperature: live.config?.unit_system?.temperature }) }),
+              callService: async (domain, service, data) => {
+                const fresh = root.querySelector?.("home-assistant")?.hass;
+                if (panel.contentDocument !== root || iframeView() !== "home" || currentView !== "home" || fresh?.connected === false || fresh?.connection?.connected === false) throw new Error("Connection unavailable");
+                if (domain !== "climate" || !["set_temperature", "set_hvac_mode"].includes(service) || data?.entity_id !== "climate.entryway_entryway") throw new Error("Unsupported Home action");
+                const allowed = service === "set_hvac_mode" ? ["entity_id", "hvac_mode"] : ["entity_id", "temperature", "target_temp_low", "target_temp_high"];
+                if (Object.keys(data).some((key) => !allowed.includes(key))) throw new Error("Unsupported Home action");
+                return fresh.callService(domain, service, data);
+              },
+            });
+          };
+          const probe = { root, timer: null, attempts: 0 };
+          customHomeProbe = probe;
+          const attempt = () => {
+            if (customHomeProbe !== probe || panel.contentDocument !== root || iframeView() !== "home") return false;
+            const hass = getHass();
+            if (hass?.states && typeof hass.callService === "function" && hass.connected !== false) {
+              let instance;
+              try {
+                instance = window.FrameOSCustomHome.mount(customHomeRoot, {
+                getHass,
+                navigate: (view) => { if (validView(view)) navigate(view); },
+                onUnavailable: () => {
+                  if (panel.contentDocument !== root || isAuthenticationRoute()) {
+                    disposeCustomHome();
+                    if (isAuthenticationRoute()) showSignInRequired();
+                  }
+                },
+                });
+              } catch (_error) {
+                disposeCustomHome();
+                setHomeChrome("home");
+                return false;
+              }
+              customHomeWork = { root, instance };
+              customHomeProbe = null;
+              disposeRouteWork();
+              removeHomeStyles();
+              setHomeChrome(null);
+              panel.classList?.toggle("custom-home-backend", true);
+              customHomeRoot.hidden = false;
+              loading.hidden = true;
+              announce("Home ready");
+              return true;
+            }
+            // Discovery is bounded; native HA remains an available fallback.
+            if (++probe.attempts < 240) probe.timer = window.setTimeout(attempt, 50);
+            else customHomeProbe = null;
+            return false;
+          };
+          return attempt();
+        };
 
         const announce = (message) => { status.textContent = message; };
         const focusPanel = () => { try { panel.contentWindow.focus(); } catch (_error) { panel.focus(); } };
@@ -201,6 +308,7 @@
           try { return /^\/auth(?:\/|$)/.test(panel.contentWindow.location.pathname); } catch (_error) { return false; }
         };
         const showSignInRequired = () => {
+          disposeCustomHome();
           disposeRouteWork();
           disposeHomeStyles();
           loading.hidden = true;
@@ -318,9 +426,13 @@
           disposeRouteWork();
           const root = panel.contentDocument;
           if (!root) {
+            disposeCustomHome();
             if (view !== "home") disposeHomeStyles();
             return;
           }
+          if (view === "home") {
+            if (discoverCustomHome(root)) return;
+          } else disposeCustomHome();
           if (view === "home") activateHomeStyles(root); else disposeHomeStyles();
           const state = { view, root, ready: false, timeout: null, shadowProbeTimer: null, shadowProbeExpired: false, observers: [], observedRoots: new WeakSet(), pendingShadowHosts: new Set(), styledHeadings: new WeakSet(), styledHeadingShadows: new WeakSet(), headings: new Map(), calendarRoot: null, cameraCards: new Set() };
           activeWork = state;
@@ -339,6 +451,7 @@
           const view = normalizeView(rawView);
           if (location.hash !== `#${view}`) history.replaceState(null, "", `${location.pathname}${location.search}#${view}`);
           currentView = view;
+          disposeCustomHome();
           disposeRouteWork();
           if (view !== "home") disposeHomeStyles();
           showLoading(view);
@@ -367,6 +480,7 @@
         };
 
         panel.addEventListener("load", () => {
+          disposeCustomHome();
           attachSpaNavigationWatcher();
           const loadedView = iframeView();
           if (!loadedView) {
@@ -375,6 +489,12 @@
           if (currentView) observeReadiness(loadedView || currentView);
         });
         window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
+        window.addEventListener("pagehide", () => {
+          disposeCustomHome();
+          disposeRouteWork();
+          disposeHomeStyles();
+          if (detachSpaNavigation) detachSpaNavigation();
+        });
         navigate(location.hash.slice(1));
       })();
     </script>
