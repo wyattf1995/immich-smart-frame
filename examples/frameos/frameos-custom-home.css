@@ -14,9 +14,6 @@
 }
 .frameos-custom-home *, .frameos-custom-home *::before, .frameos-custom-home *::after { box-sizing: border-box; }
 .frameos-custom-home.night { --fch-paper:#102226; --fch-ink:#f5f2e9; --fch-line:#547985; --fch-sky:#173941; --fch-yellow:#d6ad00; --fch-card:#18343a; }
-.fch-rail { position:absolute; inset:0 auto 0 0; width:66px; padding:14px 7px; display:flex; flex-direction:column; gap:7px; background:var(--fch-ink); color:var(--fch-paper); }
-.fch-rail button { min-height:52px; padding:5px 2px; border:0; border-radius:10px; background:transparent; color:inherit; font:700 10px/1.2 Arial,sans-serif; text-transform:uppercase; cursor:pointer; }
-.fch-rail button:hover, .fch-rail button:focus-visible { outline:3px solid var(--fch-yellow); outline-offset:1px; background:rgba(255,255,255,.15); }
 .fch-top { display:grid; grid-template-columns:1.15fr .9fr .72fr; align-items:end; gap:20px; min-height:135px; border-bottom:3px solid var(--fch-ink); padding-bottom:10px; }
 .fch-time { font-size:clamp(68px, 10vw, 128px); font-weight:700; letter-spacing:-.095em; line-height:.78; white-space:nowrap; }
 .fch-date, .fch-eyebrow { margin-top:10px; font-size:13px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; }
@@ -47,8 +44,6 @@
 .fch-actions .fch-action {min-width:90px}
 .fch-links {padding:10px;gap:12px}
 .fch-link {min-height:64px}
-.fch-rail button {overflow-wrap:anywhere;min-height:66px}
-.fch-rail button:first-child {background:var(--fch-paper);color:var(--fch-ink)}
 .fch-feedback.error {color:#a8231c}
 .night .fch-feedback.error {color:#ffaaa1}
 .night .fch-feedback.pending {color:#ead578}
@@ -56,7 +51,14 @@
  .fch-time{font-size:72px}.fch-grid{display:flex;flex-direction:column}.fch-card{width:100%}.fch-bottom{display:contents}.fch-next-title{font-size:32px}
 }
 /* Keep navigation labels intact on the 1280px frame. */
-.frameos-custom-home {padding-left:108px}
-.fch-rail {width:88px;padding:14px 8px}
-.fch-rail button {font-size:10px;overflow-wrap:normal;word-break:normal}
-@media (max-width:720px) {.frameos-custom-home {padding-left:100px}}
+.frameos-custom-home {padding-left:24px}
+@media (max-width:720px) {.frameos-custom-home {padding-left:12px}}
+
+/* Native FrameOS owns the persistent rail; this page keeps content spacious. */
+.fch-weather { grid-template-columns:auto auto 1fr; }
+.fch-forecast { grid-column:1/-1; display:flex; gap:8px; margin-top:7px; }
+.fch-forecast-day { display:grid; grid-template-columns:auto auto; column-gap:4px; min-width:0; padding:4px 6px; border-left:1px solid var(--fch-line); font-size:11px; line-height:1.15; }
+.fch-forecast-day b { grid-column:1/-1; font-size:10px; text-transform:uppercase; }
+.fch-forecast-day i { font-style:normal; }
+.fch-forecast-day strong { font-size:13px; }
+.fch-forecast-day small,.fch-forecast-status { grid-column:1/-1; font-size:10px; }
