@@ -52,10 +52,10 @@ class TouchNavigationRail(
             background = style.card(context.dp(16).toFloat(), active)
             setPadding(context.dp(6), context.dp(6), context.dp(6), context.dp(6))
             setOnClickListener { action() }
-            addView(TouchModeIconView(context, mode).apply { tint = if (active) style.ink else style.accent },
+            addView(TouchModeIconView(context, mode).apply { tint = if (active) style.selectedInk else style.accent },
                 LayoutParams(context.dp(28), context.dp(28)))
             addView(TextView(context).apply {
-                text = label; setTextColor(if (active) style.ink else style.muted)
+                text = label; setTextColor(if (active) style.selectedInk else style.muted)
                 setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 11f)
                 typeface = Typeface.create("sans", Typeface.BOLD); gravity = Gravity.CENTER
                 importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO

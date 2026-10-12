@@ -57,4 +57,11 @@ class TouchDashboardContractTest {
         assertTrue("Photo-card children need rounded clipping", dashboard.contains("clipToOutline = true"))
         assertTrue("Photo label must draw a contrast scrim", dashboard.contains("setColor(0xb30d1d31.toInt())"))
     }
+
+    @Test
+    fun selectedHomeUsesDedicatedContrastInk() {
+        assertTrue(rail.contains("style.selectedInk"))
+        assertTrue(dashboard.contains("tag = mode == FrameMode.HOME"))
+        assertTrue(dashboard.contains("selectedHome -> style.selectedInk"))
+    }
 }

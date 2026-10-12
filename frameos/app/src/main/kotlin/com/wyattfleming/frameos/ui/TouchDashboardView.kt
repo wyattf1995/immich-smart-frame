@@ -150,9 +150,10 @@ class TouchDashboardView(
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             contentDescription = detail ?: label; isClickable = true; isFocusable = true; minimumTouchTarget(context)
             background = style.card(context.dp(22).toFloat(), mode == FrameMode.HOME)
+            tag = mode == FrameMode.HOME
             setPadding(context.dp(18), context.dp(12), context.dp(18), context.dp(12)); setOnClickListener { action() }
             addView(TouchModeIconView(context, mode).apply {
-                tint = if (mode == FrameMode.HOME) style.ink else style.accent
+                tint = if (mode == FrameMode.HOME) style.selectedInk else style.accent
             }, LinearLayout.LayoutParams(context.dp(36), context.dp(36)).apply { marginEnd = context.dp(14) })
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -191,12 +192,18 @@ class TouchDashboardView(
         includeFontPadding = false
     }
 
-    private fun tintText(view: View) {
+    private fun tintText(view: View, selectedHome: Boolean = view.tag == true) {
         if (view is TextView) {
             view.setTextColor(
-                if (view.typeface.style == Typeface.BOLD) style.ink else style.muted,
+                when {
+                    selectedHome -> style.selectedInk
+                    view.typeface.style == Typeface.BOLD -> style.ink
+                    else -> style.muted
+                },
             )
         }
-        if (view is android.view.ViewGroup) for (index in 0 until view.childCount) tintText(view.getChildAt(index))
+        if (view is android.view.ViewGroup) {
+            for (index in 0 until view.childCount) tintText(view.getChildAt(index), selectedHome)
+        }
     }
 }
