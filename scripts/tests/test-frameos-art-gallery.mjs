@@ -43,6 +43,9 @@ await gallery.advance(-1);
 assert.equal(gallery.currentId, "a", "previous navigates the local collection");
 await gallery.advance(1);
 assert.equal(gallery.currentId, "b", "next returns through actual viewing history after Previous");
+const noRepeat = new ArtGallery(root, { Image: class {}, setInterval, clearInterval, random:() => 0 });
+noRepeat.collection = validateCollection(collection()); noRepeat.currentId = "a"; noRepeat.bag = [];
+assert.equal(noRepeat.nextCandidate(1).artwork.id, "b", "a completed shuffle bag does not immediately repeat the current artwork");
 
 gallery.syncAutoplay();
 assert.equal(scheduled.at(-1).delay, CYCLE_MILLIS, "autoplay uses the sixty second cadence");
@@ -68,6 +71,14 @@ racing.display = (entry) => { racing.currentId = entry.id; };
 const earlier = racing.advance(1, true); const later = racing.advance(1, false);
 pending.get("b")(); await later; pending.get("a")(); await earlier;
 assert.equal(racing.currentId, "b", "a slower stale load cannot overwrite the latest navigation action");
+
+const retiring = new ArtGallery(root, { Image: class {}, setInterval, clearInterval });
+retiring.collection = validateCollection(collection()); retiring.bag = ["a"]; retiring.preloadNext = () => {};
+let renderedAfterDestroy = false; let resolveRetiring;
+retiring.loadImage = () => new Promise((resolve) => { resolveRetiring = resolve; });
+retiring.display = () => { renderedAfterDestroy = true; };
+const retiredLoad = retiring.advance(1, true); retiring.destroy(); resolveRetiring({ src:"images/a.jpg" }); await retiredLoad;
+assert.equal(renderedAfterDestroy, false, "a destroyed gallery ignores an in-flight image completion");
 
 assert.doesNotMatch(source, /innerHTML/, "captions are assigned with textContent, never HTML");
 assert.match(source, /fetch\(this\.collectionUrl/, "only the same-origin local collection is fetched");
