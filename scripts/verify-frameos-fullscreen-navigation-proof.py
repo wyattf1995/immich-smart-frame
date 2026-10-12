@@ -86,6 +86,8 @@ def run(label: str, expected_failures: int) -> dict[str, object]:
         expected_names = set(suite["failed"]) if suite_expected else set()
         if failed_names != expected_names:
             raise RuntimeError(f"unexpected {name} failed tests: {failed_names}")
+        if any(case.find("failure").get("type") != "java.lang.AssertionError" for case in failures):
+            raise RuntimeError(f"{name} failed for a reason other than the expected assertion")
         suite_results[name] = {"tests": len(cases), "failures": len(failures), "junit_xml": copied.name}
         total_cases += len(cases)
         total_failures += len(failures)

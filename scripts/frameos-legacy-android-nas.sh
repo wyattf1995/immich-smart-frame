@@ -16,6 +16,7 @@ node "$root/scripts/tests/test-frameos-custom-home-integration.mjs" \
 
 node "$root/scripts/tests/test-frameos-art-gallery.mjs" | tee "$root/reports/frameos-legacy/art-gallery-tests.log"
 python3 "$root/scripts/verify-frameos-art-gallery-proof.py" "$root" | tee "$root/reports/frameos-legacy/art-gallery-proof.log"
+python3 "$root/scripts/verify-frameos-art-fullscreen-proof.py" "$root" | tee "$root/reports/frameos-legacy/art-fullscreen-proof.log"
 python3 "$root/scripts/verify-frameos-art-mode-source-proof.py" "$root" | tee "$root/reports/frameos-legacy/art-source-proof.log"
 
 # Preserve the existing pinned SDK bootstrap and the complete regression suite.
@@ -35,6 +36,7 @@ python3 "$root/scripts/verify-frameos-weather-touch-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-touch-dashboard-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-exclusive-attachment-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-touch-dashboard-integration-proof.py" "$root"
+python3 "$root/scripts/verify-frameos-fullscreen-navigation-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-touchscreen-cache-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-embedded-oauth-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-oauth-https-redirect-proof.py" "$root"
