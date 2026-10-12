@@ -26,8 +26,11 @@ Serve these files from Home Assistant at `/local/frameos-art/`:
 }
 ```
 
-The gallery rejects empty or malformed manifests, external/escaping image paths,
-credential-bearing URLs, and source URLs with queries or fragments. It displays
+`year` and `sourceUrl` are optional. Omit either when Takeout does not provide
+verified attribution; the caption shows only the artist when no year is present.
+When supplied, `sourceUrl` must be an HTTPS URL without credentials, queries, or
+fragments. The gallery rejects empty or malformed manifests and external or
+escaping image paths. It displays
 an Art-specific unavailable view and never falls back to family photos. Images
 are fit to the screen without cropping. Tapping away from either screen edge
 reveals Previous, Pause, and Next; arrow keys navigate and Space pauses. Native
