@@ -47,7 +47,7 @@
         });
         const READY_TIMEOUT_MILLIS = 12_000;
         const HOME_STYLE_PROBE_TIMEOUT_MILLIS = 12_000;
-        const MAX_NAVIGATION_GUARD_NODES = 128;
+        const MAX_NAVIGATION_GUARD_NODES = 4096;
         const HOME_STYLE_SHADOW_LEAVES = new Set(["ha-markdown-element"]);
         const validView = (value) => Object.prototype.hasOwnProperty.call(routes, value);
         const normalizeView = (value) => validView(value) ? value : "home";
