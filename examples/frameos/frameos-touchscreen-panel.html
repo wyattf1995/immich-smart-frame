@@ -71,7 +71,7 @@
           activeWork = null;
         };
 
-        const textFor = (element) => [element.heading, element.getAttribute?.("heading"), element.textContent].filter((value) => typeof value === "string").join(" ").toLowerCase();
+        const textFor = (element) => [element.heading, element.getAttribute?.("heading"), element.textContent, element.shadowRoot?.textContent].filter((value) => typeof value === "string").join(" ").toLowerCase();
         const isActiveElement = (element, state) => Boolean(element && element.isConnected && element.ownerDocument === state.root && panel.contentDocument === state.root);
         const pruneEvidence = (state) => {
           state.headings.forEach((element, heading) => { if (!isActiveElement(element, state)) state.headings.delete(heading); });
@@ -92,9 +92,15 @@
             if (activeWork !== state) return;
             const activeView = iframeView() || currentView;
             if (activeView !== state.view) { observeReadiness(activeView); return; }
-            records.forEach((record) => record.addedNodes.forEach((node) => inspectAddedSubtree(node, state)));
+            records.forEach((record) => {
+              if (record.type === "characterData") {
+                inspectAddedSubtree(record.target.parentElement, state);
+              } else {
+                record.addedNodes.forEach((node) => inspectAddedSubtree(node, state));
+              }
+            });
           });
-          observer.observe(root, { childList: true, subtree: true });
+          observer.observe(root, { childList: true, subtree: true, characterData: true });
           state.observers.push(observer);
         };
         const inspectElement = (element, state) => {
@@ -112,7 +118,13 @@
           if (readiness[state.view]) readiness[state.view].forEach((heading) => { if (text.includes(heading)) state.headings.set(heading, element); });
         };
         const inspectAddedSubtree = (node, state) => {
-          if (!node || !node.querySelectorAll) return;
+          if (!node) return;
+          if (node.nodeType === 3) {
+            if (node.parentElement) inspectElement(node.parentElement, state);
+            finishIfReady(state);
+            return;
+          }
+          if (!node.querySelectorAll) return;
           if (node.nodeType === 1) inspectElement(node, state);
           node.querySelectorAll("*").forEach((element) => inspectElement(element, state));
           finishIfReady(state);

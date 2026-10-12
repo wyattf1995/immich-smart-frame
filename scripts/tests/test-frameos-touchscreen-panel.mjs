@@ -12,18 +12,20 @@ const makeElement = (localName, options = {}) => ({
   localName,
   heading: options.heading || "",
   textContent: options.text || options.heading || "",
+  expectedShadowText: options.expectedShadowText || "",
   shadowRoot: options.shadowRoot || null,
   ownerDocument: root,
   isConnected: true,
   getAttribute() { return null; },
   querySelectorAll() { return options.children || []; },
 });
-const headingShadow = { nodeType: 11, querySelectorAll() { return [
-  makeElement("hui-heading-card", { heading: "Today" }),
-  makeElement("hui-heading-card", { heading: "Up next" }),
-  makeElement("hui-heading-card", { heading: "Home status" }),
-  makeElement("hui-heading-card", { heading: "Comfort" }),
-]; } };
+const headingCards = ["Today", "Up next", "Home status", "Comfort"].map((heading) => makeElement("hui-heading-card", {
+  shadowRoot: { nodeType: 11, textContent: "", querySelectorAll() { return []; } },
+  text: "",
+  heading: "",
+  expectedShadowText: heading,
+}));
+const headingShadow = { nodeType: 11, querySelectorAll() { return headingCards; } };
 root.nodes = [makeElement("home-assistant", { shadowRoot: headingShadow })];
 
 const windowListeners = new Map();
@@ -67,7 +69,11 @@ assert.equal(panel.src, "/frameos-touchscreen/home?kiosk");
 assert.equal(context.FrameOSTouchscreenPanel.normalizeView("nope"), "home");
 assert.equal(context.FrameOSTouchscreenPanel.routeFor("calendar"), "/frameos-touchscreen/calendar?kiosk");
 panelListeners.get("load")();
-assert.equal(loading.hidden, true, "open shadow-root headings make Home ready");
+assert.equal(loading.hidden, false, "empty HA heading hosts are not ready before delayed shadow text arrives");
+headingCards.forEach((card) => { card.shadowRoot.textContent = card.expectedShadowText; });
+const characterDataObserver = observers.at(-1);
+headingCards.forEach((card) => characterDataObserver.callback([{ type: "characterData", target: { parentElement: card } }]));
+assert.equal(loading.hidden, true, "delayed HA heading shadow text makes Home ready");
 const firstSpaListener = childListeners.get("location-changed");
 panelListeners.get("load")();
 assert.notEqual(childListeners.get("location-changed"), firstSpaListener, "a full iframe load reattaches navigation listeners even when WindowProxy identity is stable");
