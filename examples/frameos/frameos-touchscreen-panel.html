@@ -7,8 +7,13 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
     <title>FrameOS touchscreen panel</title>
     <style>
-      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #101722; color: #f7f9fc; font-family: system-ui, sans-serif; }
-      #panel { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #101722; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #102025; color: #f1ede4; font-family: system-ui, sans-serif; }
+      #panel { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #102025; }
+      #panel.home-layout { top: 78px; height: calc(100% - 78px); }
+      #home-chrome { position: fixed; z-index: 1; inset: 0 0 auto; height: 78px; display: flex; align-items: center; justify-content: space-between; box-sizing: border-box; padding: 0 28px; background: #102025; color: #f1ede4; pointer-events: none; }
+      #home-chrome[hidden] { display: none; }
+      #home-title { font-size: 1rem; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: #d8c390; }
+      #home-hint { font-size: .9rem; color: rgba(241,237,228,.68); }
       #loading { position: fixed; z-index: 2; inset: 0; display: grid; place-items: center; pointer-events: none; background: radial-gradient(circle at 50% 42%, #23354d, #101722 62%); font-size: clamp(1.1rem, 2.2vw, 1.8rem); }
       #loading[hidden] { display: none; }
       #loading.still-connecting { inset: auto 1rem 1rem; width: fit-content; padding: .65rem .9rem; border: 1px solid rgba(255,255,255,.15); border-radius: .75rem; background: rgba(16,23,34,.88); font-size: 1rem; }
@@ -17,6 +22,7 @@
   </head>
   <body>
     <iframe id="panel" title="FrameOS touchscreen Home Assistant panel" allow="autoplay; fullscreen" referrerpolicy="same-origin"></iframe>
+    <header id="home-chrome" hidden><span id="home-title">Home</span><span id="home-hint">Swipe from the left edge for photos</span></header>
     <div id="loading">Opening Home…</div>
     <p id="status" aria-live="polite" aria-atomic="true"></p>
     <script>
@@ -49,17 +55,24 @@
         window.FrameOSTouchscreenPanel = Object.freeze({ normalizeView, routeFor });
 
         const panel = document.getElementById("panel");
+        const homeChrome = document.getElementById("home-chrome");
         const loading = document.getElementById("loading");
         const status = document.getElementById("status");
         let currentView = null;
         let activeWork = null;
         let spaWindow = null;
         let detachSpaNavigation = null;
+        let homeStyleWork = null;
 
         const announce = (message) => { status.textContent = message; };
         const focusPanel = () => { try { panel.contentWindow.focus(); } catch (_error) { panel.focus(); } };
         const labelFor = (view) => labels[view] || "Camera";
-        const showLoading = (view) => { loading.textContent = `Opening ${labelFor(view)}…`; loading.classList.remove("still-connecting"); loading.hidden = false; announce(`Loading ${labelFor(view)}`); };
+        const setHomeChrome = (view) => {
+          const isHome = view === "home";
+          if (homeChrome) homeChrome.hidden = !isHome;
+          panel.classList?.toggle("home-layout", isHome);
+        };
+        const showLoading = (view) => { setHomeChrome(view); loading.textContent = `Opening ${labelFor(view)}…`; loading.classList.remove("still-connecting"); loading.hidden = false; announce(`Loading ${labelFor(view)}`); };
         const showReady = (view) => { loading.hidden = true; announce(`${labelFor(view)} ready`); focusPanel(); };
         const showStillConnecting = (view) => { loading.textContent = `${labelFor(view)} still connecting…`; loading.classList.add("still-connecting"); loading.hidden = false; announce(`${labelFor(view)} still connecting`); focusPanel(); };
 
@@ -70,6 +83,87 @@
           activeWork.observers.forEach((observer) => observer.disconnect());
           activeWork = null;
         };
+
+        const removeHomeStyles = () => {
+          if (!homeStyleWork) return;
+          homeStyleWork.observers.forEach((observer) => observer.disconnect());
+          homeStyleWork.styleRoots.forEach((root) => root.querySelector?.("#frameos-home-redesign")?.remove?.());
+          homeStyleWork.cardRoots.forEach((root) => root.querySelector?.("#frameos-home-card")?.remove?.());
+          homeStyleWork.markdownRoots.forEach((root) => root.querySelector?.("#frameos-home-markdown")?.remove?.());
+          homeStyleWork = null;
+        };
+        const homeStyle = (document, id, text) => {
+          const style = document.createElement("style");
+          style.id = id;
+          style.textContent = text;
+          return style;
+        };
+        const styleHomeElement = (element, work) => {
+          if (!element || element.ownerDocument !== work.root || !element.shadowRoot) return;
+          const shadow = element.shadowRoot;
+          if (element.localName === "hui-sections-view" && !shadow.querySelector?.("#frameos-home-redesign")) {
+            shadow.append(homeStyle(element.ownerDocument, "frameos-home-redesign", `
+              :host { --primary-text-color:#f1ede4; --secondary-text-color:rgba(241,237,228,.72); --card-background-color:#182a2c; --ha-card-background:#182a2c; --divider-color:rgba(216,195,144,.22); display:block; min-height:100%; background:#102025; }
+              div.wrapper, div.container, div.content { background:#102025 !important; }
+              div.container { padding:12px 28px 22px !important; }
+              div.section-container { gap:22px !important; }
+            `));
+            work.styleRoots.add(shadow);
+          }
+          if (["hui-markdown-card", "hui-thermostat-card"].includes(element.localName) && !shadow.querySelector?.("#frameos-home-card")) {
+            const extra = element.localName === "hui-thermostat-card"
+              ? "p.title{color:#d8c390!important;letter-spacing:.08em;text-transform:uppercase} div.container{color:#f1ede4!important}"
+              : "ha-markdown{color:#f1ede4!important}";
+            shadow.append(homeStyle(element.ownerDocument, "frameos-home-card", `ha-card{background:#182a2c!important;color:#f1ede4!important;border:1px solid rgba(216,195,144,.22);border-radius:20px;box-shadow:0 12px 28px rgba(0,0,0,.18)} ${extra}`));
+            work.cardRoots.add(shadow);
+          }
+          if (element.localName === "ha-markdown") {
+            const markdownElement = [...shadow.querySelectorAll("*")].find((child) => child.localName === "ha-markdown-element");
+            const firstStrong = markdownElement?.querySelector?.("strong");
+            const isClock = /^([01]?\d|2[0-3]):[0-5]\d$/.test(firstStrong?.textContent?.trim() || "");
+            const clockStyle = isClock
+              ? "ha-markdown-element{color:#f1ede4!important} ha-markdown-element strong:first-child{display:block;font-size:clamp(3.8rem,9vw,6.25rem);line-height:.96;letter-spacing:-.055em;color:#f1ede4!important}"
+              : "ha-markdown-element{color:#f1ede4!important;font-size:1.18rem;line-height:1.45}";
+            const existingStyle = shadow.querySelector?.("#frameos-home-markdown");
+            if (existingStyle) existingStyle.textContent = clockStyle;
+            else shadow.append(homeStyle(element.ownerDocument, "frameos-home-markdown", clockStyle));
+            work.markdownRoots.add(shadow);
+          }
+        };
+        const styleHomeSubtree = (node, work) => {
+          if (!node || homeStyleWork !== work || panel.contentDocument !== work.root) return;
+          if (node.nodeType === 1) {
+            styleHomeElement(node, work);
+            if (node.shadowRoot) observeHomeStyleRoot(node.shadowRoot, work);
+          }
+          if (!node.querySelectorAll) return;
+          node.querySelectorAll("*").forEach((element) => {
+            styleHomeElement(element, work);
+            if (element.shadowRoot) observeHomeStyleRoot(element.shadowRoot, work);
+          });
+        };
+        const observeHomeStyleRoot = (root, work) => {
+          if (work.observedRoots.has(root)) return;
+          work.observedRoots.add(root);
+          const observer = new MutationObserver((records) => {
+            if (homeStyleWork !== work || iframeView() !== "home") return;
+            records.forEach((record) => {
+              if (record.type === "characterData" && root.host?.localName === "ha-markdown") styleHomeElement(root.host, work);
+              (record.addedNodes || []).forEach((node) => styleHomeSubtree(node, work));
+            });
+          });
+          observer.observe(root, { childList: true, subtree: true, characterData: true });
+          work.observers.push(observer);
+          styleHomeSubtree(root, work);
+        };
+        const activateHomeStyles = (root) => {
+          if (homeStyleWork?.root === root) return;
+          removeHomeStyles();
+          const work = { root, observers: [], observedRoots: new WeakSet(), styleRoots: new Set(), cardRoots: new Set(), markdownRoots: new Set() };
+          homeStyleWork = work;
+          observeHomeStyleRoot(root, work);
+        };
+        const disposeHomeStyles = () => { removeHomeStyles(); setHomeChrome(null); };
 
         const textFor = (element) => [element.heading, element.getAttribute?.("heading"), element.textContent, element.shadowRoot?.textContent].filter((value) => typeof value === "string").join(" ").toLowerCase();
         const applyHeadingContrast = (element, state) => {
@@ -82,8 +176,8 @@
             );
             element.style.setProperty("border-radius", "14px", "important");
             element.style.setProperty("box-shadow", "inset 0 0 0 1px rgba(255,255,255,.1)", "important");
-            element.style.setProperty("--primary-text-color", "#fff", "important");
-            element.style.setProperty("--secondary-text-color", "rgba(255,255,255,.92)", "important");
+            element.style.setProperty("--primary-text-color", "#f1ede4", "important");
+            element.style.setProperty("--secondary-text-color", "#d8c390", "important");
             state.styledHeadings.add(element);
           }
           const headingShadow = element.shadowRoot;
@@ -91,7 +185,7 @@
             if (!headingShadow.querySelector("#frameos-heading-contrast")) {
               const style = element.ownerDocument.createElement("style");
               style.id = "frameos-heading-contrast";
-              style.textContent = ":host,*{color:#fff!important;text-shadow:0 1px 3px rgba(0,0,0,.9)}";
+              style.textContent = ":host,*{color:#f1ede4!important;text-shadow:0 1px 3px rgba(0,0,0,.9)}";
               headingShadow.append(style);
             }
             state.styledHeadingShadows.add(headingShadow);
@@ -111,6 +205,7 @@
           return readiness[state.view].every((heading) => state.headings.has(heading));
         };
         const observeRoot = (root, state) => {
+          if (activeWork !== state || state.ready) return;
           if (state.observedRoots.has(root)) return;
           state.observedRoots.add(root);
           const observer = new MutationObserver((records) => {
@@ -129,6 +224,7 @@
           state.observers.push(observer);
         };
         const inspectElement = (element, state) => {
+          if (activeWork !== state || state.ready) return;
           if (!isActiveElement(element, state)) return;
           if (element.shadowRoot) {
             state.pendingShadowHosts.delete(element);
@@ -145,6 +241,7 @@
           if (readiness[state.view]) readiness[state.view].forEach((heading) => { if (text.includes(heading)) state.headings.set(heading, element); });
         };
         const inspectAddedSubtree = (node, state) => {
+          if (activeWork !== state || state.ready) return;
           if (!node) return;
           if (node.nodeType === 3) {
             if (node.parentElement) inspectElement(node.parentElement, state);
@@ -177,7 +274,11 @@
         const observeReadiness = (view) => {
           disposeRouteWork();
           const root = panel.contentDocument;
-          if (!root) return;
+          if (!root) {
+            if (view !== "home") disposeHomeStyles();
+            return;
+          }
+          if (view === "home") activateHomeStyles(root); else disposeHomeStyles();
           const state = { view, root, ready: false, timeout: null, shadowProbeTimer: null, shadowProbeExpired: false, observers: [], observedRoots: new WeakSet(), pendingShadowHosts: new Set(), styledHeadings: new WeakSet(), styledHeadingShadows: new WeakSet(), headings: new Map(), calendarRoot: null, cameraCards: new Set() };
           activeWork = state;
           activeWork.timeout = window.setTimeout(() => {
@@ -196,6 +297,7 @@
           if (location.hash !== `#${view}`) history.replaceState(null, "", `${location.pathname}${location.search}#${view}`);
           currentView = view;
           disposeRouteWork();
+          if (view !== "home") disposeHomeStyles();
           showLoading(view);
           panel.src = routeFor(view);
         };
