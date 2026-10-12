@@ -35,6 +35,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (legacyArmv7) {
+                // GeckoView 144 pulls SnakeYAML 2.2, whose JavaBeans references are
+                // absent from Android. Keep this compatibility declaration out of the
+                // modern artifact; it does not add JavaBeans classes or relax minification.
+                proguardFiles("proguard-legacy-rules.pro")
+            }
         }
     }
 
