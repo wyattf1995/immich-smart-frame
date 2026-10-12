@@ -48,4 +48,13 @@ class TouchDashboardContractTest {
         assertTrue("Changing configured modes rebuilds the tree", dashboard.contains("this.modes = modes.distinct()\n        rebuild()"))
         assertTrue("Changing day/night style rebuilds the tree", dashboard.contains("if (next != style) { style = next; rebuild() }"))
     }
+
+    @Test
+    fun navigationAndPhotoLabelsRemainReachableAndLegible() {
+        assertTrue("The fixed-width rail must scroll instead of clipping later modes", rail.contains("private val scroller = ScrollView(context)"))
+        assertTrue(rail.contains("addView(scroller, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))"))
+        assertTrue(rail.contains("items.addView(item(mode, mode.label, selected == mode)"))
+        assertTrue("Photo-card children need rounded clipping", dashboard.contains("clipToOutline = true"))
+        assertTrue("Photo label must draw a contrast scrim", dashboard.contains("setColor(0xb30d1d31.toInt())"))
+    }
 }
