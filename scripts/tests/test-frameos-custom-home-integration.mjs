@@ -69,3 +69,4 @@ assert.ok(!classes.has('custom-home-backend'));
 assert.equal(home.hidden,false,'native Home header/fallback restored');
 listeners.get('pagehide')();
 console.log('Custom Home integration: session discovery, navigation, auth and document lifecycle passed');
+assert.doesNotMatch(html,/wyattf1995|gmail_com/,'public wrapper discovers bounded calendar metadata without private account identifiers');
