@@ -13,6 +13,17 @@ object FrameConfigurationPatch {
             weatherEntityId = existing.weatherEntityId,
             homeAssistantFallbackUrl = existing.homeAssistantFallbackUrl,
             birdsUrl = birdsUrl,
+            artUrl = existing.artUrl,
+        )
+
+    fun withArtUrl(existing: FrameConfiguration, artUrl: String?): FrameConfiguration? =
+        FrameConfiguration.from(
+            photosUrl = existing.photosUrl,
+            homeAssistantUrl = existing.homeAssistantUrl,
+            weatherEntityId = existing.weatherEntityId,
+            homeAssistantFallbackUrl = existing.homeAssistantFallbackUrl,
+            birdsUrl = existing.birdsUrl,
+            artUrl = artUrl,
         )
 
     fun withPhotosSyncGroup(existing: FrameConfiguration, group: String): SyncGroupResult =

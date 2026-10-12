@@ -101,6 +101,20 @@ class FrameReducerTest {
     }
 
     @Test
+    fun `stale idle expiry preserves a selected Art mode`() {
+        val state = FrameState(
+            mode = FrameMode.ART,
+            photosPaused = true,
+            brightnessOverridePercent = 70,
+        )
+
+        val transition = reducer.reduce(state, FrameIntent.IdleExpired)
+
+        assertEquals(state, transition.state)
+        assertTrue(transition.effects.isEmpty())
+    }
+
+    @Test
     fun `brightness changes in ten percent bounded steps and can return to auto`() {
         var state = FrameState()
         repeat(12) { state = reducer.reduce(state, FrameIntent.BrightnessUp).state }

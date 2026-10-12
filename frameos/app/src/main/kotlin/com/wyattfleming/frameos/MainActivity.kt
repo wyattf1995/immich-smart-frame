@@ -311,7 +311,7 @@ class MainActivity : Activity() {
         experienceStore = FrameExperienceStore(this)
         touchscreenStore = FrameTouchscreenSettingsStore(this)
         touchscreenSettings = touchscreenStore.read()
-        dashboardVisible = touchDashboardEnabled
+        dashboardVisible = touchDashboardEnabled && !touchscreenSettings.startWithPhotos
         diagnosticStore = FrameDiagnosticStore(this)
         photoReserve = com.wyattfleming.frameos.photos.FrameOfflineReserve(java.io.File(filesDir, "frame-offline-reserve"))
         photoBridge = com.wyattfleming.frameos.photos.FramePhotoBridge(photoReserve, onPhotoObserved = { photo ->
@@ -748,6 +748,7 @@ class MainActivity : Activity() {
                 homeAssistantUrl = activeConfiguration.homeAssistantUrl,
                 homeAssistantFallbackUrl = activeConfiguration.homeAssistantFallbackUrl,
                 birdsUrl = activeConfiguration.birdsUrl,
+                artUrl = activeConfiguration.artUrl,
                 warmHomeAssistantView = warmHomeAssistantView,
                 listener = webListener,
                 operationLogger = operationLogger,
@@ -940,6 +941,7 @@ class MainActivity : Activity() {
 
     private fun dispatch(intent: FrameIntent) {
         cancelModeGesture()
+        if (intent == FrameIntent.IdleExpired && state.mode.persistsAcrossIdle) return
         if (touchDashboardEnabled && (intent == FrameIntent.GoHome || intent == FrameIntent.IdleExpired)) {
             showDashboard()
             return
@@ -1036,7 +1038,7 @@ class MainActivity : Activity() {
                     hideWebRecovery()
                     webSurface?.show(target.slot, target.url, takeFocus = true)
                 }
-                FrameWebSlot.BIRDS -> {
+                FrameWebSlot.BIRDS, FrameWebSlot.ART -> {
                     hideOfflinePhoto()
                     weatherContent.visibility = View.GONE
                     hideWebRecovery()
@@ -1124,6 +1126,7 @@ class MainActivity : Activity() {
 
     private fun isWebLabelActive(label: String): Boolean = !dashboardVisible && when (label) {
         FrameMode.PHOTOS.label -> state.mode == FrameMode.PHOTOS
+        FrameMode.ART.label -> state.mode == FrameMode.ART
         "Home Assistant" -> state.mode in HOME_ASSISTANT_MODES
         FrameMode.CAMERAS.label -> state.mode == FrameMode.CAMERAS
         FrameMode.BIRDS.label -> state.mode == FrameMode.BIRDS
@@ -1167,6 +1170,7 @@ class MainActivity : Activity() {
         cancelDashboardPhoto()
         val resolvedMode = availability().resolve(mode)
         val unavailableBirds = mode == FrameMode.BIRDS && resolvedMode != mode
+        val unavailableArt = mode == FrameMode.ART && resolvedMode != mode
         val changed = state.mode != resolvedMode
         state = state.copy(
             mode = resolvedMode,
@@ -1176,6 +1180,8 @@ class MainActivity : Activity() {
         if (resolvedMode == FrameMode.WEATHER) refreshWeather()
         if (unavailableBirds) {
             showHud("Birds is not configured")
+        } else if (unavailableArt) {
+            showHud("Art is not configured")
         } else if (changed && announceHud) {
             showHud()
         }
@@ -1265,6 +1271,7 @@ class MainActivity : Activity() {
 
     private fun availability(): FrameModeAvailability = FrameModeAvailability(
         birdsUrl = configuration?.birdsUrl,
+        artUrl = configuration?.artUrl,
         requestedModes = experienceSettings.orderedEnabledModes,
     )
 
@@ -1285,6 +1292,7 @@ class MainActivity : Activity() {
             homeAssistantFallbackUrl = intent
                 .getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_FALLBACK_URL),
             birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
+            artUrl = intent.getStringExtra(FrameControlContract.EXTRA_ART_URL),
         ) ?: return null
         configurationStore.write(provisioned)
         SharedPreferencesWeatherCache(this).clear()
@@ -1477,7 +1485,7 @@ class MainActivity : Activity() {
         val touchscreenChanged = updatedTouchscreen != touchscreenSettings
         if (touchscreenChanged) {
             touchscreenSettings = updatedTouchscreen
-            dashboardVisible = touchDashboardEnabled
+            dashboardVisible = touchDashboardEnabled && !touchscreenSettings.startWithPhotos
         }
         val updated = configurationStore.read() ?: return
         if (updated != configuration || touchscreenChanged) {
@@ -1574,6 +1582,7 @@ class MainActivity : Activity() {
             weatherEntityId = current.weatherEntityId,
             homeAssistantFallbackUrl = current.homeAssistantFallbackUrl,
             birdsUrl = current.birdsUrl,
+            artUrl = current.artUrl,
         ) ?: return false
         configuration = updated
         configurationStore.write(updated)
@@ -1865,7 +1874,7 @@ class MainActivity : Activity() {
     private fun scheduleIdleReset() {
         handler.removeCallbacks(expireIdle)
         // Idle return applies to other views; Photos pause/hold owns its own lifetime.
-        if (!dashboardVisible && state.mode != FrameMode.PHOTOS) {
+        if (!dashboardVisible && state.mode != FrameMode.PHOTOS && !state.mode.persistsAcrossIdle) {
             handler.postDelayed(expireIdle, experienceSettings.idleReturnSeconds * 1_000L)
         }
     }

@@ -46,7 +46,7 @@ def method_body(text: str, signature: str) -> tuple[int, int]:
     raise RuntimeError(f"unterminated method: {signature}")
 
 
-def run(label: str, expected_failures: int) -> dict[str, object]:
+def run(label: str, expected_failures: int, expected_names: set[str]) -> dict[str, object]:
     if report_dir.exists():
         shutil.rmtree(report_dir)
     log = out / f"{label}.log"
@@ -64,7 +64,6 @@ def run(label: str, expected_failures: int) -> dict[str, object]:
     if len(cases) != 4 or len(failures) != expected_failures or errors:
         raise RuntimeError(f"unexpected JUnit outcome cases={len(cases)} failures={len(failures)} errors={len(errors)}")
     names = {case.get("name") for case in failures}
-    expected_names = {"dashboard render hides and suspends browser content"} if expected_failures else set()
     if names != expected_names:
         raise RuntimeError(f"unexpected failed tests: {names}")
     return {
@@ -90,7 +89,11 @@ try:
         raise RuntimeError("expected exactly one dashboard render browser suspension")
     mutated = text[:begin] + render.replace(marker, "", 1) + text[end:]
     source.write_text(mutated, encoding="utf-8")
-    negative = run("touch-dashboard-browser-suspend-source-red", expected_failures=1)
+    negative = run(
+        "touch-dashboard-browser-suspend-source-red",
+        expected_failures=1,
+        expected_names={"dashboard render hides and suspends browser content"},
+    )
     if negative["exit"] == 0:
         raise RuntimeError("negative proof unexpectedly passed")
 finally:
@@ -98,11 +101,71 @@ finally:
     if sha256(source) != source_hash:
         raise RuntimeError("MainActivity exact restoration failed")
 
-restored = run("touch-dashboard-browser-suspend-restored-green", expected_failures=0)
+restored = run(
+    "touch-dashboard-browser-suspend-restored-green",
+    expected_failures=0,
+    expected_names=set(),
+)
 if restored["exit"] != 0:
     raise RuntimeError("restored contract test failed")
 if sha256(test) != test_hash:
     raise RuntimeError("contract test changed during proof")
+
+photos_start_marker = "dashboardVisible = touchDashboardEnabled && !touchscreenSettings.startWithPhotos"
+try:
+    text = original.decode("utf-8")
+    if text.count(photos_start_marker) != 2:
+        raise RuntimeError("expected startup and refresh Photos-first expressions")
+    source.write_text(text.replace(photos_start_marker, "dashboardVisible = touchDashboardEnabled"), encoding="utf-8")
+    photos_start_negative = run(
+        "touch-dashboard-photos-start-source-red",
+        expected_failures=1,
+        expected_names={"startup reads the local touchscreen opt in and physical touch is the dashboard front door"},
+    )
+    if photos_start_negative["exit"] == 0:
+        raise RuntimeError("Photos-start negative proof unexpectedly passed")
+finally:
+    source.write_bytes(original)
+    if sha256(source) != source_hash:
+        raise RuntimeError("MainActivity exact restoration failed after Photos-start proof")
+
+photos_start_restored = run(
+    "touch-dashboard-photos-start-restored-green",
+    expected_failures=0,
+    expected_names=set(),
+)
+if photos_start_restored["exit"] != 0:
+    raise RuntimeError("Photos-start restored contract test failed")
+if sha256(test) != test_hash:
+    raise RuntimeError("contract test changed during Photos-start proof")
+
+art_idle_marker = "        if (intent == FrameIntent.IdleExpired && state.mode.persistsAcrossIdle) return\n"
+try:
+    text = original.decode("utf-8")
+    if text.count(art_idle_marker) != 1:
+        raise RuntimeError("expected exactly one Art idle dashboard bypass guard")
+    source.write_text(text.replace(art_idle_marker, "", 1), encoding="utf-8")
+    art_idle_negative = run(
+        "touch-dashboard-art-idle-source-red",
+        expected_failures=1,
+        expected_names={"Photos and directional mode routes can leave the dashboard"},
+    )
+    if art_idle_negative["exit"] == 0:
+        raise RuntimeError("Art idle negative proof unexpectedly passed")
+finally:
+    source.write_bytes(original)
+    if sha256(source) != source_hash:
+        raise RuntimeError("MainActivity exact restoration failed after Art idle proof")
+
+art_idle_restored = run(
+    "touch-dashboard-art-idle-restored-green",
+    expected_failures=0,
+    expected_names=set(),
+)
+if art_idle_restored["exit"] != 0:
+    raise RuntimeError("Art idle restored contract test failed")
+if sha256(test) != test_hash:
+    raise RuntimeError("contract test changed during Art idle proof")
 
 (out / "touch-dashboard-integration-proof.json").write_text(json.dumps({
     "passed": True,
@@ -112,5 +175,9 @@ if sha256(test) != test_hash:
     "unchanged_test_sha256": test_hash,
     "negative": negative,
     "restored": restored,
+    "photos_start_negative": photos_start_negative,
+    "photos_start_restored": photos_start_restored,
+    "art_idle_negative": art_idle_negative,
+    "art_idle_restored": art_idle_restored,
 }, indent=2) + "\n", encoding="utf-8")
 print("dashboard integration red / exact restore green verified", flush=True)

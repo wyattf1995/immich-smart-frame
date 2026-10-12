@@ -16,12 +16,14 @@ class FrameControlReceiver : BroadcastReceiver() {
 
         // This receiver is DUMP-protected. Keep hardware opt-ins independent of companion policy.
         if (intent.hasExtra(FrameControlContract.EXTRA_TOUCH_DASHBOARD_ENABLED) ||
-            intent.hasExtra(FrameControlContract.EXTRA_DETACH_HIDDEN_HOME)) {
+            intent.hasExtra(FrameControlContract.EXTRA_DETACH_HIDDEN_HOME) ||
+            intent.hasExtra(FrameControlContract.EXTRA_START_WITH_PHOTOS)) {
             val store = FrameTouchscreenSettingsStore(context)
             val current = store.read()
             store.write(current.copy(
                 dashboardEnabled = intent.getBooleanExtra(FrameControlContract.EXTRA_TOUCH_DASHBOARD_ENABLED, current.dashboardEnabled),
                 detachHiddenHome = intent.getBooleanExtra(FrameControlContract.EXTRA_DETACH_HIDDEN_HOME, current.detachHiddenHome),
+                startWithPhotos = intent.getBooleanExtra(FrameControlContract.EXTRA_START_WITH_PHOTOS, current.startWithPhotos),
             ))
         }
 
@@ -63,16 +65,30 @@ class FrameControlReceiver : BroadcastReceiver() {
                 homeAssistantFallbackUrl = intent
                     .getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_FALLBACK_URL),
                 birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
+                artUrl = intent.getStringExtra(FrameControlContract.EXTRA_ART_URL),
             )
             if (configuration != null) {
                 SharedPreferencesWeatherCache(context).clear()
                 configurationStore.write(configuration)
             }
-        } else if (intent.hasExtra(FrameControlContract.EXTRA_BIRDS_URL)) {
-            FrameConfigurationPatch.withBirdsUrl(
-                existing = existingConfiguration,
-                birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
-            )?.let(configurationStore::write)
+        } else if (
+            intent.hasExtra(FrameControlContract.EXTRA_BIRDS_URL) ||
+            intent.hasExtra(FrameControlContract.EXTRA_ART_URL)
+        ) {
+            var updated = existingConfiguration
+            if (intent.hasExtra(FrameControlContract.EXTRA_BIRDS_URL)) {
+                updated = FrameConfigurationPatch.withBirdsUrl(
+                    existing = updated,
+                    birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
+                ) ?: updated
+            }
+            if (intent.hasExtra(FrameControlContract.EXTRA_ART_URL)) {
+                updated = FrameConfigurationPatch.withArtUrl(
+                    existing = updated,
+                    artUrl = intent.getStringExtra(FrameControlContract.EXTRA_ART_URL),
+                ) ?: updated
+            }
+            if (updated != existingConfiguration) configurationStore.write(updated)
         }
         if (intent.hasExtra(FrameControlContract.EXTRA_COMPANION_URL)) {
             val credentialsWritten = FrameCompanionCredentialsStore(context).write(

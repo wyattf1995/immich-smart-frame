@@ -18,12 +18,15 @@ class MainActivityTouchDashboardContractTest {
             listOf(
                 "touchscreenStore = FrameTouchscreenSettingsStore(this)",
                 "touchscreenSettings = touchscreenStore.read()",
-                "dashboardVisible = touchDashboardEnabled",
+                "dashboardVisible = touchDashboardEnabled && !touchscreenSettings.startWithPhotos",
             ),
         )
         assertTrue(source.contains("packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)"))
         assertTrue(settings.contains("fun showsDashboard(hasTouchscreen: Boolean): Boolean = dashboardEnabled && hasTouchscreen"))
+        assertTrue(settings.contains("val startWithPhotos: Boolean = false"))
         assertTrue(receiver.contains("FrameTouchscreenSettingsStore(context)"))
+        assertTrue(controlContract().contains("EXTRA_START_WITH_PHOTOS = \"frameos.start_with_photos\""))
+        assertTrue(receiver.contains("startWithPhotos = intent.getBooleanExtra(FrameControlContract.EXTRA_START_WITH_PHOTOS, current.startWithPhotos)"))
         assertFalse("hardware preferences must not be read from companion state", receiver.substringBefore("val configurationStore").contains("FrameCompanion"))
     }
 
@@ -59,6 +62,13 @@ class MainActivityTouchDashboardContractTest {
                 "render(state, announce = changed)",
             ),
         )
+        assertContainsInOrder(
+            dispatch,
+            listOf(
+                "if (intent == FrameIntent.IdleExpired && state.mode.persistsAcrossIdle) return",
+                "if (touchDashboardEnabled && (intent == FrameIntent.GoHome || intent == FrameIntent.IdleExpired))",
+            ),
+        )
         assertTrue(dispatch.contains("if (intent == FrameIntent.NextMode || intent == FrameIntent.PreviousMode) dashboardVisible = false"))
         assertTrue(source.contains("onOpenMode = { showMode(it, announceHud = false) }"))
     }
@@ -82,6 +92,7 @@ class MainActivityTouchDashboardContractTest {
     private fun mainActivity(): String = readSource("MainActivity.kt")
     private fun touchscreenSettings(): String = readSource("config/FrameTouchscreenSettings.kt")
     private fun controlReceiver(): String = readSource("control/FrameControlReceiver.kt")
+    private fun controlContract(): String = readSource("control/FrameControlCommand.kt")
 
     private fun readSource(relative: String): String {
         val root = Path.of("src/main/kotlin/com/wyattfleming/frameos")

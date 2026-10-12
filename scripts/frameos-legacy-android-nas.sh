@@ -14,6 +14,10 @@ node "$root/scripts/tests/test-frameos-custom-home.mjs" \
 node "$root/scripts/tests/test-frameos-custom-home-integration.mjs" \
   | tee "$root/reports/frameos-legacy/custom-home-integration-tests.log"
 
+node "$root/scripts/tests/test-frameos-art-gallery.mjs" | tee "$root/reports/frameos-legacy/art-gallery-tests.log"
+python3 "$root/scripts/verify-frameos-art-gallery-proof.py" "$root" | tee "$root/reports/frameos-legacy/art-gallery-proof.log"
+python3 "$root/scripts/verify-frameos-art-mode-source-proof.py" "$root" | tee "$root/reports/frameos-legacy/art-source-proof.log"
+
 # Preserve the existing pinned SDK bootstrap and the complete regression suite.
 bash "$root/scripts/frame-sync-android-nas.sh"
 export ANDROID_SDK_ROOT="$root/.nas-frame-sync-android/sdk"
@@ -21,6 +25,8 @@ export ANDROID_HOME="$ANDROID_SDK_ROOT"
 export GRADLE_USER_HOME="$root/.nas-frame-sync-android/gradle-home"
 export TMPDIR="$root/.nas-frame-sync-android/tmp"
 export JAVA_TOOL_OPTIONS="-Djava.io.tmpdir=$TMPDIR"
+python3 "$root/scripts/verify-frameos-art-routing-proof.py" "$root"
+python3 "$root/scripts/verify-frameos-art-idle-proof.py" "$root"
 python3 "$root/scripts/verify-touchscreen-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-bridge-callback-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-touchscreen-route-proof.py" "$root"

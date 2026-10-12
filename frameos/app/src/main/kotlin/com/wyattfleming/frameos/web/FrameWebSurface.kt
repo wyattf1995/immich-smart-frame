@@ -30,6 +30,7 @@ class FrameWebSurface(
     homeAssistantUrl: String,
     homeAssistantFallbackUrl: String? = null,
     birdsUrl: String? = null,
+    artUrl: String? = null,
     private val warmHomeAssistantView: GeckoView,
     private val listener: Listener,
     private val urlPolicy: FrameUrlPolicy = FrameUrlPolicy(),
@@ -404,9 +405,11 @@ class FrameWebSurface(
     private val homeAssistantUrl = homeAssistantUrl
     private val homeAssistantFallbackUrl = homeAssistantFallbackUrl
     private val birdsUrl = birdsUrl
+    private val artUrl = artUrl
     private var homeAssistantSession: ManagedSession? = null
     private var cameraSession: ManagedSession? = null
     private var birdsSession: ManagedSession? = null
+    private var artSession: ManagedSession? = null
     private var foregroundSlot: FrameWebSlot? = null
     private var displayedSlot: FrameWebSlot? = null
     private var foregroundAttachedSession: ManagedSession? = null
@@ -469,6 +472,9 @@ class FrameWebSurface(
         if (displayedSlot == FrameWebSlot.BIRDS && slot != FrameWebSlot.BIRDS) {
             disposeBirdsSession()
         }
+        if (displayedSlot == FrameWebSlot.ART && slot != FrameWebSlot.ART) {
+            disposeArtSession()
+        }
         val managed = sessionFor(slot)
         managed.lifecycleSuspended = false
         allSessions().filter { it !== managed && it !== homeAssistantSession }.forEach {
@@ -515,6 +521,7 @@ class FrameWebSurface(
         visibility = View.GONE
         if (displayedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
         if (displayedSlot == FrameWebSlot.BIRDS) disposeBirdsSession()
+        if (displayedSlot == FrameWebSlot.ART) disposeArtSession()
         allSessions().filter { it !== homeAssistantSession }.forEach {
             cancelRecovery(it)
             it.setFocused(false)
@@ -540,6 +547,10 @@ class FrameWebSurface(
         }
         if (!active && displayedSlot == FrameWebSlot.BIRDS) {
             disposeBirdsSession()
+            return
+        }
+        if (!active && displayedSlot == FrameWebSlot.ART) {
+            disposeArtSession()
             return
         }
         displayedSlot?.let { slot ->
@@ -576,6 +587,7 @@ class FrameWebSurface(
         photoBridge?.setCaptureEnabled(false, true)
         if (displayedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
         if (displayedSlot == FrameWebSlot.BIRDS) disposeBirdsSession()
+        if (displayedSlot == FrameWebSlot.ART) disposeArtSession()
         allSessions().forEach {
             cancelRecovery(it)
             it.suspendForLifecycle()
@@ -585,7 +597,7 @@ class FrameWebSurface(
     fun forwardKey(event: KeyEvent): Boolean {
         val displayedView = when (displayedSlot) {
             FrameWebSlot.HOME_ASSISTANT -> warmHomeAssistantView
-            FrameWebSlot.PHOTOS, FrameWebSlot.CAMERAS, FrameWebSlot.BIRDS -> this
+            FrameWebSlot.PHOTOS, FrameWebSlot.ART, FrameWebSlot.CAMERAS, FrameWebSlot.BIRDS -> this
             null -> return false
         }
         displayedView.requestFocus()
@@ -631,6 +643,8 @@ class FrameWebSurface(
         cameraSession = null
         birdsSession?.close()
         birdsSession = null
+        artSession?.close()
+        artSession = null
         homeAssistantSession?.close()
         homeAssistantSession = null
         photosSession.close()
@@ -652,6 +666,10 @@ class FrameWebSurface(
             configuredUrls = listOf(requireNotNull(birdsUrl)),
             label = "Birds",
         ).also { birdsSession = it }
+        FrameWebSlot.ART -> artSession ?: ManagedSession(
+            configuredUrls = listOf(requireNotNull(artUrl)),
+            label = "Art",
+        ).also { artSession = it }
     }
 
     private fun homeAssistantOrigins(): List<String> = buildList {
@@ -664,6 +682,7 @@ class FrameWebSurface(
         homeAssistantSession?.let(::add)
         cameraSession?.let(::add)
         birdsSession?.let(::add)
+        artSession?.let(::add)
     }
 
     private fun attachForeground(slot: FrameWebSlot, managed: ManagedSession) {
@@ -719,6 +738,25 @@ class FrameWebSurface(
         }
         if (displayedSlot == FrameWebSlot.BIRDS) displayedSlot = null
         birdsSession = null
+        val close = Runnable {
+            pendingCameraClosures.remove(disposable)
+            disposable.close()
+        }
+        pendingCameraClosures[disposable] = close
+        post(close)
+    }
+
+    /** Art never reuses Photos' bridge, playback reserve, or session. */
+    private fun disposeArtSession() {
+        val disposable = artSession ?: return
+        cancelRecovery(disposable)
+        disposable.prepareForDisposal()
+        if (foregroundSlot == FrameWebSlot.ART) {
+            if (session != null) releaseForegroundAttachedSession()
+            foregroundSlot = null
+        }
+        if (displayedSlot == FrameWebSlot.ART) displayedSlot = null
+        artSession = null
         val close = Runnable {
             pendingCameraClosures.remove(disposable)
             disposable.close()
@@ -829,7 +867,7 @@ class FrameWebSurface(
 
     private fun displayedSurfaceVisible(): Boolean = when (displayedSlot) {
         FrameWebSlot.HOME_ASSISTANT -> warmHomeAssistantView.visibility == View.VISIBLE
-        FrameWebSlot.PHOTOS, FrameWebSlot.CAMERAS, FrameWebSlot.BIRDS -> visibility == View.VISIBLE
+        FrameWebSlot.PHOTOS, FrameWebSlot.ART, FrameWebSlot.CAMERAS, FrameWebSlot.BIRDS -> visibility == View.VISIBLE
         null -> false
     }
 

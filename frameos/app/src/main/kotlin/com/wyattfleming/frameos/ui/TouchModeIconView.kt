@@ -38,6 +38,13 @@ internal class TouchModeIconView @JvmOverloads constructor(
                 canvas.drawLine(w * .31f, h * .67f, w * .46f, h * .51f, paint)
                 canvas.drawLine(w * .46f, h * .51f, w * .70f, h * .70f, paint)
             }
+            FrameMode.ART -> {
+                bounds.set(w * .22f, h * .22f, w * .78f, h * .78f)
+                canvas.drawRoundRect(bounds, p * .15f, p * .15f, paint)
+                canvas.drawLine(w * .34f, h * .68f, w * .49f, h * .48f, paint)
+                canvas.drawLine(w * .49f, h * .48f, w * .67f, h * .68f, paint)
+                canvas.drawCircle(w * .64f, h * .38f, p * .12f, paint)
+            }
             FrameMode.HOME -> {
                 canvas.drawLine(w * .25f, h * .48f, w * .50f, h * .27f, paint)
                 canvas.drawLine(w * .50f, h * .27f, w * .75f, h * .48f, paint)

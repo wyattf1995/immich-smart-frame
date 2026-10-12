@@ -8,6 +8,7 @@ enum class FrameWebSlot(
     val canPreload: Boolean,
 ) {
     PHOTOS(isPersistent = true, canPreload = false),
+    ART(isPersistent = false, canPreload = false),
     HOME_ASSISTANT(isPersistent = true, canPreload = true),
     CAMERAS(isPersistent = false, canPreload = false),
     BIRDS(isPersistent = false, canPreload = false),
@@ -28,9 +29,12 @@ class FrameSurfaceRouter(configuration: FrameConfiguration) {
         version = WRAPPER_VERSION,
     )
     private val birdsUrl = configuration.birdsUrl
+    private val artUrl = configuration.artUrl
 
     fun target(mode: FrameMode): FrameSurfaceTarget = when (mode) {
         FrameMode.PHOTOS -> FrameSurfaceTarget.Web(FrameWebSlot.PHOTOS, photosUrl)
+        FrameMode.ART -> artUrl?.let { url -> FrameSurfaceTarget.Web(FrameWebSlot.ART, url) }
+            ?: FrameSurfaceTarget.Unavailable(FrameMode.ART)
         FrameMode.WEATHER -> FrameSurfaceTarget.NativeWeather
         FrameMode.HOME, FrameMode.CALENDAR -> FrameSurfaceTarget.Web(
             slot = FrameWebSlot.HOME_ASSISTANT,

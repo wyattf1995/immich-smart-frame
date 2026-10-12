@@ -214,11 +214,70 @@ def prove_dashboard_reparenting() -> dict[str, object]:
     }
 
 
+def prove_dashboard_photo_label_contrast() -> dict[str, object]:
+    source = frame / "app/src/main/kotlin/com/wyattfleming/frameos/ui/TouchDashboardView.kt"
+    test = frame / "app/src/test/kotlin/com/wyattfleming/frameos/ui/TouchDashboardContractTest.kt"
+    require_regular(source)
+    require_regular(test)
+    original = source.read_bytes()
+    original_hash = sha256(source)
+    test_hash = sha256(test)
+    before = "setColor(style.surface)"
+    after = "setColor(0xb30d1d31.toInt())"
+    try:
+        text = original.decode("utf-8")
+        if text.count(before) != 1 or after in text:
+            raise RuntimeError("expected one themed dashboard Photos-label surface")
+        source.write_text(text.replace(before, after, 1), encoding="utf-8")
+        negative_exit, negative_log, negative_xml = run(
+            "com.wyattfleming.frameos.ui.TouchDashboardContractTest",
+            "TEST-com.wyattfleming.frameos.ui.TouchDashboardContractTest.xml",
+            "touch-dashboard-photo-label-contrast-source-red",
+            expected_cases=5,
+            expected_failures=1,
+            failed_case_names={"navigationAndPhotoLabelsRemainReachableAndLegible"},
+        )
+        assert negative_exit != 0, negative_log
+    finally:
+        source.write_bytes(original)
+        assert source.read_bytes() == original
+        assert sha256(source) == original_hash
+
+    restored_exit, restored_log, restored_xml = run(
+        "com.wyattfleming.frameos.ui.TouchDashboardContractTest",
+        "TEST-com.wyattfleming.frameos.ui.TouchDashboardContractTest.xml",
+        "touch-dashboard-photo-label-contrast-restored-green",
+        expected_cases=5,
+        expected_failures=0,
+        failed_case_names=set(),
+    )
+    assert restored_exit == 0, restored_log
+    assert sha256(test) == test_hash
+    return {
+        "recipe": "themed Photos label surface with contrasting bold ink",
+        "negative_exit": negative_exit,
+        "negative_tests": 5,
+        "negative_assertion_failures": 1,
+        "restored_green_exit": restored_exit,
+        "restored_tests": 5,
+        "restored_failures": 0,
+        "original_source_sha256": original_hash,
+        "restored_source_sha256": sha256(source),
+        "unchanged_test_sha256": test_hash,
+        "negative_log": "touch-dashboard-photo-label-contrast-source-red.log",
+        "negative_junit_xml": negative_xml,
+        "restored_log": "touch-dashboard-photo-label-contrast-restored-green.log",
+        "restored_junit_xml": restored_xml,
+    }
+
+
 hidden_home = prove_hidden_home_policy()
 dashboard = prove_dashboard_reparenting()
+dashboard_photo_label_contrast = prove_dashboard_photo_label_contrast()
 (out / "touch-dashboard-source-proof.json").write_text(json.dumps({
     "passed": True,
     "hidden_home_policy": hidden_home,
     "dashboard_reparenting": dashboard,
+    "dashboard_photo_label_contrast": dashboard_photo_label_contrast,
 }, indent=2) + "\n", encoding="utf-8")
 print("touch dashboard source-only red / exact restore green verified", flush=True)

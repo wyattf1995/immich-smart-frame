@@ -37,6 +37,13 @@ assert.equal(facade.connection,undefined,'HA connection is not passed through');
 assert.equal(facade.connected,true);
 assert.deepEqual(Object.keys(facade.states),[]);
 assert.ok(Object.isFrozen(facade));
+hass.states['weather.forecast_home']={state:'rainy',attributes:{temperature:62,temperature_unit:'°F',private_marker:'hidden'}};
+hass.states['weather.parents_weather']={state:'sunny',attributes:{temperature:99}};
+const weatherFacade=options.getHass();
+assert.equal(weatherFacade.states['weather.forecast_home']?.attributes.temperature,62,'wrapper exposes household forecast state');
+assert.equal(weatherFacade.states['weather.forecast_home']?.attributes.private_marker,undefined);
+assert.equal(weatherFacade.states['weather.parents_weather'],undefined,'unrelated home weather stays outside facade');
+
 await assert.rejects(facade.callService('light','turn_on',{entity_id:'light.any'}),/Unsupported/);
 await assert.rejects(facade.callService('climate','set_hvac_mode',{entity_id:'climate.other',hvac_mode:'heat'}),/Unsupported/);
 options.navigate('cameras');

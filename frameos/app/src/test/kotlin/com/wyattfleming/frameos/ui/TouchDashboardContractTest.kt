@@ -55,7 +55,8 @@ class TouchDashboardContractTest {
         assertTrue(rail.contains("addView(scroller, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))"))
         assertTrue(rail.contains("items.addView(item(mode, mode.label, selected == mode)"))
         assertTrue("Photo-card children need rounded clipping", dashboard.contains("clipToOutline = true"))
-        assertTrue("Photo label must draw a contrast scrim", dashboard.contains("setColor(0xb30d1d31.toInt())"))
+        assertTrue("Photo label must use the current light or dark card surface", dashboard.contains("setColor(style.surface)"))
+        assertTrue("The bold photo label must use the matching high-contrast ink", dashboard.contains("view.typeface.style == Typeface.BOLD -> style.ink"))
     }
 
     @Test
