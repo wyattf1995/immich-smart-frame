@@ -50,7 +50,7 @@ class MainActivityTouchDashboardContractTest {
 
         assertTrue(back.contains("showMode(FrameMode.HOME, announceHud = false)"))
         assertFalse(dispatch.contains("FrameIntent.GoHome"))
-        assertFalse(dispatch.contains("FrameIntent.IdleExpired)"))
+        assertTrue(dispatch.contains("if (intent == FrameIntent.IdleExpired && state.mode.persistsAcrossIdle) return"))
     }
 
     @Test
