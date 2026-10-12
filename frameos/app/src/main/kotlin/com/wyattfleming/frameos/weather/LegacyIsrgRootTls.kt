@@ -47,7 +47,7 @@ internal object LegacyIsrgRootTls {
 
         fun open(uri: URI): HttpURLConnection {
             val connection = opener(uri)
-            if (sdkInt < Build.VERSION_CODES.O && connection is HttpsURLConnection) {
+            if (sdkInt == Build.VERSION_CODES.M && connection is HttpsURLConnection) {
                 connection.sslSocketFactory = socketFactory()
             }
             return connection
