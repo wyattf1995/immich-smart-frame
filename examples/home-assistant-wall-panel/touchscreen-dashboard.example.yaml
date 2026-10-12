@@ -1,0 +1,157 @@
+# Opt-in dashboard for the low-memory PF1007 touchscreen frame.
+# These four camera entities were verified enabled in the Home Assistant registry.
+title: FrameOS Touchscreen
+views:
+  - title: Home
+    path: home
+    icon: mdi:home
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Today
+            icon: mdi:calendar-today
+          - type: markdown
+            content: >-
+              {% if has_value('sensor.time') and has_value('sensor.date') %}
+              **{{ states('sensor.time') }}** · {{ as_datetime(states('sensor.date'), none).strftime('%A, %B %-d') if as_datetime(states('sensor.date'), none) else 'Date unavailable' }}
+              {% else %}_Time and date are temporarily unavailable_{% endif %}
+          - type: heading
+            heading: Up next
+            icon: mdi:calendar-clock
+          - type: markdown
+            content: >-
+              {% set message = state_attr('calendar.family', 'message') %}
+              {% if message %}{{ message }}{% else %}_No upcoming family event_{% endif %}
+      - type: grid
+        cards:
+          - type: heading
+            heading: Comfort
+            icon: mdi:home-thermometer-outline
+          - type: thermostat
+            entity: climate.entryway_entryway
+            name: Entryway
+          - type: heading
+            heading: Home status
+            icon: mdi:home-heart
+          - type: tile
+            entity: binary_sensor.internet_status
+            name: Internet
+            tap_action:
+              action: none
+          - type: tile
+            entity: sensor.last_successful_backup
+            name: Last HA backup
+            tap_action:
+              action: none
+    animated_background: neutral
+
+  - title: Cameras
+    path: cameras
+    icon: mdi:cctv
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Camera chooser
+            icon: mdi:camera-control
+          - type: tile
+            entity: camera.backyard_backyard_camera
+            name: Backyard
+            tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/camera-1?kiosk" }
+          - type: tile
+            entity: camera.dining_room_dining_room_camera
+            name: Dining room
+            tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/camera-2?kiosk" }
+      - type: grid
+        cards:
+          - type: heading
+            heading: Camera chooser
+            icon: mdi:camera-control
+          - type: tile
+            entity: camera.garage_garage_camera
+            name: Garage
+            tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/camera-3?kiosk" }
+          - type: tile
+            entity: camera.living_room_living_room_camera
+            name: Living room
+            tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/camera-4?kiosk" }
+    animated_background: neutral
+
+  - title: Camera 1
+    path: camera-1
+    type: panel
+    subview: true
+    visible: false
+    cards:
+      - type: picture-entity
+        entity: camera.backyard_backyard_camera
+        camera_view: live
+        show_name: true
+        show_state: false
+        fit_mode: contain
+        aspect_ratio: '16:9'
+        tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/cameras?kiosk" }
+  - title: Camera 2
+    path: camera-2
+    type: panel
+    subview: true
+    visible: false
+    cards:
+      - type: picture-entity
+        entity: camera.dining_room_dining_room_camera
+        camera_view: live
+        show_name: true
+        show_state: false
+        fit_mode: contain
+        aspect_ratio: '16:9'
+        tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/cameras?kiosk" }
+  - title: Camera 3
+    path: camera-3
+    type: panel
+    subview: true
+    visible: false
+    cards:
+      - type: picture-entity
+        entity: camera.garage_garage_camera
+        camera_view: live
+        show_name: true
+        show_state: false
+        fit_mode: contain
+        aspect_ratio: '16:9'
+        tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/cameras?kiosk" }
+  - title: Camera 4
+    path: camera-4
+    type: panel
+    subview: true
+    visible: false
+    cards:
+      - type: picture-entity
+        entity: camera.living_room_living_room_camera
+        camera_view: live
+        show_name: true
+        show_state: false
+        fit_mode: contain
+        aspect_ratio: '16:9'
+        tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/cameras?kiosk" }
+
+  - title: Calendar
+    path: calendar
+    icon: mdi:calendar-month
+    type: panel
+    cards:
+      - type: calendar
+        initial_view: dayGridMonth
+        entities: [calendar.family, calendar.personal, calendar.birthdays, calendar.holidays]
+
+animated_background:
+  default_url: /local/wallpanel-weather/neutral.png?v=9fb6f0f237b4
+  transparent_panel: true
+  groups:
+    - name: neutral
+      config:
+        default_url: /local/wallpanel-weather/neutral.png?v=9fb6f0f237b4

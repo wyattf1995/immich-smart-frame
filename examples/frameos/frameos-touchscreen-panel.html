@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#101722">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+    <title>FrameOS touchscreen panel</title>
+    <style>
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #101722; color: #f7f9fc; font-family: system-ui, sans-serif; }
+      #panel { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #101722; }
+      #loading { position: fixed; z-index: 2; inset: 0; display: grid; place-items: center; pointer-events: none; background: radial-gradient(circle at 50% 42%, #23354d, #101722 62%); font-size: clamp(1.1rem, 2.2vw, 1.8rem); }
+      #loading[hidden] { display: none; }
+      #loading.still-connecting { inset: auto 1rem 1rem; width: fit-content; padding: .65rem .9rem; border: 1px solid rgba(255,255,255,.15); border-radius: .75rem; background: rgba(16,23,34,.88); font-size: 1rem; }
+      #status { position: fixed; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); }
+    </style>
+  </head>
+  <body>
+    <iframe id="panel" title="FrameOS touchscreen Home Assistant panel" allow="autoplay; fullscreen" referrerpolicy="same-origin"></iframe>
+    <div id="loading">Opening Home…</div>
+    <p id="status" aria-live="polite" aria-atomic="true"></p>
+    <script>
+      (() => {
+        "use strict";
+        const routes = Object.freeze({
+          home: "/frameos-touchscreen/home?kiosk",
+          cameras: "/frameos-touchscreen/cameras?kiosk",
+          calendar: "/frameos-touchscreen/calendar?kiosk",
+        });
+        const labels = Object.freeze({ home: "Home", cameras: "Cameras", calendar: "Calendar" });
+        const readiness = Object.freeze({
+          home: Object.freeze(["today", "up next", "home status", "comfort"]),
+          cameras: Object.freeze(["camera chooser"]),
+          calendar: Object.freeze(["ha-full-calendar"]),
+        });
+        const READY_TIMEOUT_MILLIS = 12_000;
+        const validView = (value) => Object.prototype.hasOwnProperty.call(routes, value);
+        const normalizeView = (value) => validView(value) ? value : "home";
+        const routeFor = (value) => routes[normalizeView(value)];
+        const iframeView = () => {
+          try {
+            const match = panel.contentWindow.location.pathname.match(/^\/frameos-touchscreen\/(home|cameras|calendar|camera-[1-4])\/?$/);
+            return match ? match[1] : null;
+          } catch (_error) {
+            return null;
+          }
+        };
+
+        window.FrameOSTouchscreenPanel = Object.freeze({ normalizeView, routeFor });
+
+        const panel = document.getElementById("panel");
+        const loading = document.getElementById("loading");
+        const status = document.getElementById("status");
+        let currentView = null;
+        let activeWork = null;
+        let spaWindow = null;
+        let detachSpaNavigation = null;
+
+        const announce = (message) => { status.textContent = message; };
+        const focusPanel = () => { try { panel.contentWindow.focus(); } catch (_error) { panel.focus(); } };
+        const labelFor = (view) => labels[view] || "Camera";
+        const showLoading = (view) => { loading.textContent = `Opening ${labelFor(view)}…`; loading.classList.remove("still-connecting"); loading.hidden = false; announce(`Loading ${labelFor(view)}`); };
+        const showReady = (view) => { loading.hidden = true; announce(`${labelFor(view)} ready`); focusPanel(); };
+        const showStillConnecting = (view) => { loading.textContent = `${labelFor(view)} still connecting…`; loading.classList.add("still-connecting"); loading.hidden = false; announce(`${labelFor(view)} still connecting`); focusPanel(); };
+
+        const disposeRouteWork = () => {
+          if (!activeWork) return;
+          window.clearTimeout(activeWork.timeout);
+          window.clearTimeout(activeWork.shadowProbeTimer);
+          activeWork.observers.forEach((observer) => observer.disconnect());
+          activeWork = null;
+        };
+
+        const textFor = (element) => [element.heading, element.getAttribute?.("heading"), element.textContent].filter((value) => typeof value === "string").join(" ").toLowerCase();
+        const isActiveElement = (element, state) => Boolean(element && element.isConnected && element.ownerDocument === state.root && panel.contentDocument === state.root);
+        const pruneEvidence = (state) => {
+          state.headings.forEach((element, heading) => { if (!isActiveElement(element, state)) state.headings.delete(heading); });
+          if (!isActiveElement(state.calendarRoot, state)) state.calendarRoot = null;
+          state.cameraCards.forEach((element) => { if (!isActiveElement(element, state)) state.cameraCards.delete(element); });
+          state.pendingShadowHosts.forEach((element) => { if (!isActiveElement(element, state)) state.pendingShadowHosts.delete(element); });
+        };
+        const routeReady = (state) => {
+          pruneEvidence(state);
+          if (/^camera-[1-4]$/.test(state.view)) return state.cameraCards.size === 1;
+          if (state.view === "calendar") return Boolean(state.calendarRoot);
+          return readiness[state.view].every((heading) => state.headings.has(heading));
+        };
+        const observeRoot = (root, state) => {
+          if (state.observedRoots.has(root)) return;
+          state.observedRoots.add(root);
+          const observer = new MutationObserver((records) => {
+            if (activeWork !== state) return;
+            const activeView = iframeView() || currentView;
+            if (activeView !== state.view) { observeReadiness(activeView); return; }
+            records.forEach((record) => record.addedNodes.forEach((node) => inspectAddedSubtree(node, state)));
+          });
+          observer.observe(root, { childList: true, subtree: true });
+          state.observers.push(observer);
+        };
+        const inspectElement = (element, state) => {
+          if (!isActiveElement(element, state)) return;
+          if (element.shadowRoot) {
+            state.pendingShadowHosts.delete(element);
+            observeRoot(element.shadowRoot, state);
+            inspectAddedSubtree(element.shadowRoot, state);
+          } else if (!state.ready && element.localName?.includes("-")) {
+            state.pendingShadowHosts.add(element);
+          }
+          const text = textFor(element);
+          if (/^camera-[1-4]$/.test(state.view) && element.localName === "hui-picture-entity-card") state.cameraCards.add(element);
+          if (state.view === "calendar" && element.localName === "ha-full-calendar") state.calendarRoot = element;
+          if (readiness[state.view]) readiness[state.view].forEach((heading) => { if (text.includes(heading)) state.headings.set(heading, element); });
+        };
+        const inspectAddedSubtree = (node, state) => {
+          if (!node || !node.querySelectorAll) return;
+          if (node.nodeType === 1) inspectElement(node, state);
+          node.querySelectorAll("*").forEach((element) => inspectElement(element, state));
+          finishIfReady(state);
+        };
+        const scheduleShadowProbe = (state) => {
+          if (activeWork !== state || state.ready || state.shadowProbeExpired || state.shadowProbeTimer || state.pendingShadowHosts.size === 0) return;
+          state.shadowProbeTimer = window.setTimeout(() => {
+            state.shadowProbeTimer = null;
+            if (activeWork !== state || state.ready || state.shadowProbeExpired) return;
+            state.pendingShadowHosts.forEach((host) => {
+              if (host.shadowRoot) { state.pendingShadowHosts.delete(host); observeRoot(host.shadowRoot, state); inspectAddedSubtree(host.shadowRoot, state); }
+            });
+            scheduleShadowProbe(state);
+          }, 50);
+        };
+        const finishIfReady = (state) => {
+          if (activeWork !== state || state.ready || !routeReady(state)) return;
+          state.ready = true;
+          disposeRouteWork();
+          showReady(state.view);
+        };
+
+        const observeReadiness = (view) => {
+          disposeRouteWork();
+          const root = panel.contentDocument;
+          if (!root) return;
+          const state = { view, root, ready: false, timeout: null, shadowProbeTimer: null, shadowProbeExpired: false, observers: [], observedRoots: new WeakSet(), pendingShadowHosts: new Set(), headings: new Map(), calendarRoot: null, cameraCards: new Set() };
+          activeWork = state;
+          activeWork.timeout = window.setTimeout(() => {
+            if (activeWork?.view !== view) return;
+            activeWork.shadowProbeExpired = true;
+            disposeRouteWork();
+            showStillConnecting(view);
+          }, READY_TIMEOUT_MILLIS);
+          observeRoot(root, state);
+          inspectAddedSubtree(root, state);
+          scheduleShadowProbe(state);
+        };
+
+        const navigate = (rawView) => {
+          const view = normalizeView(rawView);
+          if (location.hash !== `#${view}`) history.replaceState(null, "", `${location.pathname}${location.search}#${view}`);
+          currentView = view;
+          disposeRouteWork();
+          showLoading(view);
+          panel.src = routeFor(view);
+        };
+
+        const attachSpaNavigationWatcher = () => {
+          let childWindow;
+          try { childWindow = panel.contentWindow; } catch (_error) { return; }
+          if (!childWindow) return;
+          if (detachSpaNavigation) detachSpaNavigation();
+          const onNavigation = () => {
+            const view = iframeView() || currentView;
+            if (!view) return;
+            showLoading(view);
+            observeReadiness(view);
+          };
+          childWindow.addEventListener("location-changed", onNavigation);
+          childWindow.addEventListener("popstate", onNavigation);
+          spaWindow = childWindow;
+          detachSpaNavigation = () => {
+            childWindow.removeEventListener("location-changed", onNavigation);
+            childWindow.removeEventListener("popstate", onNavigation);
+          };
+        };
+
+        panel.addEventListener("load", () => {
+          attachSpaNavigationWatcher();
+          const loadedView = iframeView();
+          if (!loadedView) {
+            try {
+              const path = panel.contentWindow.location.pathname;
+              if (/^\/auth(?:\/|$)/.test(path)) {
+                disposeRouteWork();
+                loading.hidden = true;
+                announce("Sign-in required");
+                focusPanel();
+                return;
+              }
+            } catch (_error) {
+              // A same-origin authentication page remains usable without readiness inspection.
+            }
+          }
+          if (currentView) observeReadiness(loadedView || currentView);
+        });
+        window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
+        navigate(location.hash.slice(1));
+      })();
+    </script>
+  </body>
+</html>
