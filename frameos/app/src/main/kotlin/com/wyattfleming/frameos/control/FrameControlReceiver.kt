@@ -6,12 +6,24 @@ import android.content.Intent
 import com.wyattfleming.frameos.config.FrameConfiguration
 import com.wyattfleming.frameos.config.FrameConfigurationPatch
 import com.wyattfleming.frameos.config.FrameConfigurationStore
+import com.wyattfleming.frameos.config.FrameTouchscreenSettingsStore
 import com.wyattfleming.frameos.config.FramePhotosSyncGroupUrl
 import com.wyattfleming.frameos.weather.SharedPreferencesWeatherCache
 
 class FrameControlReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != FrameControlContract.ACTION_CONTROL) return
+
+        // This receiver is DUMP-protected. Keep hardware opt-ins independent of companion policy.
+        if (intent.hasExtra(FrameControlContract.EXTRA_TOUCH_DASHBOARD_ENABLED) ||
+            intent.hasExtra(FrameControlContract.EXTRA_DETACH_HIDDEN_HOME)) {
+            val store = FrameTouchscreenSettingsStore(context)
+            val current = store.read()
+            store.write(current.copy(
+                dashboardEnabled = intent.getBooleanExtra(FrameControlContract.EXTRA_TOUCH_DASHBOARD_ENABLED, current.dashboardEnabled),
+                detachHiddenHome = intent.getBooleanExtra(FrameControlContract.EXTRA_DETACH_HIDDEN_HOME, current.detachHiddenHome),
+            ))
+        }
 
         val configurationStore = FrameConfigurationStore(context)
         val existingConfiguration = configurationStore.read()

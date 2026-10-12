@@ -47,6 +47,8 @@ object FrameControlContract {
     const val ACTION_CONTROL = "com.wyattfleming.frameos.CONTROL"
     const val EXTRA_COMMAND = "frameos.command"
     const val EXTRA_MODE = "frameos.mode"
+    const val EXTRA_TOUCH_DASHBOARD_ENABLED = "frameos.touch_dashboard_enabled"
+    const val EXTRA_DETACH_HIDDEN_HOME = "frameos.detach_hidden_home"
     const val EXTRA_PHOTOS_URL = "frameos.photos_url"
     const val EXTRA_HOME_ASSISTANT_URL = "frameos.home_assistant_url"
     const val EXTRA_HOME_ASSISTANT_FALLBACK_URL = "frameos.home_assistant_fallback_url"

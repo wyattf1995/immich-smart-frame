@@ -1,6 +1,8 @@
 package com.wyattfleming.frameos
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.pm.PackageManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -58,6 +60,8 @@ import com.wyattfleming.frameos.config.FrameConfiguration
 import com.wyattfleming.frameos.config.FrameConfigurationStore
 import com.wyattfleming.frameos.config.FrameExperienceSettings
 import com.wyattfleming.frameos.config.FrameExperienceStore
+import com.wyattfleming.frameos.config.FrameTouchscreenSettings
+import com.wyattfleming.frameos.config.FrameTouchscreenSettingsStore
 import com.wyattfleming.frameos.config.QuietHoursBrightnessPolicy
 import com.wyattfleming.frameos.control.FrameControlCommand
 import com.wyattfleming.frameos.control.FrameControlContract
@@ -79,6 +83,8 @@ import com.wyattfleming.frameos.security.FrameExternalControlPolicy
 import com.wyattfleming.frameos.diagnostics.FrameDiagnosticStore
 import com.wyattfleming.frameos.ui.FrameTouchInputLayout
 import com.wyattfleming.frameos.ui.WeatherContentView
+import com.wyattfleming.frameos.ui.TouchDashboardView
+import com.wyattfleming.frameos.ui.TouchNavigationRail
 import com.wyattfleming.frameos.ui.dp
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherEndpoint
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherParser
@@ -102,6 +108,7 @@ import java.net.URI
 import java.security.SecureRandom
 import java.time.ZoneId
 import java.time.LocalTime
+import java.time.ZonedDateTime
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -137,6 +144,28 @@ class MainActivity : Activity() {
     private lateinit var loading: LinearLayout
     private lateinit var webRecovery: LinearLayout
     private lateinit var webRecoveryLabel: TextView
+    private var touchDashboard: TouchDashboardView? = null
+    private var touchRail: TouchNavigationRail? = null
+    private lateinit var touchscreenStore: FrameTouchscreenSettingsStore
+    private var touchscreenSettings = FrameTouchscreenSettings()
+    private val touchDashboardEnabled: Boolean
+        get() = touchscreenSettings.showsDashboard(packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN))
+    private var dashboardVisible = false
+    private var dashboardBitmap: Bitmap? = null
+    private var dashboardPhotoId: String? = null
+    @Volatile private var dashboardPhotoGeneration = 0L
+    private var dashboardPhotoFuture: Future<*>? = null
+    private var dashboardWeather: WeatherPresentation? = null
+    private val refreshDashboardClock = object : Runnable {
+        override fun run() {
+            if (!activityResumed || !touchDashboardEnabled) return
+            val now = ZonedDateTime.now()
+            touchDashboard?.updateTime(now)
+            touchRail?.updateTime(now)
+            if (dashboardVisible) refreshDashboardPhoto()
+            handler.postDelayed(this, 30_000L)
+        }
+    }
 
     private var state = FrameStartupPolicy.initialState()
     private var starLongPressed = false
@@ -275,12 +304,15 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         configurationStore = FrameConfigurationStore(this)
         experienceStore = FrameExperienceStore(this)
+        touchscreenStore = FrameTouchscreenSettingsStore(this)
+        touchscreenSettings = touchscreenStore.read()
+        dashboardVisible = touchDashboardEnabled
         diagnosticStore = FrameDiagnosticStore(this)
         photoReserve = com.wyattfleming.frameos.photos.FrameOfflineReserve(java.io.File(filesDir, "frame-offline-reserve"))
         photoBridge = com.wyattfleming.frameos.photos.FramePhotoBridge(photoReserve, onPhotoObserved = { photo ->
             handler.post {
                 if (!photoBridge.isCurrentObservation(photo)) return@post
-                if (!activityResumed || state.mode != FrameMode.PHOTOS ||
+                if (!activityResumed || dashboardVisible || state.mode != FrameMode.PHOTOS ||
                     (state.photosPaused && photo.pauseSnapshotNonce == null &&
                         (!manualPhotoStepPending || !isNewManualPhotoStepAsset(manualPhotoStepPreviousAssetId, photo.assetId)))
                 ) return@post
@@ -325,6 +357,7 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        refreshLocalProvisioning()
         handleOAuthCallback(intent)
         handleFrameCommand(intent)
         handlePendingControl()
@@ -340,12 +373,14 @@ class MainActivity : Activity() {
         applyBrightness(state.brightnessOverridePercent)
         enterImmersiveMode()
         render(state, announce = false)
+        handler.removeCallbacks(refreshDashboardClock)
+        refreshDashboardClock.run()
         if (configuration == null) confirmBootRecoveryAfterNextDraw()
         scheduleCompanionPoll()
         if (pendingAuthorizationCode != null && !weatherAuthorizationInProgress) {
             startAuthorizationExchange()
         } else if (
-            state.mode == FrameMode.WEATHER &&
+            (state.mode == FrameMode.WEATHER || dashboardVisible) &&
             !weatherNeedsAuthentication &&
             !weatherAuthorizationInProgress &&
             !weatherRefreshInProgress
@@ -365,6 +400,8 @@ class MainActivity : Activity() {
         handler.removeCallbacks(preloadCalendar)
         handler.removeCallbacks(pollCompanion)
         handler.removeCallbacks(refreshQuietHours)
+        handler.removeCallbacks(refreshDashboardClock)
+        cancelDashboardPhoto()
         cancelPhotoWork()
         hideOfflinePhoto()
         photoBridge.setCaptureEnabled(false, true)
@@ -391,6 +428,7 @@ class MainActivity : Activity() {
         cancelPhotoWork()
         hideOfflinePhoto()
         photoWorkerExecutor.shutdownNow()
+        clearDashboardPhoto()
         photoBridge.close()
         weatherRequestExecutor.shutdownNow()
         authorizationExecutor.shutdownNow()
@@ -402,7 +440,15 @@ class MainActivity : Activity() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         webSurface?.trimMemory(level)
-        if (level >= TRIM_MEMORY_RUNNING_LOW) photoReserve.clearForLowMemory()
+        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            photoReserve.clearForLowMemory()
+            clearDashboardPhoto()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (touchDashboardEnabled && configuration != null) showDashboard() else super.onBackPressed()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -616,7 +662,7 @@ class MainActivity : Activity() {
         val fullScreenLayout = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
-        )
+        ).apply { if (touchDashboardEnabled && configuration != null) leftMargin = dp(88) }
         val activeConfiguration = configuration
         if (activeConfiguration != null) {
             val runtime = (application as FrameOsApplication).geckoRuntime
@@ -689,6 +735,7 @@ class MainActivity : Activity() {
                 photoBridge = photoBridge,
                 photosProfile = FramePhotosProfileUrl.profile(activeConfiguration.photosUrl) ?: "balanced",
                 deactivateHiddenHomeAssistant = experienceSettings.deactivateHiddenHomeAssistant,
+                detachHiddenHomeAssistant = touchscreenSettings.detachHiddenHome,
             )
             root.addView(warmHomeAssistantView, fullScreenLayout)
             root.addView(webSurface, fullScreenLayout)
@@ -696,6 +743,28 @@ class MainActivity : Activity() {
             root.addView(offlinePhoto, fullScreenLayout)
         } else {
             root.addView(buildConfigurationView(), fullScreenLayout)
+        }
+        touchDashboard = null
+        touchRail = null
+        if (touchDashboardEnabled && activeConfiguration != null) {
+            touchDashboard = TouchDashboardView(this,
+                onOpenMode = { showMode(it, announceHud = false) },
+                onOpenSettings = { showDashboardSettings() },
+            ).also {
+                it.setModes(availableModes())
+                it.updateTime(ZonedDateTime.now())
+                it.setPhotoPreview(dashboardBitmap)
+                root.addView(it, fullScreenLayout)
+            }
+            touchRail = TouchNavigationRail(this,
+                onDashboard = { showDashboard() },
+                onOpenMode = { showMode(it, announceHud = false) },
+            ).also {
+                it.setModes(availableModes())
+                it.updateTime(ZonedDateTime.now())
+                root.addView(it, FrameLayout.LayoutParams(dp(88), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START))
+            }
+            updateDashboardWeather(dashboardWeather)
         }
         hud = buildModeHud()
         root.addView(
@@ -835,6 +904,7 @@ class MainActivity : Activity() {
     }
 
     private fun showStartupTransition() {
+        if (dashboardVisible) return
         handler.postDelayed({
             loading.visibility = View.VISIBLE
             loading.animate().alpha(1f).setDuration(180).start()
@@ -851,6 +921,11 @@ class MainActivity : Activity() {
 
     private fun dispatch(intent: FrameIntent) {
         cancelModeGesture()
+        if (touchDashboardEnabled && (intent == FrameIntent.GoHome || intent == FrameIntent.IdleExpired)) {
+            showDashboard()
+            return
+        }
+        if (intent == FrameIntent.NextMode || intent == FrameIntent.PreviousMode) dashboardVisible = false
         if (intent == FrameIntent.PrimaryAction && state.mode == FrameMode.PHOTOS) {
             handler.removeCallbacks(resumePhotosAfterHold)
         }
@@ -895,6 +970,26 @@ class MainActivity : Activity() {
     }
 
     private fun render(next: FrameState, announce: Boolean) {
+        touchDashboard?.visibility = if (dashboardVisible) View.VISIBLE else View.GONE
+        touchRail?.setSelection(if (dashboardVisible) null else next.mode)
+        if (dashboardVisible && touchDashboard != null) {
+            cancelPhotoWork()
+            photoBridge.setCaptureEnabled(false, true)
+            hideOfflinePhoto()
+            hideWebRecovery()
+            weatherContent.visibility = View.GONE
+            webSurface?.hide()
+            webSurface?.suspendAllContent()
+            handler.removeCallbacks(preloadCalendar)
+            if (::loading.isInitialized) loading.visibility = View.GONE
+            if (::hud.isInitialized) hud.visibility = View.GONE
+            if (activityResumed) {
+                refreshDashboardPhoto()
+                confirmBootRecoveryAfterNextDraw()
+            }
+            scheduleWeatherRefresh()
+            return
+        }
         if (::diagnosticStore.isInitialized) diagnosticStore.recordMode(next.mode)
         if (next.mode != FrameMode.PHOTOS || !activityResumed) {
             cancelPhotoWork()
@@ -992,7 +1087,7 @@ class MainActivity : Activity() {
 
     private fun scheduleCalendarPreload() {
         handler.removeCallbacks(preloadCalendar)
-        if (FrameWebCompositionPolicy.forMode(state.mode).warmCalendarInBackground && activityResumed) {
+        if (!dashboardVisible && FrameWebCompositionPolicy.forMode(state.mode).warmCalendarInBackground && activityResumed) {
             handler.postDelayed(preloadCalendar, CALENDAR_PRELOAD_DELAY_MILLIS)
         }
     }
@@ -1008,7 +1103,7 @@ class MainActivity : Activity() {
         handler.postDelayed(delayedHud, SLOW_PAGE_LOAD_MILLIS)
     }
 
-    private fun isWebLabelActive(label: String): Boolean = when (label) {
+    private fun isWebLabelActive(label: String): Boolean = !dashboardVisible && when (label) {
         FrameMode.PHOTOS.label -> state.mode == FrameMode.PHOTOS
         "Home Assistant" -> state.mode in HOME_ASSISTANT_MODES
         FrameMode.CAMERAS.label -> state.mode == FrameMode.CAMERAS
@@ -1048,6 +1143,8 @@ class MainActivity : Activity() {
 
     private fun showMode(mode: FrameMode, announceHud: Boolean = true) {
         cancelModeGesture()
+        dashboardVisible = false
+        cancelDashboardPhoto()
         val resolvedMode = availability().resolve(mode)
         val unavailableBirds = mode == FrameMode.BIRDS && resolvedMode != mode
         val changed = state.mode != resolvedMode
@@ -1063,6 +1160,86 @@ class MainActivity : Activity() {
             showHud()
         }
         scheduleIdleReset()
+    }
+
+    private fun showDashboard() {
+        if (!touchDashboardEnabled || configuration == null) return
+        cancelModeGesture()
+        dashboardVisible = true
+        render(state, announce = false)
+        refreshWeather()
+        scheduleIdleReset()
+    }
+
+    private fun showDashboardSettings() {
+        AlertDialog.Builder(this)
+            .setTitle("Your frame")
+            .setMessage("Appearance follows the time of day.\n\nLight: 7 AM–7 PM\nDark: 7 PM–7 AM\n\nUse Today to return to your dashboard from any view.")
+            .setPositiveButton("Done", null)
+            .setNeutralButton("Wi-Fi settings") { _, _ ->
+                runCatching { startActivity(Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)) }
+            }
+            .show()
+    }
+
+    private fun updateDashboardWeather(presentation: WeatherPresentation?) {
+        dashboardWeather = presentation
+        val summary = presentation?.temperature?.takeIf { it.isNotBlank() }?.let { temperature ->
+            listOf(temperature, presentation.condition).filter { it.isNotBlank() }.joinToString(" · ")
+        }
+        touchDashboard?.setWeather(
+            summary = summary ?: presentation?.emptyMessage,
+            detail = if (summary != null) presentation.status.takeIf { it.isNotBlank() } ?: "Current conditions"
+                else "Tap Weather to connect or refresh",
+        )
+    }
+
+    private fun refreshDashboardPhoto() {
+        if (!activityResumed || !dashboardVisible || dashboardPhotoFuture != null) return
+        val entry = photoReserve.latest()
+        if (entry == null) { clearDashboardPhoto(); return }
+        if (dashboardPhotoId == entry.assetId && dashboardBitmap != null) return
+        val generation = ++dashboardPhotoGeneration
+        dashboardPhotoFuture = photoWorkerExecutor.submit {
+            val bitmap = runCatching {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(entry.file.path, bounds)
+                val options = BitmapFactory.Options().apply {
+                    inSampleSize = 1
+                    while (bounds.outWidth / inSampleSize > 1_024 || bounds.outHeight / inSampleSize > 1_024) {
+                        inSampleSize *= 2
+                    }
+                }
+                BitmapFactory.decodeFile(entry.file.path, options)
+            }.getOrNull()
+            handler.post {
+                if (generation == dashboardPhotoGeneration) dashboardPhotoFuture = null
+                if (generation != dashboardPhotoGeneration || !activityResumed || !dashboardVisible ||
+                    isDestroyed || photoReserve.entries().none { it.assetId == entry.assetId }) {
+                    bitmap?.recycle()
+                    return@post
+                }
+                val previous = dashboardBitmap
+                dashboardBitmap = bitmap
+                dashboardPhotoId = if (bitmap == null) null else entry.assetId
+                touchDashboard?.setPhotoPreview(bitmap)
+                previous?.recycle()
+            }
+        }
+    }
+
+    private fun cancelDashboardPhoto() {
+        ++dashboardPhotoGeneration
+        dashboardPhotoFuture?.cancel(true)
+        dashboardPhotoFuture = null
+    }
+
+    private fun clearDashboardPhoto() {
+        cancelDashboardPhoto()
+        touchDashboard?.setPhotoPreview(null)
+        dashboardBitmap?.recycle()
+        dashboardBitmap = null
+        dashboardPhotoId = null
     }
 
     private fun availability(): FrameModeAvailability = FrameModeAvailability(
@@ -1167,6 +1344,7 @@ class MainActivity : Activity() {
                 handler.post {
                     if (generation != weatherRequestGeneration || isFinishing || isDestroyed) return@post
                     weatherContent.presentation = cached
+                    updateDashboardWeather(cached)
                 }
             }
             val presentation = try {
@@ -1180,6 +1358,7 @@ class MainActivity : Activity() {
                 weatherRefreshStartedAtUptimeMillis = 0L
                 weatherRefreshInProgress = false
                 weatherContent.presentation = presentation
+                updateDashboardWeather(presentation)
                 presentation.freshDataEpochMillis?.let(diagnosticStore::recordWeatherSuccess)
                 weatherNeedsAuthentication = presentation.authenticationRequired ||
                     presentation.emptyMessage == "Weather needs Home Assistant sign-in"
@@ -1191,7 +1370,7 @@ class MainActivity : Activity() {
     private fun scheduleWeatherRefresh() {
         handler.removeCallbacks(refreshVisibleWeather)
         WeatherRefreshPolicy.nextDelayMillis(
-            weatherVisible = state.mode == FrameMode.WEATHER,
+            weatherVisible = state.mode == FrameMode.WEATHER || dashboardVisible,
             activityResumed = activityResumed,
             authenticationRequired = weatherNeedsAuthentication,
             authorizationInProgress = weatherAuthorizationInProgress || weatherRefreshInProgress || pendingAuthorizationCode != null,
@@ -1273,8 +1452,14 @@ class MainActivity : Activity() {
     private fun refreshLocalProvisioning() {
         val persisted = experienceStore.read()
         if (persisted.settingsRevision < experienceSettings.settingsRevision) experienceSettings = persisted
+        val updatedTouchscreen = touchscreenStore.read()
+        val touchscreenChanged = updatedTouchscreen != touchscreenSettings
+        if (touchscreenChanged) {
+            touchscreenSettings = updatedTouchscreen
+            dashboardVisible = touchDashboardEnabled
+        }
         val updated = configurationStore.read() ?: return
-        if (updated != configuration) {
+        if (updated != configuration || touchscreenChanged) {
             configuration = updated
             invalidateCompanionPoll()
             rebuildExperienceUi()
@@ -1381,6 +1566,7 @@ class MainActivity : Activity() {
 
     private fun rebuildExperienceUi() {
         cancelPhotoWork()
+        clearDashboardPhoto()
         hideOfflinePhoto()
         currentPhotoAssetId = null
         lastPhotoAt = null
@@ -1597,7 +1783,7 @@ class MainActivity : Activity() {
     private fun scheduleIdleReset() {
         handler.removeCallbacks(expireIdle)
         // Idle return applies to other views; Photos pause/hold owns its own lifetime.
-        if (state.mode != FrameMode.PHOTOS) {
+        if (!dashboardVisible && state.mode != FrameMode.PHOTOS) {
             handler.postDelayed(expireIdle, experienceSettings.idleReturnSeconds * 1_000L)
         }
     }
@@ -1618,7 +1804,7 @@ class MainActivity : Activity() {
     }
 
     private fun showOfflinePhoto(step: Int = 0, manual: Boolean = false): Boolean {
-        if (!activityResumed || state.mode != FrameMode.PHOTOS || (state.photosPaused && !manual)) return false
+        if (!activityResumed || dashboardVisible || state.mode != FrameMode.PHOTOS || (state.photosPaused && !manual)) return false
         if (sharedPlaybackConfigured() && step != 0) return false
         val entries = photoReserve.entries()
         if (entries.isEmpty()) { hideOfflinePhoto(); return false }
@@ -1632,7 +1818,7 @@ class MainActivity : Activity() {
             val bitmap = runCatching { BitmapFactory.decodeFile(entry.file.path) }.getOrNull()
             handler.post {
                 if (bitmap == null) return@post
-                if (generation != photoDisplayGeneration || !activityResumed || state.mode != FrameMode.PHOTOS ||
+                if (generation != photoDisplayGeneration || !activityResumed || dashboardVisible || state.mode != FrameMode.PHOTOS ||
                     !photoFallbackPolicy.isShowing || photoReserve.entries().none { it.assetId == entry.assetId }) {
                     bitmap.recycle()
                     return@post
@@ -1684,7 +1870,7 @@ class MainActivity : Activity() {
 
     private fun schedulePhotoFreshness() {
         handler.removeCallbacks(refreshPhotoFreshness)
-        val active = activityResumed && state.mode == FrameMode.PHOTOS && !state.photosPaused
+        val active = activityResumed && !dashboardVisible && state.mode == FrameMode.PHOTOS && !state.photosPaused
         if (active && !photosWereActive) photosVisibleSince = System.currentTimeMillis()
         photosWereActive = active
         if (active && !photoProbeInFlight) handler.postDelayed(refreshPhotoFreshness, PHOTO_FRESHNESS_CHECK_MILLIS)
@@ -1692,7 +1878,7 @@ class MainActivity : Activity() {
     }
 
     private fun checkPhotoFreshness() {
-        if (!activityResumed || state.mode != FrameMode.PHOTOS || state.photosPaused || photoProbeInFlight) return
+        if (!activityResumed || dashboardVisible || state.mode != FrameMode.PHOTOS || state.photosPaused || photoProbeInFlight) return
         val photosUrl = configuration?.photosUrl ?: return
         val generation = photoProbeGeneration
         photoProbeInFlight = true
