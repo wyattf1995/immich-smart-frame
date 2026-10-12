@@ -194,6 +194,9 @@ class FrameWebSurfaceContractTest {
         assertContainsInOrder(
             show,
             listOf(
+                "if (slot != FrameWebSlot.PHOTOS)",
+                "photosContentActive = false",
+                "photoBridge?.setCaptureEnabled(false, true)",
                 "if (displayedSlot != null && displayedSlot != slot)",
                 "displayedManagedSession()?.stopWatchingDisplayedContent()",
             ),
