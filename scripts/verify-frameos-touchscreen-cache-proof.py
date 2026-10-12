@@ -36,7 +36,7 @@ command = [
     "--tests", "com.wyattfleming.frameos.web.HomeAssistantRouteTest",
 ]
 
-before = '    private const val TOUCHSCREEN_WRAPPER_VERSION = "d8e1eca9cb54"\n'
+before = '    private const val TOUCHSCREEN_WRAPPER_VERSION = "96250b57dc7f"\n'
 after = '    private const val TOUCHSCREEN_WRAPPER_VERSION = "touchscreen-1"\n'
 
 
@@ -68,7 +68,7 @@ def copy_and_assert_junit(label: str, expected_failures: int) -> str:
             # JUnit compacts the identical URL prefix in ComparisonFailure.
             # Verify the actual cache-token mismatch rather than its elided context.
             assert "expected:<" in detail and "but was:<" in detail, detail
-            assert "[d8e1eca9cb54]" in detail and "[touchscreen-1]" in detail, detail
+            assert "[96250b57dc7f]" in detail and "[touchscreen-1]" in detail, detail
     return copied.name
 
 
