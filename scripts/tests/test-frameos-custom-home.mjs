@@ -64,22 +64,26 @@ assert.equal(timers.at(-1).cleared, true, "destroy cancels the render tick to pr
 assert.equal(root.replaceChildrenCalls, 1, "destroy clears the mounted custom view");
 
 const makeInteractiveRoot = () => {
-  const root = { nodes: [], writes: 0, replaceChildrenCalls: 0, _html: "" };
+  const root = { nodes: [], clockNodes: new Map(), writes: 0, replaceChildrenCalls: 0, _html: "" };
   Object.defineProperty(root, "innerHTML", {
     get() { return this._html; },
     set(markup) {
-      this._html = markup; this.writes += 1; this.nodes = [];
+      this._html = markup; this.writes += 1; this.nodes = []; this.clockNodes = new Map();
       const matches = markup.matchAll(/<button([^>]*)>/g);
       for (const match of matches) {
         const attributes = match[1], listeners = new Map(), dataset = {};
         for (const data of attributes.matchAll(/data-([a-z-]+)(?:="([^"]*)")?/g)) dataset[data[1].replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = data[2] ?? "";
         this.nodes.push({ dataset, disabled: /\sdisabled(?:\s|>|$)/.test(attributes), addEventListener(type, callback) { listeners.set(type, callback); }, click() { return listeners.get("click")?.(); } });
       }
+      for (const match of markup.matchAll(/<(span|small)([^>]*)>([^<]*)<\/\1>/g)) {
+        const marker = match[2].match(/data-frameos-clock-(time|period|date)/)?.[1];
+        if (marker) this.clockNodes.set(marker, { textContent: match[3] });
+      }
     },
   });
-  root.replaceChildren = () => { root.replaceChildrenCalls += 1; root.nodes = []; root._html = ""; };
+  root.replaceChildren = () => { root.replaceChildrenCalls += 1; root.nodes = []; root.clockNodes = new Map(); root._html = ""; };
   root.querySelectorAll = (selector) => { const key = selector.match(/^\[data-([^\]]+)\]$/)?.[1]?.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()); return key ? root.nodes.filter((node) => Object.hasOwn(node.dataset, key)) : []; };
-  root.querySelector = (selector) => root.querySelectorAll(selector)[0] || null;
+  root.querySelector = (selector) => root.clockNodes.get(selector.match(/^\[data-frameos-clock-(time|period|date)\]$/)?.[1]) || root.querySelectorAll(selector)[0] || null;
   return root;
 };
 const interactiveRoot = makeInteractiveRoot();
@@ -117,6 +121,23 @@ interactive.destroy();
 deferredReject(new Error("late failure"));
 await pendingAction;
 assert.equal(interactiveRoot.replaceChildrenCalls, 1, "a late async failure cannot resurrect a destroyed view");
+
+// Clock-only changes must update the visible clock without replacing the control
+// tree. The clock is injected here only to make a minute transition deterministic.
+const clockRoot = makeInteractiveRoot();
+let displayNow = new Date(2026, 9, 12, 9, 5);
+const clockHandle = api.mount(clockRoot, {
+  getHass: () => liveHass,
+  now: () => displayNow,
+});
+const clockWrites = clockRoot.writes;
+const initialClockText = clockRoot.querySelector("[data-frameos-clock-time]")?.textContent;
+assert.ok(initialClockText, "the mounted Home exposes an updateable time node");
+displayNow = new Date(2026, 9, 12, 9, 6);
+timers.filter((timer) => timer.delay === 1000 && !timer.cleared).at(-1).callback();
+assert.equal(clockRoot.writes, clockWrites, "a minute tick does not replace the interactive Home tree");
+assert.notEqual(clockRoot.querySelector("[data-frameos-clock-time]")?.textContent, initialClockText, "a minute tick updates the visible time in place");
+clockHandle.destroy();
 
 const temperatureRoot = makeInteractiveRoot();
 const temperatureServices = [];
