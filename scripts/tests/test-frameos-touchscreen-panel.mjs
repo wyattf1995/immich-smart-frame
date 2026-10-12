@@ -6,7 +6,12 @@ const html = fs.readFileSync(new URL("../../examples/frameos/frameos-touchscreen
 const script = html.match(/<script>\s*([\s\S]*?)\s*<\/script>/)?.[1];
 assert.ok(script, "panel must contain executable wrapper script");
 
-const root = { nodeType: 9, nodes: [], querySelectorAll() { return this.nodes; } };
+const root = {
+  nodeType: 9,
+  nodes: [],
+  querySelectorAll() { return this.nodes; },
+  createElement() { return { id: "", textContent: "" }; },
+};
 const makeElement = (localName, options = {}) => ({
   nodeType: 1,
   localName,
