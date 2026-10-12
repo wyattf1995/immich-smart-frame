@@ -17,6 +17,8 @@ cases = [
     ("nav", b"  const CLIMATE", b"  // fch-rail regression\n  const CLIMATE", "native rail is the only top-level navigation"),
     ("calendar", b"safe(eventLabel(event,", b"safe(eventTime(event.start,", "calendar rows render the date-aware event label"),
     ("forecast", b"const forecastMarkup = forecast ?", b"const forecastMarkup = false ?", "ready forecast exposes a compact dated forecast row"),
+    ("forecast-unit", b"forecast, forecastUnit, forecastStatus", b"forecast, forecastStatus", "a forecast unit-only change repaints the compact forecast"),
+    ("calendar-day", b"calendarDateKey:now.date, ", b"", "calendar labels refresh at the local day boundary"),
 ]
 
 def run(label):
@@ -44,7 +46,7 @@ green_exit, green_log = run("restored-green")
 assert green_exit == 0
 assert hashlib.sha256(test.read_bytes()).hexdigest() == test_hash
 (out / "custom-home-content-source-proof.json").write_text(json.dumps({
-    "passed": True, "negatives": negatives, "negative_assertion_failures": 3,
+    "passed": True, "negatives": negatives, "negative_assertion_failures": len(negatives),
     "restored_green_exit": green_exit,
     "restored_source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
     "unchanged_test_sha256": test_hash, "restored_log": green_log,
