@@ -45,9 +45,14 @@ def copy_and_assert_junit(label: str, expected_failures: int) -> str:
     assert len(failures) == expected_failures, len(failures)
     assert not errors, errors
     if expected_failures:
+        failed_case_names = {case.get("name") for case in cases if case.find("failure") is not None}
+        assert failed_case_names == {
+            "reserved touchscreen route selects its dedicated wrapper and cache version",
+            "reserved touchscreen route accepts its trailing slash",
+        }, failed_case_names
         for failure in failures:
             detail = (failure.get("message") or "") + (failure.text or "")
-            assert failure.get("type") == "java.lang.AssertionError", detail
+            assert failure.get("type") == "org.junit.ComparisonFailure", detail
             assert "frameos-touchscreen-panel.html" in detail, detail
     return copied.name
 
