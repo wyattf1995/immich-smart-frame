@@ -113,18 +113,20 @@
           if (["hui-markdown-card", "hui-thermostat-card"].includes(element.localName) && !shadow.querySelector?.("#frameos-home-card")) {
             const extra = element.localName === "hui-thermostat-card"
               ? "p.title{color:#d8c390!important;letter-spacing:.08em;text-transform:uppercase} div.container{color:#f1ede4!important}"
-              : "ha-markdown{color:#f1ede4!important} ha-markdown-element{color:#f1ede4!important;font-size:1.18rem;line-height:1.45} ha-markdown-element p:first-child{margin-top:0} ha-markdown-element strong:first-child{font-size:clamp(3.8rem,9vw,6.25rem);line-height:.96;letter-spacing:-.055em;color:#f1ede4!important}";
+              : "ha-markdown{color:#f1ede4!important}";
             shadow.append(homeStyle(element.ownerDocument, "frameos-home-card", `ha-card{background:#182a2c!important;color:#f1ede4!important;border:1px solid rgba(216,195,144,.22);border-radius:20px;box-shadow:0 12px 28px rgba(0,0,0,.18)} ${extra}`));
             work.cardRoots.add(shadow);
           }
-          if (element.localName === "ha-markdown" && !shadow.querySelector?.("#frameos-home-markdown")) {
+          if (element.localName === "ha-markdown") {
             const markdownElement = [...shadow.querySelectorAll("*")].find((child) => child.localName === "ha-markdown-element");
             const firstStrong = markdownElement?.querySelector?.("strong");
             const isClock = /^([01]?\d|2[0-3]):[0-5]\d$/.test(firstStrong?.textContent?.trim() || "");
             const clockStyle = isClock
               ? "ha-markdown-element{color:#f1ede4!important} ha-markdown-element strong:first-child{display:block;font-size:clamp(3.8rem,9vw,6.25rem);line-height:.96;letter-spacing:-.055em;color:#f1ede4!important}"
               : "ha-markdown-element{color:#f1ede4!important;font-size:1.18rem;line-height:1.45}";
-            shadow.append(homeStyle(element.ownerDocument, "frameos-home-markdown", clockStyle));
+            const existingStyle = shadow.querySelector?.("#frameos-home-markdown");
+            if (existingStyle) existingStyle.textContent = clockStyle;
+            else shadow.append(homeStyle(element.ownerDocument, "frameos-home-markdown", clockStyle));
             work.markdownRoots.add(shadow);
           }
         };
@@ -145,9 +147,12 @@
           work.observedRoots.add(root);
           const observer = new MutationObserver((records) => {
             if (homeStyleWork !== work || iframeView() !== "home") return;
-            records.forEach((record) => record.addedNodes.forEach((node) => styleHomeSubtree(node, work)));
+            records.forEach((record) => {
+              if (record.type === "characterData" && root.host?.localName === "ha-markdown") styleHomeElement(root.host, work);
+              (record.addedNodes || []).forEach((node) => styleHomeSubtree(node, work));
+            });
           });
-          observer.observe(root, { childList: true, subtree: true });
+          observer.observe(root, { childList: true, subtree: true, characterData: true });
           work.observers.push(observer);
           styleHomeSubtree(root, work);
         };
@@ -200,6 +205,7 @@
           return readiness[state.view].every((heading) => state.headings.has(heading));
         };
         const observeRoot = (root, state) => {
+          if (activeWork !== state || state.ready) return;
           if (state.observedRoots.has(root)) return;
           state.observedRoots.add(root);
           const observer = new MutationObserver((records) => {
@@ -218,6 +224,7 @@
           state.observers.push(observer);
         };
         const inspectElement = (element, state) => {
+          if (activeWork !== state || state.ready) return;
           if (!isActiveElement(element, state)) return;
           if (element.shadowRoot) {
             state.pendingShadowHosts.delete(element);
@@ -234,6 +241,7 @@
           if (readiness[state.view]) readiness[state.view].forEach((heading) => { if (text.includes(heading)) state.headings.set(heading, element); });
         };
         const inspectAddedSubtree = (node, state) => {
+          if (activeWork !== state || state.ready) return;
           if (!node) return;
           if (node.nodeType === 3) {
             if (node.parentElement) inspectElement(node.parentElement, state);
@@ -265,9 +273,12 @@
 
         const observeReadiness = (view) => {
           disposeRouteWork();
-          if (view === "home") activateHomeStyles(panel.contentDocument); else disposeHomeStyles();
           const root = panel.contentDocument;
-          if (!root) return;
+          if (!root) {
+            if (view !== "home") disposeHomeStyles();
+            return;
+          }
+          if (view === "home") activateHomeStyles(root); else disposeHomeStyles();
           const state = { view, root, ready: false, timeout: null, shadowProbeTimer: null, shadowProbeExpired: false, observers: [], observedRoots: new WeakSet(), pendingShadowHosts: new Set(), styledHeadings: new WeakSet(), styledHeadingShadows: new WeakSet(), headings: new Map(), calendarRoot: null, cameraCards: new Set() };
           activeWork = state;
           activeWork.timeout = window.setTimeout(() => {
