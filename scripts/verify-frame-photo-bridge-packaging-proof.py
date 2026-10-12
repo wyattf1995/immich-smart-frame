@@ -106,7 +106,7 @@ def main() -> int:
     green, green_xml = run("restored-green", receipt)
     if green["exit"] != 0 or summary(green_xml) != (1, 0, 0, 0):
         raise RuntimeError("restored packaging contract is not green")
-    receipt.update({"status": "passed", "manifest_restored_sha256": digest(MANIFEST), "manifest_restored_exact": True})
+    receipt.update({"status": "passed", "passed": True, "manifest_restored_sha256": digest(MANIFEST), "manifest_restored_exact": True})
     (REPORT / "receipt.json").write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"status": "passed", "proof": receipt["proof"]}))
     return 0
