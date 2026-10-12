@@ -143,6 +143,7 @@ assert.match(clockStyle.textContent, /display:block;[^}]*6\.25rem/, "a child-lis
 const clockStyleAssignments = clockStyle.textAssignmentCount;
 markdownObserver.callback([{ type: "childList", addedNodes: [clockStrong] }]);
 assert.equal(clockStyle.textAssignmentCount, clockStyleAssignments, "identical child-list updates do not rewrite the existing clock style");
+assert.equal(markdown.shadowRoot.styles.filter((style) => style.id === "frameos-home-markdown").length, 1, "stable markdown mutations never append duplicate deep styles");
 headingCards.forEach((card) => { card.shadowRoot.textContent = card.expectedShadowText; });
 const characterDataObserver = observers.at(-1);
 headingCards.forEach((card) => characterDataObserver.callback([{ type: "characterData", target: { parentElement: card } }]));
