@@ -4,7 +4,7 @@ package com.wyattfleming.frameos.config
 data class FrameTouchscreenSettings(
     val dashboardEnabled: Boolean = false,
     val detachHiddenHome: Boolean = false,
-    val startWithPhotos: Boolean = false,
+    val startWithPhotos: Boolean = true,
 ) {
     fun showsDashboard(hasTouchscreen: Boolean): Boolean = dashboardEnabled && hasTouchscreen
 }
