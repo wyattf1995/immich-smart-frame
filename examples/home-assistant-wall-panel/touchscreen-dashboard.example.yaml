@@ -1,0 +1,153 @@
+# Opt-in dashboard for the low-memory PF1007 touchscreen frame.
+# Replace only the four camera.* placeholders after checking the live registry.
+title: FrameOS Touchscreen
+views:
+  - title: Home
+    path: home
+    icon: mdi:home
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Today
+            icon: mdi:calendar-today
+          - type: markdown
+            content: >-
+              {% if has_value('sensor.time') and has_value('sensor.date') %}
+              **{{ states('sensor.time') }}** · {{ as_datetime(states('sensor.date'), none).strftime('%A, %B %-d') if as_datetime(states('sensor.date'), none) else 'Date unavailable' }}
+              {% else %}_Time and date are temporarily unavailable_{% endif %}
+          - type: heading
+            heading: Up next
+            icon: mdi:calendar-clock
+          - type: markdown
+            content: >-
+              {% set message = state_attr('calendar.family', 'message') %}
+              {% if message %}{{ message }}{% else %}_No upcoming family event_{% endif %}
+      - type: grid
+        cards:
+          - type: heading
+            heading: Comfort
+            icon: mdi:home-thermometer-outline
+          - type: thermostat
+            entity: climate.entryway_entryway
+            name: Entryway
+          - type: heading
+            heading: Home status
+            icon: mdi:home-heart
+          - type: tile
+            entity: binary_sensor.internet_status
+            name: Internet
+            tap_action:
+              action: none
+          - type: tile
+            entity: sensor.last_successful_backup
+            name: Last HA backup
+            tap_action:
+              action: none
+    animated_background: neutral
+
+  - title: Cameras
+    path: cameras
+    icon: mdi:cctv
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Camera chooser
+            icon: mdi:camera-control
+          - type: tile
+            entity: camera.frameos_camera_1
+            name: Camera 1
+            tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/camera-1?kiosk" }
+          - type: tile
+            entity: camera.frameos_camera_2
+            name: Camera 2
+            tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/camera-2?kiosk" }
+      - type: grid
+        cards:
+          - type: heading
+            heading: Camera chooser
+            icon: mdi:camera-control
+          - type: tile
+            entity: camera.frameos_camera_3
+            name: Camera 3
+            tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/camera-3?kiosk" }
+          - type: tile
+            entity: camera.frameos_camera_4
+            name: Camera 4
+            tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/camera-4?kiosk" }
+    animated_background: neutral
+
+  - title: Camera 1
+    path: camera-1
+    type: panel
+    visible: false
+    cards:
+      - type: picture-entity
+        entity: camera.frameos_camera_1
+        camera_view: live
+        show_name: true
+        show_state: false
+        fit_mode: contain
+        aspect_ratio: '16:9'
+        tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/cameras?kiosk" }
+  - title: Camera 2
+    path: camera-2
+    type: panel
+    visible: false
+    cards:
+      - type: picture-entity
+        entity: camera.frameos_camera_2
+        camera_view: live
+        show_name: true
+        show_state: false
+        fit_mode: contain
+        aspect_ratio: '16:9'
+        tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/cameras?kiosk" }
+  - title: Camera 3
+    path: camera-3
+    type: panel
+    visible: false
+    cards:
+      - type: picture-entity
+        entity: camera.frameos_camera_3
+        camera_view: live
+        show_name: true
+        show_state: false
+        fit_mode: contain
+        aspect_ratio: '16:9'
+        tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/cameras?kiosk" }
+  - title: Camera 4
+    path: camera-4
+    type: panel
+    visible: false
+    cards:
+      - type: picture-entity
+        entity: camera.frameos_camera_4
+        camera_view: live
+        show_name: true
+        show_state: false
+        fit_mode: contain
+        aspect_ratio: '16:9'
+        tap_action: { action: navigate, navigation_path: "/frameos-touchscreen/cameras?kiosk" }
+
+  - title: Calendar
+    path: calendar
+    icon: mdi:calendar-month
+    type: panel
+    cards:
+      - type: calendar
+        initial_view: dayGridMonth
+        entities: [calendar.family, calendar.personal, calendar.birthdays, calendar.holidays]
+
+animated_background:
+  default_url: /local/wallpanel-weather/neutral.png?v=9fb6f0f237b4
+  transparent_panel: true
+  groups:
+    - name: neutral
+      config:
+        default_url: /local/wallpanel-weather/neutral.png?v=9fb6f0f237b4
