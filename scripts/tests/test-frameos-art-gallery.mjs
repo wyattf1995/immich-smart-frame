@@ -89,4 +89,6 @@ assert.match(source, /"Resume"\s*:\s*"Pause"/, "tap-revealed controls include pa
 assert.match(source, /this\.paused \? "Resume" : "Pause"/, "pause control reports Resume when cycling is paused");
 assert.match(source, /\["Next"/, "tap-revealed controls include next navigation");
 assert.match(stylesheet, /object-fit:contain/, "artwork is fit without cropping");
+assert.match(stylesheet, /\.art-controls\s*\{[^}]*pointer-events:none/, "hidden controls cannot receive the first tap");
+assert.match(stylesheet, /\.art-shell\.is-controls-visible \.art-controls\s*\{[^}]*pointer-events:auto/, "visible controls become interactive after being revealed");
 console.log("FrameOS Art gallery tests passed");
