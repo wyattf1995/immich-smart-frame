@@ -40,11 +40,27 @@ const sanitized = api.__test.sanitize([
   { datetime: "2026-10-13", condition: "rainy", temperature: "19", templow: "", precipitation_probability: "80" },
   { datetime: "2026-10-13", condition: "sunny", temperature: 20 },
   { datetime: "2026-10-14", condition: "cloudy", temperature: 17 },
+  { datetime: "2026-10-15T16:00:00+00:00", condition: "fog", temperature: 15 },
 ], "°C", now);
-assert.equal(sanitized.days.length, 2, "past, malformed, and duplicate daily records are skipped");
+assert.equal(sanitized.days.length, 3, "past, malformed, and duplicate daily records are skipped");
 assert.equal(sanitized.days[0].temperature, 19, "finite bounded numeric strings are accepted");
 assert.equal(sanitized.days[0].templow, null, "missing temperatures do not coerce to zero");
+assert.match(sanitized.days[2].datetime, /^2026-10-1[45]$/, "Home Assistant ISO timestamps become a bounded local calendar day");
 assert.equal(api.__test.sanitize(payload(), "kelvin", now), null, "unsupported temperature units are unavailable");
+
+let recursiveCalls = 0; let recursive;
+recursive = api.create({ readForecast: () => { recursiveCalls += 1; return Promise.resolve(payload()); }, temperatureUnit: () => "°F", now: () => now, timers: context.window, onUpdate: () => recursive.refreshIfNeeded() });
+recursive.setActive(true); await flush();
+assert.equal(recursiveCalls, 1, "a synchronous renderer refresh cannot recurse before the request is fenced");
+recursive.destroy();
+
+let resolveLate;
+const timedOut = api.create({ readForecast: () => new Promise((resolve) => { resolveLate = resolve; }), temperatureUnit: () => "°F", now: () => now, timers: context.window });
+timedOut.setActive(true); timedOut.refreshIfNeeded(); await flush();
+[...timers.values()].filter((timer) => timer.delay === 10_000 && !timer.cleared).at(-1).callback();
+resolveLate(payload()); await flush();
+assert.equal(timedOut.snapshot().forecastStatus, "unavailable", "a late success after timeout cannot overwrite unavailable state");
+timedOut.destroy();
 
 let rejectFetch; let lateCalls = 0;
 const late = api.create({ readForecast: () => { lateCalls += 1; return new Promise((resolve, reject) => { rejectFetch = reject; }); }, temperatureUnit: () => "°F", now: () => now, timers: context.window });
