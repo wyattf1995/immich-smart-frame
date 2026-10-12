@@ -5,6 +5,16 @@ import vm from "node:vm";
 const html = fs.readFileSync(new URL("../../examples/frameos/frameos-touchscreen-panel.html", import.meta.url), "utf8");
 const script = html.match(/<script>\s*([\s\S]*?)\s*<\/script>/)?.[1];
 assert.ok(script, "panel must contain executable wrapper script");
+assert.match(html, /id="home-chrome"/, "Home has a wrapper-reserved header instead of an overlay on thermostat controls");
+assert.match(html, /#panel\.home-layout/, "Home reserves iframe space below its wrapper header");
+assert.match(html, /const activateHomeStyles/, "Home styling is activated only for the Home route");
+assert.match(html, /const disposeHomeStyles/, "Home styling has explicit SPA-route cleanup");
+assert.match(html, /#frameos-home-redesign/, "the verified sections-view shadow receives a scoped Home palette");
+assert.match(html, /hui-thermostat-card/, "the stock thermostat card receives only scoped visual treatment");
+assert.match(html, /#f1ede4/, "Home uses the requested warm-ivory foreground");
+assert.match(html, /#d8c390/, "Home uses the requested muted-gold accent");
+assert.match(html, /#182a2c/, "Home uses the requested deep-green card surface");
+assert.doesNotMatch(html, /pointer-events\s*:\s*none[^}]*hui-thermostat-card|hui-thermostat-card[^}]*pointer-events\s*:\s*none/, "thermostat controls remain interactive");
 
 const root = {
   nodeType: 9,
@@ -94,7 +104,7 @@ const characterDataObserver = observers.at(-1);
 headingCards.forEach((card) => characterDataObserver.callback([{ type: "characterData", target: { parentElement: card } }]));
 assert.equal(loading.hidden, true, "delayed HA heading shadow text makes Home ready");
 headingCards.forEach((card) => {
-  assert.ok(card.style.values.some(([name, value]) => name === "--primary-text-color" && value === "#fff"), "Home heading host receives the established high-contrast text variable");
+  assert.ok(card.style.values.some(([name, value]) => name === "--primary-text-color" && value === "#f1ede4"), "Home heading host receives the requested warm-ivory high-contrast text variable");
   assert.equal(card.shadowRoot.styles.filter((style) => style.id === "frameos-heading-contrast").length, 1, "Home heading shadow receives exactly one contrast style");
 });
 const firstSpaListener = childListeners.get("location-changed");
