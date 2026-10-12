@@ -13,14 +13,8 @@ out = root / 'reports/frameos-legacy'
 out.mkdir(parents=True, exist_ok=True)
 original = source.read_bytes()
 test_hash = hashlib.sha256(test.read_bytes()).hexdigest()
-needle = b'''            else {
-              customHomeProbe = null;
-              scheduleLateHomeDiscovery(bootstrap, getHass);
-            }'''
-replacement = b'''            else {
-              customHomeProbe = null;
-            }'''
-assert original.count(needle) == 1
+needle = b"if (connectedHomeHass(bootstrap.root) && mountCustomHome(bootstrap.root, getHass)) return;"
+replacement = b"if (false && connectedHomeHass(bootstrap.root) && mountCustomHome(bootstrap.root, getHass)) return;"
 
 def run(label):
     result = subprocess.run(['node', 'scripts/tests/test-frameos-home-late-bootstrap.mjs'], cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
@@ -32,7 +26,7 @@ try:
     source.write_bytes(original.replace(needle, replacement))
     red_exit, red_log, red_output = run('home-late-bootstrap-source-red')
     assert red_exit != 0
-    assert 'only one 1 Hz late discovery timer is armed after the fast window' in red_output
+    assert 'healthy Home Assistant that appears after the initial window mounts once' in red_output
 finally:
     source.write_bytes(original)
     assert source.read_bytes() == original
@@ -42,10 +36,10 @@ assert green_exit == 0
 assert hashlib.sha256(test.read_bytes()).hexdigest() == test_hash
 receipt = {
     'passed': True,
-    'recipe': 'preserve the 12-second native fallback and schedule bounded 1 Hz late Home discovery',
+    'recipe': 'preserve the 12-second native fallback and mount a healthy same-origin Home Assistant shell after bounded late discovery',
     'negative_exit': red_exit,
     'negative_assertion_failures': 1,
-    'negative_expected_assertion': 'only one 1 Hz late discovery timer is armed after the fast window',
+    'negative_expected_assertion': 'healthy Home Assistant that appears after the initial window mounts once',
     'negative_log': red_log,
     'restored_green_exit': green_exit,
     'restored_log': green_log,
