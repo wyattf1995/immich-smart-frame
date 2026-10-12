@@ -54,6 +54,16 @@ class FrameArtModeContractTest {
         )
         assertEquals(FrameMode.ART, configured.cycleModes[1])
         assertTrue(configured.isAvailable(FrameMode.ART))
+
+        val legacyModeOrder = FrameModeAvailability(
+            birdsUrl = null,
+            artUrl = "https://art.example.invalid/impressionist-landscapes",
+            requestedModes = listOf(FrameMode.PHOTOS, FrameMode.HOME, FrameMode.WEATHER),
+        )
+        assertEquals(
+            listOf(FrameMode.PHOTOS, FrameMode.ART, FrameMode.HOME, FrameMode.WEATHER),
+            legacyModeOrder.cycleModes,
+        )
     }
 
     @Test
