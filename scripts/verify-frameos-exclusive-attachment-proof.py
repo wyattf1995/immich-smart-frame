@@ -50,7 +50,7 @@ def run(label: str, expected_failures: int, expected_failure_name: str | None = 
     cases = list(root_element.iter("testcase"))
     failures = [failure for case in cases for failure in case.findall("failure")]
     errors = [error for case in cases for error in case.findall("error")]
-    assert len(cases) == 14, len(cases)
+    assert len(cases) == 15, len(cases)
     assert len(failures) == expected_failures, len(failures)
     assert not errors, errors
     if expected_failures:
@@ -93,7 +93,7 @@ def prove_negative(
         assert negative_exit != 0, negative_log
         return {
             "negative_exit": negative_exit,
-            "negative_tests": 14,
+            "negative_tests": 15,
             "negative_assertion_failures": 1,
             "negative_log": f"{label}.log",
             "negative_junit_xml": negative_xml,
@@ -125,7 +125,7 @@ assert sha256(test) == test_hash
     "home_transition": home,
     "hide_transition": hide,
     "restored_green_exit": restored_exit,
-    "restored_tests": 14,
+    "restored_tests": 15,
     "restored_failures": 0,
     "original_source_sha256": source_hash,
     "restored_source_sha256": sha256(source),
