@@ -164,7 +164,7 @@
         const attachSpaNavigationWatcher = () => {
           let childWindow;
           try { childWindow = panel.contentWindow; } catch (_error) { return; }
-          if (!childWindow || childWindow === spaWindow) return;
+          if (!childWindow) return;
           if (detachSpaNavigation) detachSpaNavigation();
           const onNavigation = () => {
             const view = iframeView() || currentView;
@@ -183,7 +183,22 @@
 
         panel.addEventListener("load", () => {
           attachSpaNavigationWatcher();
-          if (currentView) observeReadiness(iframeView() || currentView);
+          const loadedView = iframeView();
+          if (!loadedView) {
+            try {
+              const path = panel.contentWindow.location.pathname;
+              if (/^\/auth(?:\/|$)/.test(path)) {
+                disposeRouteWork();
+                loading.hidden = true;
+                announce("Sign-in required");
+                focusPanel();
+                return;
+              }
+            } catch (_error) {
+              // A same-origin authentication page remains usable without readiness inspection.
+            }
+          }
+          if (currentView) observeReadiness(loadedView || currentView);
         });
         window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
         navigate(location.hash.slice(1));
