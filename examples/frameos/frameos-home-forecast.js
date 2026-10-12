@@ -10,12 +10,18 @@
     const number = typeof value === "number" ? value : (typeof value === "string" && value.trim() ? Number(value) : NaN);
     return Number.isFinite(number) && number >= min && number <= max ? number : null;
   };
+  const localDate = (parsed) => `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
   const date = (value) => {
-    if (typeof value !== "string" || !/^\d{4}-\d\d-\d\d$/.test(value)) return null;
-    const parsed = new Date(`${value}T00:00:00Z`);
-    return Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== value ? null : value;
+    if (typeof value !== "string" || value.length > 64) return null;
+    if (/^\d{4}-\d\d-\d\d$/.test(value)) {
+      const parsed = new Date(`${value}T00:00:00Z`);
+      return Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== value ? null : value;
+    }
+    if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(value)) return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.valueOf()) ? null : localDate(parsed);
   };
-  const today = (millis) => new Date(millis).toISOString().slice(0, 10);
+  const today = (millis) => localDate(new Date(millis));
   const sanitize = (raw, unit, now) => {
     if (!Array.isArray(raw) || (unit !== "°C" && unit !== "°F")) return null;
     const seen = new Set(), days = [];
@@ -52,8 +58,9 @@
       return visibleForecast() ? (status === "ready" ? "ready" : "stale") : "unavailable";
     };
     const snapshot = () => Object.freeze({ forecast: visibleForecast(), forecastStatus: visibleStatus() });
-    const finish = (epoch, error, result) => {
+    const finish = (epoch, error, result, timedOut = false) => {
       if (destroyed || !active || epoch !== requestEpoch) return;
+      if (timedOut) requestEpoch += 1;
       clearTimeout(); inFlight = null;
       const parsed = error ? null : sanitize(result, unit(), now());
       if (parsed) { forecast = parsed; lastSuccess = now(); lastError = null; status = "ready"; }
@@ -69,7 +76,7 @@
       const request = Promise.resolve().then(options.readForecast);
       inFlight = request;
       status = "loading"; notify();
-      timeout = timers.setTimeout(() => finish(epoch, true), REQUEST_TIMEOUT);
+      timeout = timers.setTimeout(() => finish(epoch, true, undefined, true), REQUEST_TIMEOUT);
       request.then((result) => finish(epoch, false, result), () => finish(epoch, true));
       return request;
     };
