@@ -50,8 +50,11 @@ assert.equal(api.__test.sanitize(payload(), "kelvin", now), null, "unsupported t
 
 let recursiveCalls = 0; let recursive, reentered = false;
 recursive = api.create({ readForecast: () => { recursiveCalls += 1; return Promise.resolve(payload()); }, temperatureUnit: () => "°F", now: () => now, timers: context.window, onUpdate: () => { if (!reentered) { reentered = true; recursive.refreshIfNeeded(); } } });
-recursive.setActive(true); await flush();
+recursive.setActive(true); await flush(); await flush();
 assert.equal(recursiveCalls, 1, "a synchronous renderer refresh cannot recurse before the request is fenced");
+reentered = false; now += 30 * 60 * 1000;
+await recursive.refreshIfNeeded(); await flush();
+assert.equal(recursiveCalls, 2, "a later refresh remains fenced before it synchronously redraws");
 recursive.destroy();
 
 let resolveLate;
