@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import org.json.JSONObject
+import org.mozilla.gecko.util.GeckoBundle
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
@@ -456,7 +457,7 @@ class FramePhotoBridge(
 
         override fun onMessage(nativeApp: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
             val senderSession = sender.session
-            if (nativeApp != NATIVE_APP || senderSession == null) return GeckoResult.fromValue(JSONObject().put("accepted", false))
+            if (nativeApp != NATIVE_APP || senderSession == null) return GeckoResult.fromValue(acceptanceResponse(false))
             val trustedSender = Sender(
                 session = senderSession,
                 url = sender.url,
@@ -464,24 +465,24 @@ class FramePhotoBridge(
                 contentScript = sender.environmentType == WebExtension.MessageSender.ENV_TYPE_CONTENT_SCRIPT,
             )
             if ((message as? JSONObject)?.optString("type") == DIAGNOSTIC_TYPE) {
-                return GeckoResult.fromValue(JSONObject().put("accepted", acceptDiagnostic(message, trustedSender)))
+                return GeckoResult.fromValue(acceptanceResponse(acceptDiagnostic(message, trustedSender)))
             }
             if ((message as? JSONObject)?.optString("type") in setOf(SHARED_STATE_TYPE, SHARED_SETTLED_TYPE)) {
-                return GeckoResult.fromValue(JSONObject().put("accepted", acceptSharedPlayback(message, trustedSender)))
+                return GeckoResult.fromValue(acceptanceResponse(acceptSharedPlayback(message, trustedSender)))
             }
             val capture = captureFrom(
                 message,
                 trustedSender,
             )
-            if (capture == null) return GeckoResult.fromValue(JSONObject().put("accepted", false))
+            if (capture == null) return GeckoResult.fromValue(acceptanceResponse(false))
             val result = GeckoResult<Any>()
             try {
                 decodeWorker.execute {
                     val accepted = reserve.persist(capture.assetId, capture.image, capture.capturedAt, capture.scope.key) { canCommit(capture) } && reportIfCurrent(capture)
-                    result.complete(JSONObject().put("accepted", accepted))
+                    result.complete(acceptanceResponse(accepted))
                 }
             } catch (_: RejectedExecutionException) {
-                result.complete(JSONObject().put("accepted", false))
+                result.complete(acceptanceResponse(false))
             }
             return result
         }
@@ -492,6 +493,11 @@ class FramePhotoBridge(
         const val MAX_BASE64_CHARS = 4 * 1024 * 1024
         const val EXTENSION_LOCATION = "resource://android/assets/frame-photo-bridge/"
         const val EXTENSION_ID = "frame-photo-bridge@wyattfleming.com"
+        /** Gecko 144 serializes native-message callback objects through GeckoBundle. */
+        internal fun acceptanceResponse(accepted: Boolean): GeckoBundle = GeckoBundle(1).apply {
+            putBoolean("accepted", accepted)
+        }
+
         const val NATIVE_APP = "frame_photo_bridge"
         private const val MESSAGE_TYPE = "loaded-photo"
         private const val PAUSE_SNAPSHOT_NONCE = "snapshotNonce"
