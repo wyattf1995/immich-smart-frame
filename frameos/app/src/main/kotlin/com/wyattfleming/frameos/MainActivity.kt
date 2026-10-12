@@ -1873,7 +1873,7 @@ class MainActivity : Activity() {
     private fun scheduleIdleReset() {
         handler.removeCallbacks(expireIdle)
         // Idle return applies to other views; Photos pause/hold owns its own lifetime.
-        if (!dashboardVisible && state.mode != FrameMode.PHOTOS) {
+        if (!dashboardVisible && state.mode != FrameMode.PHOTOS && !state.mode.persistsAcrossIdle) {
             handler.postDelayed(expireIdle, experienceSettings.idleReturnSeconds * 1_000L)
         }
     }

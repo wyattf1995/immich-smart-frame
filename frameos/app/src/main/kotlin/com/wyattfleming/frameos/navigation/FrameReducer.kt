@@ -12,9 +12,13 @@ class FrameReducer(
         FrameIntent.NextMode -> state.changeMode(state.mode.next(availableModes()))
         FrameIntent.PreviousMode -> state.changeMode(state.mode.previous(availableModes()))
         FrameIntent.GoHome -> state.changeMode(FrameMode.HOME)
-        FrameIntent.IdleExpired -> state
-            .copy(mode = FrameMode.PHOTOS, photosPaused = false)
-            .announceMode()
+        FrameIntent.IdleExpired -> if (state.mode.persistsAcrossIdle) {
+            FrameTransition(state)
+        } else {
+            state
+                .copy(mode = FrameMode.PHOTOS, photosPaused = false)
+                .announceMode()
+        }
         FrameIntent.PrimaryAction -> state.primaryAction()
         FrameIntent.BrightnessUp -> state.changeBrightness(BRIGHTNESS_STEP_PERCENT)
         FrameIntent.BrightnessDown -> state.changeBrightness(-BRIGHTNESS_STEP_PERCENT)

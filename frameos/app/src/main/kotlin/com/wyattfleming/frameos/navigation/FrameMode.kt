@@ -11,6 +11,9 @@ enum class FrameMode(val label: String) {
 
     ;
 
+    val persistsAcrossIdle: Boolean
+        get() = this == ART
+
     companion object {
         fun cycleModes(birdsConfigured: Boolean, artConfigured: Boolean = false): List<FrameMode> = buildList {
             add(PHOTOS)
