@@ -88,11 +88,11 @@
         const observeRoot = (root, state) => {
           if (state.observedRoots.has(root)) return;
           state.observedRoots.add(root);
-          const observer = new MutationObserver(() => {
+          const observer = new MutationObserver((records) => {
             if (activeWork !== state) return;
             const activeView = iframeView() || currentView;
             if (activeView !== state.view) { observeReadiness(activeView); return; }
-            inspectAddedSubtree(root, state);
+            records.forEach((record) => record.addedNodes.forEach((node) => inspectAddedSubtree(node, state)));
           });
           observer.observe(root, { childList: true, subtree: true });
           state.observers.push(observer);
@@ -118,10 +118,10 @@
           finishIfReady(state);
         };
         const scheduleShadowProbe = (state) => {
-          if (activeWork !== state || state.ready || state.shadowProbeTimer || state.pendingShadowHosts.size === 0) return;
+          if (activeWork !== state || state.ready || state.shadowProbeExpired || state.shadowProbeTimer || state.pendingShadowHosts.size === 0) return;
           state.shadowProbeTimer = window.setTimeout(() => {
             state.shadowProbeTimer = null;
-            if (activeWork !== state || state.ready) return;
+            if (activeWork !== state || state.ready || state.shadowProbeExpired) return;
             state.pendingShadowHosts.forEach((host) => {
               if (host.shadowRoot) { state.pendingShadowHosts.delete(host); observeRoot(host.shadowRoot, state); inspectAddedSubtree(host.shadowRoot, state); }
             });
@@ -139,10 +139,13 @@
           disposeRouteWork();
           const root = panel.contentDocument;
           if (!root) return;
-          const state = { view, root, ready: false, timeout: null, shadowProbeTimer: null, observers: [], observedRoots: new WeakSet(), pendingShadowHosts: new Set(), headings: new Map(), calendarRoot: null, cameraCards: new Set() };
+          const state = { view, root, ready: false, timeout: null, shadowProbeTimer: null, shadowProbeExpired: false, observers: [], observedRoots: new WeakSet(), pendingShadowHosts: new Set(), headings: new Map(), calendarRoot: null, cameraCards: new Set() };
           activeWork = state;
           activeWork.timeout = window.setTimeout(() => {
-            if (activeWork?.view === view) showStillConnecting(view);
+            if (activeWork?.view !== view) return;
+            activeWork.shadowProbeExpired = true;
+            disposeRouteWork();
+            showStillConnecting(view);
           }, READY_TIMEOUT_MILLIS);
           observeRoot(root, state);
           inspectAddedSubtree(root, state);
