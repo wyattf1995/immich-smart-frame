@@ -34,24 +34,34 @@ const makeElement = (localName, options = {}) => ({
   isConnected: true,
   getAttribute() { return null; },
   querySelectorAll() { return options.children || []; },
+  querySelector(selector) { return (options.children || []).find((child) => child.localName === selector) || null; },
 });
+const makeShadow = (children = [], textContent = "") => {
+  const styles = [];
+  return {
+    nodeType: 11,
+    textContent,
+    querySelector(selector) { return styles.find((style) => style.id === selector.slice(1)) || null; },
+    querySelectorAll() { return [...children]; },
+    append(style) { styles.push(style); },
+    styles,
+  };
+};
 const headingCards = ["Today", "Up next", "Home status", "Comfort"].map((heading) => {
   const styles = [];
   return makeElement("hui-heading-card", {
-    shadowRoot: {
-      nodeType: 11,
-      textContent: "",
-      querySelector(selector) { return styles.find((style) => style.id === selector.slice(1)) || null; },
-      append(style) { styles.push(style); },
-      querySelectorAll() { return []; },
-      styles,
-    },
+    shadowRoot: makeShadow([], ""),
     text: "",
     heading: "",
     expectedShadowText: heading,
   });
 });
-const headingShadow = { nodeType: 11, querySelectorAll() { return headingCards; } };
+const clockStrong = makeElement("strong", { text: "07:16" });
+const markdownElement = makeElement("ha-markdown-element", { text: "07:16 Sunday", children: [clockStrong] });
+const markdown = makeElement("ha-markdown", { shadowRoot: makeShadow([markdownElement]) });
+const markdownCard = makeElement("hui-markdown-card", { shadowRoot: makeShadow([markdown]) });
+const sectionsView = makeElement("hui-sections-view", { shadowRoot: makeShadow([markdownCard]) });
+const headingShadow = { nodeType: 11, querySelectorAll() { return [...headingCards, sectionsView]; } };
 root.nodes = [makeElement("home-assistant", { shadowRoot: headingShadow })];
 
 const windowListeners = new Map();
@@ -61,6 +71,7 @@ const observers = [];
 const timers = [];
 const loading = { hidden: false, textContent: "", classList: { add() {}, remove() {} } };
 const status = { textContent: "" };
+const homeChrome = { hidden: true };
 const childWindow = {
   location: { pathname: "/frameos-touchscreen/home" },
   focus() {},
@@ -73,11 +84,12 @@ const panel = {
   contentWindow: childWindow,
   addEventListener(type, callback) { panelListeners.set(type, callback); },
   focus() {},
+  classList: { classes: new Set(), toggle(name, enabled) { if (enabled) this.classes.add(name); else this.classes.delete(name); } },
 };
 const context = {
   window: null,
   document: {
-    getElementById(id) { return ({ panel, loading, status })[id]; },
+    getElementById(id) { return ({ panel, loading, status, "home-chrome": homeChrome })[id]; },
     createElement() { return { id: "", textContent: "" }; },
   },
   location: { hash: "", pathname: "/local/frameos-touchscreen-panel.html", search: "" },
@@ -99,6 +111,11 @@ assert.equal(context.FrameOSTouchscreenPanel.normalizeView("nope"), "home");
 assert.equal(context.FrameOSTouchscreenPanel.routeFor("calendar"), "/frameos-touchscreen/calendar?kiosk");
 panelListeners.get("load")();
 assert.equal(loading.hidden, false, "empty HA heading hosts are not ready before delayed shadow text arrives");
+assert.equal(homeChrome.hidden, false, "Home header is active only while the Home route is loading");
+assert.ok(panel.classList.classes.has("home-layout"), "Home header reserves iframe space instead of covering controls");
+assert.equal(sectionsView.shadowRoot.styles.filter((style) => style.id === "frameos-home-redesign").length, 1, "Home palette traverses the nested sections-view shadow root");
+assert.equal(markdown.shadowRoot.styles.filter((style) => style.id === "frameos-home-markdown").length, 1, "clock styling crosses the ha-markdown shadow boundary");
+assert.match(markdown.shadowRoot.styles.find((style) => style.id === "frameos-home-markdown").textContent, /display:block;[^}]*6\.25rem/, "only the clock stylesheet carries the large display treatment");
 headingCards.forEach((card) => { card.shadowRoot.textContent = card.expectedShadowText; });
 const characterDataObserver = observers.at(-1);
 headingCards.forEach((card) => characterDataObserver.callback([{ type: "characterData", target: { parentElement: card } }]));
@@ -120,6 +137,8 @@ childListeners.get("location-changed")();
 assert.equal(loading.hidden, true, "SPA camera navigation is ready only after the one camera card appears");
 assert.equal(status.textContent, "Camera ready");
 assert.ok(oldObservers.every((observer) => observer.disconnected), "leaving Home disconnects its route observers");
+assert.equal(homeChrome.hidden, true, "Camera navigation removes the Home-only header");
+assert.ok(!panel.classList.classes.has("home-layout"), "Camera navigation removes Home iframe spacing");
 
 root.nodes = [makeElement("home-assistant", { shadowRoot: { nodeType: 11, querySelectorAll() { return [makeElement("hui-heading-card", { heading: "Camera chooser" })]; } } })];
 childWindow.location.pathname = "/frameos-touchscreen/cameras";
