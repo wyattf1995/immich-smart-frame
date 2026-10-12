@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -19,13 +20,14 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
-ROOT = Path.cwd()
+ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) == 2 else Path.cwd().resolve()
 FRAME = ROOT / "frameos"
 REPORT = ROOT / "reports" / "frameos-legacy"
 ARTIFACTS = REPORT / "photo-readiness-proof-artifacts"
 KOTLIN_TESTS = (
     "com.wyattfleming.frameos.web.FrameWebPhotosReadinessStateTest",
     "com.wyattfleming.frameos.web.FrameWebSurfaceContractTest",
+    "com.wyattfleming.frameos.MainActivityPhotoReadinessContractTest",
 )
 KOTLIN_COMMAND = [
     "./gradlew", "--no-daemon", "--max-workers=2", "-PframeosTarget=legacyArmv7",
@@ -33,6 +35,13 @@ KOTLIN_COMMAND = [
     *[item for test in KOTLIN_TESTS for item in ("--tests", test)],
 ]
 JS_COMMAND = ["node", "--test", "app/src/test/js/photos-playback.test.js"]
+EXPECTED_JUNIT_SUITES = {
+    "TEST-com.wyattfleming.frameos.web.FrameWebPhotosReadinessStateTest.xml": 3,
+    "TEST-com.wyattfleming.frameos.web.FrameWebSurfaceContractTest.xml": 16,
+    "TEST-com.wyattfleming.frameos.MainActivityPhotoReadinessContractTest.xml": 1,
+}
+EXPECTED_KOTLIN_TESTS = sum(EXPECTED_JUNIT_SUITES.values())
+EXPECTED_JS_TESTS = 30
 
 
 def sha256(path: Path) -> str:
@@ -45,6 +54,10 @@ def require(path: Path) -> None:
 
 
 def run(label: str, command: list[str], cwd: Path, proof: dict) -> dict:
+    if command == KOTLIN_COMMAND:
+        results = FRAME / "app/build/test-results/testDebugUnitTest"
+        if results.exists():
+            shutil.rmtree(results)
     log = ARTIFACTS / f"{label}.log"
     started = time.time()
     with log.open("w") as stream:
@@ -64,19 +77,35 @@ def run(label: str, command: list[str], cwd: Path, proof: dict) -> dict:
 def copy_junit(label: str, proof: dict) -> dict:
     source_dir = FRAME / "app/build/test-results/testDebugUnitTest"
     copies = []
-    for source in sorted(source_dir.rglob("TEST-*.xml")):
+    sources = sorted(source_dir.rglob("TEST-*.xml"))
+    if {source.name for source in sources} != set(EXPECTED_JUNIT_SUITES):
+        raise RuntimeError(f"{label} produced unexpected JUnit suites: {[source.name for source in sources]}")
+    for source in sources:
         destination = ARTIFACTS / f"{label}-{source.name}"
         shutil.copy2(source, destination)
         root = ET.parse(destination).getroot()
         testcases = list(root.iter("testcase"))
         failures = [case.attrib.get("name", "") for case in testcases if case.find("failure") is not None]
         errors = [case.attrib.get("name", "") for case in testcases if case.find("error") is not None]
+        skipped = [case.attrib.get("name", "") for case in testcases if case.find("skipped") is not None]
+        failure_details = [
+            {
+                "name": case.attrib.get("name", ""),
+                "type": failure.attrib.get("type", ""),
+                "message": failure.attrib.get("message", ""),
+            }
+            for case in testcases for failure in case.findall("failure")
+        ]
+        if len(testcases) != EXPECTED_JUNIT_SUITES[source.name]:
+            raise RuntimeError(f"{label} had unexpected test count in {source.name}: {len(testcases)}")
         copies.append({
             "path": str(destination.relative_to(ROOT)),
             "sha256": sha256(destination),
             "tests": len(testcases),
             "failures": failures,
             "errors": errors,
+            "skipped": skipped,
+            "failure_details": failure_details,
         })
     if not copies:
         raise RuntimeError(f"{label} produced no JUnit XML")
@@ -85,12 +114,17 @@ def copy_junit(label: str, proof: dict) -> dict:
         "tests": sum(item["tests"] for item in copies),
         "failures": sum(len(item["failures"]) for item in copies),
         "errors": sum(len(item["errors"]) for item in copies),
+        "skipped": sum(len(item["skipped"]) for item in copies),
         "cases": {case for item in copies for case in item["failures"] + item["errors"]},
+        "failure_details": [detail for item in copies for detail in item["failure_details"]],
     }
 
 
 def require_green(label: str, record: dict, summary: dict) -> None:
-    if record["exit"] != 0 or summary["failures"] or summary["errors"]:
+    if (
+        record["exit"] != 0 or summary["tests"] != EXPECTED_KOTLIN_TESTS or
+        summary["failures"] or summary["errors"] or summary["skipped"]
+    ):
         raise RuntimeError(f"{label} was not green: {record['exit']=}, {summary=}")
 
 
@@ -114,7 +148,12 @@ def kotlin_proof(
     try:
         red = run(f"{name}-red", KOTLIN_COMMAND, FRAME, proof)
         red_summary = copy_junit(f"{name}-red", proof)
-        if red["exit"] == 0 or expected_failure not in red_summary["cases"]:
+        if (
+            red["exit"] == 0 or red_summary["tests"] != EXPECTED_KOTLIN_TESTS or
+            red_summary["failures"] != 1 or red_summary["errors"] or red_summary["skipped"] or
+            expected_failure not in red_summary["cases"] or
+            red_summary["failure_details"][0]["type"] != "java.lang.AssertionError"
+        ):
             raise RuntimeError(f"{name} did not fail the expected test {expected_failure!r}: {red_summary}")
     finally:
         path.write_bytes(original)
@@ -135,17 +174,34 @@ def kotlin_proof(
     }
 
 
+def tap_counts(log: Path) -> dict:
+    text = log.read_text(errors="replace")
+    counts = {}
+    for name in ("tests", "pass", "fail"):
+        match = re.search(rf"^# {name} (\\d+)$", text, re.MULTILINE)
+        if not match:
+            raise RuntimeError(f"Node TAP log does not contain {name} count")
+        counts[name] = int(match.group(1))
+    counts["text"] = text
+    return counts
+
+
 def js_proof(path: Path, original: bytes, proof: dict) -> None:
     before = 'reportDiagnostic("htmx_no_content", inspected.fields);'
     after = 'reportDiagnostic("htmx_error", inspected.fields);'
     expected_failure = "a no-content Kiosk response keeps capture closed until a later settled response"
     baseline = run("js-baseline-green", JS_COMMAND, FRAME, proof)
-    if baseline["exit"] != 0:
+    baseline_counts = tap_counts(ARTIFACTS / "js-baseline-green.log")
+    if baseline["exit"] != 0 or {key: baseline_counts[key] for key in ("tests", "pass", "fail")} != {"tests": EXPECTED_JS_TESTS, "pass": EXPECTED_JS_TESTS, "fail": 0}:
         raise RuntimeError("JavaScript Photos baseline was not green")
     replace_once(path, original, before, after)
     try:
         red = run("js-204-stage-red", JS_COMMAND, FRAME, proof)
-        if red["exit"] == 0 or expected_failure not in (ARTIFACTS / "js-204-stage-red.log").read_text(errors="replace"):
+        red_counts = tap_counts(ARTIFACTS / "js-204-stage-red.log")
+        if (
+            red["exit"] == 0 or expected_failure not in red_counts["text"] or
+            {key: red_counts[key] for key in ("tests", "pass", "fail")} != {"tests": EXPECTED_JS_TESTS, "pass": EXPECTED_JS_TESTS - 1, "fail": 1}
+        ):
             raise RuntimeError("204 diagnostic mutation did not fail the intended Node test")
     finally:
         path.write_bytes(original)
@@ -153,7 +209,8 @@ def js_proof(path: Path, original: bytes, proof: dict) -> None:
     if path.read_bytes() != original:
         raise RuntimeError("JavaScript Photos source was not restored exactly")
     green = run("js-204-stage-restored-green", JS_COMMAND, FRAME, proof)
-    if green["exit"] != 0:
+    green_counts = tap_counts(ARTIFACTS / "js-204-stage-restored-green.log")
+    if green["exit"] != 0 or {key: green_counts[key] for key in ("tests", "pass", "fail")} != {"tests": EXPECTED_JS_TESTS, "pass": EXPECTED_JS_TESTS, "fail": 0}:
         raise RuntimeError("JavaScript Photos restored source was not green")
     proof["mutations"]["js_204_diagnostic"] = {
         "source": str(path.relative_to(ROOT)),
@@ -162,6 +219,9 @@ def js_proof(path: Path, original: bytes, proof: dict) -> None:
         "expected_failure": expected_failure,
         "red_exit": red["exit"],
         "restored_exit": green["exit"],
+        "baseline_counts": {key: baseline_counts[key] for key in ("tests", "pass", "fail")},
+        "red_counts": {key: red_counts[key] for key in ("tests", "pass", "fail")},
+        "restored_counts": {key: green_counts[key] for key in ("tests", "pass", "fail")},
     }
 
 
@@ -173,12 +233,20 @@ def main() -> int:
         FRAME / "app/src/test/kotlin/com/wyattfleming/frameos/web/FrameWebPhotosReadinessStateTest.kt",
         FRAME / "app/src/test/kotlin/com/wyattfleming/frameos/web/FrameWebSurfaceContractTest.kt",
         FRAME / "app/src/test/js/photos-playback.test.js",
+        FRAME / "app/src/test/kotlin/com/wyattfleming/frameos/MainActivityPhotoReadinessContractTest.kt",
     ]
     for path in [FRAME / "gradlew", state, surface, javascript, *test_paths]:
         require(path)
     REPORT.mkdir(parents=True, exist_ok=True)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    originals = {state: state.read_bytes(), surface: surface.read_bytes(), javascript: javascript.read_bytes()}
+    activity = FRAME / "app/src/main/kotlin/com/wyattfleming/frameos/MainActivity.kt"
+    require(activity)
+    originals = {
+        state: state.read_bytes(),
+        surface: surface.read_bytes(),
+        javascript: javascript.read_bytes(),
+        activity: activity.read_bytes(),
+    }
     proof = {
         "passed": False,
         "runner": str(Path(__file__).relative_to(ROOT)),
@@ -204,6 +272,12 @@ def main() -> int:
             "if (!hasCurrentPhotoObservation()) {",
             "if (false) {",
             "render readiness requires both a successful stop and contentful paint", proof,
+        )
+        kotlin_proof(
+            "main-activity-ready-hook", activity, originals[activity],
+            "webSurface?.onCurrentPhotoObserved(photo)",
+            "Unit",
+            "only a current visible photo observation can satisfy web readiness", proof,
         )
         js_proof(javascript, originals[javascript], proof)
         if proof["test_sha256"] != {str(path.relative_to(ROOT)): sha256(path) for path in test_paths}:
