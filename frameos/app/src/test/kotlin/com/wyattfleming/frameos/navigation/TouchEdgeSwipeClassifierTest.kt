@@ -84,6 +84,29 @@ class TouchEdgeSwipeClassifierTest {
     }
 
     @Test
+    fun `directional slop boundary drift recovers on both edges`() {
+        val leftOutward = classifier()
+        leftOutward.onDown(x = 10f, y = 500f, width = screenWidth, edgeStartPx = 24f)
+        assertNull(leftOutward.onMove(x = -2f, y = 500f))
+        assertEquals(ModeGestureDirection.PREVIOUS, leftOutward.onMove(x = 106f, y = 500f))
+
+        val leftVertical = classifier()
+        leftVertical.onDown(x = 10f, y = 500f, width = screenWidth, edgeStartPx = 24f)
+        assertNull(leftVertical.onMove(x = 10f, y = 512f))
+        assertEquals(ModeGestureDirection.PREVIOUS, leftVertical.onMove(x = 106f, y = 500f))
+
+        val rightOutward = classifier()
+        rightOutward.onDown(x = 990f, y = 500f, width = screenWidth, edgeStartPx = 24f)
+        assertNull(rightOutward.onMove(x = 1_002f, y = 500f))
+        assertEquals(ModeGestureDirection.NEXT, rightOutward.onMove(x = 894f, y = 500f))
+
+        val rightVertical = classifier()
+        rightVertical.onDown(x = 990f, y = 500f, width = screenWidth, edgeStartPx = 24f)
+        assertNull(rightVertical.onMove(x = 990f, y = 512f))
+        assertEquals(ModeGestureDirection.NEXT, rightVertical.onMove(x = 894f, y = 500f))
+    }
+
+    @Test
     fun `deliberate outward and vertical motion reject after directional slop`() {
         val outward = classifier()
         outward.onDown(x = 10f, y = 500f, width = screenWidth, edgeStartPx = 24f)
