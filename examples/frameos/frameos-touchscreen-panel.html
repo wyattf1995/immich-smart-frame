@@ -447,6 +447,32 @@
           scheduleShadowProbe(state);
         };
 
+        const hasActiveHaNavigationGuard = (root) => root.querySelector?.(
+          "ha-dialog[open],ha-dialog:not([hidden]),ha-more-info-dialog[open],ha-more-info-dialog:not([hidden]),[data-unsaved-changes='true'],[data-dirty='true']",
+        );
+
+        const trySpaNavigation = (view) => {
+          try {
+            const childWindow = panel.contentWindow;
+            const root = panel.contentDocument;
+            if (!childWindow || childWindow !== spaWindow || !root) return false;
+            if (childWindow.location.origin !== window.location.origin || isAuthenticationRoute()) return false;
+            const sourceView = iframeView();
+            if (!sourceView || !validView(view) || hasActiveHaNavigationGuard(root)) return false;
+            const hass = root.querySelector?.("home-assistant")?.hass;
+            if (!hass?.states || hass.connected === false || hass.connection?.connected === false) return false;
+            const sourcePath = `${childWindow.location.pathname}${childWindow.location.search}`;
+            const target = routeFor(view);
+            childWindow.history.pushState({ from: sourcePath }, "", target);
+            const event = new childWindow.Event("location-changed", { bubbles: true, composed: true });
+            event.detail = { replace: false };
+            childWindow.dispatchEvent(event);
+            return true;
+          } catch (_error) {
+            return false;
+          }
+        };
+
         const navigate = (rawView) => {
           const view = normalizeView(rawView);
           if (location.hash !== `#${view}`) history.replaceState(null, "", `${location.pathname}${location.search}#${view}`);
@@ -455,6 +481,7 @@
           disposeRouteWork();
           if (view !== "home") disposeHomeStyles();
           showLoading(view);
+          if (trySpaNavigation(view)) return;
           panel.src = routeFor(view);
         };
 
