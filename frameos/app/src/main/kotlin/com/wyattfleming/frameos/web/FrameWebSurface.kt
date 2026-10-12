@@ -483,7 +483,10 @@ class FrameWebSurface(
     }
 
     fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean) {
-        if (slot != FrameWebSlot.PHOTOS) photosContentActive = false
+        if (slot != FrameWebSlot.PHOTOS) {
+            photosContentActive = false
+            photoBridge?.setCaptureEnabled(false, true)
+        }
         if (displayedSlot != null && displayedSlot != slot) {
             displayedManagedSession()?.stopWatchingDisplayedContent()
         }
