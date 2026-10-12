@@ -45,7 +45,9 @@ def copy_and_assert_junit(label: str, expected_failures: int) -> str:
     if expected_failures:
         for failure in failures:
             detail = (failure.get("message") or "") + (failure.text or "")
-            assert "GeckoBundle" in detail, detail
+            assert failure.get("type") == "java.lang.AssertionError", detail
+            assert "expected:<class org.mozilla.gecko.util.GeckoBundle>" in detail, detail
+            assert "but was:<class org.json.JSONObject>" in detail, detail
     return copied.name
 
 def run(label: str, expected_failures: int) -> tuple[int, str, str]:
