@@ -3,6 +3,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const source = fs.readFileSync(new URL("../../examples/frameos/frameos-custom-home.js", import.meta.url), "utf8");
+const css = fs.readFileSync(new URL("../../examples/frameos/frameos-custom-home.css", import.meta.url), "utf8");
 const timers = [];
 const context = { window: {} };
 context.window.window = context.window;
@@ -51,6 +52,7 @@ assert.match(source, /fch-forecast/, "the Home weather area has a compact foreca
 assert.match(source, /safe\(eventLabel\(event,/, "calendar rows render the date-aware event label");
 assert.match(source, /forecast, forecastUnit, forecastStatus/, "a forecast unit-only change repaints the compact forecast");
 assert.match(source, /calendarDateKey:now\.date/, "calendar labels refresh at the local day boundary");
+assert.match(css, /\.fch-event time\{min-width:160px;white-space:nowrap/, "calendar date-and-time labels have a non-wrapping, legible column");
 assert.match(source, /Weather unavailable/, "missing weather is shown honestly rather than fabricated");
 assert.doesNotMatch(source, /fetch\(/, "the custom view never fetches or handles credentials");
 assert.doesNotMatch(source, /localStorage|sessionStorage|document\.cookie/, "the custom view never reads browser identity data");
