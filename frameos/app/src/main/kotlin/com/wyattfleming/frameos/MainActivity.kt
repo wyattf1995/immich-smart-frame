@@ -43,6 +43,7 @@ import com.wyattfleming.frameos.navigation.FrameState
 import com.wyattfleming.frameos.navigation.FrameStartupPolicy
 import com.wyattfleming.frameos.navigation.ModeGestureBurst
 import com.wyattfleming.frameos.navigation.ModeGestureDirection
+import com.wyattfleming.frameos.navigation.TouchMediaNavigation
 import com.wyattfleming.frameos.navigation.PhysicalInputMapper
 import com.wyattfleming.frameos.navigation.VolumeButton
 import com.wyattfleming.frameos.navigation.VolumeInputEffect
@@ -147,6 +148,9 @@ class MainActivity : Activity() {
     private lateinit var webRecoveryLabel: TextView
     private var touchDashboard: TouchDashboardView? = null
     private var touchRail: TouchNavigationRail? = null
+    private val touchMediaNavigation = TouchMediaNavigation()
+    private val insetContentViews = mutableListOf<View>()
+    private var dismissTouchMenu: View? = null
     private lateinit var touchscreenStore: FrameTouchscreenSettingsStore
     private var touchscreenSettings = FrameTouchscreenSettings()
     private val touchDashboardEnabled: Boolean
@@ -651,7 +655,16 @@ class MainActivity : Activity() {
 
     private fun buildUi() {
         root = FrameTouchInputLayout(this, onModeGesture = { direction, eventTimeMillis ->
-            queueModeGesture(direction, eventTimeMillis, repeatCount = 0)
+            if (touchMediaNavigation.immersiveMedia) {
+                cancelModeGesture()
+                touchMediaNavigation.revealMenu()
+                updateTouchNavigation()
+                scheduleIdleReset()
+            } else {
+                queueModeGesture(direction, eventTimeMillis, repeatCount = 0)
+            }
+        }, shouldRoute = { direction ->
+            oauthSurface == null && touchMediaNavigation.acceptsEdgeSwipe(direction)
         }).apply {
             setBackgroundColor(getColor(R.color.frame_dark))
             isFocusable = true
@@ -678,10 +691,14 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.BLACK)
             contentDescription = "Recent photo while Photos reconnects"
         }
-        val fullScreenLayout = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT,
-        ).apply { if (touchDashboardEnabled && configuration != null) leftMargin = dp(88) }
+        insetContentViews.clear()
+        fun addContentView(view: View) {
+            insetContentViews.add(view)
+            root.addView(view, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+        }
         val activeConfiguration = configuration
         if (activeConfiguration != null) {
             val runtime = (application as FrameOsApplication).geckoRuntime
@@ -757,12 +774,12 @@ class MainActivity : Activity() {
                 deactivateHiddenHomeAssistant = experienceSettings.deactivateHiddenHomeAssistant,
                 detachHiddenHomeAssistant = touchscreenSettings.detachHiddenHome,
             )
-            root.addView(warmHomeAssistantView, fullScreenLayout)
-            root.addView(webSurface, fullScreenLayout)
-            root.addView(weatherContent, fullScreenLayout)
-            root.addView(offlinePhoto, fullScreenLayout)
+            addContentView(warmHomeAssistantView)
+            addContentView(requireNotNull(webSurface))
+            addContentView(weatherContent)
+            addContentView(requireNotNull(offlinePhoto))
         } else {
-            root.addView(buildConfigurationView(), fullScreenLayout)
+            addContentView(buildConfigurationView())
         }
         touchDashboard = null
         touchRail = null
@@ -774,7 +791,10 @@ class MainActivity : Activity() {
                 it.setModes(availableModes())
                 it.updateTime(ZonedDateTime.now())
                 it.setPhotoPreview(dashboardBitmap)
-                root.addView(it, fullScreenLayout)
+                root.addView(it, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ).apply { leftMargin = dp(88) })
             }
             touchRail = TouchNavigationRail(this,
                 onDashboard = { showDashboard() },
@@ -805,9 +825,39 @@ class MainActivity : Activity() {
             },
         )
         webRecovery = buildWebRecoveryView()
-        root.addView(webRecovery, fullScreenLayout)
+        addContentView(webRecovery)
+        dismissTouchMenu = View(this).apply {
+            visibility = View.GONE
+            contentDescription = "Close navigation menu"
+            setOnClickListener {
+                touchMediaNavigation.dismissMenu()
+                updateTouchNavigation()
+                scheduleIdleReset()
+            }
+        }.also {
+            root.addView(it, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+        }
+        touchRail?.bringToFront()
+        updateTouchNavigation()
         setContentView(root)
         root.requestFocus()
+    }
+
+    private fun updateTouchNavigation() {
+        touchMediaNavigation.setScreen(touchDashboardEnabled && configuration != null, dashboardVisible, state.mode)
+        val inset = if (touchMediaNavigation.contentHasRailInset) dp(88) else 0
+        insetContentViews.forEach { view ->
+            val params = view.layoutParams as FrameLayout.LayoutParams
+            if (params.leftMargin != inset) {
+                params.leftMargin = inset
+                view.layoutParams = params
+            }
+        }
+        dismissTouchMenu?.visibility = if (touchMediaNavigation.dismissLayerVisible) View.VISIBLE else View.GONE
+        touchRail?.visibility = if (touchMediaNavigation.railVisible) View.VISIBLE else View.GONE
     }
 
     private fun buildModeHud(): LinearLayout {
@@ -991,6 +1041,7 @@ class MainActivity : Activity() {
     }
 
     private fun render(next: FrameState, announce: Boolean) {
+        updateTouchNavigation()
         touchDashboard?.visibility = if (dashboardVisible) View.VISIBLE else View.GONE
         touchRail?.setSelection(if (dashboardVisible) null else next.mode)
         if (dashboardVisible && touchDashboard != null) {
@@ -1164,6 +1215,7 @@ class MainActivity : Activity() {
     }
 
     private fun showMode(mode: FrameMode, announceHud: Boolean = true) {
+        touchMediaNavigation.dismissMenu()
         closeWeatherAuthorization(consumeState = true)
         cancelModeGesture()
         dashboardVisible = false
@@ -1190,6 +1242,7 @@ class MainActivity : Activity() {
 
     private fun showDashboard() {
         if (!touchDashboardEnabled || configuration == null) return
+        touchMediaNavigation.dismissMenu()
         closeWeatherAuthorization(consumeState = true)
         cancelModeGesture()
         dashboardVisible = true
@@ -1201,7 +1254,7 @@ class MainActivity : Activity() {
     private fun showDashboardSettings() {
         AlertDialog.Builder(this)
             .setTitle("Your frame")
-            .setMessage("Appearance follows the time of day.\n\nLight: 7 AM–7 PM\nDark: 7 PM–7 AM\n\nUse Today to return to your dashboard from any view.")
+            .setMessage("Appearance follows the time of day.\n\nLight: 7 AM–7 PM\nDark: 7 PM–7 AM\n\nPhotos and Art fill the screen. Swipe inward from the left edge to open the menu, then tap Today to return here.")
             .setPositiveButton("Done", null)
             .setNeutralButton("Wi-Fi settings") { _, _ ->
                 runCatching { startActivity(Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)) }

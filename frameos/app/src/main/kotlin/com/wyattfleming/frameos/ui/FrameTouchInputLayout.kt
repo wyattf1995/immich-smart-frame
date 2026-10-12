@@ -12,26 +12,29 @@ import com.wyattfleming.frameos.navigation.TouchModeNavigationRoute
 import com.wyattfleming.frameos.navigation.TouchModeNavigationRouter
 
 /**
- * Gives a physical touchscreen an edge-only mode switch without taking normal
+ * Gives a physical touchscreen an edge-only navigation action without taking normal
  * web content taps, scrolling, or center-originated gestures from its child.
  */
 internal class FrameTouchInputLayout private constructor(
     context: Context,
     attrs: AttributeSet?,
     private val onModeGesture: (ModeGestureDirection, Long) -> Unit,
+    private val shouldRoute: (ModeGestureDirection) -> Boolean,
 ) : FrameLayout(context, attrs) {
-    constructor(context: Context) : this(context, null, { _, _ -> })
+    constructor(context: Context) : this(context, null, { _, _ -> }, { true })
 
-    constructor(context: Context, attrs: AttributeSet?) : this(context, attrs, { _, _ -> })
+    constructor(context: Context, attrs: AttributeSet?) : this(context, attrs, { _, _ -> }, { true })
 
     constructor(
         context: Context,
         onModeGesture: (ModeGestureDirection, Long) -> Unit,
-    ) : this(context, null, onModeGesture)
+        shouldRoute: (ModeGestureDirection) -> Boolean = { true },
+    ) : this(context, null, onModeGesture, shouldRoute)
 
     private val router = TouchModeNavigationRouter(
         edgeStartPx = context.dp(EDGE_START_DP).toFloat(),
         minimumTravelPx = context.dp(MINIMUM_TRAVEL_DP).toFloat(),
+        shouldRoute = { shouldRoute(it) },
     )
     private var consumeCurrentEvent = false
 
