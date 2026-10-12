@@ -1189,7 +1189,7 @@ class MainActivity : Activity() {
         }
         touchDashboard?.setWeather(
             summary = summary ?: presentation?.emptyMessage,
-            detail = if (summary != null) presentation.status.takeIf { it.isNotBlank() } ?: "Current conditions"
+            detail = if (summary != null) presentation?.status?.takeIf { it.isNotBlank() } ?: "Current conditions"
                 else "Tap Weather to connect or refresh",
         )
     }
