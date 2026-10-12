@@ -197,6 +197,16 @@
           observeHomeStyleRoot(root, work);
         };
         const disposeHomeStyles = () => { removeHomeStyles(); setHomeChrome(null); };
+        const isAuthenticationRoute = () => {
+          try { return /^\/auth(?:\/|$)/.test(panel.contentWindow.location.pathname); } catch (_error) { return false; }
+        };
+        const showSignInRequired = () => {
+          disposeRouteWork();
+          disposeHomeStyles();
+          loading.hidden = true;
+          announce("Sign-in required");
+          focusPanel();
+        };
 
         const textFor = (element) => [element.heading, element.getAttribute?.("heading"), element.textContent, element.shadowRoot?.textContent].filter((value) => typeof value === "string").join(" ").toLowerCase();
         const applyHeadingContrast = (element, state) => {
@@ -341,6 +351,7 @@
           if (!childWindow) return;
           if (detachSpaNavigation) detachSpaNavigation();
           const onNavigation = () => {
+            if (isAuthenticationRoute()) { showSignInRequired(); return; }
             const view = iframeView() || currentView;
             if (!view) return;
             showLoading(view);
@@ -359,19 +370,7 @@
           attachSpaNavigationWatcher();
           const loadedView = iframeView();
           if (!loadedView) {
-            try {
-              const path = panel.contentWindow.location.pathname;
-              if (/^\/auth(?:\/|$)/.test(path)) {
-                disposeRouteWork();
-                disposeHomeStyles();
-                loading.hidden = true;
-                announce("Sign-in required");
-                focusPanel();
-                return;
-              }
-            } catch (_error) {
-              // A same-origin authentication page remains usable without readiness inspection.
-            }
+            if (isAuthenticationRoute()) { showSignInRequired(); return; }
           }
           if (currentView) observeReadiness(loadedView || currentView);
         });
