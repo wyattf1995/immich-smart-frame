@@ -15,7 +15,7 @@ class TouchNavigationRail private constructor(
     context: Context,
     attrs: AttributeSet?,
     defStyleAttr: Int,
-    private val onDashboard: () -> Unit,
+    private val onOpenSettings: () -> Unit,
     private val onOpenMode: (FrameMode) -> Unit,
 ) : LinearLayout(context, attrs, defStyleAttr) {
     constructor(context: Context) : this(context, null, 0, {}, {})
@@ -27,9 +27,9 @@ class TouchNavigationRail private constructor(
 
     constructor(
         context: Context,
-        onDashboard: () -> Unit,
+        onOpenSettings: () -> Unit,
         onOpenMode: (FrameMode) -> Unit,
-    ) : this(context, null, 0, onDashboard, onOpenMode)
+    ) : this(context, null, 0, onOpenSettings, onOpenMode)
 
     private var style = TouchDashboardStyle.forHour(12)
     private var selected: FrameMode? = null
@@ -49,8 +49,18 @@ class TouchNavigationRail private constructor(
         layoutParams = LayoutParams(context.dp(88), LayoutParams.MATCH_PARENT)
         rebuild()
     }
-    fun setModes(modes: List<FrameMode>) { this.modes = modes.distinct(); rebuild() }
-    fun setSelection(mode: FrameMode?) { selected = mode; rebuild() }
+    fun setModes(modes: List<FrameMode>) {
+        val next = modes.distinct()
+        if (this.modes == next) return
+        this.modes = next
+        rebuild()
+    }
+
+    fun setSelection(mode: FrameMode?) {
+        if (selected == mode) return
+        selected = mode
+        rebuild()
+    }
     fun updateTime(now: ZonedDateTime) {
         val next = TouchDashboardStyle.forHour(now.hour)
         if (next != style) { style = next; rebuild() }
@@ -58,8 +68,8 @@ class TouchNavigationRail private constructor(
     private fun rebuild() {
         removeAllViews(); items.removeAllViews(); setBackgroundColor(style.background)
         addView(scroller, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
-        items.addView(item(null, "Today", selected == null) { onDashboard() })
         modes.forEach { mode -> items.addView(item(mode, mode.label, selected == mode) { onOpenMode(mode) }) }
+        items.addView(item(null, "Settings", false) { onOpenSettings() })
     }
     private fun item(mode: FrameMode?, label: String, active: Boolean, action: () -> Unit): View =
         LinearLayout(context).apply {

@@ -16,7 +16,7 @@ class FrameReducer(
             FrameTransition(state)
         } else {
             state
-                .copy(mode = FrameMode.PHOTOS, photosPaused = false)
+                .copy(mode = FrameMode.HOME, photosPaused = false)
                 .announceMode()
         }
         FrameIntent.PrimaryAction -> state.primaryAction()
