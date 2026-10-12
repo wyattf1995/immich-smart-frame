@@ -48,8 +48,8 @@ assert.equal(sanitized.days[0].templow, null, "missing temperatures do not coerc
 assert.match(sanitized.days[2].datetime, /^2026-10-1[45]$/, "Home Assistant ISO timestamps become a bounded local calendar day");
 assert.equal(api.__test.sanitize(payload(), "kelvin", now), null, "unsupported temperature units are unavailable");
 
-let recursiveCalls = 0; let recursive;
-recursive = api.create({ readForecast: () => { recursiveCalls += 1; return Promise.resolve(payload()); }, temperatureUnit: () => "°F", now: () => now, timers: context.window, onUpdate: () => recursive.refreshIfNeeded() });
+let recursiveCalls = 0; let recursive, reentered = false;
+recursive = api.create({ readForecast: () => { recursiveCalls += 1; return Promise.resolve(payload()); }, temperatureUnit: () => "°F", now: () => now, timers: context.window, onUpdate: () => { if (!reentered) { reentered = true; recursive.refreshIfNeeded(); } } });
 recursive.setActive(true); await flush();
 assert.equal(recursiveCalls, 1, "a synchronous renderer refresh cannot recurse before the request is fenced");
 recursive.destroy();
