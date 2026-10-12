@@ -12,6 +12,10 @@ class FrameModeAvailability(
                 (it != FrameMode.ART || !artUrl.isNullOrBlank())
         }
         ?.takeIf { it.isNotEmpty() }
+        ?.let { modes ->
+            if (artUrl.isNullOrBlank() || FrameMode.ART in modes) modes
+            else modes.toMutableList().apply { add(indexOf(FrameMode.PHOTOS) + 1, FrameMode.ART) }
+        }
         ?: FrameMode.cycleModes(
             birdsConfigured = !birdsUrl.isNullOrBlank(),
             artConfigured = !artUrl.isNullOrBlank(),
