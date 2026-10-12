@@ -32,6 +32,21 @@ without Weather.
 
 ## Verification boundary
 
+With the touchscreen dashboard enabled, Today and ordinary function views keep
+their navigation rail visible. Photos and Art use the full viewport. A deliberate
+one-finger swipe inward from the left edge reveals an overlay menu; tapping
+outside it closes it, and Today returns to the dashboard. The overlay does not
+resize the media. Center gestures remain with the content, while touchscreen
+edge swipes no longer cycle views in this dashboard configuration. Hardware
+gesture navigation on the original Lenovo configuration is unchanged.
+
+Art keeps the entire painting visible, with a blurred copy behind it filling
+space left by the image's aspect ratio. Only the backdrop is cropped. Update the
+Art page URL's version query when publishing changed assets; stylesheet and
+script queries are also versioned so no authentication or Photos cache needs
+clearing. Actual-frame fullscreen and overlay acceptance remains a deployment
+check in addition to the regression suite.
+
 The protected receiver, direct `show` commands for the original five
 destinations, the forward/reverse cycle, warm Home Assistant routing, native
 Weather UI, and foreground recovery were exercised on a mounted Lenovo
