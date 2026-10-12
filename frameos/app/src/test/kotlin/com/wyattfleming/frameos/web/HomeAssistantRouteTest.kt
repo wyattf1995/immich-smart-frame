@@ -18,6 +18,39 @@ class HomeAssistantRouteTest {
     }
 
     @Test
+    fun `reserved touchscreen route selects its dedicated wrapper and cache version`() {
+        assertEquals(
+            "https://home-assistant.example.invalid:8443/local/frameos-touchscreen-panel.html?v=touchscreen-1",
+            HomeAssistantRoute.wrapperBaseUrl(
+                homeAssistantUrl = "https://home-assistant.example.invalid:8443/frameos-touchscreen",
+                version = "frameos-1",
+            ),
+        )
+    }
+
+    @Test
+    fun `reserved touchscreen route accepts its trailing slash`() {
+        assertEquals(
+            "https://home-assistant.example.invalid/local/frameos-touchscreen-panel.html?v=touchscreen-1",
+            HomeAssistantRoute.wrapperBaseUrl(
+                homeAssistantUrl = "https://home-assistant.example.invalid/frameos-touchscreen/",
+                version = "frameos-1",
+            ),
+        )
+    }
+
+    @Test
+    fun `other Home Assistant paths retain the normal wrapper and caller cache version`() {
+        assertEquals(
+            "https://home-assistant.example.invalid:8443/local/frameos-panel.html?v=frameos-7",
+            HomeAssistantRoute.wrapperBaseUrl(
+                homeAssistantUrl = "https://home-assistant.example.invalid:8443/frameos-touchscreen-preview",
+                version = "frameos-7",
+            ),
+        )
+    }
+
+    @Test
     fun `embedded HA modes use same document fragments so the wrapper stays warm`() {
         val base = "https://home-assistant.example.invalid/local/frameos-panel.html?v=1"
 
