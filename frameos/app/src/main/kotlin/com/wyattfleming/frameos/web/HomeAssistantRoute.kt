@@ -37,6 +37,6 @@ object HomeAssistantRoute {
     private const val WRAPPER_PATH = "/local/frameos-panel.html"
     private const val TOUCHSCREEN_ROUTE = "/frameos-touchscreen"
     private const val TOUCHSCREEN_WRAPPER_PATH = "/local/frameos-touchscreen-panel.html"
-    private const val TOUCHSCREEN_WRAPPER_VERSION = "d8e1eca9cb54"
+    private const val TOUCHSCREEN_WRAPPER_VERSION = "96250b57dc7f"
     private val VERSION_PATTERN = Regex("[A-Za-z0-9._-]+")
 }
