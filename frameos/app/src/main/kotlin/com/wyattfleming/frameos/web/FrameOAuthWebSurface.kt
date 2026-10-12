@@ -23,8 +23,8 @@ import org.mozilla.geckoview.GeckoView
 @SuppressLint("ViewConstructor")
 class FrameOAuthWebSurface(
     context: Context,
-    runtime: GeckoRuntime,
-    authorizationUrl: String,
+    private val runtime: GeckoRuntime,
+    private val authorizationUrl: String,
     configuredHomeAssistantUrl: String,
     private val onCallback: (String) -> Unit,
     private val onFailure: () -> Unit,
@@ -40,6 +40,7 @@ class FrameOAuthWebSurface(
         },
     )
     private var closed = false
+    private var started = false
     private var callbackDelivered = false
     private var failureDelivered = false
     private val timeout = Runnable { failAndClose() }
@@ -94,6 +95,12 @@ class FrameOAuthWebSurface(
             override fun onCrash(session: GeckoSession) = failAndClose()
             override fun onKill(session: GeckoSession) = failAndClose()
         }
+    }
+
+    /** Starts this retained surface after its caller has attached it to the view hierarchy. */
+    fun start() {
+        if (started || closed) return
+        started = true
         try {
             oauthSession.open(runtime)
             oauthSession.setActive(true)
