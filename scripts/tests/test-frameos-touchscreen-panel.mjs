@@ -181,6 +181,15 @@ panelListeners.get("load")();
 assert.equal(homeChrome.hidden, true, "an authentication load removes the Home-only header");
 assert.ok(!panel.classList.classes.has("home-layout"), "an authentication load restores full-frame iframe geometry");
 assert.equal(pendingHomeProbe.cleared, true, "authentication cleanup cancels a pending Home shadow probe");
+childListeners.get("location-changed")();
+childListeners.get("popstate")();
+assert.equal(homeChrome.hidden, true, "authentication SPA navigation never restores the Home header");
+assert.ok(!panel.classList.classes.has("home-layout"), "authentication SPA navigation never restores Home iframe geometry");
+assert.ok(homeStyleObserver.disconnected, "authentication SPA navigation keeps Home shadow observers disposed");
+childWindow.location.pathname = "/frameos-touchscreen/home";
+childListeners.get("location-changed")();
+assert.equal(homeChrome.hidden, false, "a valid Home route resumes the Home header after sign-in");
+assert.ok(panel.classList.classes.has("home-layout"), "a valid Home route resumes reserved Home iframe geometry after sign-in");
 
 const oldObservers = observers.slice();
 const cameraCard = makeElement("hui-picture-entity-card");
