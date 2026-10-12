@@ -53,7 +53,9 @@ def copy_and_assert_junit(label: str, expected_failures: int) -> str:
         for failure in failures:
             detail = (failure.get("message") or "") + (failure.text or "")
             assert failure.get("type") == "org.junit.ComparisonFailure", detail
-            assert "frameos-touchscreen-panel.html" in detail, detail
+            # ComparisonFailure brackets only the differing substring, so join
+            # its display form before checking the complete expected route.
+            assert "frameos-touchscreen-panel.html" in detail.replace("[", "").replace("]", ""), detail
     return copied.name
 
 
