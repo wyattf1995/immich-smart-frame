@@ -46,41 +46,61 @@ def run(label: str, failures: int, names: set[str]) -> dict:
     assert len(cases) == 8, len(cases)
     assert len(failed) == failures, failed
     assert failed == names, failed
-    assert not errors, errors
-    return {"exit": result.returncode, "log": log.name, "junit_xml": xml.name}
+    skipped = [item for case in cases for item in case.findall("skipped")]
+    assert not errors and not skipped, (errors, skipped)
+    for case in cases:
+        failure = case.find("failure")
+        if failure is not None:
+            assert failure.get("type") in {"java.lang.AssertionError", "org.junit.ComparisonFailure"}, failure.attrib
+    return {"exit": result.returncode, "log": log.name, "junit_xml": xml.name,
+            "tests": len(cases), "failures": len(failed), "errors": 0, "skipped": 0,
+            "failed_cases": sorted(failed)}
 
 original = source.read_bytes()
 source_hash = digest(source)
 test_hash = digest(test)
 proofs = []
 
-def mutation(label: str, before: str, after: str, failed_name: str) -> None:
+def mutation(label: str, before: str, after: str, failed_names: set[str]) -> None:
     text = original.decode()
     assert text.count(before) == 1 and after not in text
     try:
         source.write_text(text.replace(before, after), encoding="utf-8")
-        result = run(label + "-source-red", 1, {failed_name})
+        result = run(label + "-source-red", len(failed_names), failed_names)
         assert result["exit"] != 0
-        proofs.append({"label": label, "negative_assertion_failures": 1, "negative_tests": 8, **result})
+        proofs.append({"label": label, "negative_assertion_failures": len(failed_names), "negative_tests": 8, **result})
     finally:
         source.write_bytes(original)
         assert digest(source) == source_hash
 
-mutation(
-    "legacy-tls-api23-gate",
-    "sdkInt == Build.VERSION_CODES.M",
-    # A literal false makes Kotlin discard the following HTTPS smart cast,
-    # causing a compiler error instead of exercising the guarding JUnit test.
-    # Keep a runtime predicate that rejects all SDKs covered by the test.
-    "sdkInt == -1",
-    "legacy socket factory is applied only to app scoped pre26 HTTPS connections",
+mutations = (
+    (
+        "legacy-tls-api23-gate",
+        "sdkInt == Build.VERSION_CODES.M",
+        # Preserve the HTTPS smart cast while rejecting the tested SDK.
+        "sdkInt == -1",
+        {"legacy socket factory is applied only to app scoped pre26 HTTPS connections"},
+    ),
+    (
+        "legacy-tls-supplemental-fallback",
+        "supplemental.checkServerTrusted(chain, authType)",
+        # Omitting only the supplemental validator must fail both the call
+        # requirement and the rejected-chain guard through JUnit assertions.
+        # Repeating the platform call instead throws a certificate exception
+        # and is not an assertion proof of these two requirements.
+        "Unit /* source-only negative: omit supplemental validation */",
+        {
+            "supplemental root is used only after platform rejects the chain",
+            "a chain rejected by both trust managers stays rejected",
+        },
+    ),
 )
-mutation(
-    "legacy-tls-supplemental-fallback",
-    "supplemental.checkServerTrusted(chain, authType)",
-    "platform.checkServerTrusted(chain, authType)",
-    "supplemental root is used only after platform rejects the chain",
-)
+# Validate every marker before paying for a Gradle invocation. Replacement text
+# must be absent, but a different existing platform delegation is legitimate.
+for label, before, after, names in mutations:
+    assert original.decode().count(before) == 1 and after not in original.decode(), label
+for args in mutations:
+    mutation(*args)
 green = run("legacy-tls-restored-green", 0, set())
 assert green["exit"] == 0
 assert digest(source) == source_hash
