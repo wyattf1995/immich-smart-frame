@@ -248,6 +248,84 @@ class FrameWebSurfaceContractTest {
     }
 
     @Test
+    fun `opt in hidden Home detachment releases the warm renderer and blocks background preload`() {
+        val source = source()
+        val preload = methodBody(source, "fun preload(slot: FrameWebSlot, url: String)")
+        val show = methodBody(source, "fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean)")
+        val hide = methodBody(source, "fun hide()")
+        val detach = methodBody(source, "private fun detachWarmHomeWhenRequired(slot: FrameWebSlot?)")
+
+        assertTrue(source.contains("private val detachHiddenHomeAssistant: Boolean = false"))
+        assertContainsInOrder(
+            preload,
+            listOf(
+                "require(slot.canPreload)",
+                "if (!homeAttachmentPolicy.allowsBackgroundPreload(slot)) return",
+                "ensureWarmHomeAttached(managed)",
+            ),
+        )
+        assertContainsInOrder(
+            show,
+            listOf(
+                "} else {",
+                "detachWarmHomeWhenRequired(slot)",
+                "attachForeground(slot, managed)",
+            ),
+        )
+        assertTrue(hide.contains("detachWarmHomeWhenRequired(slot = null)"))
+        assertContainsInOrder(
+            detach,
+            listOf(
+                "releaseWarmHomeAttachedSession()",
+                "homeAssistantSession?.setActive(false)",
+            ),
+        )
+    }
+
+    @Test
+    fun `opt in releases foreground before attaching Home and preserves the default warm path`() {
+        val show = methodBody(source(), "fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean)")
+
+        assertTrue("The default must retain the established warm attachment behavior", show.contains(
+            "if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()",
+        ))
+        assertContainsInOrder(
+            show,
+            listOf(
+                "if (slot == FrameWebSlot.HOME_ASSISTANT) {",
+                "if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()",
+                "ensureWarmHomeAttached(managed)",
+            ),
+        )
+    }
+
+    @Test
+    fun `opt in hide releases both Home and foreground renderer bindings`() {
+        val source = source()
+        val hide = methodBody(source, "fun hide()")
+        val detach = methodBody(source, "private fun detachWarmHomeWhenRequired(slot: FrameWebSlot?)")
+
+        assertTrue("The established default must not release a retained foreground binding", hide.contains(
+            "if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()",
+        ))
+        assertContainsInOrder(
+            hide,
+            listOf(
+                "detachWarmHomeWhenRequired(slot = null)",
+                "if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()",
+                "displayedSlot = null",
+            ),
+        )
+        assertContainsInOrder(
+            detach,
+            listOf(
+                "releaseWarmHomeAttachedSession()",
+                "homeAssistantSession?.setActive(false)",
+            ),
+        )
+    }
+
+    @Test
     fun `suspendAllContent cancels recovery callbacks before suspending sessions without evicting warm home`() {
         val suspendAllContent = methodBody(source(), "fun suspendAllContent()")
 
@@ -293,6 +371,28 @@ class FrameWebSurfaceContractTest {
                 "post(close)",
             ),
         )
+    }
+
+    @Test
+    fun `Art uses its own disposable session without Photos bridge ownership`() {
+        val source = source()
+        val disposeArtSession = methodBody(source, "private fun disposeArtSession()")
+
+        assertContainsInOrder(
+            disposeArtSession,
+            listOf(
+                "cancelRecovery(disposable)",
+                "disposable.prepareForDisposal()",
+                "if (foregroundSlot == FrameWebSlot.ART)",
+                "releaseForegroundAttachedSession()",
+                "val close = Runnable",
+                "disposable.close()",
+                "post(close)",
+            ),
+        )
+        assertTrue(source.contains("FrameWebSlot.ART -> artSession ?: ManagedSession("))
+        assertTrue(source.contains("configuredUrls = listOf(requireNotNull(artUrl))"))
+        assertFalse(source.contains("FrameWebSlot.ART -> photosSession"))
     }
 
     private fun source(): String {

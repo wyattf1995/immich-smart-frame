@@ -21,6 +21,11 @@ internal object FrameWebCompositionPolicy {
             retainHomeAssistantSurface = true,
             warmCalendarInBackground = true,
         )
+        FrameMode.ART -> FrameWebComposition(
+            foreground = FrameWebForeground.PRIMARY,
+            retainHomeAssistantSurface = true,
+            warmCalendarInBackground = false,
+        )
         FrameMode.HOME, FrameMode.CALENDAR -> FrameWebComposition(
             foreground = FrameWebForeground.HOME_ASSISTANT,
             retainHomeAssistantSurface = true,

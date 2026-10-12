@@ -20,7 +20,7 @@ class HomeAssistantRouteTest {
     @Test
     fun `reserved touchscreen route selects its dedicated wrapper and cache version`() {
         assertEquals(
-            "https://home-assistant.example.invalid:8443/local/frameos-touchscreen-panel.html?v=touchscreen-1",
+            "https://home-assistant.example.invalid:8443/local/frameos-touchscreen-panel.html?v=d9c1b399af73",
             HomeAssistantRoute.wrapperBaseUrl(
                 homeAssistantUrl = "https://home-assistant.example.invalid:8443/frameos-touchscreen",
                 version = "frameos-1",
@@ -31,7 +31,7 @@ class HomeAssistantRouteTest {
     @Test
     fun `reserved touchscreen route accepts its trailing slash`() {
         assertEquals(
-            "https://home-assistant.example.invalid/local/frameos-touchscreen-panel.html?v=touchscreen-1",
+            "https://home-assistant.example.invalid/local/frameos-touchscreen-panel.html?v=d9c1b399af73",
             HomeAssistantRoute.wrapperBaseUrl(
                 homeAssistantUrl = "https://home-assistant.example.invalid/frameos-touchscreen/",
                 version = "frameos-1",
@@ -67,6 +67,7 @@ class HomeAssistantRouteTest {
             HomeAssistantRoute.urlFor(base, FrameMode.CALENDAR),
         )
         assertNull(HomeAssistantRoute.urlFor(base, FrameMode.PHOTOS))
+        assertNull(HomeAssistantRoute.urlFor(base, FrameMode.ART))
         assertNull(HomeAssistantRoute.urlFor(base, FrameMode.WEATHER))
     }
 
