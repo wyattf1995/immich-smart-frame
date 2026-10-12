@@ -6,6 +6,7 @@ import android.graphics.Typeface
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -69,6 +70,7 @@ class TouchDashboardView(
     }
 
     private fun rebuild() {
+        detachReusableChildren()
         content.removeAllViews()
         setBackgroundColor(style.background)
         content.setPadding(context.dp(28), context.dp(20), context.dp(28), context.dp(24))
@@ -90,7 +92,7 @@ class TouchDashboardView(
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL; addView(time); addView(date)
         }, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-        addView(cardButton("Settings", null, { onOpenSettings() }),
+        addView(settingsButton(),
             LinearLayout.LayoutParams(context.dp(124), context.dp(56)))
     }
 
@@ -149,6 +151,30 @@ class TouchDashboardView(
                 detail?.let { addView(text(13f, false).apply { text = it }) }
             }, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         }
+
+    private fun settingsButton(): View = TextView(context).apply {
+        text = "Settings"
+        gravity = Gravity.CENTER
+        contentDescription = "Open Settings"
+        isClickable = true
+        isFocusable = true
+        minimumTouchTarget(context)
+        background = style.card(context.dp(22).toFloat())
+        setOnClickListener { onOpenSettings() }
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        typeface = Typeface.create("sans", Typeface.BOLD)
+    }
+
+    /**
+     * [content.removeAllViews] only detaches the immediate header/column views.
+     * These stateful children are nested inside them and must be removed from
+     * their old parents before a mode or palette rebuild reattaches them.
+     */
+    private fun detachReusableChildren() {
+        listOf(time, date, weatherSummary, weatherDetail, photo, photoEmpty).forEach { child ->
+            (child.parent as? ViewGroup)?.removeView(child)
+        }
+    }
 
     private fun text(size: Float, strong: Boolean): TextView = TextView(context).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, size)
