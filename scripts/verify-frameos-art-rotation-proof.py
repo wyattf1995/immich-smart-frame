@@ -42,6 +42,11 @@ mutations = (
         "Array.isArray(parsed.shownIds) || parsed.shownIds.length > MAX_ROTATION_SHOWN_IDS",
         "Array.isArray(parsed.shownIds)",
     ),
+    (
+        "serialized-id-bound",
+        "!id || JSON.stringify(id).length > MAX_SERIALIZED_ID_CHARS || seen.has(id)",
+        "!id || seen.has(id)",
+    ),
 )
 
 
@@ -77,7 +82,7 @@ if hashlib.sha256(test.read_bytes()).hexdigest() != test_hash:
     raise SystemExit("Art rotation test changed during source proof")
 (out / "art-rotation-source-proof.json").write_text(json.dumps({
     "passed": True,
-    "recipe": "successful display persistence plus bounded history, collection, and local-storage state",
+    "recipe": "successful display persistence plus bounded history, collection, escaped serialized IDs, and local-storage state",
     "command": ["node", str(test)],
     # Retain the original simple fields for existing receipt readers.
     "negative_exit": negative_runs["persistence"]["exit"],
@@ -89,4 +94,4 @@ if hashlib.sha256(test.read_bytes()).hexdigest() != test_hash:
     "restored_log": green_log,
     "bounded_negative_runs": negative_runs,
 }, indent=2) + "\n", encoding="utf-8")
-print("Art rotation proof: five source mutations red and exact restored source green")
+print("Art rotation proof: six source mutations red and exact restored source green")
