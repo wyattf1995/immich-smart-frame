@@ -3,6 +3,12 @@
   const CYCLE_MILLIS = 120_000;
   const EDGE_GUARD_PX = 36;
   const ROTATION_STATE_VERSION = 1;
+  // The collection is intentionally local and small. These caps keep a malformed
+  // collection or browser storage entry from growing gallery state without bound.
+  const MAX_ARTWORKS = 2048;
+  const MAX_HISTORY_ENTRIES = 200;
+  const MAX_ROTATION_STORAGE_BYTES = 256 * 1024;
+  const MAX_ROTATION_SHOWN_IDS = MAX_ARTWORKS;
   const ROTATION_STORAGE_PREFIX = "frameos-art-rotation-v1:";
   const IMAGE_PATH = /^images\/[a-f0-9]{64}\.jpg$/;
   const text = (value) => typeof value === "string" ? value.trim() : "";
@@ -13,7 +19,7 @@
   const validateCollection = (input) => {
     if (!input || typeof input !== "object" || input.version !== 1 || !Array.isArray(input.artworks)) return null;
     const title = text(input.title);
-    if (!title || input.artworks.length === 0) return null;
+    if (!title || input.artworks.length === 0 || input.artworks.length > MAX_ARTWORKS) return null;
     const seen = new Set();
     const artworks = [];
     for (const entry of input.artworks) {
@@ -71,8 +77,10 @@
     readRotation(collection) {
       if (!this.storage) return null;
       try {
-        const parsed = JSON.parse(this.storage.getItem(rotationStorageKey(collection)) || "null");
-        if (!parsed || typeof parsed !== "object" || parsed.version !== ROTATION_STATE_VERSION || !Array.isArray(parsed.shownIds)) return null;
+        const raw = this.storage.getItem(rotationStorageKey(collection));
+        if (typeof raw !== "string" || raw.length > MAX_ROTATION_STORAGE_BYTES) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object" || parsed.version !== ROTATION_STATE_VERSION || !Array.isArray(parsed.shownIds) || parsed.shownIds.length > MAX_ROTATION_SHOWN_IDS) return null;
         const allowed = new Set(collection.artworks.map(({ id }) => id)); const shown = [];
         for (const id of parsed.shownIds) { if (typeof id !== "string") return null; if (allowed.has(id) && !shown.includes(id)) shown.push(id); }
         const lastDisplayedId = typeof parsed.lastDisplayedId === "string" && allowed.has(parsed.lastDisplayedId) ? parsed.lastDisplayedId : null;
@@ -123,7 +131,9 @@
     }
     commitHistory(artwork, historyIndex) {
       if (historyIndex !== null) { this.historyIndex = historyIndex; return; }
-      this.history = this.history.slice(0, this.historyIndex + 1); this.history.push(artwork.id); this.historyIndex = this.history.length - 1;
+      this.history = this.history.slice(0, this.historyIndex + 1); this.history.push(artwork.id);
+      if (this.history.length > MAX_HISTORY_ENTRIES) this.history.splice(0, this.history.length - MAX_HISTORY_ENTRIES);
+      this.historyIndex = this.history.length - 1;
     }
     discardFailedHistory(id) {
       this.history = this.history.filter((entry) => entry !== id);
@@ -198,7 +208,7 @@
     }
     destroy() { this.destroyed = true; ++this.actionToken; this.stopAutoplay(); this.currentImage = null; this.nextImage = null; if (this.controlsTimer !== null) window.clearTimeout(this.controlsTimer); this.document.removeEventListener("visibilitychange", this.onVisibility); this.root.replaceChildren(); }
   }
-  const api = Object.freeze({ ArtGallery, validateCollection, shuffledIds, rotationStorageKey, CYCLE_MILLIS, EDGE_GUARD_PX });
+  const api = Object.freeze({ ArtGallery, validateCollection, shuffledIds, rotationStorageKey, CYCLE_MILLIS, EDGE_GUARD_PX, MAX_ARTWORKS, MAX_HISTORY_ENTRIES, MAX_ROTATION_STORAGE_BYTES });
   window.FrameOSArtGallery = api;
   document.addEventListener("DOMContentLoaded", () => { const root = document.getElementById("art-gallery"); if (root) new ArtGallery(root).start(); }, { once:true });
 })();
