@@ -52,6 +52,6 @@ custom Home and from the existing Lenovo wall panel.
 Run the custom Home model/interaction suite, wrapper integration lifecycle suite,
 existing wrapper tests and structure/privacy validator. Keep test changes separate
 from guarded source changes; retain source-only red/green evidence. Verify Home,
-auth routing, navigation, touch target sizes and no clipping on the actual QA
-frame (1280×800, Android 6), then check state/connection failure behavior before
+auth routing, navigation, touch target sizes and no clipping on the actual QA frame
+(1280×800, Android 6), then check state/connection failure behavior before
 bedroom rollout. Preserve authenticated camera playback and one-stream cleanup.

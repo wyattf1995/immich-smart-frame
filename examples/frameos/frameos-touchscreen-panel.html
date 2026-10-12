@@ -95,15 +95,51 @@
           // Never read credentials or create a second connection from this UI.
           const getHass = () => {
             if (panel.contentDocument !== root || iframeView() !== "home" || currentView !== "home") return null;
-            return root.querySelector?.("home-assistant")?.hass || null;
+            const live = root.querySelector?.("home-assistant")?.hass;
+            if (!live?.states || typeof live.callService !== "function") return null;
+            // Expose data needed by this view, not HA's auth/connection object.
+            const ids = ["climate.entryway_entryway", "weather.home", "calendar.family",
+              "calendar.wyattf1995_gmail_com", "calendar.birthdays", "calendar.holidays_in_united_states",
+              "camera.backyard_backyard_camera", "camera.dining_room_dining_room_camera",
+              "camera.garage_garage_camera", "camera.living_room_living_room_camera"];
+            const keys = ["friendly_name", "current_temperature", "current_humidity", "temperature",
+              "min_temp", "max_temp", "target_temp_step", "target_temp_low", "target_temp_high",
+              "hvac_modes", "hvac_action", "temperature_unit", "humidity", "message", "start_time", "end_time", "all_day"];
+            const states = {};
+            ids.forEach((id) => {
+              const entity = live.states[id];
+              if (!entity) return;
+              const attributes = {};
+              keys.forEach((key) => {
+                const value = entity.attributes?.[key];
+                if (["string", "number", "boolean"].includes(typeof value) || value === null) attributes[key] = value;
+                else if (key === "hvac_modes" && Array.isArray(value)) attributes[key] = Object.freeze(value.filter((item) => typeof item === "string"));
+              });
+              states[id] = Object.freeze({ entity_id: id, state: entity.state, attributes: Object.freeze(attributes) });
+            });
+            return Object.freeze({
+              states: Object.freeze(states),
+              connected: live.connected !== false && live.connection?.connected !== false,
+              config: Object.freeze({ unit_system: Object.freeze({ temperature: live.config?.unit_system?.temperature }) }),
+              callService: async (domain, service, data) => {
+                const fresh = root.querySelector?.("home-assistant")?.hass;
+                if (panel.contentDocument !== root || iframeView() !== "home" || currentView !== "home" || fresh?.connected === false || fresh?.connection?.connected === false) throw new Error("Connection unavailable");
+                if (domain !== "climate" || !["set_temperature", "set_hvac_mode"].includes(service) || data?.entity_id !== "climate.entryway_entryway") throw new Error("Unsupported Home action");
+                const allowed = service === "set_hvac_mode" ? ["entity_id", "hvac_mode"] : ["entity_id", "temperature", "target_temp_low", "target_temp_high"];
+                if (Object.keys(data).some((key) => !allowed.includes(key))) throw new Error("Unsupported Home action");
+                return fresh.callService(domain, service, data);
+              },
+            });
           };
           const probe = { root, timer: null, attempts: 0 };
           customHomeProbe = probe;
           const attempt = () => {
             if (customHomeProbe !== probe || panel.contentDocument !== root || iframeView() !== "home") return false;
             const hass = getHass();
-            if (hass?.states && typeof hass.callService === "function" && hass.connection?.connected !== false) {
-              const instance = window.FrameOSCustomHome.mount(customHomeRoot, {
+            if (hass?.states && typeof hass.callService === "function" && hass.connected !== false) {
+              let instance;
+              try {
+                instance = window.FrameOSCustomHome.mount(customHomeRoot, {
                 getHass,
                 navigate: (view) => { if (validView(view)) navigate(view); },
                 onUnavailable: () => {
@@ -112,7 +148,12 @@
                     if (isAuthenticationRoute()) showSignInRequired();
                   }
                 },
-              });
+                });
+              } catch (_error) {
+                disposeCustomHome();
+                setHomeChrome("home");
+                return false;
+              }
               customHomeWork = { root, instance };
               customHomeProbe = null;
               disposeRouteWork();
