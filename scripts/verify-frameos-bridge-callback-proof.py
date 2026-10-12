@@ -19,7 +19,7 @@ original = source.read_bytes()
 test_hash = hashlib.sha256(test.read_bytes()).hexdigest()
 command = [
     "./gradlew", "--no-daemon", "--max-workers=2", "-PframeosTarget=legacyArmv7",
-    ":app:testReleaseUnitTest",
+    ":app:testDebugUnitTest",
     "--tests", "com.wyattfleming.frameos.photos.FramePhotoBridgeCallbackResponseTest",
 ]
 
@@ -31,7 +31,7 @@ after = '''        internal fun acceptanceResponse(accepted: Boolean): Any = JSO
 '''
 
 def copy_and_assert_junit(label: str, expected_failures: int) -> str:
-    candidates = list((frame / "app/build/test-results/testReleaseUnitTest").rglob(result_name))
+    candidates = list((frame / "app/build/test-results/testDebugUnitTest").rglob(result_name))
     assert len(candidates) == 1, candidates
     copied = out / f"{label}.xml"
     shutil.copy2(candidates[0], copied)
