@@ -4,7 +4,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class TouchModeNavigationRouterTest {
-    private val router = TouchModeNavigationRouter(edgeStartPx = 24f, minimumTravelPx = 96f)
+    private val router = TouchModeNavigationRouter(
+        edgeStartPx = 24f,
+        minimumTravelPx = 96f,
+        directionalTouchSlopPx = 12f,
+    )
 
     @Test
     fun `only touchscreen edge swipes are intercepted`() {
@@ -73,6 +77,7 @@ class TouchModeNavigationRouterTest {
         val policyRouter = TouchModeNavigationRouter(
             edgeStartPx = 24f,
             minimumTravelPx = 96f,
+            directionalTouchSlopPx = 12f,
             shouldRoute = { direction -> allowPrevious && direction == ModeGestureDirection.PREVIOUS },
         )
 
@@ -96,6 +101,7 @@ class TouchModeNavigationRouterTest {
         val policyRouter = TouchModeNavigationRouter(
             edgeStartPx = 24f,
             minimumTravelPx = 96f,
+            directionalTouchSlopPx = 12f,
             shouldRoute = { direction ->
                 if (!menuOpen && direction == ModeGestureDirection.PREVIOUS) {
                     interceptions += 1
@@ -117,6 +123,42 @@ class TouchModeNavigationRouterTest {
         assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(down(x = 10f)))
         assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(move(x = 106f)))
         assertEquals(1, interceptions)
+    }
+
+    @Test
+    fun `immersive edge width is admitted only at down and remains frozen for the gesture`() {
+        var immersiveMedia = true
+        val policyRouter = TouchModeNavigationRouter(
+            edgeStartPx = 24f,
+            minimumTravelPx = 96f,
+            directionalTouchSlopPx = 12f,
+            edgeStartPxForDown = { if (immersiveMedia) 48f else 24f },
+            shouldRoute = { it == ModeGestureDirection.PREVIOUS },
+        )
+
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(down(x = 36f)))
+        immersiveMedia = false
+        assertEquals(
+            TouchModeNavigationRoute.Intercept(ModeGestureDirection.PREVIOUS),
+            policyRouter.route(move(x = 132f)),
+        )
+        assertEquals(TouchModeNavigationRoute.ConsumeIntercepted, policyRouter.route(up()))
+
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(down(x = 36f)))
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(move(x = 132f)))
+
+        immersiveMedia = true
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(down(x = 48f)))
+        assertEquals(
+            TouchModeNavigationRoute.Intercept(ModeGestureDirection.PREVIOUS),
+            policyRouter.route(move(x = 144f)),
+        )
+        assertEquals(TouchModeNavigationRoute.ConsumeIntercepted, policyRouter.route(up()))
+
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(down(x = 49f)))
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(move(x = 145f)))
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(down(x = 500f)))
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(move(x = 596f)))
     }
 
     private fun down(x: Float, touchscreen: Boolean = true) = TouchInputSample(

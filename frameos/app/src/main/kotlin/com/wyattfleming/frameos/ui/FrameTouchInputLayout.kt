@@ -20,20 +20,26 @@ internal class FrameTouchInputLayout private constructor(
     attrs: AttributeSet?,
     private val onModeGesture: (ModeGestureDirection, Long) -> Unit,
     private val shouldRoute: (ModeGestureDirection) -> Boolean,
+    private val isImmersiveMedia: () -> Boolean,
 ) : FrameLayout(context, attrs) {
-    constructor(context: Context) : this(context, null, { _, _ -> }, { true })
+    constructor(context: Context) : this(context, null, { _, _ -> }, { true }, { false })
 
-    constructor(context: Context, attrs: AttributeSet?) : this(context, attrs, { _, _ -> }, { true })
+    constructor(context: Context, attrs: AttributeSet?) : this(context, attrs, { _, _ -> }, { true }, { false })
 
     constructor(
         context: Context,
         onModeGesture: (ModeGestureDirection, Long) -> Unit,
         shouldRoute: (ModeGestureDirection) -> Boolean = { true },
-    ) : this(context, null, onModeGesture, shouldRoute)
+        isImmersiveMedia: () -> Boolean = { false },
+    ) : this(context, null, onModeGesture, shouldRoute, isImmersiveMedia)
 
     private val router = TouchModeNavigationRouter(
         edgeStartPx = context.dp(EDGE_START_DP).toFloat(),
         minimumTravelPx = context.dp(MINIMUM_TRAVEL_DP).toFloat(),
+        directionalTouchSlopPx = context.dp(DIRECTIONAL_TOUCH_SLOP_DP).toFloat(),
+        edgeStartPxForDown = {
+            context.dp(if (isImmersiveMedia()) IMMERSIVE_MEDIA_EDGE_START_DP else EDGE_START_DP).toFloat()
+        },
         shouldRoute = { shouldRoute(it) },
     )
     private var consumeCurrentEvent = false
@@ -87,6 +93,8 @@ internal class FrameTouchInputLayout private constructor(
 
     private companion object {
         const val EDGE_START_DP = 24
+        const val IMMERSIVE_MEDIA_EDGE_START_DP = 48
+        const val DIRECTIONAL_TOUCH_SLOP_DP = 12
         const val MINIMUM_TRAVEL_DP = 96
     }
 }

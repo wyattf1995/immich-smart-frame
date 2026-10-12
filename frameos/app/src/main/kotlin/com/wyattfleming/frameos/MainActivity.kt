@@ -661,6 +661,8 @@ class MainActivity : Activity() {
             }
         }, shouldRoute = { direction ->
             oauthSurface == null && touchMediaNavigation.acceptsEdgeSwipe(direction)
+        }, isImmersiveMedia = {
+            touchMediaNavigation.immersiveMedia
         }).apply {
             setBackgroundColor(getColor(R.color.frame_dark))
             isFocusable = true

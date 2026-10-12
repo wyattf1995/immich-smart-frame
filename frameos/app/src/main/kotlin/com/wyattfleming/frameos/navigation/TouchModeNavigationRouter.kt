@@ -25,9 +25,11 @@ internal sealed interface TouchModeNavigationRoute {
 internal class TouchModeNavigationRouter(
     edgeStartPx: Float,
     minimumTravelPx: Float,
+    directionalTouchSlopPx: Float,
+    private val edgeStartPxForDown: () -> Float = { edgeStartPx },
     private val shouldRoute: (ModeGestureDirection) -> Boolean = { true },
 ) {
-    private val classifier = TouchEdgeSwipeClassifier(edgeStartPx, minimumTravelPx)
+    private val classifier = TouchEdgeSwipeClassifier(minimumTravelPx, directionalTouchSlopPx)
     private var intercepting = false
 
     fun route(sample: TouchInputSample): TouchModeNavigationRoute {
@@ -41,7 +43,13 @@ internal class TouchModeNavigationRouter(
             return TouchModeNavigationRoute.ConsumeIntercepted
         }
         when (sample.action) {
-            TouchInputAction.DOWN -> classifier.onDown(sample.x, sample.y, sample.width, sample.pointerCount)
+            TouchInputAction.DOWN -> classifier.onDown(
+                sample.x,
+                sample.y,
+                sample.width,
+                edgeStartPxForDown(),
+                sample.pointerCount,
+            )
             TouchInputAction.MOVE -> classifier.onMove(sample.x, sample.y, sample.pointerCount)?.let { direction ->
                 if (!shouldRoute(direction)) return TouchModeNavigationRoute.PassToChild
                 intercepting = true
