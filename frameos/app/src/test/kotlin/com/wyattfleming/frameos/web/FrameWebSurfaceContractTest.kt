@@ -373,6 +373,28 @@ class FrameWebSurfaceContractTest {
         )
     }
 
+    @Test
+    fun `Art uses its own disposable session without Photos bridge ownership`() {
+        val source = source()
+        val disposeArtSession = methodBody(source, "private fun disposeArtSession()")
+
+        assertContainsInOrder(
+            disposeArtSession,
+            listOf(
+                "cancelRecovery(disposable)",
+                "disposable.prepareForDisposal()",
+                "if (foregroundSlot == FrameWebSlot.ART)",
+                "releaseForegroundAttachedSession()",
+                "val close = Runnable",
+                "disposable.close()",
+                "post(close)",
+            ),
+        )
+        assertTrue(source.contains("FrameWebSlot.ART -> artSession ?: ManagedSession("))
+        assertTrue(source.contains("configuredUrls = listOf(requireNotNull(artUrl))"))
+        assertFalse(source.contains("FrameWebSlot.ART -> photosSession"))
+    }
+
     private fun source(): String {
         val candidates = listOf(
             Paths.get("app/src/main/kotlin/com/wyattfleming/frameos/web/FrameWebSurface.kt"),

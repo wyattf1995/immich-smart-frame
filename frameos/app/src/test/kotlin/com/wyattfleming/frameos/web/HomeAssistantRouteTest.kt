@@ -67,6 +67,7 @@ class HomeAssistantRouteTest {
             HomeAssistantRoute.urlFor(base, FrameMode.CALENDAR),
         )
         assertNull(HomeAssistantRoute.urlFor(base, FrameMode.PHOTOS))
+        assertNull(HomeAssistantRoute.urlFor(base, FrameMode.ART))
         assertNull(HomeAssistantRoute.urlFor(base, FrameMode.WEATHER))
     }
 
