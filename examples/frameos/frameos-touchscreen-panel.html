@@ -47,6 +47,10 @@
           calendar: Object.freeze(["ha-full-calendar"]),
         });
         const READY_TIMEOUT_MILLIS = 12_000;
+        // Native HA remains visible after the initial 12-second readiness window.
+        // This is only a bounded liveness check for an already-authenticated, same-origin shell.
+        const HOME_LATE_DISCOVERY_INTERVAL_MILLIS = 1_000;
+        const HOME_LATE_DISCOVERY_DEADLINE_MILLIS = 60_000;
         const HOME_STYLE_PROBE_TIMEOUT_MILLIS = 12_000;
         const MAX_NAVIGATION_GUARD_NODES = 4096;
         const HOME_STYLE_SHADOW_LEAVES = new Set(["ha-markdown-element"]);
@@ -76,6 +80,7 @@
         let homeStyleWork = null;
         let customHomeWork = null;
         let customHomeProbe = null;
+        let homeBootstrap = null;
         let forecastOwner = null;
         const FORECAST_ENTITY = "weather.forecast_home";
         const disposeForecast = () => {
@@ -115,14 +120,120 @@
           return forecastOwner.controller.snapshot();
         };
 
-        const disposeCustomHome = () => {
-          forecastOwner?.controller.setActive(false);
+        const isCurrentHomeRoot = (root) => panel.contentDocument === root && iframeView() === "home" && currentView === "home" && !isAuthenticationRoute();
+        const clearHomeBootstrap = () => {
           if (customHomeProbe) window.clearTimeout(customHomeProbe.timer);
           customHomeProbe = null;
+          if (homeBootstrap?.lateTimer) window.clearTimeout(homeBootstrap.lateTimer);
+          homeBootstrap = null;
+        };
+        const pauseLateHomeDiscovery = () => {
+          if (!homeBootstrap?.lateTimer) return;
+          window.clearTimeout(homeBootstrap.lateTimer);
+          homeBootstrap.lateTimer = null;
+        };
+        const disposeCustomHome = () => {
+          forecastOwner?.controller.setActive(false);
+          clearHomeBootstrap();
           if (customHomeWork) customHomeWork.instance.destroy();
           customHomeWork = null;
           if (customHomeRoot) customHomeRoot.hidden = true;
           panel.classList?.toggle("custom-home-backend", false);
+        };
+        const connectedHomeHass = (root) => {
+          if (!isCurrentHomeRoot(root)) return null;
+          const live = root.querySelector?.("home-assistant")?.hass;
+          // This guard deliberately avoids Object.keys(live.states) until the existing
+          // authenticated HA connection says it is live.
+          if (!live?.states || typeof live.callService !== "function" || live.connected === false || live.connection?.connected === false) return null;
+          return live;
+        };
+        const getCustomHomeHass = (root) => {
+          const live = connectedHomeHass(root);
+          if (!live) return null;
+          // Expose data needed by this view, not HA's auth/connection object.
+          const ids = ["climate.entryway_entryway", "weather.forecast_home", "weather.home", "calendar.family",
+            ...Object.keys(live.states).filter((id) => id.startsWith("calendar.") && id !== "calendar.family").sort().slice(0, 3),
+            "camera.backyard_backyard_camera", "camera.dining_room_dining_room_camera",
+            "camera.garage_garage_camera", "camera.living_room_living_room_camera"];
+          const keys = ["friendly_name", "current_temperature", "current_humidity", "temperature",
+            "min_temp", "max_temp", "target_temp_step", "target_temp_low", "target_temp_high",
+            "hvac_modes", "hvac_action", "temperature_unit", "humidity", "message", "start_time", "end_time", "all_day"];
+          const states = {};
+          ids.forEach((id) => {
+            const entity = live.states[id];
+            if (!entity) return;
+            const attributes = {};
+            keys.forEach((key) => {
+              const value = entity.attributes?.[key];
+              if (["string", "number", "boolean"].includes(typeof value) || value === null) attributes[key] = value;
+              else if (key === "hvac_modes" && Array.isArray(value)) attributes[key] = Object.freeze(value.filter((item) => typeof item === "string"));
+            });
+            states[id] = Object.freeze({ entity_id: id, state: entity.state, attributes: Object.freeze(attributes) });
+          });
+          const forecast = homeForecast(root, live);
+          return Object.freeze({
+            forecast: forecast.forecast,
+            forecastStatus: forecast.forecastStatus,
+            states: Object.freeze(states),
+            connected: true,
+            config: Object.freeze({ unit_system: Object.freeze({ temperature: live.config?.unit_system?.temperature }) }),
+            callService: async (domain, service, data) => {
+              const fresh = root.querySelector?.("home-assistant")?.hass;
+              if (!isCurrentHomeRoot(root) || fresh?.connected === false || fresh?.connection?.connected === false) throw new Error("Connection unavailable");
+              if (domain !== "climate" || !["set_temperature", "set_hvac_mode"].includes(service) || data?.entity_id !== "climate.entryway_entryway") throw new Error("Unsupported Home action");
+              const allowed = service === "set_hvac_mode" ? ["entity_id", "hvac_mode"] : ["entity_id", "temperature", "target_temp_low", "target_temp_high"];
+              if (Object.keys(data).some((key) => !allowed.includes(key))) throw new Error("Unsupported Home action");
+              return fresh.callService(domain, service, data);
+            },
+          });
+        };
+        const mountCustomHome = (root, getHass) => {
+          let instance;
+          try {
+            instance = window.FrameOSCustomHome.mount(customHomeRoot, {
+              getHass,
+              navigate: (view) => { if (validView(view)) navigate(view); },
+              onUnavailable: () => {
+                if (panel.contentDocument !== root || isAuthenticationRoute()) {
+                  disposeCustomHome();
+                  if (isAuthenticationRoute()) showSignInRequired();
+                }
+              },
+            });
+          } catch (_error) {
+            disposeCustomHome();
+            setHomeChrome("home");
+            return false;
+          }
+          clearHomeBootstrap();
+          customHomeWork = { root, instance };
+          disposeRouteWork();
+          removeHomeStyles();
+          setHomeChrome(null);
+          panel.classList?.toggle("custom-home-backend", true);
+          customHomeRoot.hidden = false;
+          loading.hidden = true;
+          announce("Home ready");
+          return true;
+        };
+        const scheduleLateHomeDiscovery = (bootstrap, getHass) => {
+          if (homeBootstrap !== bootstrap || customHomeWork) return;
+          if (!isCurrentHomeRoot(bootstrap.root)) { clearHomeBootstrap(); return; }
+          if (document.visibilityState === "hidden") return;
+          if (Date.now() >= bootstrap.deadlineAt) return;
+          if (Date.now() + HOME_LATE_DISCOVERY_INTERVAL_MILLIS > bootstrap.deadlineAt) return;
+          if (bootstrap.lateTimer) return;
+          bootstrap.lateTimer = window.setTimeout(() => {
+            bootstrap.lateTimer = null;
+            if (homeBootstrap !== bootstrap) return;
+            if (!isCurrentHomeRoot(bootstrap.root)) { clearHomeBootstrap(); return; }
+            if (document.visibilityState === "hidden") return;
+            if (Date.now() >= bootstrap.deadlineAt) return;
+            // Never enumerate HA state while its existing authenticated connection is down.
+            if (connectedHomeHass(bootstrap.root) && mountCustomHome(bootstrap.root, getHass)) return;
+            scheduleLateHomeDiscovery(bootstrap, getHass);
+          }, HOME_LATE_DISCOVERY_INTERVAL_MILLIS);
         };
         const discoverCustomHome = (root) => {
           if (!customHomeRoot || !window.FrameOSCustomHome) return false;
@@ -132,86 +243,22 @@
             return true;
           }
           disposeCustomHome();
-          // The same-origin HA frontend owns authentication and the connection.
-          // Never read credentials or create a second connection from this UI.
-          const getHass = () => {
-            if (panel.contentDocument !== root || iframeView() !== "home" || currentView !== "home") return null;
-            const live = root.querySelector?.("home-assistant")?.hass;
-            if (!live?.states || typeof live.callService !== "function") return null;
-            // Expose data needed by this view, not HA's auth/connection object.
-            const ids = ["climate.entryway_entryway", "weather.forecast_home", "weather.home", "calendar.family",
-              ...Object.keys(live.states).filter((id) => id.startsWith("calendar.") && id !== "calendar.family").sort().slice(0, 3),
-              "camera.backyard_backyard_camera", "camera.dining_room_dining_room_camera",
-              "camera.garage_garage_camera", "camera.living_room_living_room_camera"];
-            const keys = ["friendly_name", "current_temperature", "current_humidity", "temperature",
-              "min_temp", "max_temp", "target_temp_step", "target_temp_low", "target_temp_high",
-              "hvac_modes", "hvac_action", "temperature_unit", "humidity", "message", "start_time", "end_time", "all_day"];
-            const states = {};
-            ids.forEach((id) => {
-              const entity = live.states[id];
-              if (!entity) return;
-              const attributes = {};
-              keys.forEach((key) => {
-                const value = entity.attributes?.[key];
-                if (["string", "number", "boolean"].includes(typeof value) || value === null) attributes[key] = value;
-                else if (key === "hvac_modes" && Array.isArray(value)) attributes[key] = Object.freeze(value.filter((item) => typeof item === "string"));
-              });
-              states[id] = Object.freeze({ entity_id: id, state: entity.state, attributes: Object.freeze(attributes) });
-            });
-            const forecast = homeForecast(root, live);
-            return Object.freeze({
-              forecast: forecast.forecast,
-              forecastStatus: forecast.forecastStatus,
-              states: Object.freeze(states),
-              connected: live.connected !== false && live.connection?.connected !== false,
-              config: Object.freeze({ unit_system: Object.freeze({ temperature: live.config?.unit_system?.temperature }) }),
-              callService: async (domain, service, data) => {
-                const fresh = root.querySelector?.("home-assistant")?.hass;
-                if (panel.contentDocument !== root || iframeView() !== "home" || currentView !== "home" || fresh?.connected === false || fresh?.connection?.connected === false) throw new Error("Connection unavailable");
-                if (domain !== "climate" || !["set_temperature", "set_hvac_mode"].includes(service) || data?.entity_id !== "climate.entryway_entryway") throw new Error("Unsupported Home action");
-                const allowed = service === "set_hvac_mode" ? ["entity_id", "hvac_mode"] : ["entity_id", "temperature", "target_temp_low", "target_temp_high"];
-                if (Object.keys(data).some((key) => !allowed.includes(key))) throw new Error("Unsupported Home action");
-                return fresh.callService(domain, service, data);
-              },
-            });
-          };
+          const bootstrap = { root, deadlineAt: Date.now() + HOME_LATE_DISCOVERY_DEADLINE_MILLIS, lateTimer: null };
+          homeBootstrap = bootstrap;
+          const getHass = () => getCustomHomeHass(root);
           const probe = { root, timer: null, attempts: 0 };
           customHomeProbe = probe;
           const attempt = () => {
-            if (customHomeProbe !== probe || panel.contentDocument !== root || iframeView() !== "home") return false;
+            if (customHomeProbe !== probe || homeBootstrap !== bootstrap) return false;
+            if (!isCurrentHomeRoot(root)) { clearHomeBootstrap(); return false; }
             const hass = getHass();
-            if (hass?.states && typeof hass.callService === "function" && hass.connected !== false) {
-              let instance;
-              try {
-                instance = window.FrameOSCustomHome.mount(customHomeRoot, {
-                getHass,
-                navigate: (view) => { if (validView(view)) navigate(view); },
-                onUnavailable: () => {
-                  if (panel.contentDocument !== root || isAuthenticationRoute()) {
-                    disposeCustomHome();
-                    if (isAuthenticationRoute()) showSignInRequired();
-                  }
-                },
-                });
-              } catch (_error) {
-                disposeCustomHome();
-                setHomeChrome("home");
-                return false;
-              }
-              customHomeWork = { root, instance };
-              customHomeProbe = null;
-              disposeRouteWork();
-              removeHomeStyles();
-              setHomeChrome(null);
-              panel.classList?.toggle("custom-home-backend", true);
-              customHomeRoot.hidden = false;
-              loading.hidden = true;
-              announce("Home ready");
-              return true;
-            }
-            // Discovery is bounded; native HA remains an available fallback.
+            if (hass?.states && typeof hass.callService === "function" && hass.connected !== false) return mountCustomHome(root, getHass);
+            // Preserve the existing 12-second fast discovery window, then use a low-cost 1 Hz liveness probe.
             if (++probe.attempts < 240) probe.timer = window.setTimeout(attempt, 50);
-            else customHomeProbe = null;
+            else {
+              customHomeProbe = null;
+              scheduleLateHomeDiscovery(bootstrap, getHass);
+            }
             return false;
           };
           return attempt();
@@ -578,6 +625,12 @@
           if (currentView) observeReadiness(loadedView || currentView);
         });
         window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
+        window.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "hidden") { pauseLateHomeDiscovery(); return; }
+          const bootstrap = homeBootstrap;
+          if (!bootstrap || customHomeProbe || customHomeWork || !isCurrentHomeRoot(bootstrap.root) || Date.now() >= bootstrap.deadlineAt) return;
+          scheduleLateHomeDiscovery(bootstrap, () => getCustomHomeHass(bootstrap.root));
+        });
         window.addEventListener("pagehide", () => {
           disposeCustomHome();
           disposeForecast();
