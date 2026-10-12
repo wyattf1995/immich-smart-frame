@@ -8,6 +8,8 @@ const context = { window: {} };
 context.window.window = context.window;
 context.window.setInterval = (callback, delay) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; };
 context.window.clearInterval = (timer) => { timer.cleared = true; };
+context.window.setTimeout = (callback, delay) => { const timer = { callback, delay, cleared: false, timeout: true }; timers.push(timer); return timer; };
+context.window.clearTimeout = (timer) => { timer.cleared = true; };
 vm.runInNewContext(source, context, { filename: "frameos-custom-home.js" });
 const api = context.window.FrameOSCustomHome;
 assert.ok(api?.__test, "custom home exposes pure test helpers");
@@ -16,6 +18,11 @@ const { clampTemperature, climateModel, modePayload, setpointPayload, isWritable
 assert.equal(clampTemperature(68, { min: 60, max: 80, step: 1 }), 68);
 assert.equal(clampTemperature(99, { min: 60, max: 80, step: 1 }), 80, "drafts never exceed the device maximum");
 assert.equal(clampTemperature("unknown", { min: 60, max: 80, step: 1 }), null, "unknown values never become zero");
+assert.equal(api.__test.finite(null), null, "null never coerces into zero");
+assert.equal(api.__test.finite(""), null, "empty strings never coerce into zero");
+assert.equal(api.__test.finite(false), null, "boolean values never coerce into zero");
+assert.equal(api.__test.eventTime("not-a-date"), "Time unavailable", "bad calendar dates are rendered safely");
+assert.equal(api.__test.eventTime("2026-10-12"), "All day", "all-day calendar items retain their semantics");
 
 const off = climateModel({ state: "off", attributes: { hvac_modes: ["off", "heat", "cool"], min_temp: 50, max_temp: 90, target_temp_step: 1, temperature: 68 } }, "°F");
 assert.equal(off.temperatureEnabled, false, "off disables temperature changes until a mode is explicitly selected");
@@ -53,3 +60,72 @@ assert.equal(timers.at(-1).delay, 1000, "the only background work is the bounded
 handle.destroy();
 assert.equal(timers.at(-1).cleared, true, "destroy cancels the render tick to prevent a detached view race");
 assert.equal(root.replaceChildrenCalls, 1, "destroy clears the mounted custom view");
+
+const makeInteractiveRoot = () => {
+  const root = { nodes: [], writes: 0, replaceChildrenCalls: 0, _html: "" };
+  Object.defineProperty(root, "innerHTML", {
+    get() { return this._html; },
+    set(markup) {
+      this._html = markup; this.writes += 1; this.nodes = [];
+      const matches = markup.matchAll(/<button([^>]*)>/g);
+      for (const match of matches) {
+        const attributes = match[1], listeners = new Map(), dataset = {};
+        for (const data of attributes.matchAll(/data-([a-z-]+)(?:="([^"]*)")?/g)) dataset[data[1].replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = data[2] ?? "";
+        this.nodes.push({ dataset, disabled: /\sdisabled(?:\s|>|$)/.test(attributes), addEventListener(type, callback) { listeners.set(type, callback); }, click() { return listeners.get("click")?.(); } });
+      }
+    },
+  });
+  root.replaceChildren = () => { root.replaceChildrenCalls += 1; root.nodes = []; root._html = ""; };
+  root.querySelectorAll = (selector) => { const key = selector.match(/^\[data-([^\]]+)\]$/)?.[1]?.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()); return key ? root.nodes.filter((node) => Object.hasOwn(node.dataset, key)) : []; };
+  root.querySelector = (selector) => root.querySelectorAll(selector)[0] || null;
+  return root;
+};
+const interactiveRoot = makeInteractiveRoot();
+let connected = true;
+let deferredReject;
+const services = [];
+const liveHass = {
+  get connected() { return connected; },
+  config: { unit_system: { temperature: "°F" } },
+  states: { "climate.entryway_entryway": { state: "heat", attributes: { hvac_modes: ["off", "heat", "cool", "heat_cool"], min_temp: 60, max_temp: 80, target_temp_step: 1, temperature: 68, current_temperature: 68 } } },
+  callService(domain, service, payload) { services.push([domain, service, payload]); return new Promise((_, reject) => { deferredReject = reject; }); },
+};
+const interactive = api.mount(interactiveRoot, { getHass: () => liveHass });
+const initialWrites = interactiveRoot.writes;
+timers.find((timer) => timer.delay === 1000 && !timer.cleared)?.callback();
+assert.equal(interactiveRoot.writes, initialWrites, "unchanged one-second ticks preserve the mounted controls and focus");
+const heatButton = interactiveRoot.querySelectorAll("[data-mode]").find((button) => button.dataset.mode === "cool");
+const firstAction = heatButton.click();
+await Promise.resolve();
+assert.equal(JSON.stringify(services[0]), JSON.stringify(["climate", "set_hvac_mode", { entity_id: "climate.entryway_entryway", hvac_mode: "cool" }]), "a mode click uses an explicit, current service payload");
+heatButton.click();
+assert.equal(services.length, 1, "pending mode changes cannot overlap");
+deferredReject(new Error("offline"));
+await firstAction;
+connected = false;
+interactive.refresh();
+const offlineCool = interactiveRoot.querySelectorAll("[data-mode]").find((button) => button.dataset.mode === "cool");
+offlineCool.click();
+assert.equal(services.length, 1, "an offline click re-reads connection state and never writes");
+connected = true;
+interactive.refresh();
+const pendingButton = interactiveRoot.querySelectorAll("[data-mode]").find((button) => button.dataset.mode === "cool");
+const pendingAction = pendingButton.click();
+interactive.destroy();
+deferredReject(new Error("late failure"));
+await pendingAction;
+assert.equal(interactiveRoot.replaceChildrenCalls, 1, "a late async failure cannot resurrect a destroyed view");
+
+const temperatureRoot = makeInteractiveRoot();
+const temperatureServices = [];
+const temperatureHass = {
+  connected: true,
+  config: { unit_system: { temperature: "°F" } },
+  states: { "climate.entryway_entryway": { state: "heat", attributes: { hvac_modes: ["off", "heat"], min_temp: 60, max_temp: 80, target_temp_step: 1, temperature: 68, current_temperature: 68 } } },
+  callService(domain, service, payload) { temperatureServices.push([domain, service, payload]); return Promise.resolve(); },
+};
+const temperatureHandle = api.mount(temperatureRoot, { getHass: () => temperatureHass });
+temperatureRoot.querySelectorAll("[data-adjust]").find((button) => button.dataset.adjust === "temperature:1").click();
+await temperatureRoot.querySelector("[data-apply]").click();
+assert.equal(JSON.stringify(temperatureServices[0]), JSON.stringify(["climate", "set_temperature", { entity_id: "climate.entryway_entryway", temperature: 69 }]), "an explicit Apply click is required for a drafted temperature command");
+temperatureHandle.destroy();
