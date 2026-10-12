@@ -1,7 +1,15 @@
 (() => {
   "use strict";
-  const CYCLE_MILLIS = 60_000;
+  const CYCLE_MILLIS = 120_000;
   const EDGE_GUARD_PX = 36;
+  const ROTATION_STATE_VERSION = 1;
+  // The collection is intentionally local and small. These caps keep a malformed
+  // collection or browser storage entry from growing gallery state without bound.
+  const MAX_ARTWORKS = 2048;
+  const MAX_HISTORY_ENTRIES = 200;
+  const MAX_ROTATION_STORAGE_BYTES = 256 * 1024;
+  const MAX_ROTATION_SHOWN_IDS = MAX_ARTWORKS;
+  const ROTATION_STORAGE_PREFIX = "frameos-art-rotation-v1:";
   const IMAGE_PATH = /^images\/[a-f0-9]{64}\.jpg$/;
   const text = (value) => typeof value === "string" ? value.trim() : "";
   const validSourceUrl = (value) => {
@@ -11,7 +19,7 @@
   const validateCollection = (input) => {
     if (!input || typeof input !== "object" || input.version !== 1 || !Array.isArray(input.artworks)) return null;
     const title = text(input.title);
-    if (!title || input.artworks.length === 0) return null;
+    if (!title || input.artworks.length === 0 || input.artworks.length > MAX_ARTWORKS) return null;
     const seen = new Set();
     const artworks = [];
     for (const entry of input.artworks) {
@@ -28,6 +36,15 @@
     }
     return ids;
   };
+  // This only names a browser-storage bucket. Persisted state remains validated
+  // against the current local collection before it can affect rotation.
+  const stableStorageHash = (value) => {
+    let hash = 0x811c9dc5;
+    for (const character of value) { hash ^= character.codePointAt(0); hash = Math.imul(hash, 0x01000193); }
+    return (hash >>> 0).toString(16);
+  };
+  const rotationStorageKey = (collection) => `${ROTATION_STORAGE_PREFIX}${stableStorageHash(collection.title)}`;
+  const localStorageOrNull = () => { try { return window.localStorage || null; } catch (_) { return null; } };
   class ArtGallery {
     constructor(root, options = {}) {
       if (!root || !root.ownerDocument) throw new TypeError("Art gallery needs a document root");
@@ -35,7 +52,9 @@
       this.Image = options.Image || window.Image; this.random = options.random || Math.random;
       this.setInterval = options.setInterval || window.setInterval.bind(window); this.clearInterval = options.clearInterval || window.clearInterval.bind(window);
       this.collectionUrl = options.collectionUrl || "collection.json"; this.timer = null; this.controlsTimer = null;
+      this.storage = options.storage === undefined ? localStorageOrNull() : options.storage;
       this.collection = null; this.bag = []; this.history = []; this.historyIndex = -1; this.currentId = null;
+      this.rotationShownIds = new Set(); this.rotationLastDisplayedId = null;
       this.currentImage = null; this.nextImage = null; this.failed = new Set(); this.paused = false; this.actionToken = 0;
       this.hidden = this.document.hidden === true; this.destroyed = false;
       this.onVisibility = () => { this.hidden = this.document.hidden === true; this.syncAutoplay(); };
@@ -50,11 +69,48 @@
         const collection = response?.ok ? validateCollection(await response.json()) : null;
         if (this.destroyed || token !== this.actionToken) return;
         if (!collection) return this.unavailable("Art is unavailable. Add a valid local collection to continue.");
-        this.collection = collection; this.bag = shuffledIds(collection.artworks, this.random); await this.advance(1, true, token);
+        this.collection = collection; this.restoreRotation(collection); await this.advance(1, true, token);
       } catch (_) { if (!this.destroyed && token === this.actionToken) this.unavailable("Art is temporarily unavailable. Check the local collection and try again."); }
     }
     current() { return this.collection?.artworks.find(({ id }) => id === this.currentId) || null; }
     artworkFor(id) { return this.collection?.artworks.find((artwork) => artwork.id === id) || null; }
+    readRotation(collection) {
+      if (!this.storage) return null;
+      try {
+        const raw = this.storage.getItem(rotationStorageKey(collection));
+        if (typeof raw !== "string" || raw.length > MAX_ROTATION_STORAGE_BYTES) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object" || parsed.version !== ROTATION_STATE_VERSION || !Array.isArray(parsed.shownIds) || parsed.shownIds.length > MAX_ROTATION_SHOWN_IDS) return null;
+        const allowed = new Set(collection.artworks.map(({ id }) => id)); const shown = [];
+        for (const id of parsed.shownIds) { if (typeof id !== "string") return null; if (allowed.has(id) && !shown.includes(id)) shown.push(id); }
+        const lastDisplayedId = typeof parsed.lastDisplayedId === "string" && allowed.has(parsed.lastDisplayedId) ? parsed.lastDisplayedId : null;
+        return { shownIds:shown, lastDisplayedId };
+      } catch (_) { return null; }
+    }
+    persistRotation() {
+      if (!this.storage || !this.collection) return;
+      const shownIds = this.collection.artworks.map(({ id }) => id).filter((id) => this.rotationShownIds.has(id));
+      try { this.storage.setItem(rotationStorageKey(this.collection), JSON.stringify({ version:ROTATION_STATE_VERSION, shownIds, lastDisplayedId:this.rotationLastDisplayedId })); } catch (_) {}
+    }
+    newRotationBag() {
+      if (!this.collection) return [];
+      let allowed = this.collection.artworks.filter(({ id }) => !this.failed.has(id));
+      let unseen = allowed.filter(({ id }) => !this.rotationShownIds.has(id));
+      if (!unseen.length) { this.rotationShownIds.clear(); unseen = allowed; }
+      const ids = shuffledIds(unseen, this.random);
+      const last = this.rotationLastDisplayedId;
+      if (ids.length > 1 && ids[0] === last) { const swap = ids.findIndex((id) => id !== last); [ids[0], ids[swap]] = [ids[swap], ids[0]]; }
+      return ids;
+    }
+    restoreRotation(collection) {
+      const persisted = this.readRotation(collection);
+      this.rotationShownIds = new Set(persisted?.shownIds || []);
+      this.rotationLastDisplayedId = persisted?.lastDisplayedId || null;
+      this.bag = this.newRotationBag();
+    }
+    recordDisplayed(id) {
+      this.rotationShownIds.add(id); this.rotationLastDisplayedId = id; this.persistRotation();
+    }
     nextCandidate(direction) {
       if (!this.collection) return null;
       const allowed = this.collection.artworks.filter(({ id }) => !this.failed.has(id));
@@ -67,10 +123,7 @@
         const index = this.historyIndex + 1; const artwork = this.artworkFor(this.history[index]);
         if (artwork && !this.failed.has(artwork.id)) return { artwork, historyIndex:index };
       }
-      if (!this.bag.length) {
-        this.bag = shuffledIds(allowed, this.random);
-        if (allowed.length > 1 && this.bag[0] === this.currentId) this.bag.push(this.bag.shift());
-      }
+      if (!this.bag.length) this.bag = this.newRotationBag();
       const id = this.bag.shift(); return { artwork:allowed.find(({ id: candidate }) => candidate === id) || allowed[0], historyIndex:null };
     }
     loadImage(artwork) {
@@ -78,7 +131,9 @@
     }
     commitHistory(artwork, historyIndex) {
       if (historyIndex !== null) { this.historyIndex = historyIndex; return; }
-      this.history = this.history.slice(0, this.historyIndex + 1); this.history.push(artwork.id); this.historyIndex = this.history.length - 1;
+      this.history = this.history.slice(0, this.historyIndex + 1); this.history.push(artwork.id);
+      if (this.history.length > MAX_HISTORY_ENTRIES) this.history.splice(0, this.history.length - MAX_HISTORY_ENTRIES);
+      this.historyIndex = this.history.length - 1;
     }
     discardFailedHistory(id) {
       this.history = this.history.filter((entry) => entry !== id);
@@ -93,7 +148,7 @@
         const image = await this.loadImage(candidate.artwork);
         if (this.destroyed || token !== this.actionToken) return;
         this.currentId = candidate.artwork.id; this.currentImage = image; this.commitHistory(candidate.artwork, candidate.historyIndex);
-        this.display(candidate.artwork, image); this.syncAutoplay();
+        this.display(candidate.artwork, image); this.recordDisplayed(candidate.artwork.id); this.syncAutoplay();
       }
       catch (_) {
         if (this.destroyed || token !== this.actionToken) return;
@@ -153,7 +208,7 @@
     }
     destroy() { this.destroyed = true; ++this.actionToken; this.stopAutoplay(); this.currentImage = null; this.nextImage = null; if (this.controlsTimer !== null) window.clearTimeout(this.controlsTimer); this.document.removeEventListener("visibilitychange", this.onVisibility); this.root.replaceChildren(); }
   }
-  const api = Object.freeze({ ArtGallery, validateCollection, shuffledIds, CYCLE_MILLIS, EDGE_GUARD_PX });
+  const api = Object.freeze({ ArtGallery, validateCollection, shuffledIds, rotationStorageKey, CYCLE_MILLIS, EDGE_GUARD_PX, MAX_ARTWORKS, MAX_HISTORY_ENTRIES, MAX_ROTATION_STORAGE_BYTES });
   window.FrameOSArtGallery = api;
   document.addEventListener("DOMContentLoaded", () => { const root = document.getElementById("art-gallery"); if (root) new ArtGallery(root).start(); }, { once:true });
 })();
