@@ -63,7 +63,7 @@ def run(label: str, expected_failures: int) -> dict[str, object]:
     cases = list(root_element.iter("testcase"))
     failures = [case for case in cases if case.find("failure") is not None]
     errors = [case for case in cases if case.find("error") is not None]
-    if len(cases) != 3 or len(failures) != expected_failures or errors:
+    if len(cases) != 4 or len(failures) != expected_failures or errors:
         raise RuntimeError(f"unexpected JUnit outcome cases={len(cases)} failures={len(failures)} errors={len(errors)}")
     failed_names = {case.get("name") for case in failures}
     expected_names = {"embeddedCallbackUsesAuthoritativeCallbackHandler"} if expected_failures else set()

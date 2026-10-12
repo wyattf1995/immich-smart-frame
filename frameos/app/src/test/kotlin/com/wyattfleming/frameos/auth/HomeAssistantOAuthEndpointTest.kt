@@ -12,7 +12,7 @@ class HomeAssistantOAuthEndpointTest {
     private val callback = "https://home.example.invalid:8123/local/frameos-oauth.html"
 
     @Test
-    fun `uses same-origin authorize and token URLs with the callback page as client ID`() {
+    fun `uses the exact same-origin callback page as client and redirect ID`() {
         val state = OAuthState.fromCryptographicBytes(ByteArray(32) { it.toByte() })
         val authorization = endpoint.authorizationRequest(
             callbackPageUrl = callback,
@@ -22,7 +22,7 @@ class HomeAssistantOAuthEndpointTest {
         assertEquals("https://home.example.invalid:8123/auth/token", endpoint.tokenUrl())
         assertEquals(state, authorization.state)
         assertEquals(
-            "https://home.example.invalid:8123/auth/authorize?response_type=code&client_id=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&redirect_uri=frameos%3A%2F%2Foauth%2Fcallback&state=${state.value}",
+            "https://home.example.invalid:8123/auth/authorize?response_type=code&client_id=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&redirect_uri=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&state=${state.value}",
             authorization.url,
         )
         assertEquals(

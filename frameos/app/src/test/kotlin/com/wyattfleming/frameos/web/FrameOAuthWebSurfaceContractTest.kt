@@ -16,6 +16,8 @@ class FrameOAuthWebSurfaceContractTest {
         assertTrue(source.contains("const val TIMEOUT_MILLIS = 120_000L"))
         assertTrue(source.contains("const val MAX_TIMEOUT_MILLIS = 120_000L"))
         assertTrue(source.contains("OAuth authorization URL must stay on the configured HTTPS origin"))
+        assertTrue(source.contains("callbackPageUrl: String"))
+        assertTrue(source.contains("FrameOAuthNavigationPolicy(configuredHomeAssistantUrl, callbackPageUrl)"))
         assertTrue(source.contains("navigationPolicy.decide(authorizationUrl) == FrameOAuthNavigationPolicy.Decision.ALLOW"))
         assertTrue(source.contains("fun start()"))
         assertTrue(source.contains("if (started || closed) return"))

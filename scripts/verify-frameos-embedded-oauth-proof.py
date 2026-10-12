@@ -29,7 +29,7 @@ command = [
     "--tests", "com.wyattfleming.frameos.auth.FrameOAuthNavigationPolicyTest",
 ]
 
-before = "if (isCallbackCandidate(requestUrl)) return Decision.CALLBACK"
+before = "if (callbackTarget.isNativeCallback(requestUrl)) return Decision.CALLBACK"
 after = "if (false) return Decision.CALLBACK"
 
 

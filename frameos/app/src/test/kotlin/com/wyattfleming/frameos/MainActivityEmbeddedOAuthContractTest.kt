@@ -28,6 +28,18 @@ class MainActivityEmbeddedOAuthContractTest {
     }
 
     @Test
+    fun initializesEndpointAwareVerifierBeforeEmbeddedAuthorization() {
+        val initialization = methodBody("private fun initializeWeatherRuntime()")
+        assertContainsInOrder(
+            initialization,
+            listOf(
+                "val callbackPageUrl = callbackPageUrl(activeConfiguration.homeAssistantUrl)",
+                "callbackVerifier = OAuthCallbackVerifier(pendingStateStore, callbackPageUrl)",
+            ),
+        )
+    }
+
+    @Test
     fun callbackVerifierRunsBeforePendingAuthorizationCodeIsAssigned() {
         val callback = methodBody("private fun handleOAuthCallbackUrl(callbackUrl: String)")
 
