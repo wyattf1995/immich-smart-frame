@@ -49,6 +49,8 @@ assert.doesNotMatch(source, /fch-rail/, "the native rail is the only top-level n
 assert.match(source, /data-nav="cameras"/, "in-content Cameras navigation remains available");
 assert.match(source, /fch-forecast/, "the Home weather area has a compact forecast surface");
 assert.match(source, /safe\(eventLabel\(event,/, "calendar rows render the date-aware event label");
+assert.match(source, /forecast, forecastUnit, forecastStatus/, "a forecast unit-only change repaints the compact forecast");
+assert.match(source, /calendarDateKey:now\.date/, "calendar labels refresh at the local day boundary");
 assert.match(source, /Weather unavailable/, "missing weather is shown honestly rather than fabricated");
 assert.doesNotMatch(source, /fetch\(/, "the custom view never fetches or handles credentials");
 assert.doesNotMatch(source, /localStorage|sessionStorage|document\.cookie/, "the custom view never reads browser identity data");
@@ -163,6 +165,9 @@ assert.equal(clockTime.assignments, 1, "a minute transition updates the changed 
 assert.equal(clockPeriod.assignments, 0, "a minute transition does not assign an unchanged period");
 assert.equal(clockDate.assignments, 0, "a minute transition does not assign an unchanged date");
 assert.equal(clockRoot.querySelectorAll("[data-mode]").find((button) => button.dataset.mode === "cool"), clockControl, "a minute tick preserves the existing climate control node");
+displayNow = new Date(2026, 9, 13, 0, 1);
+timers.filter((timer) => timer.delay === 1000 && !timer.cleared).at(-1).callback();
+assert.equal(clockRoot.writes, clockWrites + 1, "a local day transition rebuilds calendar labels while preserving ordinary ticks");
 clockHandle.destroy();
 
 const temperatureRoot = makeInteractiveRoot();
@@ -223,6 +228,8 @@ assert.match(weatherRoot.innerHTML,/fch-weather-temp">17°C</,'installed househo
 assert.match(weatherRoot.innerHTML,/fch-weather-state">rainy</);
 assert.match(weatherRoot.innerHTML,/fch-forecast-day[^>]*><b>Today<\/b>/,'ready forecast exposes a compact dated forecast row');
 assert.match(weatherRoot.innerHTML,/17°C/,'forecast preserves the bounded household temperature unit');
+weatherHass.forecast.temperatureUnit='°F';weatherHandle.refresh();
+assert.match(weatherRoot.innerHTML,/fch-forecast-day[^>]*><b>Today<\/b>[\s\S]*?17°F/,'a forecast unit-only update repaints the forecast row');
 weatherHass.states['weather.forecast_home'].state='unavailable';weatherHandle.refresh();
 assert.match(weatherRoot.innerHTML,/fch-weather-temp">—°C</,'stale weather temperatures are hidden when unavailable');
 delete weatherHass.states['weather.forecast_home'];weatherHandle.refresh();
