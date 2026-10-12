@@ -34,7 +34,7 @@ KOTLIN_COMMAND = [
     ":app:testDebugUnitTest",
     *[item for test in KOTLIN_TESTS for item in ("--tests", test)],
 ]
-JS_COMMAND = ["node", "--test", "app/src/test/js/photos-playback.test.js"]
+JS_COMMAND = ["node", "--test", "--test-reporter=tap", "app/src/test/js/photos-playback.test.js"]
 EXPECTED_JUNIT_SUITES = {
     "TEST-com.wyattfleming.frameos.web.FrameWebPhotosReadinessStateTest.xml": 3,
     "TEST-com.wyattfleming.frameos.web.FrameWebSurfaceContractTest.xml": 16,
@@ -178,7 +178,7 @@ def tap_counts(log: Path) -> dict:
     text = log.read_text(errors="replace")
     counts = {}
     for name in ("tests", "pass", "fail"):
-        match = re.search(rf"^# {name} (\\d+)$", text, re.MULTILINE)
+        match = re.search(rf"^# {name} (\d+)$", text, re.MULTILINE)
         if not match:
             raise RuntimeError(f"Node TAP log does not contain {name} count")
         counts[name] = int(match.group(1))
