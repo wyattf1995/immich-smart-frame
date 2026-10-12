@@ -248,6 +248,41 @@ class FrameWebSurfaceContractTest {
     }
 
     @Test
+    fun `opt in hidden Home detachment releases the warm renderer and blocks background preload`() {
+        val source = source()
+        val preload = methodBody(source, "fun preload(slot: FrameWebSlot, url: String)")
+        val show = methodBody(source, "fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean)")
+        val hide = methodBody(source, "fun hide()")
+        val detach = methodBody(source, "private fun detachWarmHomeWhenRequired(slot: FrameWebSlot?)")
+
+        assertTrue(source.contains("private val detachHiddenHomeAssistant: Boolean = false"))
+        assertContainsInOrder(
+            preload,
+            listOf(
+                "require(slot.canPreload)",
+                "if (!homeAttachmentPolicy.allowsBackgroundPreload(slot)) return",
+                "ensureWarmHomeAttached(managed)",
+            ),
+        )
+        assertContainsInOrder(
+            show,
+            listOf(
+                "} else {",
+                "detachWarmHomeWhenRequired(slot)",
+                "attachForeground(slot, managed)",
+            ),
+        )
+        assertTrue(hide.contains("detachWarmHomeWhenRequired(slot = null)"))
+        assertContainsInOrder(
+            detach,
+            listOf(
+                "releaseWarmHomeAttachedSession()",
+                "homeAssistantSession?.setActive(false)",
+            ),
+        )
+    }
+
+    @Test
     fun `suspendAllContent cancels recovery callbacks before suspending sessions without evicting warm home`() {
         val suspendAllContent = methodBody(source(), "fun suspendAllContent()")
 
