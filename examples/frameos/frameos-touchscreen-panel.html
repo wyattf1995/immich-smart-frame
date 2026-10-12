@@ -41,7 +41,7 @@
         });
         const READY_TIMEOUT_MILLIS = 12_000;
         const HOME_STYLE_PROBE_TIMEOUT_MILLIS = 12_000;
-        const HOME_STYLE_SHADOW_HOSTS = new Set(["hui-sections-view", "hui-heading-card", "hui-markdown-card", "hui-thermostat-card", "ha-markdown"]);
+        const HOME_STYLE_SHADOW_LEAVES = new Set(["ha-markdown-element"]);
         const validView = (value) => Object.prototype.hasOwnProperty.call(routes, value);
         const normalizeView = (value) => validView(value) ? value : "home";
         const routeFor = (value) => routes[normalizeView(value)];
@@ -149,7 +149,7 @@
           });
         };
         const queueHomeShadowHost = (element, work) => {
-          if (element.ownerDocument !== work.root || !HOME_STYLE_SHADOW_HOSTS.has(element.localName)) return;
+          if (element.ownerDocument !== work.root || !element.localName?.includes("-") || HOME_STYLE_SHADOW_LEAVES.has(element.localName)) return;
           work.pendingShadowHosts.add(element);
           scheduleHomeShadowProbe(work);
         };
