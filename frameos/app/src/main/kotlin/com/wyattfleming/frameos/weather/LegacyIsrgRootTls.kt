@@ -1,5 +1,6 @@
 package com.wyattfleming.frameos.weather
 
+import android.annotation.SuppressLint
 import android.os.Build
 import java.io.ByteArrayInputStream
 import java.net.HttpURLConnection
@@ -54,6 +55,12 @@ internal object LegacyIsrgRootTls {
         }
     }
 
+    // This composes two platform TrustManagerFactory validators: platform roots
+    // first, then exactly the fingerprint-checked ISRG root. Both rejecting still
+    // throws; HttpsURLConnection retains its default hostname verification.
+    // CustomX509TrustManager flags all custom implementations, including this
+    // delegated API23-only compatibility path. Keep all other TLS lint enabled.
+    @SuppressLint("CustomX509TrustManager")
     class FallbackTrustManager(
         private val platform: X509TrustManager,
         private val supplemental: X509TrustManager,
