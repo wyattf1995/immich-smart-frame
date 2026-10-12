@@ -30,6 +30,7 @@
     <header id="home-chrome" hidden><span id="home-title">Home</span><span id="home-hint">Swipe from the left edge for photos</span></header>
     <div id="loading">Opening Home…</div>
     <p id="status" aria-live="polite" aria-atomic="true"></p>
+    <script src="/local/frameos-home-forecast.js?v=home-forecast-1"></script>
     <script src="/local/frameos-custom-home.js?v=88c1874528e3"></script>
     <script>
       (() => {
@@ -75,8 +76,47 @@
         let homeStyleWork = null;
         let customHomeWork = null;
         let customHomeProbe = null;
+        let forecastOwner = null;
+        const FORECAST_ENTITY = "weather.forecast_home";
+        const disposeForecast = () => {
+          forecastOwner?.controller.destroy();
+          forecastOwner = null;
+        };
+        const homeForecast = (root, live) => {
+          const unavailable = { forecast: null, forecastStatus: "unavailable" };
+          if (!window.FrameOSHomeForecast || !live.connection || typeof live.callWS !== "function") return unavailable;
+          if (forecastOwner?.root !== root || forecastOwner?.connection !== live.connection) {
+            disposeForecast();
+            const connection = live.connection;
+            const currentLive = () => {
+              if (panel.contentDocument !== root || iframeView() !== "home" || currentView !== "home" || document.visibilityState === "hidden") return null;
+              const fresh = root.querySelector?.("home-assistant")?.hass;
+              return fresh?.connection === connection && fresh.connected !== false && connection.connected === true ? fresh : null;
+            };
+            const controller = window.FrameOSHomeForecast.create({
+              readForecast: async () => {
+                const fresh = currentLive();
+                if (!fresh || typeof fresh.callWS !== "function") throw new Error("Forecast unavailable");
+                // Read-only weather response through HA's existing authenticated socket.
+                const result = await fresh.callWS({ type: "call_service", domain: "weather", service: "get_forecasts",
+                  target: { entity_id: FORECAST_ENTITY }, service_data: { type: "daily" }, return_response: true });
+                if (!currentLive()) throw new Error("Forecast unavailable");
+                return result?.response?.[FORECAST_ENTITY]?.forecast;
+              },
+              temperatureUnit: () => currentLive()?.states?.[FORECAST_ENTITY]?.attributes?.temperature_unit || "",
+              onUpdate: () => {
+                if (forecastOwner?.controller === controller && currentLive()) customHomeWork?.instance.refresh();
+              },
+            });
+            forecastOwner = { root, connection, controller };
+          }
+          forecastOwner.controller.setActive(document.visibilityState !== "hidden" && live.connected !== false && live.connection.connected === true);
+          forecastOwner.controller.refreshIfNeeded();
+          return forecastOwner.controller.snapshot();
+        };
 
         const disposeCustomHome = () => {
+          forecastOwner?.controller.setActive(false);
           if (customHomeProbe) window.clearTimeout(customHomeProbe.timer);
           customHomeProbe = null;
           if (customHomeWork) customHomeWork.instance.destroy();
@@ -118,7 +158,10 @@
               });
               states[id] = Object.freeze({ entity_id: id, state: entity.state, attributes: Object.freeze(attributes) });
             });
+            const forecast = homeForecast(root, live);
             return Object.freeze({
+              forecast: forecast.forecast,
+              forecastStatus: forecast.forecastStatus,
               states: Object.freeze(states),
               connected: live.connected !== false && live.connection?.connected !== false,
               config: Object.freeze({ unit_system: Object.freeze({ temperature: live.config?.unit_system?.temperature }) }),
@@ -310,6 +353,7 @@
         };
         const showSignInRequired = () => {
           disposeCustomHome();
+          disposeForecast();
           disposeRouteWork();
           disposeHomeStyles();
           loading.hidden = true;
@@ -536,6 +580,7 @@
         window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
         window.addEventListener("pagehide", () => {
           disposeCustomHome();
+          disposeForecast();
           disposeRouteWork();
           disposeHomeStyles();
           if (detachSpaNavigation) detachSpaNavigation();
