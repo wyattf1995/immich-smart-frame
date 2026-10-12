@@ -70,7 +70,7 @@ try:
     slop_red = mutate(
         "gesture-slop-red",
         "classifier",
-        "if (maxOf(horizontalDistance, verticalDistance) < directionalTouchSlopPx) return null",
+        "if (maxOf(horizontalDistance, verticalDistance) <= directionalTouchSlopPx) return null",
         "if (false) return null",
         "sub slop outward and vertical jitter recovers into a deliberate inward swipe",
     )
