@@ -32,4 +32,20 @@ class TouchDashboardContractTest {
         assertTrue(rail.contains("onDashboard()"))
         assertFalse("Birds is never added independently of setModes", rail.contains("FrameMode.BIRDS"))
     }
+
+    @Test
+    fun dashboardDetachesReusableViewsBeforeModeOrThemeRebuilds() {
+        assertTrue(
+            "A nested old header/card keeps stateful children parented after content removal",
+            dashboard.contains("detachReusableChildren()\n        content.removeAllViews()"),
+        )
+        listOf("time", "date", "weatherSummary", "weatherDetail", "photo", "photoEmpty").forEach { child ->
+            assertTrue(
+                "Reusable $child must be detached before it is added to the next dashboard tree",
+                dashboard.contains("listOf(time, date, weatherSummary, weatherDetail, photo, photoEmpty)"),
+            )
+        }
+        assertTrue("Changing configured modes rebuilds the tree", dashboard.contains("this.modes = modes.distinct()\n        rebuild()"))
+        assertTrue("Changing day/night style rebuilds the tree", dashboard.contains("if (next != style) { style = next; rebuild() }"))
+    }
 }
