@@ -14,6 +14,7 @@ export TMPDIR="$root/.nas-frame-sync-android/tmp"
 export JAVA_TOOL_OPTIONS="-Djava.io.tmpdir=$TMPDIR"
 python3 "$root/scripts/verify-touchscreen-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-bridge-callback-proof.py" "$root"
+python3 "$root/scripts/verify-frameos-touchscreen-route-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-legacy-api-proof.py" "$root"
 mkdir -p "$root/reports/frameos-legacy"
 "$root/frameos/gradlew" -p "$root/frameos" --no-daemon --max-workers=2 \
