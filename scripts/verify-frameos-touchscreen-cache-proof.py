@@ -36,7 +36,7 @@ command = [
     "--tests", "com.wyattfleming.frameos.web.HomeAssistantRouteTest",
 ]
 
-before = '    private const val TOUCHSCREEN_WRAPPER_VERSION = "dd9f877808dd"\n'
+before = '    private const val TOUCHSCREEN_WRAPPER_VERSION = "d9c1b399af73"\n'
 after = '    private const val TOUCHSCREEN_WRAPPER_VERSION = "touchscreen-1"\n'
 
 
