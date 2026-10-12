@@ -176,7 +176,7 @@ def prove_dashboard_reparenting() -> dict[str, object]:
             "com.wyattfleming.frameos.ui.TouchDashboardContractTest",
             "TEST-com.wyattfleming.frameos.ui.TouchDashboardContractTest.xml",
             "touch-dashboard-detach-source-red",
-            expected_cases=4,
+            expected_cases=5,
             expected_failures=1,
             failed_case_names={"dashboardDetachesReusableViewsBeforeModeOrThemeRebuilds"},
         )
@@ -190,7 +190,7 @@ def prove_dashboard_reparenting() -> dict[str, object]:
         "com.wyattfleming.frameos.ui.TouchDashboardContractTest",
         "TEST-com.wyattfleming.frameos.ui.TouchDashboardContractTest.xml",
         "touch-dashboard-detach-restored-green",
-        expected_cases=4,
+        expected_cases=5,
         expected_failures=0,
         failed_case_names=set(),
     )
@@ -199,10 +199,10 @@ def prove_dashboard_reparenting() -> dict[str, object]:
     return {
         "recipe": "dashboard reusable-child detachment before rebuild",
         "negative_exit": negative_exit,
-        "negative_tests": 4,
+        "negative_tests": 5,
         "negative_assertion_failures": 1,
         "restored_green_exit": restored_exit,
-        "restored_tests": 4,
+        "restored_tests": 5,
         "restored_failures": 0,
         "original_source_sha256": original_hash,
         "restored_source_sha256": sha256(source),
