@@ -131,3 +131,26 @@ temperatureRoot.querySelectorAll("[data-adjust]").find((button) => button.datase
 await temperatureRoot.querySelector("[data-apply]").click();
 assert.equal(JSON.stringify(temperatureServices[0]), JSON.stringify(["climate", "set_temperature", { entity_id: "climate.entryway_entryway", temperature: 69 }]), "an explicit Apply click is required for a drafted temperature command");
 temperatureHandle.destroy();
+
+// No false camera availability, fabricated current reading, or silent overwrite
+// after another controller changes the setpoint while this draft is open.
+const guardedRoot = makeInteractiveRoot();
+const guardedCalls = [];
+const guardedHass = { connected:true, config:{unit_system:{temperature:'°F'}}, states:{
+ 'climate.entryway_entryway':{state:'heat',attributes:{hvac_modes:['off','heat'],min_temp:60,max_temp:80,target_temp_step:1,temperature:68,current_temperature:null}}
+},callService(...args){guardedCalls.push(args);return Promise.resolve();}};
+const guarded = api.mount(guardedRoot,{getHass:()=>guardedHass});
+assert.match(guardedRoot.innerHTML,/0 cameras available/,'absent cameras are not available');
+assert.match(guardedRoot.innerHTML,/fch-climate-temp">—</,'missing current temperature is not the target');
+await guardedRoot.querySelector('[data-apply]').click();
+assert.equal(guardedCalls.length,0,'Apply without edits must not resend state');
+guardedRoot.querySelectorAll('[data-adjust]').find(b=>b.dataset.adjust==='temperature:1').click();
+guardedHass.states['climate.entryway_entryway'].attributes.temperature=72;
+await guardedRoot.querySelector('[data-apply]').click();
+assert.equal(guardedCalls.length,0,'an external same-mode target change invalidates old drafts');
+assert.match(guardedRoot.innerHTML,/72°F/);
+guardedHass.states['climate.entryway_entryway'].state='unavailable';
+guarded.refresh();
+await guardedRoot.querySelectorAll('[data-mode]').find(b=>b.dataset.mode==='heat').click();
+assert.equal(guardedCalls.length,0,'unavailable climate rejects mode writes even if old supported modes remain');
+guarded.destroy();
