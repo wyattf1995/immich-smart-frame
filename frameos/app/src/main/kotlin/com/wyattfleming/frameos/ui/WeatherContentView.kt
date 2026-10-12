@@ -28,6 +28,8 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 class WeatherContentView(context: Context) : View(context) {
+    private var onPrimaryAction: (() -> Unit)? = null
+
     var presentation: WeatherPresentation = previewPresentation()
         set(value) {
             if (field.sceneCondition != value.sceneCondition) sceneEpochMillis = SystemClock.uptimeMillis()
@@ -36,11 +38,7 @@ class WeatherContentView(context: Context) : View(context) {
             pageEpochMillis = SystemClock.uptimeMillis()
             pageAnchorIndex = 0
             staticLayerState.invalidatePresentation()
-            val metricSummary = value.metrics.joinToString { "${it.label} ${it.value}" }
-            contentDescription = value.emptyMessage ?: buildString {
-                append("${value.condition}, ${value.temperature}. ${value.status}")
-                if (metricSummary.isNotEmpty()) append(". $metricSummary")
-            }
+            updateInteractionState()
             invalidate()
         }
 
@@ -71,7 +69,16 @@ class WeatherContentView(context: Context) : View(context) {
 
     init {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
-        contentDescription = "Clear night, 79°F. Preview weather"
+        setOnClickListener {
+            if (isPrimaryActionAvailable()) onPrimaryAction?.invoke()
+        }
+        updateInteractionState()
+    }
+
+    /** Enables the visible Weather sign-in affordance without changing hardware-key behavior. */
+    fun setOnPrimaryActionListener(listener: (() -> Unit)?) {
+        onPrimaryAction = listener
+        updateInteractionState()
     }
 
     fun moveHourlyPage(forward: Boolean): String? {
@@ -428,8 +435,29 @@ class WeatherContentView(context: Context) : View(context) {
         drawCard(canvas, RectF(width * 0.23f, height * 0.30f, width * 0.77f, height * 0.69f))
         drawWeatherIcon(canvas, WeatherCondition.CLOUDY, width * 0.50f, height * 0.41f, dp(38f))
         drawCenteredText(canvas, message, width * 0.50f, height * 0.53f, 28f, Color.WHITE, true)
-        val detail = if (message.contains("sign-in")) "Press ★ to connect securely" else "The last forecast will return automatically"
+        val detail = WeatherTouchPrimaryAction.detailFor(message, isPrimaryActionAvailable())
         drawCenteredText(canvas, detail, width * 0.50f, height * 0.60f, 19f, MUTED)
+    }
+
+    private fun isPrimaryActionAvailable(): Boolean = WeatherTouchPrimaryAction.isAvailable(
+        emptyMessage = presentation.emptyMessage,
+        actionConfigured = onPrimaryAction != null,
+    )
+
+    private fun updateInteractionState() {
+        val primaryActionAvailable = isPrimaryActionAvailable()
+        isClickable = primaryActionAvailable
+        isFocusable = primaryActionAvailable
+        val metricSummary = presentation.metrics.joinToString { "${it.label} ${it.value}" }
+        val fallbackDescription = buildString {
+            append("${presentation.condition}, ${presentation.temperature}. ${presentation.status}")
+            if (metricSummary.isNotEmpty()) append(". $metricSummary")
+        }
+        contentDescription = WeatherTouchPrimaryAction.contentDescriptionFor(
+            emptyMessage = presentation.emptyMessage,
+            fallbackDescription = fallbackDescription,
+            actionConfigured = primaryActionAvailable,
+        )
     }
 
     private fun drawCurrent(canvas: Canvas, forecastPageIndex: Int) {
@@ -646,4 +674,24 @@ class WeatherContentView(context: Context) : View(context) {
             },
         )
     }
+}
+
+internal object WeatherTouchPrimaryAction {
+    private const val SIGN_IN_MESSAGE = "Weather needs Home Assistant sign-in"
+    private const val TOUCH_CONNECT_HINT = "Tap to connect securely"
+    private const val OFFLINE_HINT = "The last forecast will return automatically"
+
+    fun isAvailable(emptyMessage: String?, actionConfigured: Boolean): Boolean =
+        actionConfigured && emptyMessage == SIGN_IN_MESSAGE
+
+    fun detailFor(emptyMessage: String?, actionConfigured: Boolean): String =
+        if (isAvailable(emptyMessage, actionConfigured)) TOUCH_CONNECT_HINT else OFFLINE_HINT
+
+    fun contentDescriptionFor(
+        emptyMessage: String?,
+        fallbackDescription: String,
+        actionConfigured: Boolean,
+    ): String = emptyMessage?.let { message ->
+        if (isAvailable(message, actionConfigured)) "$message. $TOUCH_CONNECT_HINT" else message
+    } ?: fallbackDescription
 }
