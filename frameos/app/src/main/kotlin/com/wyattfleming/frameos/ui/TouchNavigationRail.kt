@@ -2,6 +2,7 @@ package com.wyattfleming.frameos.ui
 
 import android.content.Context
 import android.graphics.Typeface
+import android.util.AttributeSet
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
@@ -10,11 +11,26 @@ import android.widget.TextView
 import com.wyattfleming.frameos.navigation.FrameMode
 import java.time.ZonedDateTime
 
-class TouchNavigationRail(
+class TouchNavigationRail private constructor(
     context: Context,
+    attrs: AttributeSet?,
+    defStyleAttr: Int,
     private val onDashboard: () -> Unit,
     private val onOpenMode: (FrameMode) -> Unit,
-) : LinearLayout(context) {
+) : LinearLayout(context, attrs, defStyleAttr) {
+    constructor(context: Context) : this(context, null, 0, {}, {})
+
+    constructor(context: Context, attrs: AttributeSet?) : this(context, attrs, 0, {}, {})
+
+    constructor(context: Context, attrs: AttributeSet?, defStyleAttr: Int) :
+        this(context, attrs, defStyleAttr, {}, {})
+
+    constructor(
+        context: Context,
+        onDashboard: () -> Unit,
+        onOpenMode: (FrameMode) -> Unit,
+    ) : this(context, null, 0, onDashboard, onOpenMode)
+
     private var style = TouchDashboardStyle.forHour(12)
     private var selected: FrameMode? = null
     private var modes: List<FrameMode> = FrameMode.cycleModes(false)
