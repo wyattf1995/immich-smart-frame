@@ -66,6 +66,21 @@ class MainActivityFullscreenMediaContractTest {
         assertContainsInOrder(showDashboard, listOf("touchMediaNavigation.dismissMenu()", "dashboardVisible = true", "render(state, announce = false)"))
     }
 
+    @Test
+    fun `pause clears a transient media menu before discarding pending navigation`() {
+        val onPause = methodBody(mainActivity(), "override fun onPause()")
+
+        assertContainsInOrder(
+            onPause,
+            listOf(
+                "root.resetTouchNavigation()",
+                "touchMediaNavigation.dismissMenu()",
+                "updateTouchNavigation()",
+                "cancelModeGesture()",
+            ),
+        )
+    }
+
     private fun mainActivity(): String {
         val root = Path.of("src/main/kotlin/com/wyattfleming/frameos")
         val source = root.resolve("MainActivity.kt")
