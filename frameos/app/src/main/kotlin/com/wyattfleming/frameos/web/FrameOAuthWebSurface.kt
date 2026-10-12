@@ -26,11 +26,12 @@ class FrameOAuthWebSurface(
     private val runtime: GeckoRuntime,
     private val authorizationUrl: String,
     configuredHomeAssistantUrl: String,
+    callbackPageUrl: String,
     private val onCallback: (String) -> Unit,
     private val onFailure: () -> Unit,
     private val timeoutMillis: Long = TIMEOUT_MILLIS,
     private val navigationPolicy: FrameOAuthNavigationPolicy =
-        FrameOAuthNavigationPolicy(configuredHomeAssistantUrl),
+        FrameOAuthNavigationPolicy(configuredHomeAssistantUrl, callbackPageUrl),
 ) : GeckoView(context) {
     private val oauthSession = GeckoSession(
         GeckoSessionSettings().apply {

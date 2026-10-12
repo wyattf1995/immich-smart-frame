@@ -109,7 +109,11 @@ embedded-route readiness remains separate from native document paint.
 
 Deploy the two local pages to Home Assistant's `/config/www/` directory so they
 are available as `/local/frameos-panel.html` and `/local/frameos-oauth.html`.
-Keep them same-origin with the configured Home Assistant URL.
+Keep them same-origin with the configured Home Assistant URL. Native Weather
+uses the exact `/local/frameos-oauth.html` HTTPS URL as both its OAuth client
+identifier and redirect URI; FrameOS intercepts that exact callback before
+Gecko loads it. Do not change its path, host, scheme, or port independently of
+`frameos.home_assistant_url`.
 
 Initial provisioning goes through a receiver protected by Android's
 `android.permission.DUMP`; ordinary applications cannot send it. Run the

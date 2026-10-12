@@ -1322,7 +1322,7 @@ class MainActivity : Activity() {
             oauthCallbackPageUrl = callbackPageUrl
             pendingOAuthStateStore = pendingStateStore
             oauthClient = client
-            callbackVerifier = OAuthCallbackVerifier(pendingStateStore)
+            callbackVerifier = OAuthCallbackVerifier(pendingStateStore, callbackPageUrl)
             weatherCoordinator = WeatherCoordinator(
                 accessTokenProvider = client,
                 repository = WeatherRepository(
@@ -1643,6 +1643,7 @@ class MainActivity : Activity() {
                 runtime = (application as FrameOsApplication).geckoRuntime,
                 authorizationUrl = authorization.url,
                 configuredHomeAssistantUrl = homeUrl,
+                callbackPageUrl = callbackPageUrl,
                 onCallback = { callback ->
                     closeWeatherAuthorization(consumeState = false)
                     handleOAuthCallbackUrl(callback)
