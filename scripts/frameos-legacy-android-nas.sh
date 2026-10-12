@@ -35,6 +35,11 @@ with zipfile.ZipFile(apk) as z:
     assert libs and all(n.startswith('lib/armeabi-v7a/') for n in libs), libs
     assert 'lib/armeabi-v7a/libxul.so' in libs
     assert not any(n.startswith('META-INF/') and n.endswith(('.RSA','.DSA','.EC')) for n in z.namelist())
+    assert z.testzip() is None
+signer = aapt.with_name('apksigner')
+signature = subprocess.run([str(signer), 'verify', '--verbose', '--min-sdk-version', '23', str(apk)], capture_output=True, text=True)
+(out/'unsigned-apk-verification.txt').write_text(signature.stdout + signature.stderr)
+assert signature.returncode == 1 and 'DOES NOT VERIFY' in signature.stderr + signature.stdout, signature
 dependencies = (out/'dependencies-and-release-lint.log').read_text()
 assert 'geckoview-armeabi-v7a:144.0.20251027123126' in dependencies
 assert 'geckoview-arm64-v8a' not in dependencies
