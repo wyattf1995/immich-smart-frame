@@ -41,6 +41,8 @@ assert.equal(isWritable({ connected: true, pending: false, state: "unknown" }), 
 assert.match(source, /callService\("climate", "set_temperature"/, "temperature changes use Home Assistant's service API");
 assert.match(source, /callService\("climate", "set_hvac_mode"/, "mode changes use Home Assistant's service API");
 assert.match(source, /addEventListener\("click"/, "writes require a direct click event");
+assert.match(source, /data-nav="home">Home</, "the web dashboard uses an accurate Home rail label");
+assert.match(source, /Weather unavailable/, "missing weather is shown honestly rather than fabricated");
 assert.doesNotMatch(source, /fetch\(/, "the custom view never fetches or handles credentials");
 assert.doesNotMatch(source, /localStorage|sessionStorage|document\.cookie/, "the custom view never reads browser identity data");
 
