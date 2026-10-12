@@ -203,8 +203,9 @@ guarded.destroy();
 
 const calendarRoot=makeInteractiveRoot();
 const calendarHass={connected:true,states:{'calendar.family':{state:'on',attributes:{message:'Holiday',start_time:'2026-10-12 00:00:00',all_day:true}}},callService(){throw new Error('render cannot write');}};
-const calendarHandle=api.mount(calendarRoot,{getHass:()=>calendarHass});
+const calendarHandle=api.mount(calendarRoot,{getHass:()=>calendarHass,now:()=>new Date(2026,9,12,9)});
 assert.match(calendarRoot.innerHTML,/All day/,'HA all_day boolean labels midnight events correctly');
+assert.match(calendarRoot.innerHTML,/Today · All day/,'calendar content retains day and date context in the rendered row');
 assert.doesNotMatch(calendarRoot.innerHTML,/fch-weather-icon">☀/,'missing weather must not claim sunshine');
 calendarHandle.destroy();
 
