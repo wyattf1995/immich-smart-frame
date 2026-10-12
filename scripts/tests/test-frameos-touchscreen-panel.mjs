@@ -6,7 +6,12 @@ const html = fs.readFileSync(new URL("../../examples/frameos/frameos-touchscreen
 const script = html.match(/<script>\s*([\s\S]*?)\s*<\/script>/)?.[1];
 assert.ok(script, "panel must contain executable wrapper script");
 
-const root = { nodeType: 9, nodes: [], querySelectorAll() { return this.nodes; } };
+const root = {
+  nodeType: 9,
+  nodes: [],
+  querySelectorAll() { return this.nodes; },
+  createElement() { return { id: "", textContent: "" }; },
+};
 const makeElement = (localName, options = {}) => ({
   nodeType: 1,
   localName,
@@ -14,17 +19,28 @@ const makeElement = (localName, options = {}) => ({
   textContent: options.text || options.heading || "",
   expectedShadowText: options.expectedShadowText || "",
   shadowRoot: options.shadowRoot || null,
+  style: { values: [], setProperty(name, value, priority) { this.values.push([name, value, priority]); } },
   ownerDocument: root,
   isConnected: true,
   getAttribute() { return null; },
   querySelectorAll() { return options.children || []; },
 });
-const headingCards = ["Today", "Up next", "Home status", "Comfort"].map((heading) => makeElement("hui-heading-card", {
-  shadowRoot: { nodeType: 11, textContent: "", querySelectorAll() { return []; } },
-  text: "",
-  heading: "",
-  expectedShadowText: heading,
-}));
+const headingCards = ["Today", "Up next", "Home status", "Comfort"].map((heading) => {
+  const styles = [];
+  return makeElement("hui-heading-card", {
+    shadowRoot: {
+      nodeType: 11,
+      textContent: "",
+      querySelector(selector) { return styles.find((style) => style.id === selector.slice(1)) || null; },
+      append(style) { styles.push(style); },
+      querySelectorAll() { return []; },
+      styles,
+    },
+    text: "",
+    heading: "",
+    expectedShadowText: heading,
+  });
+});
 const headingShadow = { nodeType: 11, querySelectorAll() { return headingCards; } };
 root.nodes = [makeElement("home-assistant", { shadowRoot: headingShadow })];
 
@@ -50,7 +66,10 @@ const panel = {
 };
 const context = {
   window: null,
-  document: { getElementById(id) { return ({ panel, loading, status })[id]; } },
+  document: {
+    getElementById(id) { return ({ panel, loading, status })[id]; },
+    createElement() { return { id: "", textContent: "" }; },
+  },
   location: { hash: "", pathname: "/local/frameos-touchscreen-panel.html", search: "" },
   history: { replaceState(_state, _title, value) { context.location.hash = value.slice(value.indexOf("#")); } },
   MutationObserver: class {
@@ -74,6 +93,10 @@ headingCards.forEach((card) => { card.shadowRoot.textContent = card.expectedShad
 const characterDataObserver = observers.at(-1);
 headingCards.forEach((card) => characterDataObserver.callback([{ type: "characterData", target: { parentElement: card } }]));
 assert.equal(loading.hidden, true, "delayed HA heading shadow text makes Home ready");
+headingCards.forEach((card) => {
+  assert.ok(card.style.values.some(([name, value]) => name === "--primary-text-color" && value === "#fff"), "Home heading host receives the established high-contrast text variable");
+  assert.equal(card.shadowRoot.styles.filter((style) => style.id === "frameos-heading-contrast").length, 1, "Home heading shadow receives exactly one contrast style");
+});
 const firstSpaListener = childListeners.get("location-changed");
 panelListeners.get("load")();
 assert.notEqual(childListeners.get("location-changed"), firstSpaListener, "a full iframe load reattaches navigation listeners even when WindowProxy identity is stable");
