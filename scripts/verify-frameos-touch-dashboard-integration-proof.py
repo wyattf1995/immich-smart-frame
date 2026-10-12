@@ -139,6 +139,34 @@ if photos_start_restored["exit"] != 0:
 if sha256(test) != test_hash:
     raise RuntimeError("contract test changed during Photos-start proof")
 
+art_idle_marker = "        if (intent == FrameIntent.IdleExpired && state.mode.persistsAcrossIdle) return\n"
+try:
+    text = original.decode("utf-8")
+    if text.count(art_idle_marker) != 1:
+        raise RuntimeError("expected exactly one Art idle dashboard bypass guard")
+    source.write_text(text.replace(art_idle_marker, "", 1), encoding="utf-8")
+    art_idle_negative = run(
+        "touch-dashboard-art-idle-source-red",
+        expected_failures=1,
+        expected_names={"Photos and directional mode routes can leave the dashboard"},
+    )
+    if art_idle_negative["exit"] == 0:
+        raise RuntimeError("Art idle negative proof unexpectedly passed")
+finally:
+    source.write_bytes(original)
+    if sha256(source) != source_hash:
+        raise RuntimeError("MainActivity exact restoration failed after Art idle proof")
+
+art_idle_restored = run(
+    "touch-dashboard-art-idle-restored-green",
+    expected_failures=0,
+    expected_names=set(),
+)
+if art_idle_restored["exit"] != 0:
+    raise RuntimeError("Art idle restored contract test failed")
+if sha256(test) != test_hash:
+    raise RuntimeError("contract test changed during Art idle proof")
+
 (out / "touch-dashboard-integration-proof.json").write_text(json.dumps({
     "passed": True,
     "recipe": "remove only dashboard render webSurface suspension",
@@ -149,5 +177,7 @@ if sha256(test) != test_hash:
     "restored": restored,
     "photos_start_negative": photos_start_negative,
     "photos_start_restored": photos_start_restored,
+    "art_idle_negative": art_idle_negative,
+    "art_idle_restored": art_idle_restored,
 }, indent=2) + "\n", encoding="utf-8")
 print("dashboard integration red / exact restore green verified", flush=True)
