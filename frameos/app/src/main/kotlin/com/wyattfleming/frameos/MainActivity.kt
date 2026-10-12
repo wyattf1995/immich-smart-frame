@@ -599,7 +599,14 @@ class MainActivity : Activity() {
                 handled
             }
         }
-        weatherContent = WeatherContentView(this).apply { visibility = View.GONE }
+        weatherContent = WeatherContentView(this).apply {
+            visibility = View.GONE
+            setOnPrimaryActionListener {
+                if (state.mode == FrameMode.WEATHER && weatherNeedsAuthentication) {
+                    dispatch(FrameIntent.PrimaryAction)
+                }
+            }
+        }
         offlinePhoto = ImageView(this).apply {
             visibility = View.GONE
             scaleType = ImageView.ScaleType.FIT_CENTER
