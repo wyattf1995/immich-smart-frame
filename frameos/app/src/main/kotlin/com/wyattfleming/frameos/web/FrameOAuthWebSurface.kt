@@ -9,6 +9,7 @@ import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.WebRequestError
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
 
@@ -69,6 +70,20 @@ class FrameOAuthWebSurface(
                     GeckoResult.fromValue(AllowOrDeny.DENY)
                 }
             }
+
+            override fun onNewSession(
+                session: GeckoSession,
+                uri: String,
+            ): GeckoResult<GeckoSession>? = null
+
+            override fun onLoadError(
+                session: GeckoSession,
+                uri: String?,
+                error: WebRequestError,
+            ): GeckoResult<String>? {
+                failAndClose()
+                return null
+            }
         }
         oauthSession.progressDelegate = object : GeckoSession.ProgressDelegate {
             override fun onPageStop(session: GeckoSession, success: Boolean) {
@@ -93,12 +108,10 @@ class FrameOAuthWebSurface(
         closed = true
         removeCallbacks(timeout)
         if (session != null) runCatching(::releaseSession)
-        runCatching {
-            oauthSession.setFocused(false)
-            oauthSession.setActive(false)
-            oauthSession.stop()
-            oauthSession.close()
-        }
+        runCatching { oauthSession.setFocused(false) }
+        runCatching { oauthSession.setActive(false) }
+        runCatching { oauthSession.stop() }
+        runCatching { oauthSession.close() }
     }
 
     private fun deliverCallback(callbackUrl: String) {
