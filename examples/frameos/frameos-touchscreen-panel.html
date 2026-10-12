@@ -67,9 +67,10 @@
 
         const announce = (message) => { status.textContent = message; };
         const focusPanel = () => { try { panel.contentWindow.focus(); } catch (_error) { panel.focus(); } };
-        const showLoading = (view) => { loading.textContent = `Opening ${labels[view]}…`; loading.classList.remove("still-connecting"); loading.hidden = false; announce(`Loading ${labels[view]}`); };
-        const showReady = (view) => { loading.hidden = true; announce(`${labels[view]} ready`); focusPanel(); };
-        const showStillConnecting = (view) => { loading.textContent = `${labels[view]} still connecting…`; loading.classList.add("still-connecting"); loading.hidden = false; announce(`${labels[view]} still connecting`); focusPanel(); };
+        const labelFor = (view) => labels[view] || "Camera";
+        const showLoading = (view) => { loading.textContent = `Opening ${labelFor(view)}…`; loading.classList.remove("still-connecting"); loading.hidden = false; announce(`Loading ${labelFor(view)}`); };
+        const showReady = (view) => { loading.hidden = true; announce(`${labelFor(view)} ready`); focusPanel(); };
+        const showStillConnecting = (view) => { loading.textContent = `${labelFor(view)} still connecting…`; loading.classList.add("still-connecting"); loading.hidden = false; announce(`${labelFor(view)} still connecting`); focusPanel(); };
 
         const disposeRouteWork = () => {
           if (!activeWork) return;
