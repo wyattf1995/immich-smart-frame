@@ -283,6 +283,49 @@ class FrameWebSurfaceContractTest {
     }
 
     @Test
+    fun `opt in releases foreground before attaching Home and preserves the default warm path`() {
+        val show = methodBody(source(), "fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean)")
+
+        assertTrue("The default must retain the established warm attachment behavior", show.contains(
+            "if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()",
+        ))
+        assertContainsInOrder(
+            show,
+            listOf(
+                "if (slot == FrameWebSlot.HOME_ASSISTANT) {",
+                "if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()",
+                "ensureWarmHomeAttached(managed)",
+            ),
+        )
+    }
+
+    @Test
+    fun `opt in hide releases both Home and foreground renderer bindings`() {
+        val source = source()
+        val hide = methodBody(source, "fun hide()")
+        val detach = methodBody(source, "private fun detachWarmHomeWhenRequired(slot: FrameWebSlot?)")
+
+        assertTrue("The established default must not release a retained foreground binding", hide.contains(
+            "if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()",
+        ))
+        assertContainsInOrder(
+            hide,
+            listOf(
+                "detachWarmHomeWhenRequired(slot = null)",
+                "if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()",
+                "displayedSlot = null",
+            ),
+        )
+        assertContainsInOrder(
+            detach,
+            listOf(
+                "releaseWarmHomeAttachedSession()",
+                "homeAssistantSession?.setActive(false)",
+            ),
+        )
+    }
+
+    @Test
     fun `suspendAllContent cancels recovery callbacks before suspending sessions without evicting warm home`() {
         val suspendAllContent = methodBody(source(), "fun suspendAllContent()")
 
