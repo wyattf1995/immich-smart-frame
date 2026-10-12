@@ -2,6 +2,7 @@ package com.wyattfleming.frameos.navigation
 
 enum class FrameMode(val label: String) {
     PHOTOS("Photos"),
+    ART("Art"),
     HOME("Home"),
     WEATHER("Weather"),
     CAMERAS("Cameras"),
@@ -11,8 +12,10 @@ enum class FrameMode(val label: String) {
     ;
 
     companion object {
-        fun cycleModes(birdsConfigured: Boolean): List<FrameMode> = buildList {
-            addAll(listOf(PHOTOS, HOME, WEATHER))
+        fun cycleModes(birdsConfigured: Boolean, artConfigured: Boolean = false): List<FrameMode> = buildList {
+            add(PHOTOS)
+            if (artConfigured) add(ART)
+            addAll(listOf(HOME, WEATHER))
             if (birdsConfigured) add(BIRDS)
             addAll(listOf(CAMERAS, CALENDAR))
         }

@@ -748,6 +748,7 @@ class MainActivity : Activity() {
                 homeAssistantUrl = activeConfiguration.homeAssistantUrl,
                 homeAssistantFallbackUrl = activeConfiguration.homeAssistantFallbackUrl,
                 birdsUrl = activeConfiguration.birdsUrl,
+                artUrl = activeConfiguration.artUrl,
                 warmHomeAssistantView = warmHomeAssistantView,
                 listener = webListener,
                 operationLogger = operationLogger,
@@ -1036,7 +1037,7 @@ class MainActivity : Activity() {
                     hideWebRecovery()
                     webSurface?.show(target.slot, target.url, takeFocus = true)
                 }
-                FrameWebSlot.BIRDS -> {
+                FrameWebSlot.BIRDS, FrameWebSlot.ART -> {
                     hideOfflinePhoto()
                     weatherContent.visibility = View.GONE
                     hideWebRecovery()
@@ -1124,6 +1125,7 @@ class MainActivity : Activity() {
 
     private fun isWebLabelActive(label: String): Boolean = !dashboardVisible && when (label) {
         FrameMode.PHOTOS.label -> state.mode == FrameMode.PHOTOS
+        FrameMode.ART.label -> state.mode == FrameMode.ART
         "Home Assistant" -> state.mode in HOME_ASSISTANT_MODES
         FrameMode.CAMERAS.label -> state.mode == FrameMode.CAMERAS
         FrameMode.BIRDS.label -> state.mode == FrameMode.BIRDS
@@ -1167,6 +1169,7 @@ class MainActivity : Activity() {
         cancelDashboardPhoto()
         val resolvedMode = availability().resolve(mode)
         val unavailableBirds = mode == FrameMode.BIRDS && resolvedMode != mode
+        val unavailableArt = mode == FrameMode.ART && resolvedMode != mode
         val changed = state.mode != resolvedMode
         state = state.copy(
             mode = resolvedMode,
@@ -1176,6 +1179,8 @@ class MainActivity : Activity() {
         if (resolvedMode == FrameMode.WEATHER) refreshWeather()
         if (unavailableBirds) {
             showHud("Birds is not configured")
+        } else if (unavailableArt) {
+            showHud("Art is not configured")
         } else if (changed && announceHud) {
             showHud()
         }
@@ -1265,6 +1270,7 @@ class MainActivity : Activity() {
 
     private fun availability(): FrameModeAvailability = FrameModeAvailability(
         birdsUrl = configuration?.birdsUrl,
+        artUrl = configuration?.artUrl,
         requestedModes = experienceSettings.orderedEnabledModes,
     )
 
@@ -1285,6 +1291,7 @@ class MainActivity : Activity() {
             homeAssistantFallbackUrl = intent
                 .getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_FALLBACK_URL),
             birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
+            artUrl = intent.getStringExtra(FrameControlContract.EXTRA_ART_URL),
         ) ?: return null
         configurationStore.write(provisioned)
         SharedPreferencesWeatherCache(this).clear()
@@ -1574,6 +1581,7 @@ class MainActivity : Activity() {
             weatherEntityId = current.weatherEntityId,
             homeAssistantFallbackUrl = current.homeAssistantFallbackUrl,
             birdsUrl = current.birdsUrl,
+            artUrl = current.artUrl,
         ) ?: return false
         configuration = updated
         configurationStore.write(updated)

@@ -15,6 +15,7 @@ class FrameConfigurationStore(context: Context) {
             weatherEntityId,
             preferences.getString(KEY_HOME_ASSISTANT_FALLBACK_URL, null),
             preferences.getString(KEY_BIRDS_URL, null),
+            preferences.getString(KEY_ART_URL, null),
         )
     }
 
@@ -25,6 +26,7 @@ class FrameConfigurationStore(context: Context) {
             .putString(KEY_WEATHER_ENTITY_ID, configuration.weatherEntityId)
             .putString(KEY_HOME_ASSISTANT_FALLBACK_URL, configuration.homeAssistantFallbackUrl)
             .putString(KEY_BIRDS_URL, configuration.birdsUrl)
+            .putString(KEY_ART_URL, configuration.artUrl)
             .apply()
     }
 
@@ -35,5 +37,6 @@ class FrameConfigurationStore(context: Context) {
         const val KEY_WEATHER_ENTITY_ID = "weather_entity_id"
         const val KEY_HOME_ASSISTANT_FALLBACK_URL = "home_assistant_fallback_url"
         const val KEY_BIRDS_URL = "birds_url"
+        const val KEY_ART_URL = "art_url"
     }
 }

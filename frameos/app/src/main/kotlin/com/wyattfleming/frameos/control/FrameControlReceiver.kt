@@ -63,16 +63,30 @@ class FrameControlReceiver : BroadcastReceiver() {
                 homeAssistantFallbackUrl = intent
                     .getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_FALLBACK_URL),
                 birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
+                artUrl = intent.getStringExtra(FrameControlContract.EXTRA_ART_URL),
             )
             if (configuration != null) {
                 SharedPreferencesWeatherCache(context).clear()
                 configurationStore.write(configuration)
             }
-        } else if (intent.hasExtra(FrameControlContract.EXTRA_BIRDS_URL)) {
-            FrameConfigurationPatch.withBirdsUrl(
-                existing = existingConfiguration,
-                birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
-            )?.let(configurationStore::write)
+        } else if (
+            intent.hasExtra(FrameControlContract.EXTRA_BIRDS_URL) ||
+            intent.hasExtra(FrameControlContract.EXTRA_ART_URL)
+        ) {
+            var updated = existingConfiguration
+            if (intent.hasExtra(FrameControlContract.EXTRA_BIRDS_URL)) {
+                updated = FrameConfigurationPatch.withBirdsUrl(
+                    existing = updated,
+                    birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
+                ) ?: updated
+            }
+            if (intent.hasExtra(FrameControlContract.EXTRA_ART_URL)) {
+                updated = FrameConfigurationPatch.withArtUrl(
+                    existing = updated,
+                    artUrl = intent.getStringExtra(FrameControlContract.EXTRA_ART_URL),
+                ) ?: updated
+            }
+            if (updated != existingConfiguration) configurationStore.write(updated)
         }
         if (intent.hasExtra(FrameControlContract.EXTRA_COMPANION_URL)) {
             val credentialsWritten = FrameCompanionCredentialsStore(context).write(

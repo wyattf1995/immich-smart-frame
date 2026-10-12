@@ -27,6 +27,7 @@ object HomeAssistantRoute {
             FrameMode.CAMERAS -> "cameras"
             FrameMode.CALENDAR -> "calendar"
             FrameMode.BIRDS -> return null
+            FrameMode.ART -> return null
             FrameMode.PHOTOS -> return null
         }
 

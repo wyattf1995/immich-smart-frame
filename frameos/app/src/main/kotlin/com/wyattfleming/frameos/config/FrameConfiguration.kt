@@ -9,6 +9,8 @@ data class FrameConfiguration(
     val weatherEntityId: String,
     val homeAssistantFallbackUrl: String? = null,
     val birdsUrl: String? = null,
+    /** Separate opt-in artwork feed. Family Photos remains the required default. */
+    val artUrl: String? = null,
 ) {
     companion object {
         fun from(
@@ -17,6 +19,7 @@ data class FrameConfiguration(
             weatherEntityId: String = DEFAULT_WEATHER_ENTITY_ID,
             homeAssistantFallbackUrl: String? = null,
             birdsUrl: String? = null,
+            artUrl: String? = null,
             urlPolicy: FrameUrlPolicy = FrameUrlPolicy(),
         ): FrameConfiguration? {
             val normalizedPhotosUrl = photosUrl.trim()
@@ -24,6 +27,7 @@ data class FrameConfiguration(
             val normalizedWeatherEntityId = weatherEntityId.trim()
             val normalizedFallbackUrl = homeAssistantFallbackUrl?.trim()?.ifBlank { null }
             val normalizedBirdsUrl = birdsUrl?.trim()?.ifBlank { null }
+            val normalizedArtUrl = artUrl?.trim()?.ifBlank { null }
             if (!urlPolicy.isSafeConfigurationUrl(normalizedPhotosUrl)) return null
             if (!urlPolicy.isSafeConfigurationUrl(normalizedHomeAssistantUrl)) return null
             if (!URI(normalizedHomeAssistantUrl).scheme.equals("https", ignoreCase = true)) return null
@@ -32,6 +36,7 @@ data class FrameConfiguration(
                 if (!URI(normalizedFallbackUrl).scheme.equals("https", ignoreCase = true)) return null
             }
             if (normalizedBirdsUrl != null && !urlPolicy.isSafeConfigurationUrl(normalizedBirdsUrl)) return null
+            if (normalizedArtUrl != null && !urlPolicy.isSafeConfigurationUrl(normalizedArtUrl)) return null
             if (!WEATHER_ENTITY_PATTERN.matches(normalizedWeatherEntityId)) return null
 
             return FrameConfiguration(
@@ -40,6 +45,7 @@ data class FrameConfiguration(
                 weatherEntityId = normalizedWeatherEntityId,
                 homeAssistantFallbackUrl = normalizedFallbackUrl,
                 birdsUrl = normalizedBirdsUrl,
+                artUrl = normalizedArtUrl,
             )
         }
 
