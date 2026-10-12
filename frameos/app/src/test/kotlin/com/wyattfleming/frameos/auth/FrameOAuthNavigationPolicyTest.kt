@@ -1,6 +1,7 @@
 package com.wyattfleming.frameos.auth
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class FrameOAuthNavigationPolicyTest {
@@ -18,6 +19,20 @@ class FrameOAuthNavigationPolicyTest {
             FrameOAuthNavigationPolicy.Decision.ALLOW,
             policy.decide("https://home.example.invalid:8444/auth/login?next=%2Fauth%2Fauthorize"),
         )
+    }
+
+    @Test
+    fun rejectsMalformedOrNonHttpsConfiguredOrigins() {
+        listOf(
+            "http://home.example.invalid:8444",
+            "https://user@home.example.invalid:8444",
+            "https:///missing-host",
+            "not a uri",
+        ).forEach { configuredUrl ->
+            assertThrows(IllegalArgumentException::class.java) {
+                FrameOAuthNavigationPolicy(configuredUrl)
+            }
+        }
     }
 
     @Test

@@ -10,6 +10,10 @@ class FrameOAuthNavigationPolicy(
 ) {
     enum class Decision { ALLOW, CALLBACK, DENY }
 
+    init {
+        requireConfiguredHttpsOrigin(configuredHomeAssistantUrl)
+    }
+
     fun decide(requestUrl: String): Decision {
         if (isCallbackCandidate(requestUrl)) return Decision.CALLBACK
         return if (urlPolicy.isAllowedTopLevelNavigation(configuredHomeAssistantUrl, requestUrl)) {
@@ -17,6 +21,16 @@ class FrameOAuthNavigationPolicy(
         } else {
             Decision.DENY
         }
+    }
+
+    private fun requireConfiguredHttpsOrigin(configuredUrl: String) {
+        val uri = runCatching { URI(configuredUrl) }
+            .getOrElse { throw IllegalArgumentException("Home Assistant URL must be a valid HTTPS origin", it) }
+        require(uri.scheme.equals("https", ignoreCase = true)) {
+            "Home Assistant URL must use HTTPS"
+        }
+        require(uri.userInfo == null) { "Home Assistant URL must not include user info" }
+        require(!uri.host.isNullOrBlank()) { "Home Assistant URL must include a host" }
     }
 
     private fun isCallbackCandidate(requestUrl: String): Boolean = runCatching {
