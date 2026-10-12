@@ -76,8 +76,35 @@ finally:
 code, restored = lint('api23-restored-green')
 assert code == 0, restored
 assert tests == {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in tests}
+
+# Gecko 144 predates Mozilla's five named Android/SnakeYAML consumer rules.
+# Prove the exact release-packaging failure before restoring those same rules.
+rules = frame / 'app/proguard-legacy-rules.pro'
+original_rules = rules.read_bytes()
+bean_types = {'BeanInfo', 'FeatureDescriptor', 'IntrospectionException', 'Introspector', 'PropertyDescriptor'}
+assert {line.removeprefix('-dontwarn java.beans.') for line in original_rules.decode().splitlines()
+        if line.startswith('-dontwarn ')} == bean_types
+release_command = ['./gradlew', '--no-daemon', '--max-workers=2', '-PframeosTarget=legacyArmv7', ':app:assembleRelease']
+try:
+    rules.write_text('\n'.join(line for line in original_rules.decode().splitlines()
+                              if not line.startswith('-dontwarn java.beans.')) + '\n')
+    with (out/'legacy-r8-source-red.log').open('w') as log:
+        failed = subprocess.run(release_command, cwd=frame, stdout=log, stderr=subprocess.STDOUT)
+    negative_r8 = (out/'legacy-r8-source-red.log').read_text()
+    assert failed.returncode != 0 and 'minifyReleaseWithR8 FAILED' in negative_r8, negative_r8
+    for bean in bean_types:
+        assert 'Missing class java.beans.' + bean in negative_r8, negative_r8
+finally:
+    rules.write_bytes(original_rules)
+    assert rules.read_bytes() == original_rules
+with (out/'legacy-r8-restored-green.log').open('w') as log:
+    release = subprocess.run(release_command, cwd=frame, stdout=log, stderr=subprocess.STDOUT)
+assert release.returncode == 0
+assert tests == {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in tests}
 (out/'api23-source-proof.json').write_text(json.dumps({
     'passed': True, 'negative_expected_errors': 5, 'style_cycle_expected_errors': 2, 'restored_lint_exit': code,
+    'r8_negative_missing_types': sorted(bean_types), 'restored_release_exit': release.returncode,
+    'restored_legacy_rules_sha256': hashlib.sha256(original_rules).hexdigest(),
     'restored_sources': {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources},
     'unchanged_tests': {str(p.relative_to(root)): digest for p, digest in tests.items()},
     'scope': 'API23 lint guards; encoding vectors separately verify format preservation, not API availability',
