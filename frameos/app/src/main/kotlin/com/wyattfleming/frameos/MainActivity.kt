@@ -941,6 +941,7 @@ class MainActivity : Activity() {
 
     private fun dispatch(intent: FrameIntent) {
         cancelModeGesture()
+        if (intent == FrameIntent.IdleExpired && state.mode.persistsAcrossIdle) return
         if (touchDashboardEnabled && (intent == FrameIntent.GoHome || intent == FrameIntent.IdleExpired)) {
             showDashboard()
             return
