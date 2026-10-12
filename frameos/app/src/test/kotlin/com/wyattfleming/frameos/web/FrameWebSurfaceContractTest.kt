@@ -95,7 +95,8 @@ class FrameWebSurfaceContractTest {
         assertContainsInOrder(
             maybeReportRendered,
             listOf(
-                "if (!newlyRendered) return",
+                "if ((!newlyRendered && !photoObserved) || !renderedState.rendered) return",
+                "if (!hasCurrentPhotoObservation())",
                 "val pageLoad = disarmPageLoadWatchdog()",
                 "if (pageLoad.timedOut)",
                 "renderedState.recordFailure()",
@@ -155,7 +156,7 @@ class FrameWebSurfaceContractTest {
             retry,
             listOf(
                 "val managed = displayedManagedSession() ?: return false",
-                "if (managed.renderedState.rendered) return false",
+                "if (managed.isReadyForDisplay()) return false",
                 "val url = managed.loadState.recoveryUrl() ?: return false",
                 "cancelRecovery(managed)",
                 "managed.request(url)",
@@ -186,13 +187,16 @@ class FrameWebSurfaceContractTest {
             stopWatching,
             listOf(
                 "val pageLoad = disarmPageLoadWatchdog()",
-                "if (pageLoad.hadActiveLoad && !renderedState.rendered)",
+                "if (pageLoad.hadActiveLoad && !isReadyForDisplay())",
                 "loadState.recordFailure()",
             ),
         )
         assertContainsInOrder(
             show,
             listOf(
+                "if (slot != FrameWebSlot.PHOTOS)",
+                "photosContentActive = false",
+                "photoBridge?.setCaptureEnabled(false, true)",
                 "if (displayedSlot != null && displayedSlot != slot)",
                 "displayedManagedSession()?.stopWatchingDisplayedContent()",
             ),
@@ -218,10 +222,48 @@ class FrameWebSurfaceContractTest {
         assertContainsInOrder(
             reportRendered,
             listOf(
-                "managed.renderedState.rendered",
+                "managed.isReadyForDisplay()",
                 "managed === displayedManagedSession()",
                 "displayedSurfaceVisible()",
                 "listener.onPageRendered(managed.label)",
+            ),
+        )
+    }
+
+    @Test
+    fun `Photos requires a trusted current bridge observation before surface readiness`() {
+        val source = source()
+        val request = methodBody(source, "fun request(url: String)")
+        val observed = methodBody(source, "fun onCurrentPhotoObserved(")
+        val record = methodBody(source, "fun recordCurrentPhotoObserved(")
+
+        assertContainsInOrder(
+            request,
+            listOf(
+                "if (label == \"Photos\" && !fragmentOnly)",
+                "photoReadiness.begin(photoBridge?.beginPageLoad(session))",
+                "session.loadUri(url)",
+            ),
+        )
+        assertContainsInOrder(
+            observed,
+            listOf(
+                "displayedSlot != FrameWebSlot.PHOTOS",
+                "!photosContentActive",
+                "!displayedSurfaceVisible()",
+                "photosSession.recordCurrentPhotoObserved(photo)",
+            ),
+        )
+        assertContainsInOrder(
+            record,
+            listOf(
+                "photoBridge?.isCurrentObservation(photo) != true",
+                "lifecycleSuspended",
+                "this !== displayedManagedSession()",
+                "!photosContentActive",
+                "!displayedSurfaceVisible()",
+                "photoReadiness.recordObservation(photo.generation)",
+                "maybeReportRendered(newlyRendered = false, photoObserved = true)",
             ),
         )
     }
