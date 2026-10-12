@@ -161,3 +161,21 @@ const calendarHandle=api.mount(calendarRoot,{getHass:()=>calendarHass});
 assert.match(calendarRoot.innerHTML,/All day/,'HA all_day boolean labels midnight events correctly');
 assert.doesNotMatch(calendarRoot.innerHTML,/fch-weather-icon">☀/,'missing weather must not claim sunshine');
 calendarHandle.destroy();
+
+// Household weather uses the installed Met.no entity without choosing another home's station.
+const weatherRoot=makeInteractiveRoot();
+const weatherHass={connected:true,config:{unit_system:{temperature:'°F'}},states:{
+ 'weather.forecast_home':{state:'rainy',attributes:{temperature:17,temperature_unit:'°C'}},
+ 'weather.home':{state:'sunny',attributes:{temperature:80,temperature_unit:'°F'}},
+ 'weather.parents_weather':{state:'sunny',attributes:{temperature:99,temperature_unit:'°F'}}
+},callService(){throw new Error('weather render cannot write');}};
+const weatherHandle=api.mount(weatherRoot,{getHass:()=>weatherHass});
+assert.match(weatherRoot.innerHTML,/fch-weather-temp">17°C</,'installed household forecast and its own unit win');
+assert.match(weatherRoot.innerHTML,/fch-weather-state">rainy</);
+weatherHass.states['weather.forecast_home'].state='unavailable';weatherHandle.refresh();
+assert.match(weatherRoot.innerHTML,/fch-weather-temp">—°C</,'stale weather temperatures are hidden when unavailable');
+delete weatherHass.states['weather.forecast_home'];weatherHandle.refresh();
+assert.match(weatherRoot.innerHTML,/fch-weather-temp">80°F</,'generic weather.home remains compatible');
+delete weatherHass.states['weather.home'];weatherHandle.refresh();
+assert.doesNotMatch(weatherRoot.innerHTML,/99°F/,'never choose an unrelated household weather entity');
+weatherHandle.destroy();
