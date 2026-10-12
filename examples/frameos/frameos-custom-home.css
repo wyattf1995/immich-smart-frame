@@ -55,3 +55,8 @@
 @media (max-width:720px) {
  .fch-time{font-size:72px}.fch-grid{display:flex;flex-direction:column}.fch-card{width:100%}.fch-bottom{display:contents}.fch-next-title{font-size:32px}
 }
+/* Keep navigation labels intact on the 1280px frame. */
+.frameos-custom-home {padding-left:108px}
+.fch-rail {width:88px;padding:14px 8px}
+.fch-rail button {font-size:10px;overflow-wrap:normal;word-break:normal}
+@media (max-width:720px) {.frameos-custom-home {padding-left:100px}}
