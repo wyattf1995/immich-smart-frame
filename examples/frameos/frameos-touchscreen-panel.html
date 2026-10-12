@@ -125,7 +125,7 @@
               ? "ha-markdown-element{color:#f1ede4!important} ha-markdown-element strong:first-child{display:block;font-size:clamp(3.8rem,9vw,6.25rem);line-height:.96;letter-spacing:-.055em;color:#f1ede4!important}"
               : "ha-markdown-element{color:#f1ede4!important;font-size:1.18rem;line-height:1.45}";
             const existingStyle = shadow.querySelector?.("#frameos-home-markdown");
-            if (existingStyle) existingStyle.textContent = clockStyle;
+            if (existingStyle && existingStyle.textContent !== clockStyle) existingStyle.textContent = clockStyle;
             else shadow.append(homeStyle(element.ownerDocument, "frameos-home-markdown", clockStyle));
             work.markdownRoots.add(shadow);
           }
@@ -148,7 +148,7 @@
           const observer = new MutationObserver((records) => {
             if (homeStyleWork !== work || iframeView() !== "home") return;
             records.forEach((record) => {
-              if (record.type === "characterData" && root.host?.localName === "ha-markdown") styleHomeElement(root.host, work);
+              if ((record.type === "characterData" || record.type === "childList") && root.host?.localName === "ha-markdown") styleHomeElement(root.host, work);
               (record.addedNodes || []).forEach((node) => styleHomeSubtree(node, work));
             });
           });
@@ -330,6 +330,7 @@
               const path = panel.contentWindow.location.pathname;
               if (/^\/auth(?:\/|$)/.test(path)) {
                 disposeRouteWork();
+                disposeHomeStyles();
                 loading.hidden = true;
                 announce("Sign-in required");
                 focusPanel();
