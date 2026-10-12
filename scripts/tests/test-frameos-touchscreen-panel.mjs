@@ -15,10 +15,19 @@ assert.match(html, /#f1ede4/, "Home uses the requested warm-ivory foreground");
 assert.match(html, /#d8c390/, "Home uses the requested muted-gold accent");
 assert.match(html, /#182a2c/, "Home uses the requested deep-green card surface");
 assert.doesNotMatch(html, /pointer-events\s*:\s*none[^}]*hui-thermostat-card|hui-thermostat-card[^}]*pointer-events\s*:\s*none/, "thermostat controls remain interactive");
+assert.match(html, /MAX_NAVIGATION_GUARD_NODES/, "SPA navigation bounds shadow-DOM guard inspection conservatively");
+assert.match(html, /MAX_NAVIGATION_GUARD_NODES = 4096/, "SPA guard inspection admits a normal HA dashboard before failing closed");
+assert.match(html, /childWindow\.location\.search !== "\?kiosk"/, "SPA navigation accepts only the exact kiosk route query");
+assert.match(html, /hass\.connection\?\.connected !== true/, "SPA navigation requires a positively connected HA session");
 
 const root = {
   nodeType: 9,
   nodes: [],
+  navigationBlocker: null,
+  querySelector(selector) {
+    if (selector === "home-assistant") return this.nodes.find((node) => node.localName === "home-assistant") || null;
+    return this.navigationBlocker;
+  },
   querySelectorAll() { return this.nodes; },
   createElement() {
     let textContent = "";
@@ -53,7 +62,8 @@ const makeShadow = (children = [], textContent = "") => {
   return {
     nodeType: 11,
     textContent,
-    querySelector(selector) { return styles.find((style) => style.id === selector.slice(1)) || null; },
+    navigationBlocker: null,
+    querySelector(selector) { return this.navigationBlocker || styles.find((style) => style.id === selector.slice(1)) || null; },
     querySelectorAll() { return [...children]; },
     append(style) { styles.push(style); },
     styles,
@@ -79,6 +89,12 @@ const statusCard = makeElement("hui-markdown-card", { shadowRoot: makeShadow([st
 const sectionsView = makeElement("hui-sections-view", { shadowRoot: makeShadow([markdownCard, statusCard]) });
 const headingShadow = { nodeType: 11, querySelectorAll() { return [...headingCards, sectionsView]; } };
 root.nodes = [makeElement("home-assistant", { shadowRoot: headingShadow })];
+root.nodes[0].hass = {
+  states: {},
+  connected: true,
+  connection: { connected: true },
+  callService() {},
+};
 
 const windowListeners = new Map();
 const childListeners = new Map();
@@ -88,9 +104,29 @@ const timers = [];
 const loading = { hidden: false, textContent: "", classList: { add() {}, remove() {} } };
 const status = { textContent: "" };
 const homeChrome = { hidden: true };
+const childHistoryCalls = [];
+const childEvents = [];
 const childWindow = {
-  location: { pathname: "/frameos-touchscreen/home" },
+  location: { origin: "https://frame.example", pathname: "/frameos-touchscreen/home", search: "" },
+  history: {
+    state: null,
+    pushState(state, _title, target) {
+      childHistoryCalls.push({ state, target });
+      this.state = state;
+      const parsed = new URL(target, "https://frame.example");
+      childWindow.location.pathname = parsed.pathname;
+      childWindow.location.search = parsed.search;
+    },
+  },
+  Event: class {
+    constructor(type, options = {}) { this.type = type; this.bubbles = options.bubbles; this.composed = options.composed; }
+  },
   focus() {},
+  dispatchEvent(event) {
+    childEvents.push(event);
+    childListeners.get(event.type)?.(event);
+    return true;
+  },
   addEventListener(type, callback) { childListeners.set(type, callback); },
   removeEventListener(type, callback) { if (childListeners.get(type) === callback) childListeners.delete(type); },
 };
@@ -108,7 +144,7 @@ const context = {
     getElementById(id) { return ({ panel, loading, status, "home-chrome": homeChrome })[id]; },
     createElement() { return { id: "", textContent: "" }; },
   },
-  location: { hash: "", pathname: "/local/frameos-touchscreen-panel.html", search: "" },
+  location: { origin: "https://frame.example", hash: "", pathname: "/local/frameos-touchscreen-panel.html", search: "" },
   history: { replaceState(_state, _title, value) { context.location.hash = value.slice(value.indexOf("#")); } },
   MutationObserver: class {
     constructor(callback) { this.callback = callback; this.disconnected = false; observers.push(this); }
@@ -243,4 +279,79 @@ panelListeners.get("load")();
 assert.equal(loading.hidden, true, "an HA sign-in load removes the opaque loading overlay immediately");
 assert.equal(status.textContent, "Sign-in required");
 
-console.log("FrameOS touchscreen panel shadow readiness and camera lifecycle tests passed");
+root.nodes = [makeElement("home-assistant", { shadowRoot: headingShadow })];
+root.nodes[0].hass = { states: {}, connected: true, connection: { connected: true }, callService() {} };
+root.navigationBlocker = null;
+childWindow.location.origin = "https://frame.example";
+childWindow.location.pathname = "/frameos-touchscreen/home";
+childWindow.location.search = "?kiosk";
+panel.src = "";
+const historyBeforeFastPath = childHistoryCalls.length;
+context.location.hash = "#calendar";
+windowListeners.get("hashchange")();
+assert.equal(panel.src, "", "an authenticated same-origin HA shell reuses the iframe rather than assigning src");
+assert.equal(childHistoryCalls.length, historyBeforeFastPath + 1, "SPA navigation writes one HA-style child history entry");
+assert.equal(childHistoryCalls.at(-1).state.from, "/frameos-touchscreen/home?kiosk", "SPA history preserves the previous route for Back");
+assert.equal(childHistoryCalls.at(-1).target, "/frameos-touchscreen/calendar?kiosk", "SPA navigation can target only the fixed Calendar route");
+assert.equal(childEvents.at(-1).type, "location-changed", "SPA navigation emits Home Assistant's route event");
+assert.equal(childEvents.at(-1).detail.replace, false, "SPA event carries the Home Assistant replace detail");
+assert.equal(childEvents.at(-1).bubbles, true, "SPA route event matches Home Assistant bubbling semantics");
+assert.equal(childEvents.at(-1).composed, true, "SPA route event matches Home Assistant composed semantics");
+
+root.navigationBlocker = { localName: "ha-dialog" };
+const historyBeforeDialog = childHistoryCalls.length;
+context.location.hash = "#home";
+windowListeners.get("hashchange")();
+assert.equal(panel.src, "/frameos-touchscreen/home?kiosk", "an active HA dialog forces the conservative iframe reload");
+assert.equal(childHistoryCalls.length, historyBeforeDialog, "dialog fallback does not mutate HA history");
+root.navigationBlocker = null;
+
+childWindow.location.origin = "https://other.example";
+panel.src = "";
+context.location.hash = "#cameras";
+windowListeners.get("hashchange")();
+assert.equal(panel.src, "/frameos-touchscreen/cameras?kiosk", "cross-origin uncertainty keeps the full iframe reload fallback");
+childWindow.location.origin = "https://frame.example";
+
+const nestedGuardHost = makeElement("ha-navigation-guard-host", { shadowRoot: makeShadow() });
+nestedGuardHost.shadowRoot.navigationBlocker = { localName: "ha-dialog" };
+root.nodes = [makeElement("home-assistant", { shadowRoot: headingShadow }), nestedGuardHost];
+root.nodes[0].hass = { states: {}, connected: true, connection: { connected: true }, callService() {} };
+childWindow.location.pathname = "/frameos-touchscreen/home";
+childWindow.location.search = "?kiosk";
+panel.src = "";
+const historyBeforeNestedDialog = childHistoryCalls.length;
+context.location.hash = "#calendar";
+windowListeners.get("hashchange")();
+assert.equal(panel.src, "/frameos-touchscreen/calendar?kiosk", "a dialog in a reachable HA shadow root forces a full reload");
+assert.equal(childHistoryCalls.length, historyBeforeNestedDialog, "shadow dialog fallback does not mutate HA history");
+
+root.nodes = [makeElement("home-assistant", { shadowRoot: headingShadow })];
+root.nodes[0].hass = { states: {}, connected: true, connection: { connected: true }, callService() {} };
+childWindow.location.pathname = "/frameos-touchscreen/home";
+childWindow.location.search = "?kiosk&edit=1";
+panel.src = "";
+context.location.hash = "#cameras";
+windowListeners.get("hashchange")();
+assert.equal(panel.src, "/frameos-touchscreen/cameras?kiosk", "unknown or editing route queries force a full reload");
+
+root.nodes[0].hass = { states: {}, connected: true };
+childWindow.location.pathname = "/frameos-touchscreen/home";
+childWindow.location.search = "?kiosk";
+panel.src = "";
+context.location.hash = "#calendar";
+windowListeners.get("hashchange")();
+assert.equal(panel.src, "/frameos-touchscreen/calendar?kiosk", "an uncertain HA connection forces a full reload");
+
+root.nodes = [makeElement("home-assistant", { shadowRoot: headingShadow }), ...Array.from({ length: 4097 }, () => makeElement("ha-dashboard-node"))];
+root.nodes[0].hass = { states: {}, connected: true, connection: { connected: true }, callService() {} };
+childWindow.location.pathname = "/frameos-touchscreen/home";
+childWindow.location.search = "?kiosk";
+panel.src = "";
+const historyBeforeGuardBudget = childHistoryCalls.length;
+context.location.hash = "#cameras";
+windowListeners.get("hashchange")();
+assert.equal(panel.src, "/frameos-touchscreen/cameras?kiosk", "a guard traversal beyond the bounded dashboard budget fails closed");
+assert.equal(childHistoryCalls.length, historyBeforeGuardBudget, "budget exhaustion does not mutate HA history");
+
+console.log("FrameOS touchscreen panel shadow readiness and guarded SPA navigation tests passed");

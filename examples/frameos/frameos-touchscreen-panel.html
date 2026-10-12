@@ -47,6 +47,7 @@
         });
         const READY_TIMEOUT_MILLIS = 12_000;
         const HOME_STYLE_PROBE_TIMEOUT_MILLIS = 12_000;
+        const MAX_NAVIGATION_GUARD_NODES = 4096;
         const HOME_STYLE_SHADOW_LEAVES = new Set(["ha-markdown-element"]);
         const validView = (value) => Object.prototype.hasOwnProperty.call(routes, value);
         const normalizeView = (value) => validView(value) ? value : "home";
@@ -447,6 +448,49 @@
           scheduleShadowProbe(state);
         };
 
+        const hasActiveHaNavigationGuard = (root) => {
+          const selector = "ha-dialog[open],ha-dialog:not([hidden]),ha-more-info-dialog[open],ha-more-info-dialog:not([hidden]),[data-unsaved-changes='true'],[data-dirty='true']";
+          const roots = [root];
+          let inspected = 0;
+          try {
+            while (roots.length) {
+              const candidate = roots.pop();
+              if (++inspected > MAX_NAVIGATION_GUARD_NODES) return true;
+              if (candidate?.querySelector?.(selector)) return true;
+              const elements = candidate?.querySelectorAll?.("*") || [];
+              for (const element of elements) {
+                if (++inspected > MAX_NAVIGATION_GUARD_NODES) return true;
+                if (element.shadowRoot) roots.push(element.shadowRoot);
+              }
+            }
+          } catch (_error) {
+            return true;
+          }
+          return false;
+        };
+
+        const trySpaNavigation = (view) => {
+          try {
+            const childWindow = panel.contentWindow;
+            const root = panel.contentDocument;
+            if (!childWindow || childWindow !== spaWindow || !root) return false;
+            if (childWindow.location.origin !== window.location.origin || childWindow.location.search !== "?kiosk" || isAuthenticationRoute()) return false;
+            const sourceView = iframeView();
+            if (!sourceView || !validView(view) || hasActiveHaNavigationGuard(root)) return false;
+            const hass = root.querySelector?.("home-assistant")?.hass;
+            if (!hass?.states || hass.connected === false || hass.connection?.connected !== true) return false;
+            const sourcePath = `${childWindow.location.pathname}${childWindow.location.search}`;
+            const target = routeFor(view);
+            childWindow.history.pushState({ from: sourcePath }, "", target);
+            const event = new childWindow.Event("location-changed", { bubbles: true, composed: true });
+            event.detail = { replace: false };
+            childWindow.dispatchEvent(event);
+            return true;
+          } catch (_error) {
+            return false;
+          }
+        };
+
         const navigate = (rawView) => {
           const view = normalizeView(rawView);
           if (location.hash !== `#${view}`) history.replaceState(null, "", `${location.pathname}${location.search}#${view}`);
@@ -455,6 +499,7 @@
           disposeRouteWork();
           if (view !== "home") disposeHomeStyles();
           showLoading(view);
+          if (trySpaNavigation(view)) return;
           panel.src = routeFor(view);
         };
 
