@@ -2,31 +2,46 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 
-const source = fs.readFileSync(new URL("../../examples/frameos/frameos-touchscreen-panel.html", import.meta.url), "utf8");
-const script = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)?.[1];
+const html = fs.readFileSync(new URL("../../examples/frameos/frameos-touchscreen-panel.html", import.meta.url), "utf8");
+const script = html.match(/<script>\s*([\s\S]*?)\s*<\/script>/)?.[1];
 assert.ok(script, "panel must contain executable wrapper script");
 
-const listeners = new Map();
+const root = { nodeType: 9, nodes: [], querySelectorAll() { return this.nodes; } };
+const makeElement = (localName, options = {}) => ({
+  nodeType: 1,
+  localName,
+  heading: options.heading || "",
+  textContent: options.text || options.heading || "",
+  shadowRoot: options.shadowRoot || null,
+  ownerDocument: root,
+  isConnected: true,
+  getAttribute() { return null; },
+  querySelectorAll() { return options.children || []; },
+});
+const headingShadow = { nodeType: 11, querySelectorAll() { return [
+  makeElement("hui-heading-card", { heading: "Today" }),
+  makeElement("hui-heading-card", { heading: "Up next" }),
+  makeElement("hui-heading-card", { heading: "Home status" }),
+  makeElement("hui-heading-card", { heading: "Comfort" }),
+]; } };
+root.nodes = [makeElement("home-assistant", { shadowRoot: headingShadow })];
+
+const windowListeners = new Map();
+const childListeners = new Map();
 const panelListeners = new Map();
+const observers = [];
 const loading = { hidden: false, textContent: "", classList: { add() {}, remove() {} } };
 const status = { textContent: "" };
-let observerCount = 0;
-const root = {
-  querySelector(selector) {
-    if (selector === "ha-full-calendar" && root.calendar) return { localName: "ha-full-calendar" };
-    return selector === "hui-picture-entity-card" && root.camera ? { localName: "hui-picture-entity-card" } : null;
-  },
-  querySelectorAll() {
-    return root.headings.map((text) => ({ heading: text, textContent: text, getAttribute() { return null; } }));
-  },
-  headings: ["Today", "Up next", "Home status", "Comfort"],
-  calendar: false,
-  camera: false,
+const childWindow = {
+  location: { pathname: "/frameos-touchscreen/home" },
+  focus() {},
+  addEventListener(type, callback) { childListeners.set(type, callback); },
+  removeEventListener(type, callback) { if (childListeners.get(type) === callback) childListeners.delete(type); },
 };
 const panel = {
   src: "",
   contentDocument: root,
-  contentWindow: { focus() {}, location: { pathname: "/frameos-touchscreen/home" } },
+  contentWindow: childWindow,
   addEventListener(type, callback) { panelListeners.set(type, callback); },
   focus() {},
 };
@@ -34,9 +49,9 @@ const context = {
   window: null,
   document: { getElementById(id) { return ({ panel, loading, status })[id]; } },
   location: { hash: "", pathname: "/local/frameos-touchscreen-panel.html", search: "" },
-  history: { replaceState(_state, _title, location) { context.location.hash = location.slice(location.indexOf("#")); } },
+  history: { replaceState(_state, _title, value) { context.location.hash = value.slice(value.indexOf("#")); } },
   MutationObserver: class {
-    constructor(callback) { this.callback = callback; this.disconnected = false; observerCount += 1; }
+    constructor(callback) { this.callback = callback; this.disconnected = false; observers.push(this); }
     observe() {}
     disconnect() { this.disconnected = true; }
   },
@@ -44,41 +59,29 @@ const context = {
   clearTimeout() {},
 };
 context.window = context;
-context.addEventListener = (type, callback) => listeners.set(type, callback);
+context.addEventListener = (type, callback) => windowListeners.set(type, callback);
 vm.runInNewContext(script, context, { filename: "frameos-touchscreen-panel.inline.js" });
 
 assert.equal(panel.src, "/frameos-touchscreen/home?kiosk");
 assert.equal(context.FrameOSTouchscreenPanel.normalizeView("nope"), "home");
 assert.equal(context.FrameOSTouchscreenPanel.routeFor("calendar"), "/frameos-touchscreen/calendar?kiosk");
+panelListeners.get("load")();
+assert.equal(loading.hidden, true, "open shadow-root headings make Home ready");
 
-panelListeners.get("load")();
-assert.equal(loading.hidden, true, "all four Home headings make the wrapper ready");
-
-root.headings = [];
-context.location.hash = "#cameras";
-listeners.get("hashchange")();
-assert.equal(panel.src, "/frameos-touchscreen/cameras?kiosk");
-panelListeners.get("load")();
-const cameraObserverCount = observerCount;
-context.location.hash = "#calendar";
-listeners.get("hashchange")();
-assert.equal(panel.src, "/frameos-touchscreen/calendar?kiosk");
-panelListeners.get("load")();
-assert.ok(observerCount > cameraObserverCount, "route switch creates a fresh bounded observer");
-
-root.calendar = false;
-root.camera = true;
-panel.contentWindow.location.pathname = "/frameos-touchscreen/camera-1";
-panelListeners.get("load")();
-assert.equal(loading.hidden, true, "a camera subview becomes ready only with its single live card");
+const oldObservers = observers.slice();
+const cameraCard = makeElement("hui-picture-entity-card");
+const cameraShadow = { nodeType: 11, querySelectorAll() { return [cameraCard]; } };
+root.nodes = [makeElement("home-assistant", { shadowRoot: cameraShadow })];
+childWindow.location.pathname = "/frameos-touchscreen/camera-1";
+childListeners.get("location-changed")();
+assert.equal(loading.hidden, true, "SPA camera navigation is ready only after the one camera card appears");
 assert.equal(status.textContent, "Camera ready");
+assert.ok(oldObservers.every((observer) => observer.disconnected), "leaving Home disconnects its route observers");
 
-const cameras = context.FrameOSTouchscreenPanel.createCameraMountController();
-assert.equal(cameras.select("camera.entryway"), "camera.entryway");
-assert.equal(cameras.mounted(), "camera.entryway");
-cameras.select("camera.backyard");
-assert.equal(cameras.mounted(), "camera.backyard", "new selection replaces the single mount");
-cameras.dispose();
-assert.equal(cameras.mounted(), null, "leaving a camera disposes the mount");
+root.nodes = [makeElement("home-assistant", { shadowRoot: { nodeType: 11, querySelectorAll() { return [makeElement("hui-heading-card", { heading: "Camera chooser" })]; } } })];
+childWindow.location.pathname = "/frameos-touchscreen/cameras";
+childListeners.get("location-changed")();
+assert.equal(loading.hidden, true, "returning to chooser disposes the camera route and needs no live card");
+assert.equal(status.textContent, "Cameras ready");
 
-console.log("FrameOS touchscreen panel route/readiness/camera-disposal tests passed");
+console.log("FrameOS touchscreen panel shadow readiness and camera lifecycle tests passed");

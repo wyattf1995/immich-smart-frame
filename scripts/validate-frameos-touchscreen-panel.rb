@@ -17,7 +17,7 @@ required_html = [
   "default-src 'none'", "frame-src 'self'", "referrerpolicy=\"same-origin\"",
   '"/frameos-touchscreen/home?kiosk"', '"/frameos-touchscreen/cameras?kiosk"',
   '"/frameos-touchscreen/calendar?kiosk"', "READY_TIMEOUT_MILLIS", "MutationObserver",
-  "createCameraMountController", "disposeRouteWork", "iframeView", "hui-picture-entity-card", "still connecting"
+  "disposeRouteWork", "iframeView", "observeRoot", "scheduleShadowProbe", "location-changed", "hui-picture-entity-card", "still connecting"
 ]
 required_html.each { |value| abort("touchscreen wrapper missing #{value}") unless html.include?(value) }
 abort("touchscreen wrapper must have exactly one iframe") unless html.scan(/<iframe\b/).size == 1
@@ -37,8 +37,12 @@ home_text = home.to_s
 end
 abort("dashboard must not automate thermostat service calls") if home_text.match?(/service:|service_data:|perform-action/)
 
-camera_chooser = views[1].to_s
-abort("camera chooser must not mount live video") if camera_chooser.include?("camera_view: live")
+camera_chooser = views[1]
+camera_chooser_cards = camera_chooser.fetch("sections").flat_map { |section| section.fetch("cards") }
+abort("camera chooser must not mount live video") if camera_chooser_cards.any? { |card| card["camera_view"] == "live" }
+chooser_targets = camera_chooser_cards.map { |card| card.dig("tap_action", "navigation_path") }.compact
+expected_chooser_targets = %w[/frameos-touchscreen/camera-1?kiosk /frameos-touchscreen/camera-2?kiosk /frameos-touchscreen/camera-3?kiosk /frameos-touchscreen/camera-4?kiosk]
+abort("camera chooser navigation targets are incomplete") unless chooser_targets == expected_chooser_targets
 camera_views = views[2, 4]
 abort("need four camera detail views") unless camera_views.length == 4
 camera_entities = %w[
@@ -51,6 +55,7 @@ camera_views.each_with_index do |view, index|
   text = view.to_s
   entity = camera_entities.fetch(index)
   abort("camera detail lacks #{entity}") unless text.include?(entity)
+  abort("camera detail must be a Home Assistant subview") unless view["subview"] == true
   live_cards = view.fetch("cards").select { |card| card["camera_view"] == "live" }
   abort("camera detail must mount exactly one live stream") unless live_cards.length == 1
   abort("camera detail needs a chooser return path") unless text.include?("/frameos-touchscreen/cameras?kiosk")
