@@ -23,6 +23,7 @@ python3 "$root/scripts/verify-frameos-touchscreen-spa-proof.py" "$root"
 
 node "$root/scripts/tests/test-frameos-art-gallery.mjs" | tee "$root/reports/frameos-legacy/art-gallery-tests.log"
 python3 "$root/scripts/verify-frameos-art-gallery-proof.py" "$root" | tee "$root/reports/frameos-legacy/art-gallery-proof.log"
+python3 "$root/scripts/verify-frameos-art-rotation-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-art-fullscreen-proof.py" "$root" | tee "$root/reports/frameos-legacy/art-fullscreen-proof.log"
 python3 "$root/scripts/verify-frameos-art-mode-source-proof.py" "$root" | tee "$root/reports/frameos-legacy/art-source-proof.log"
 
