@@ -39,7 +39,7 @@
         const routeFor = (value) => routes[normalizeView(value)];
         const iframeView = () => {
           try {
-            const match = panel.contentWindow.location.pathname.match(/^\/frameos-touchscreen\/(camera-[1-4])\/?$/);
+            const match = panel.contentWindow.location.pathname.match(/^\/frameos-touchscreen\/(home|cameras|calendar|camera-[1-4])\/?$/);
             return match ? match[1] : null;
           } catch (_error) {
             return null;
