@@ -81,6 +81,11 @@ assert.equal(recoveredFromCorruptState.bag.length, 3, "corrupt rotation state is
 const changedCollection = namedCollection("Rotation test", ["a", "b", "c", "d"]);
 const changedGallery = testGallery(changedCollection, storage);
 assert.ok(changedGallery.bag.includes("d"), "new collection artwork joins the unfinished rotation");
+const removedCollection = namedCollection("Rotation test", ["a", "c"]);
+const removedGallery = testGallery(removedCollection, storage);
+assert.ok(removedGallery.bag.every((id) => id === "a" || id === "c"), "removed collection artwork is discarded from persisted rotation state");
+await removedGallery.advance(1, true);
+assert.notEqual(removedGallery.currentId, "a", "collection removal still avoids repeating the persisted rotation boundary");
 const failingStorage = memoryStorage();
 const failedRotation = testGallery(rotationCollection, failingStorage); failedRotation.bag = ["a", "b"];
 failedRotation.loadImage = async (entry) => entry.id === "a" ? Promise.reject(new Error("failed first image")) : ({ src:entry.image });
