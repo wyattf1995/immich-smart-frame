@@ -79,6 +79,21 @@ function reachStillConnecting(h) {
 
 {
   const h = harness();
+  h.context.document.visibilityState = 'hidden';
+  h.start();
+  h.makeConnected();
+  h.advanceTo(12_000);
+  assert.equal(h.mounts(), 0, 'an already-hidden document never starts the fast Home discovery probe');
+  assert.equal(h.activeTimers(50).length, 0, 'an already-hidden document leaves no 50 ms discovery timer');
+  h.context.document.visibilityState = 'visible';
+  h.listeners.get('visibilitychange')();
+  assert.equal(h.activeTimers(1_000).length, 1, 'visible resume starts one bounded probe for an initially hidden document');
+  h.advanceTo(13_000);
+  assert.equal(h.mounts(), 1, 'initially hidden Home mounts only after the bounded visible resume probe');
+}
+
+{
+  const h = harness();
   h.start();
   h.advanceTo(2_000);
   h.context.document.visibilityState = 'hidden';
