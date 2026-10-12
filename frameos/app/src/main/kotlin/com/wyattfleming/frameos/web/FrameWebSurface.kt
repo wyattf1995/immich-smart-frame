@@ -39,6 +39,9 @@ class FrameWebSurface(
     // Kept opt-in until device measurements prove an inactive attached GeckoView
     // avoids background work without reintroducing the Lenovo blank-panel issue.
     private val deactivateHiddenHomeAssistant: Boolean = false,
+    // Some legacy TextureView stacks require a single visible Gecko attachment.
+    // Default false preserves the established warm Home Assistant behavior.
+    private val detachHiddenHomeAssistant: Boolean = false,
     private val elapsedRealtime: () -> Long = { SystemClock.uptimeMillis() },
     private val pageLoadWatchdogMillis: Long = PAGE_LOAD_WATCHDOG_MILLIS,
 ) : GeckoView(context) {
@@ -53,6 +56,7 @@ class FrameWebSurface(
 
     private val frameRuntime = runtime
     private val retentionPolicy = FrameWebSessionRetentionPolicy()
+    private val homeAttachmentPolicy = FrameWebHomeAttachmentPolicy(detachHiddenHomeAssistant)
     private val requiresFullAccessibilityTree = context.getSystemService(AccessibilityManager::class.java)
         ?.isTouchExplorationEnabled == true
     private val recoveryPolicy = FrameWebRecoveryPolicy()
@@ -424,6 +428,7 @@ class FrameWebSurface(
 
     fun preload(slot: FrameWebSlot, url: String) {
         require(slot.canPreload) { "$slot cannot be preloaded" }
+        if (!homeAttachmentPolicy.allowsBackgroundPreload(slot)) return
         val managed = sessionFor(slot)
         managed.lifecycleSuspended = false
         ensureWarmHomeAttached(managed)
@@ -482,6 +487,7 @@ class FrameWebSurface(
             visibility = View.GONE
             warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         } else {
+            detachWarmHomeWhenRequired(slot)
             attachForeground(slot, managed)
             visibility = View.VISIBLE
             warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
@@ -515,6 +521,7 @@ class FrameWebSurface(
         }
         homeAssistantSession?.setFocused(false)
         if (deactivateHiddenHomeAssistant) homeAssistantSession?.setActive(false)
+        detachWarmHomeWhenRequired(slot = null)
         warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         displayedSlot = null
         scheduleHiddenHomeEviction()
@@ -674,6 +681,13 @@ class FrameWebSurface(
             warmHomeAttachedSession = managed
         }
         warmHomeAssistantView.visibility = View.VISIBLE
+    }
+
+    private fun detachWarmHomeWhenRequired(slot: FrameWebSlot?) {
+        if (slot != null && !homeAttachmentPolicy.detachWarmHomeWhenShowing(slot)) return
+        if (slot == null && !detachHiddenHomeAssistant) return
+        releaseWarmHomeAttachedSession()
+        homeAssistantSession?.setActive(false)
     }
 
     private fun disposeCameraSession() {
