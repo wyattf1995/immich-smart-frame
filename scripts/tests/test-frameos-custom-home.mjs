@@ -13,7 +13,7 @@ context.window.clearTimeout = (timer) => { timer.cleared = true; };
 vm.runInNewContext(source, context, { filename: "frameos-custom-home.js" });
 const api = context.window.FrameOSCustomHome;
 assert.ok(api?.__test, "custom home exposes pure test helpers");
-const { clampTemperature, climateModel, modePayload, setpointPayload, isWritable } = api.__test;
+const { clampTemperature, climateModel, modePayload, setpointPayload, isWritable, eventLabel, forecastModel } = api.__test;
 
 assert.equal(clampTemperature(68, { min: 60, max: 80, step: 1 }), 68);
 assert.equal(clampTemperature(99, { min: 60, max: 80, step: 1 }), 80, "drafts never exceed the device maximum");
@@ -23,6 +23,10 @@ assert.equal(api.__test.finite(""), null, "empty strings never coerce into zero"
 assert.equal(api.__test.finite(false), null, "boolean values never coerce into zero");
 assert.equal(api.__test.eventTime("not-a-date"), "Time unavailable", "bad calendar dates are rendered safely");
 assert.equal(api.__test.eventTime("2026-10-12"), "All day", "all-day calendar items retain their semantics");
+assert.equal(eventLabel({ start: "2026-10-13T11:30:00", allDay: false }, new Date(2026, 9, 12, 9)), "Tue Oct 13 · 11:30 AM", "calendar rows retain weekday, date, and time");
+assert.equal(eventLabel({ start: "2026-10-12", allDay: true }, new Date(2026, 9, 12, 9)), "Today · All day", "all-day events retain date context");
+assert.deepEqual(JSON.parse(JSON.stringify(forecastModel({ days: [{ datetime: "2026-10-12T12:00:00", condition: "sunny", temperature: 71, templow: 53, precipitation_probability: 10 }], temperatureUnit: "°F" }, new Date(2026, 9, 12)))), [{ label: "Today", condition: "sunny", temperature: 71, low: 53, precipitation: 10 }], "forecast accepts only finite, bounded day values");
+assert.equal(forecastModel({ days: [{ datetime: "bad", condition: "sunny", temperature: 71 }], temperatureUnit: "°F" }), null, "malformed forecast dates are unavailable rather than fabricated");
 
 const off = climateModel({ state: "off", attributes: { hvac_modes: ["off", "heat", "cool"], min_temp: 50, max_temp: 90, target_temp_step: 1, temperature: 68 } }, "°F");
 assert.equal(off.temperatureEnabled, false, "off disables temperature changes until a mode is explicitly selected");
@@ -41,7 +45,9 @@ assert.equal(isWritable({ connected: true, pending: false, state: "unknown" }), 
 assert.match(source, /callService\("climate", "set_temperature"/, "temperature changes use Home Assistant's service API");
 assert.match(source, /callService\("climate", "set_hvac_mode"/, "mode changes use Home Assistant's service API");
 assert.match(source, /addEventListener\("click"/, "writes require a direct click event");
-assert.match(source, /data-nav="home">Home</, "the web dashboard uses an accurate Home rail label");
+assert.doesNotMatch(source, /fch-rail/, "the native rail is the only top-level navigation");
+assert.match(source, /data-nav="cameras"/, "in-content Cameras navigation remains available");
+assert.match(source, /fch-forecast/, "the Home weather area has a compact forecast surface");
 assert.match(source, /Weather unavailable/, "missing weather is shown honestly rather than fabricated");
 assert.doesNotMatch(source, /fetch\(/, "the custom view never fetches or handles credentials");
 assert.doesNotMatch(source, /localStorage|sessionStorage|document\.cookie/, "the custom view never reads browser identity data");
