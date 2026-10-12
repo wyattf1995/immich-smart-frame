@@ -5,6 +5,10 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 export ORG_GRADLE_PROJECT_frameosTarget=legacyArmv7
 export GRADLE_OPTS='-Dorg.gradle.workers.max=2 -Dorg.gradle.parallel=false -Dkotlin.daemon.jvm.options=-Xmx2g'
 
+mkdir -p "$root/reports/frameos-legacy"
+node "$root/scripts/tests/test-frameos-touchscreen-panel.mjs" \
+  | tee "$root/reports/frameos-legacy/touchscreen-panel-tests.log"
+
 # Preserve the existing pinned SDK bootstrap and the complete regression suite.
 bash "$root/scripts/frame-sync-android-nas.sh"
 export ANDROID_SDK_ROOT="$root/.nas-frame-sync-android/sdk"
