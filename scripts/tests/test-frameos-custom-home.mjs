@@ -154,3 +154,10 @@ guarded.refresh();
 await guardedRoot.querySelectorAll('[data-mode]').find(b=>b.dataset.mode==='heat').click();
 assert.equal(guardedCalls.length,0,'unavailable climate rejects mode writes even if old supported modes remain');
 guarded.destroy();
+
+const calendarRoot=makeInteractiveRoot();
+const calendarHass={connected:true,states:{'calendar.family':{state:'on',attributes:{message:'Holiday',start_time:'2026-10-12 00:00:00',all_day:true}}},callService(){throw new Error('render cannot write');}};
+const calendarHandle=api.mount(calendarRoot,{getHass:()=>calendarHass});
+assert.match(calendarRoot.innerHTML,/All day/,'HA all_day boolean labels midnight events correctly');
+assert.doesNotMatch(calendarRoot.innerHTML,/fch-weather-icon">☀/,'missing weather must not claim sunshine');
+calendarHandle.destroy();
