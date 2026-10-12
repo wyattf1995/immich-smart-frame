@@ -67,6 +67,8 @@ android {
 }
 
 dependencies {
+    // Gecko's annotation dependency is runtime-only; expose API requirements to lint callers.
+    compileOnly("androidx.annotation:annotation:1.11.0")
     implementation(
         if (legacyArmv7) {
             // Mozilla AAR manifest verified: 144 is the newest armeabi-v7a

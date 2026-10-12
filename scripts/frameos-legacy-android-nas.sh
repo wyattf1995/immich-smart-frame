@@ -9,6 +9,11 @@ mkdir -p "$root/reports/frameos-legacy"
 node "$root/scripts/tests/test-frameos-touchscreen-panel.mjs" \
   | tee "$root/reports/frameos-legacy/touchscreen-panel-tests.log"
 
+node "$root/scripts/tests/test-frameos-custom-home.mjs" \
+  | tee "$root/reports/frameos-legacy/custom-home-tests.log"
+node "$root/scripts/tests/test-frameos-custom-home-integration.mjs" \
+  | tee "$root/reports/frameos-legacy/custom-home-integration-tests.log"
+
 # Preserve the existing pinned SDK bootstrap and the complete regression suite.
 bash "$root/scripts/frame-sync-android-nas.sh"
 export ANDROID_SDK_ROOT="$root/.nas-frame-sync-android/sdk"
@@ -21,6 +26,11 @@ python3 "$root/scripts/verify-frameos-bridge-callback-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-touchscreen-route-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-legacy-api-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-weather-touch-proof.py" "$root"
+python3 "$root/scripts/verify-frameos-touch-dashboard-proof.py" "$root"
+python3 "$root/scripts/verify-frameos-touch-dashboard-integration-proof.py" "$root"
+python3 "$root/scripts/verify-frameos-touchscreen-cache-proof.py" "$root"
+python3 "$root/scripts/verify-frameos-embedded-oauth-proof.py" "$root"
+python3 "$root/scripts/verify-frameos-embedded-oauth-integration-proof.py" "$root"
 mkdir -p "$root/reports/frameos-legacy"
 "$root/frameos/gradlew" -p "$root/frameos" --no-daemon --max-workers=2 \
   :app:lintRelease :app:dependencies --configuration releaseRuntimeClasspath \
