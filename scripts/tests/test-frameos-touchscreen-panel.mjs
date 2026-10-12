@@ -22,20 +22,24 @@ const root = {
   querySelectorAll() { return this.nodes; },
   createElement() { return { id: "", textContent: "" }; },
 };
-const makeElement = (localName, options = {}) => ({
-  nodeType: 1,
-  localName,
-  heading: options.heading || "",
-  textContent: options.text || options.heading || "",
-  expectedShadowText: options.expectedShadowText || "",
-  shadowRoot: options.shadowRoot || null,
-  style: { values: [], setProperty(name, value, priority) { this.values.push([name, value, priority]); } },
-  ownerDocument: root,
-  isConnected: true,
-  getAttribute() { return null; },
-  querySelectorAll() { return options.children || []; },
-  querySelector(selector) { return (options.children || []).find((child) => child.localName === selector) || null; },
-});
+const makeElement = (localName, options = {}) => {
+  const element = {
+    nodeType: 1,
+    localName,
+    heading: options.heading || "",
+    textContent: options.text || options.heading || "",
+    expectedShadowText: options.expectedShadowText || "",
+    shadowRoot: options.shadowRoot || null,
+    style: { values: [], setProperty(name, value, priority) { this.values.push([name, value, priority]); } },
+    ownerDocument: root,
+    isConnected: true,
+    getAttribute() { return null; },
+    querySelectorAll() { return options.children || []; },
+    querySelector(selector) { return (options.children || []).find((child) => child.localName === selector) || null; },
+  };
+  if (element.shadowRoot) element.shadowRoot.host = element;
+  return element;
+};
 const makeShadow = (children = [], textContent = "") => {
   const styles = [];
   return {
@@ -56,11 +60,15 @@ const headingCards = ["Today", "Up next", "Home status", "Comfort"].map((heading
     expectedShadowText: heading,
   });
 });
-const clockStrong = makeElement("strong", { text: "07:16" });
-const markdownElement = makeElement("ha-markdown-element", { text: "07:16 Sunday", children: [clockStrong] });
+const clockStrong = makeElement("strong", { text: "" });
+const markdownElement = makeElement("ha-markdown-element", { text: "", children: [clockStrong] });
 const markdown = makeElement("ha-markdown", { shadowRoot: makeShadow([markdownElement]) });
 const markdownCard = makeElement("hui-markdown-card", { shadowRoot: makeShadow([markdown]) });
-const sectionsView = makeElement("hui-sections-view", { shadowRoot: makeShadow([markdownCard]) });
+const statusStrong = makeElement("strong", { text: "Entryway thermostat:" });
+const statusElement = makeElement("ha-markdown-element", { text: "Entryway thermostat: off", children: [statusStrong] });
+const statusMarkdown = makeElement("ha-markdown", { shadowRoot: makeShadow([statusElement]) });
+const statusCard = makeElement("hui-markdown-card", { shadowRoot: makeShadow([statusMarkdown]) });
+const sectionsView = makeElement("hui-sections-view", { shadowRoot: makeShadow([markdownCard, statusCard]) });
 const headingShadow = { nodeType: 11, querySelectorAll() { return [...headingCards, sectionsView]; } };
 root.nodes = [makeElement("home-assistant", { shadowRoot: headingShadow })];
 
@@ -96,7 +104,7 @@ const context = {
   history: { replaceState(_state, _title, value) { context.location.hash = value.slice(value.indexOf("#")); } },
   MutationObserver: class {
     constructor(callback) { this.callback = callback; this.disconnected = false; observers.push(this); }
-    observe() {}
+    observe(target) { this.target = target; }
     disconnect() { this.disconnected = true; }
   },
   setTimeout(callback, delay) { const timer = { callback, delay, id: timers.length + 1 }; timers.push(timer); return timer.id; },
@@ -114,8 +122,15 @@ assert.equal(loading.hidden, false, "empty HA heading hosts are not ready before
 assert.equal(homeChrome.hidden, false, "Home header is active only while the Home route is loading");
 assert.ok(panel.classList.classes.has("home-layout"), "Home header reserves iframe space instead of covering controls");
 assert.equal(sectionsView.shadowRoot.styles.filter((style) => style.id === "frameos-home-redesign").length, 1, "Home palette traverses the nested sections-view shadow root");
-assert.equal(markdown.shadowRoot.styles.filter((style) => style.id === "frameos-home-markdown").length, 1, "clock styling crosses the ha-markdown shadow boundary");
-assert.match(markdown.shadowRoot.styles.find((style) => style.id === "frameos-home-markdown").textContent, /display:block;[^}]*6\.25rem/, "only the clock stylesheet carries the large display treatment");
+assert.equal(markdown.shadowRoot.styles.filter((style) => style.id === "frameos-home-markdown").length, 1, "empty markdown gets a normal placeholder style while Home Assistant renders asynchronously");
+assert.doesNotMatch(markdown.shadowRoot.styles.find((style) => style.id === "frameos-home-markdown").textContent, /display:block/, "an empty markdown card is never prematurely styled as a clock");
+assert.doesNotMatch(statusMarkdown.shadowRoot.styles.find((style) => style.id === "frameos-home-markdown").textContent, /display:block/, "ordinary status strong text never receives clock typography");
+clockStrong.textContent = "07:16";
+markdownElement.textContent = "07:16 Sunday";
+const markdownObserver = observers.find((observer) => observer.target === markdown.shadowRoot);
+assert.ok(markdownObserver, "the ha-markdown shadow root is observed for asynchronous content");
+markdownObserver.callback([{ type: "characterData", target: { parentElement: markdownElement } }]);
+assert.match(markdown.shadowRoot.styles.find((style) => style.id === "frameos-home-markdown").textContent, /display:block;[^}]*6\.25rem/, "delayed clock text refreshes the existing deep shadow style");
 headingCards.forEach((card) => { card.shadowRoot.textContent = card.expectedShadowText; });
 const characterDataObserver = observers.at(-1);
 headingCards.forEach((card) => characterDataObserver.callback([{ type: "characterData", target: { parentElement: card } }]));
