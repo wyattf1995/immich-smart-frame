@@ -249,6 +249,8 @@
           disposeCustomHome();
           const bootstrap = { root, deadlineAt: monotonicNow() + HOME_LATE_DISCOVERY_DEADLINE_MILLIS, lateTimer: null };
           homeBootstrap = bootstrap;
+          // A hidden iframe must not begin even the fast probe; visibility resume owns its bounded restart.
+          if (document.visibilityState === "hidden") return false;
           const getHass = () => getCustomHomeHass(root);
           const probe = { root, timer: null, attempts: 0 };
           customHomeProbe = probe;
