@@ -62,6 +62,13 @@ class MainActivityTouchDashboardContractTest {
                 "render(state, announce = changed)",
             ),
         )
+        assertContainsInOrder(
+            dispatch,
+            listOf(
+                "if (intent == FrameIntent.IdleExpired && state.mode.persistsAcrossIdle) return",
+                "if (touchDashboardEnabled && (intent == FrameIntent.GoHome || intent == FrameIntent.IdleExpired))",
+            ),
+        )
         assertTrue(dispatch.contains("if (intent == FrameIntent.NextMode || intent == FrameIntent.PreviousMode) dashboardVisible = false"))
         assertTrue(source.contains("onOpenMode = { showMode(it, announceHud = false) }"))
     }
