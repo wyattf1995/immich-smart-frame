@@ -68,6 +68,9 @@ assert.equal(context.FrameOSTouchscreenPanel.normalizeView("nope"), "home");
 assert.equal(context.FrameOSTouchscreenPanel.routeFor("calendar"), "/frameos-touchscreen/calendar?kiosk");
 panelListeners.get("load")();
 assert.equal(loading.hidden, true, "open shadow-root headings make Home ready");
+const firstSpaListener = childListeners.get("location-changed");
+panelListeners.get("load")();
+assert.notEqual(childListeners.get("location-changed"), firstSpaListener, "a full iframe load reattaches navigation listeners even when WindowProxy identity is stable");
 
 const oldObservers = observers.slice();
 const cameraCard = makeElement("hui-picture-entity-card");
@@ -99,5 +102,11 @@ root.nodes = [makeElement("home-assistant", { shadowRoot: cameraShadow })];
 childWindow.location.pathname = "/frameos-touchscreen/camera-1";
 childListeners.get("location-changed")();
 assert.equal(status.textContent, "Camera ready", "SPA watcher can restart readiness after a bounded timeout");
+
+childWindow.location.pathname = "/auth/authorize";
+loading.hidden = false;
+panelListeners.get("load")();
+assert.equal(loading.hidden, true, "an HA sign-in load removes the opaque loading overlay immediately");
+assert.equal(status.textContent, "Sign-in required");
 
 console.log("FrameOS touchscreen panel shadow readiness and camera lifecycle tests passed");

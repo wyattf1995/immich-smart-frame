@@ -17,7 +17,7 @@ required_html = [
   "default-src 'none'", "frame-src 'self'", "referrerpolicy=\"same-origin\"",
   '"/frameos-touchscreen/home?kiosk"', '"/frameos-touchscreen/cameras?kiosk"',
   '"/frameos-touchscreen/calendar?kiosk"', "READY_TIMEOUT_MILLIS", "MutationObserver",
-  "disposeRouteWork", "iframeView", "observeRoot", "scheduleShadowProbe", "shadowProbeExpired", "record.addedNodes", "location-changed", "hui-picture-entity-card", "still connecting"
+  "disposeRouteWork", "iframeView", "observeRoot", "scheduleShadowProbe", "shadowProbeExpired", "record.addedNodes", "location-changed", "hui-picture-entity-card", "Sign-in required", "still connecting"
 ]
 required_html.each { |value| abort("touchscreen wrapper missing #{value}") unless html.include?(value) }
 abort("touchscreen wrapper must have exactly one iframe") unless html.scan(/<iframe\b/).size == 1
