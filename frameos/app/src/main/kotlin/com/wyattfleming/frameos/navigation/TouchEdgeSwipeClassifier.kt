@@ -47,7 +47,7 @@ internal class TouchEdgeSwipeClassifier(
 
         // Tiny touchscreen drift is not intent. Keep observing until movement
         // exceeds this slop so a later deliberate inward swipe can recover.
-        if (maxOf(horizontalDistance, verticalDistance) < directionalTouchSlopPx) return null
+        if (maxOf(horizontalDistance, verticalDistance) <= directionalTouchSlopPx) return null
         if (verticalDistance > horizontalDistance ||
             (current.edge == Edge.LEFT && horizontal < 0f) ||
             (current.edge == Edge.RIGHT && horizontal > 0f)
