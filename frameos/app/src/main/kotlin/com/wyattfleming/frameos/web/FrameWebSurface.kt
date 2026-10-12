@@ -80,6 +80,7 @@ class FrameWebSurface(
         private var traceEvents = 0
         private var tracedCompositeGeneration = -1L
         private val photoLoadGate = FramePhotoLoadGate()
+        private val photoReadiness = FrameWebPhotosReadinessState()
         private val pageLoadWatchdogState = FrameWebPageLoadWatchdogState()
         private var pageLoadWatchdog: Runnable? = null
 
@@ -218,6 +219,9 @@ class FrameWebSurface(
                     photoLoadGate.defer(url)
                     return true
                 }
+                if (label == "Photos" && !fragmentOnly) {
+                    photoReadiness.begin(photoBridge?.beginPageLoad(session))
+                }
                 session.loadUri(url)
                 return true
             } catch (error: RuntimeException) {
@@ -275,8 +279,31 @@ class FrameWebSurface(
             if (label == "Photos" && photoLoadGate.dropPending()) loadState.recordFailure()
         }
 
-        private fun maybeReportRendered(newlyRendered: Boolean) {
-            if (!newlyRendered) return
+        fun recordCurrentPhotoObserved(photo: FramePhotoBridge.PhotoObserved): Boolean {
+            if (
+                label != "Photos" ||
+                photoBridge?.isCurrentObservation(photo) != true ||
+                lifecycleSuspended ||
+                this !== displayedManagedSession() ||
+                !photosContentActive ||
+                !displayedSurfaceVisible()
+            ) return false
+            if (!photoReadiness.recordObservation(photo.generation)) return false
+            maybeReportRendered(newlyRendered = false, photoObserved = true)
+            return true
+        }
+
+        private fun hasCurrentPhotoObservation(): Boolean =
+            label != "Photos" || photoBridge == null || photoReadiness.isReady()
+
+        fun isReadyForDisplay(): Boolean = renderedState.rendered && hasCurrentPhotoObservation()
+
+        private fun maybeReportRendered(newlyRendered: Boolean, photoObserved: Boolean = false) {
+            if ((!newlyRendered && !photoObserved) || !renderedState.rendered) return
+            if (!hasCurrentPhotoObservation()) {
+                trace("render_waiting_photo")
+                return
+            }
             trace("rendered")
             val pageLoad = disarmPageLoadWatchdog()
             if (pageLoad.timedOut) {
@@ -303,7 +330,7 @@ class FrameWebSurface(
 
         fun stopWatchingDisplayedContent() {
             val pageLoad = disarmPageLoadWatchdog()
-            if (pageLoad.hadActiveLoad && !renderedState.rendered) {
+            if (pageLoad.hadActiveLoad && !isReadyForDisplay()) {
                 loadState.recordFailure()
             }
         }
@@ -456,7 +483,10 @@ class FrameWebSurface(
     }
 
     fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean) {
-        if (slot != FrameWebSlot.PHOTOS) photosContentActive = false
+        if (slot != FrameWebSlot.PHOTOS) {
+            photosContentActive = false
+            photoBridge?.setCaptureEnabled(false, true)
+        }
         if (displayedSlot != null && displayedSlot != slot) {
             displayedManagedSession()?.stopWatchingDisplayedContent()
         }
@@ -569,18 +599,24 @@ class FrameWebSurface(
 
     fun isDisplayingRenderedLabel(label: String): Boolean {
         val managed = displayedManagedSession() ?: return false
-        return managed.label == label && managed.renderedState.rendered && displayedSurfaceVisible()
+        return managed.label == label && managed.isReadyForDisplay() && displayedSurfaceVisible()
     }
 
     fun retryDisplayedContentIfUnrendered(): Boolean {
         val managed = displayedManagedSession() ?: return false
-        if (managed.renderedState.rendered) return false
+        if (managed.isReadyForDisplay()) return false
         val url = managed.loadState.recoveryUrl() ?: return false
         cancelRecovery(managed)
         return managed.request(url)
     }
 
     fun refreshPhotos(): Boolean = photosSession.request(photosSession.configuredUrls.first())
+
+    /** Called only after the bridge has verified a current Photos observation. */
+    fun onCurrentPhotoObserved(photo: FramePhotoBridge.PhotoObserved): Boolean {
+        if (displayedSlot != FrameWebSlot.PHOTOS || !photosContentActive || !displayedSurfaceVisible()) return false
+        return photosSession.recordCurrentPhotoObserved(photo)
+    }
 
     fun suspendAllContent() {
         photosContentActive = false
@@ -854,7 +890,7 @@ class FrameWebSurface(
 
     private fun reportRenderedIfDisplayed(managed: ManagedSession) {
         if (
-            managed.renderedState.rendered &&
+            managed.isReadyForDisplay() &&
             managed === displayedManagedSession() &&
             displayedSurfaceVisible()
         ) {

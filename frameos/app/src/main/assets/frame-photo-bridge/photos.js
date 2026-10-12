@@ -297,7 +297,7 @@ function failKioskHtmxRequest(event, inspected = null) {
 function skipNoSwapKioskRequest(event) {
   const inspected = kioskHtmxRequest(event);
   if (inspected.request && inspected.request.status === 204) {
-    reportDiagnostic("htmx_error", inspected.fields);
+    reportDiagnostic("htmx_no_content", inspected.fields);
     failKioskHtmxRequest(event, inspected);
   }
 }
