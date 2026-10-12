@@ -86,7 +86,7 @@ class FrameReducerTest {
     }
 
     @Test
-    fun `idle expiry returns to Home while preserving display preferences`() {
+    fun `idle expiry restores an unpaused photo frame for non-touch routing`() {
         val state = FrameState(
             mode = FrameMode.CAMERAS,
             photosPaused = true,
@@ -95,7 +95,7 @@ class FrameReducerTest {
 
         val transition = reducer.reduce(state, FrameIntent.IdleExpired)
 
-        assertEquals(FrameMode.HOME, transition.state.mode)
+        assertEquals(FrameMode.PHOTOS, transition.state.mode)
         assertFalse(transition.state.photosPaused)
         assertEquals(70, transition.state.brightnessOverridePercent)
     }

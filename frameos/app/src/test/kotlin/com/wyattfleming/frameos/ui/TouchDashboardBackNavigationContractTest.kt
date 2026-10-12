@@ -4,11 +4,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-class TouchDashboardBackNavigationContractTest {
+class FrameHomeBackNavigationContractTest {
     @Test
     fun api33RegistersAndUnregistersWhileLegacyActivityBackRemainsAvailable() {
         val navigation = File(
-            "src/main/kotlin/com/wyattfleming/frameos/ui/TouchDashboardBackNavigation.kt",
+            "src/main/kotlin/com/wyattfleming/frameos/ui/FrameHomeBackNavigation.kt",
         ).readText()
         val activity = File(
             "src/main/kotlin/com/wyattfleming/frameos/MainActivity.kt",
@@ -19,6 +19,10 @@ class TouchDashboardBackNavigationContractTest {
         assertTrue(navigation.contains("dispatcher.unregisterOnBackInvokedCallback(callback)"))
         assertTrue(activity.contains("override fun onBackPressed()"))
         assertTrue(activity.contains("showMode(FrameMode.HOME, announceHud = false)"))
-        assertTrue("legacy dashboard back helper is isolated from the unified Home activity", !activity.contains("TouchDashboardBackNavigation"))
+        assertTrue(activity.contains("unregisterHomeBack = if (touchNavigationEnabled && configuration != null)"))
+        assertTrue(activity.contains("FrameHomeBackNavigation.register(this)"))
+        assertTrue(activity.contains("unregisterHomeBack?.invoke()"))
+        assertTrue(activity.contains("override fun onBackPressed()"))
+        assertTrue(activity.contains("touchNavigationEnabled && configuration != null"))
     }
 }

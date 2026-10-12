@@ -46,7 +46,7 @@ def copy_and_assert_junit(label: str, expected_failures: int) -> str:
         for failure in failures:
             detail = (failure.get("message") or "") + (failure.text or "")
             assert failure.get("type") == "java.lang.AssertionError", detail
-            assert "mode=ART" in detail and "mode=HOME" in detail, detail
+            assert "mode=ART" in detail and "mode=PHOTOS" in detail, detail
     return copied.name
 
 

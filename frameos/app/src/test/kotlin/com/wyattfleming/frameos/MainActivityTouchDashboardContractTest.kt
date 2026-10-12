@@ -45,12 +45,25 @@ class MainActivityTouchDashboardContractTest {
     @Test
     fun `Back and Home controls route to the existing Home mode`() {
         val source = mainActivity()
+        val resume = methodBody(source, "override fun onResume()")
+        val pause = methodBody(source, "override fun onPause()")
         val back = methodBody(source, "override fun onBackPressed()")
         val dispatch = methodBody(source, "private fun dispatch(intent: FrameIntent)")
 
+        assertContainsInOrder(resume, listOf(
+            "unregisterHomeBack?.invoke()",
+            "FrameHomeBackNavigation.register(this)",
+            "if (oauthSurface != null) closeWeatherAuthorization(consumeState = true)",
+            "else showMode(FrameMode.HOME, announceHud = false)",
+        ))
+        assertContainsInOrder(pause, listOf("unregisterHomeBack?.invoke()", "unregisterHomeBack = null"))
+        assertTrue(back.contains("touchNavigationEnabled && configuration != null"))
         assertTrue(back.contains("showMode(FrameMode.HOME, announceHud = false)"))
-        assertFalse(dispatch.contains("FrameIntent.GoHome"))
-        assertTrue(dispatch.contains("if (intent == FrameIntent.IdleExpired && state.mode.persistsAcrossIdle) return"))
+        assertContainsInOrder(dispatch, listOf(
+            "if (intent == FrameIntent.IdleExpired && state.mode.persistsAcrossIdle) return",
+            "if (touchNavigationEnabled && (intent == FrameIntent.GoHome || intent == FrameIntent.IdleExpired))",
+            "showMode(FrameMode.HOME, announceHud = false)",
+        ))
     }
 
     @Test
