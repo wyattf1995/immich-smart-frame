@@ -104,6 +104,7 @@
     }
     display(artwork, loadedImage) {
       const shell = this.document.createElement("section"); shell.className = "art-shell"; shell.tabIndex = 0;
+      const backdrop = this.document.createElement("img"); backdrop.className = "artwork-backdrop"; backdrop.alt = ""; backdrop.setAttribute("aria-hidden", "true"); backdrop.src = loadedImage.src;
       const image = this.document.createElement("img"); image.className = "artwork"; image.alt = `${artwork.title}, ${artwork.artist}`; image.src = loadedImage.src;
       const caption = this.document.createElement("div"); caption.className = "art-caption";
       const name = this.document.createElement("strong"); name.textContent = artwork.title;
@@ -113,7 +114,7 @@
       [["Previous", () => this.advance(-1), ""], [this.paused ? "Resume" : "Pause", () => this.togglePause(), "art-pause"], ["Next", () => this.advance(1), ""]].forEach(([label, handler, className]) => {
         const button = this.document.createElement("button"); button.type = "button"; button.className = className; button.textContent = label; button.addEventListener("click", handler); controls.append(button);
       });
-      shell.append(image, caption, controls);
+      shell.append(backdrop, image, caption, controls);
       shell.addEventListener("pointerdown", (event) => {
         const bounds = shell.getBoundingClientRect();
         if (event.clientX - bounds.left <= EDGE_GUARD_PX || bounds.right - event.clientX <= EDGE_GUARD_PX) return;
