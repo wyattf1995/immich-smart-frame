@@ -89,6 +89,34 @@ class LegacyIsrgRootTlsTest {
     }
 
     @Test
+    fun `only the verified API23 runtime receives the supplemental factory`() {
+        listOf(24, 25, 26).forEach { sdkInt ->
+            val connection = RecordingHttpsConnection()
+            val factory = LegacyIsrgRootTls.ConnectionFactory(
+                sdkInt = sdkInt,
+                opener = { connection },
+                socketFactory = { error("API$sdkInt must not initialize the API23-only fallback") },
+            )
+
+            factory.open(URI("https://home.example.invalid"))
+
+            assertEquals("API$sdkInt must retain platform TLS", 0, connection.socketFactoryAssignments)
+            assertEquals("API$sdkInt must retain platform hostname verification", 0, connection.hostnameVerifierAssignments)
+        }
+    }
+
+    @Test
+    fun `creating an app scoped factory never changes HTTPS globals`() {
+        val defaultFactory = HttpsURLConnection.getDefaultSSLSocketFactory()
+        val defaultVerifier = HttpsURLConnection.getDefaultHostnameVerifier()
+
+        LegacyIsrgRootTls.ConnectionFactory(sdkInt = 23)
+
+        assertSame(defaultFactory, HttpsURLConnection.getDefaultSSLSocketFactory())
+        assertSame(defaultVerifier, HttpsURLConnection.getDefaultHostnameVerifier())
+    }
+
+    @Test
     fun `embedded root has the reviewed DER fingerprint`() {
         val certificate = CertificateFactory.getInstance("X.509").generateCertificate(
             LegacyIsrgRootTls.rootPem().byteInputStream(),
@@ -121,6 +149,7 @@ class LegacyIsrgRootTlsTest {
     private class RecordingHttpsConnection : HttpsURLConnection(URL("https://home.example.invalid")) {
         var configuredSocketFactory: SSLSocketFactory? = null
         var socketFactoryAssignments = 0
+        var hostnameVerifierAssignments = 0
 
         override fun setSSLSocketFactory(factory: SSLSocketFactory) {
             socketFactoryAssignments += 1
@@ -129,6 +158,10 @@ class LegacyIsrgRootTlsTest {
 
         override fun getSSLSocketFactory(): SSLSocketFactory =
             configuredSocketFactory ?: SSLContext.getDefault().socketFactory
+
+        override fun setHostnameVerifier(verifier: javax.net.ssl.HostnameVerifier) {
+            hostnameVerifierAssignments += 1
+        }
 
         override fun connect() = Unit
         override fun disconnect() = Unit
