@@ -66,7 +66,11 @@ def copy_and_assert_junit(label: str, expected_failures: int) -> str:
         for failure in failures:
             detail = (failure.get("message") or "") + (failure.text or "")
             assert failure.get("type") == "java.lang.AssertionError", detail
-            assert "Expected condition to be true" in detail, detail
+            # The focused test imports JUnit's assertTrue with no message.
+            # JUnit 4 therefore supplies its method frame rather than Kotlin's
+            # "Expected condition to be true" wording.
+            assert "org.junit.Assert.assertTrue" in detail, detail
+            assert "signInPresentationWithConfiguredActionIsTouchAccessible" in detail, detail
     return copied.name
 
 
