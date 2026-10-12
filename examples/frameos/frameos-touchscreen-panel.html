@@ -111,6 +111,7 @@
             inspectAddedSubtree(element.shadowRoot, state);
           } else if (!state.ready && element.localName?.includes("-")) {
             state.pendingShadowHosts.add(element);
+            scheduleShadowProbe(state);
           }
           const text = textFor(element);
           if (/^camera-[1-4]$/.test(state.view) && element.localName === "hui-picture-entity-card") state.cameraCards.add(element);
