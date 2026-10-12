@@ -56,7 +56,7 @@ class HomeAssistantOAuthEndpoint private constructor(
         val query = listOf(
             "response_type" to "code",
             "client_id" to callback,
-            "redirect_uri" to REDIRECT_URI,
+            "redirect_uri" to callback,
             "state" to state.value,
         ).joinToString("&") { (key, value) -> "${encode(key)}=${encode(value)}" }
         return OAuthAuthorizationRequest(
@@ -119,7 +119,6 @@ class HomeAssistantOAuthEndpoint private constructor(
 
     companion object {
         const val CALLBACK_PATH = "/local/frameos-oauth.html"
-        const val REDIRECT_URI = "frameos://oauth/callback"
 
         fun fromDisplayUrl(displayUrl: String): HomeAssistantOAuthEndpoint {
             val configured = parseAbsoluteHttps(displayUrl)

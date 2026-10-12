@@ -6,16 +6,24 @@ import java.net.URI
 /** Limits an embedded authorization session to one configured HA HTTPS origin. */
 class FrameOAuthNavigationPolicy(
     private val configuredHomeAssistantUrl: String,
+    callbackPageUrl: String,
     private val urlPolicy: FrameUrlPolicy = FrameUrlPolicy(),
 ) {
+    private val callbackTarget = OAuthCallbackTarget.fromCallbackPageUrl(callbackPageUrl)
+
     enum class Decision { ALLOW, CALLBACK, DENY }
 
     init {
         requireConfiguredHttpsOrigin(configuredHomeAssistantUrl)
+        require(callbackTarget.isOnConfiguredOrigin(configuredHomeAssistantUrl)) {
+            "OAuth callback must stay on the configured origin"
+        }
     }
 
     fun decide(requestUrl: String): Decision {
-        if (isCallbackCandidate(requestUrl)) return Decision.CALLBACK
+        if (callbackTarget.isNativeCallback(requestUrl)) return Decision.CALLBACK
+        if (callbackTarget.isExactHttpsCallback(requestUrl)) return Decision.CALLBACK
+        if (callbackTarget.isHttpsCallbackCandidate(requestUrl)) return Decision.DENY
         return if (urlPolicy.isAllowedTopLevelNavigation(configuredHomeAssistantUrl, requestUrl)) {
             Decision.ALLOW
         } else {
@@ -33,20 +41,4 @@ class FrameOAuthNavigationPolicy(
         require(!uri.host.isNullOrBlank()) { "Home Assistant URL must include a host" }
     }
 
-    private fun isCallbackCandidate(requestUrl: String): Boolean = runCatching {
-        URI(requestUrl).let { uri ->
-            uri.scheme == CALLBACK_SCHEME &&
-                uri.host == CALLBACK_HOST &&
-                uri.path == CALLBACK_PATH &&
-                uri.userInfo == null &&
-                uri.port == -1 &&
-                uri.fragment == null
-        }
-    }.getOrDefault(false)
-
-    private companion object {
-        const val CALLBACK_SCHEME = "frameos"
-        const val CALLBACK_HOST = "oauth"
-        const val CALLBACK_PATH = "/callback"
-    }
 }

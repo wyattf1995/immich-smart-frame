@@ -7,6 +7,7 @@ import org.junit.Test
 class FrameOAuthNavigationPolicyTest {
     private val policy = FrameOAuthNavigationPolicy(
         "https://home.example.invalid:8444/frameos-touchscreen",
+        "https://home.example.invalid:8444/local/frameos-oauth.html",
     )
 
     @Test
@@ -30,7 +31,10 @@ class FrameOAuthNavigationPolicyTest {
             "not a uri",
         ).forEach { configuredUrl ->
             assertThrows(IllegalArgumentException::class.java) {
-                FrameOAuthNavigationPolicy(configuredUrl)
+                FrameOAuthNavigationPolicy(
+                    configuredUrl,
+                    "https://home.example.invalid:8444/local/frameos-oauth.html",
+                )
             }
         }
     }

@@ -18,10 +18,14 @@ class VerifiedAuthorizationCode(
 
 class OAuthCallbackVerifier(
     private val pendingStateStore: PendingOAuthStateStore,
+    callbackPageUrl: String,
 ) {
+    private val callbackTarget = OAuthCallbackTarget.fromCallbackPageUrl(callbackPageUrl)
+
     fun verify(callbackUrl: String): VerifiedAuthorizationCode? {
         val uri = parseCallback(callbackUrl) ?: return null
         val parameters = parseQuery(uri.rawQuery) ?: return null
+        if ("error" in parameters) return consumeAndReject()
         val code = parameters.singleValue("code")?.takeIf(String::isNotBlank) ?: return consumeAndReject()
         val callbackState = parameters.singleValue("state")?.takeIf(String::isNotBlank) ?: return consumeAndReject()
         val expectedState = pendingStateStore.consume() ?: return null
@@ -33,13 +37,7 @@ class OAuthCallbackVerifier(
 
     private fun parseCallback(value: String): URI? = try {
         URI(value).takeIf { uri ->
-            uri.scheme == CALLBACK_SCHEME &&
-                uri.host == CALLBACK_HOST &&
-                uri.path == CALLBACK_PATH &&
-                uri.userInfo == null &&
-                uri.port == -1 &&
-                uri.fragment == null &&
-                uri.rawQuery != null
+            callbackTarget.isNativeCallback(value) || callbackTarget.isExactHttpsCallback(value)
         }
     } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
         null
@@ -82,9 +80,4 @@ class OAuthCallbackVerifier(
 
     private fun decode(value: String): String = URLDecoder.decode(value, StandardCharsets.UTF_8.name())
 
-    private companion object {
-        const val CALLBACK_SCHEME = "frameos"
-        const val CALLBACK_HOST = "oauth"
-        const val CALLBACK_PATH = "/callback"
-    }
 }
