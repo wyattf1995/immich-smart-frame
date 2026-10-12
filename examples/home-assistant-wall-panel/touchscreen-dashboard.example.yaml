@@ -36,16 +36,18 @@ views:
           - type: heading
             heading: Home status
             icon: mdi:home-heart
-          - type: tile
-            entity: binary_sensor.internet_status
-            name: Internet
-            tap_action:
-              action: none
-          - type: tile
-            entity: sensor.last_successful_backup
-            name: Last HA backup
-            tap_action:
-              action: none
+          - type: markdown
+            content: >-
+              **Entryway thermostat:** {{ states('climate.entryway_entryway') | title }}
+
+              {% set cameras = [
+                'camera.backyard_backyard_camera',
+                'camera.dining_room_dining_room_camera',
+                'camera.garage_garage_camera',
+                'camera.living_room_living_room_camera'
+              ] %}
+              {% set available = cameras | select('has_value') | list | length %}
+              **Cameras:** {{ available }} of {{ cameras | length }} available
     animated_background: neutral
 
   - title: Cameras
