@@ -30,6 +30,7 @@ const windowListeners = new Map();
 const childListeners = new Map();
 const panelListeners = new Map();
 const observers = [];
+const timers = [];
 const loading = { hidden: false, textContent: "", classList: { add() {}, remove() {} } };
 const status = { textContent: "" };
 const childWindow = {
@@ -55,7 +56,7 @@ const context = {
     observe() {}
     disconnect() { this.disconnected = true; }
   },
-  setTimeout() { return 1; },
+  setTimeout(callback, delay) { const timer = { callback, delay, id: timers.length + 1 }; timers.push(timer); return timer.id; },
   clearTimeout() {},
 };
 context.window = context;
@@ -83,5 +84,20 @@ childWindow.location.pathname = "/frameos-touchscreen/cameras";
 childListeners.get("location-changed")();
 assert.equal(loading.hidden, true, "returning to chooser disposes the camera route and needs no live card");
 assert.equal(status.textContent, "Cameras ready");
+
+const timeoutObserverStart = observers.length;
+root.nodes = [makeElement("ha-never-ready")];
+childWindow.location.pathname = "/frameos-touchscreen/camera-2";
+childListeners.get("location-changed")();
+const routeTimeout = timers.filter((timer) => timer.delay === 12_000).at(-1);
+assert.ok(routeTimeout, "a route deadline is armed before waiting for shadow roots");
+routeTimeout.callback();
+assert.equal(status.textContent, "Camera still connecting");
+assert.ok(observers.slice(timeoutObserverStart).every((observer) => observer.disconnected), "deadline disconnects pending shadow observers instead of polling forever");
+
+root.nodes = [makeElement("home-assistant", { shadowRoot: cameraShadow })];
+childWindow.location.pathname = "/frameos-touchscreen/camera-1";
+childListeners.get("location-changed")();
+assert.equal(status.textContent, "Camera ready", "SPA watcher can restart readiness after a bounded timeout");
 
 console.log("FrameOS touchscreen panel shadow readiness and camera lifecycle tests passed");
