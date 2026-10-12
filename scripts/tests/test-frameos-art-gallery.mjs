@@ -88,7 +88,14 @@ assert.match(source, /\[\["Previous"/, "tap-revealed controls include previous n
 assert.match(source, /"Resume"\s*:\s*"Pause"/, "tap-revealed controls include pause and resume");
 assert.match(source, /this\.paused \? "Resume" : "Pause"/, "pause control reports Resume when cycling is paused");
 assert.match(source, /\["Next"/, "tap-revealed controls include next navigation");
-assert.match(stylesheet, /object-fit:contain/, "artwork is fit without cropping");
+assert.match(stylesheet, /\.artwork\s*\{[^}]*object-fit:contain/, "foreground artwork remains fully visible without cropping");
+assert.match(stylesheet, /\.artwork-backdrop\s*\{[^}]*object-fit:cover[^}]*filter:blur\(24px\)/, "a blurred cover backdrop fills contain gaps");
+assert.match(stylesheet, /\.artwork\s*\{[^}]*background:transparent/, "foreground artwork has no cream border or flash");
+assert.doesNotMatch(stylesheet, /#e9e5dc/, "Art fullscreen surface does not flash cream");
+assert.match(source, /backdrop\.className = "artwork-backdrop"/, "display creates a separate artwork backdrop");
+assert.match(source, /backdrop\.src = loadedImage\.src/, "backdrop is synchronized to the loaded local artwork");
+assert.match(source, /backdrop\.setAttribute\("aria-hidden", "true"\)/, "decorative backdrop is hidden from assistive technology");
+assert.match(source, /shell\.append\(backdrop, image, caption, controls\)/, "backdrop remains behind the complete foreground artwork and controls");
 assert.match(stylesheet, /\.art-controls\s*\{[^}]*pointer-events:none/, "hidden controls cannot receive the first tap");
 assert.match(stylesheet, /\.art-shell\.is-controls-visible \.art-controls\s*\{[^}]*pointer-events:auto/, "visible controls become interactive after being revealed");
 console.log("FrameOS Art gallery tests passed");
