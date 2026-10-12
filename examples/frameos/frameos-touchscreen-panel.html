@@ -125,8 +125,8 @@
               ? "ha-markdown-element{color:#f1ede4!important} ha-markdown-element strong:first-child{display:block;font-size:clamp(3.8rem,9vw,6.25rem);line-height:.96;letter-spacing:-.055em;color:#f1ede4!important}"
               : "ha-markdown-element{color:#f1ede4!important;font-size:1.18rem;line-height:1.45}";
             const existingStyle = shadow.querySelector?.("#frameos-home-markdown");
-            if (existingStyle && existingStyle.textContent !== clockStyle) existingStyle.textContent = clockStyle;
-            else shadow.append(homeStyle(element.ownerDocument, "frameos-home-markdown", clockStyle));
+            if (!existingStyle) shadow.append(homeStyle(element.ownerDocument, "frameos-home-markdown", clockStyle));
+            else if (existingStyle.textContent !== clockStyle) existingStyle.textContent = clockStyle;
             work.markdownRoots.add(shadow);
           }
         };
