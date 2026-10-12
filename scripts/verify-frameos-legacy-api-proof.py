@@ -12,8 +12,9 @@ out = root / 'reports/frameos-legacy'
 out.mkdir(parents=True, exist_ok=True)
 oauth = frame / 'app/src/main/kotlin/com/wyattfleming/frameos/auth/HomeAssistantOAuthEndpoint.kt'
 style = frame / 'app/src/main/res/values/styles.xml'
+style_v27 = frame / 'app/src/main/res/values-v27/styles.xml'
 manifest = frame / 'app/src/main/AndroidManifest.xml'
-sources = {p: p.read_bytes() for p in (oauth, style, manifest)}
+sources = {p: p.read_bytes() for p in (oauth, style, style_v27, manifest)}
 tests = {p: hashlib.sha256(p.read_bytes()).hexdigest()
          for p in sorted((frame/'app/src/test').rglob('*')) if p.is_file()}
 report = frame / 'app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt'
@@ -57,13 +58,28 @@ finally:
         path.write_bytes(content)
         assert path.read_bytes() == content
 
+try:
+    # Restore only the failed base-style naming from attempt2. Explicit resource
+    # inheritance must not invert Android's dotted-name implied parent relation.
+    for path in (style, style_v27):
+        text = path.read_text()
+        assert 'Base.Theme.FrameOS' in text
+        path.write_text(text.replace('Base.Theme.FrameOS', 'Theme.FrameOS.Base'))
+    code, cycle = lint('style-cycle-source-red')
+    assert code != 0 and '2 errors' in cycle and '[ResourceCycle]' in cycle, cycle
+    assert 'Theme.FrameOS is the implied parent of Theme.FrameOS.Base' in cycle, cycle
+finally:
+    for path, content in sources.items():
+        path.write_bytes(content)
+        assert path.read_bytes() == content
+
 code, restored = lint('api23-restored-green')
 assert code == 0, restored
 assert tests == {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in tests}
 (out/'api23-source-proof.json').write_text(json.dumps({
-    'passed': True, 'negative_expected_errors': 5, 'restored_lint_exit': code,
+    'passed': True, 'negative_expected_errors': 5, 'style_cycle_expected_errors': 2, 'restored_lint_exit': code,
     'restored_sources': {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources},
     'unchanged_tests': {str(p.relative_to(root)): digest for p, digest in tests.items()},
     'scope': 'API23 lint guards; encoding vectors separately verify format preservation, not API availability',
 }, indent=2)+'\n')
-print('API23 source-only five-error red / exact restore green verified', flush=True)
+print('API23 five-error and style-cycle two-error source-only red / exact restore green verified', flush=True)
