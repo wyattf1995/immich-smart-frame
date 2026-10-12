@@ -45,6 +45,9 @@ class FrameOAuthWebSurface(
 
     init {
         require(timeoutMillis in 1..MAX_TIMEOUT_MILLIS) { "OAuth timeout must be bounded" }
+        require(navigationPolicy.decide(authorizationUrl) == FrameOAuthNavigationPolicy.Decision.ALLOW) {
+            "OAuth authorization URL must stay on the configured HTTPS origin"
+        }
         setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
         setBackgroundColor(Color.BLACK)
         coverUntilFirstPaint(Color.BLACK)
