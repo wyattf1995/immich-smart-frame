@@ -53,6 +53,8 @@
         const HOME_LATE_DISCOVERY_DEADLINE_MILLIS = 60_000;
         const HOME_STYLE_PROBE_TIMEOUT_MILLIS = 12_000;
         const MAX_NAVIGATION_GUARD_NODES = 4096;
+        // performance.now() is monotonic in supported Gecko; Date is only a legacy test fallback.
+        const monotonicNow = () => typeof window.performance?.now === "function" ? window.performance.now() : Date.now();
         const HOME_STYLE_SHADOW_LEAVES = new Set(["ha-markdown-element"]);
         const validView = (value) => Object.prototype.hasOwnProperty.call(routes, value);
         const normalizeView = (value) => validView(value) ? value : "home";
@@ -127,7 +129,9 @@
           if (homeBootstrap?.lateTimer) window.clearTimeout(homeBootstrap.lateTimer);
           homeBootstrap = null;
         };
-        const pauseLateHomeDiscovery = () => {
+        const pauseHomeDiscovery = () => {
+          if (customHomeProbe) window.clearTimeout(customHomeProbe.timer);
+          customHomeProbe = null;
           if (!homeBootstrap?.lateTimer) return;
           window.clearTimeout(homeBootstrap.lateTimer);
           homeBootstrap.lateTimer = null;
@@ -221,15 +225,15 @@
           if (homeBootstrap !== bootstrap || customHomeWork) return;
           if (!isCurrentHomeRoot(bootstrap.root)) { clearHomeBootstrap(); return; }
           if (document.visibilityState === "hidden") return;
-          if (Date.now() >= bootstrap.deadlineAt) return;
-          if (Date.now() + HOME_LATE_DISCOVERY_INTERVAL_MILLIS > bootstrap.deadlineAt) return;
+          if (monotonicNow() >= bootstrap.deadlineAt) return;
+          if (monotonicNow() + HOME_LATE_DISCOVERY_INTERVAL_MILLIS > bootstrap.deadlineAt) return;
           if (bootstrap.lateTimer) return;
           bootstrap.lateTimer = window.setTimeout(() => {
             bootstrap.lateTimer = null;
             if (homeBootstrap !== bootstrap) return;
             if (!isCurrentHomeRoot(bootstrap.root)) { clearHomeBootstrap(); return; }
             if (document.visibilityState === "hidden") return;
-            if (Date.now() >= bootstrap.deadlineAt) return;
+            if (monotonicNow() >= bootstrap.deadlineAt) return;
             // Never enumerate HA state while its existing authenticated connection is down.
             if (connectedHomeHass(bootstrap.root) && mountCustomHome(bootstrap.root, getHass)) return;
             scheduleLateHomeDiscovery(bootstrap, getHass);
@@ -243,7 +247,7 @@
             return true;
           }
           disposeCustomHome();
-          const bootstrap = { root, deadlineAt: Date.now() + HOME_LATE_DISCOVERY_DEADLINE_MILLIS, lateTimer: null };
+          const bootstrap = { root, deadlineAt: monotonicNow() + HOME_LATE_DISCOVERY_DEADLINE_MILLIS, lateTimer: null };
           homeBootstrap = bootstrap;
           const getHass = () => getCustomHomeHass(root);
           const probe = { root, timer: null, attempts: 0 };
@@ -626,9 +630,9 @@
         });
         window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
         window.addEventListener("visibilitychange", () => {
-          if (document.visibilityState === "hidden") { pauseLateHomeDiscovery(); return; }
+          if (document.visibilityState === "hidden") { pauseHomeDiscovery(); return; }
           const bootstrap = homeBootstrap;
-          if (!bootstrap || customHomeProbe || customHomeWork || !isCurrentHomeRoot(bootstrap.root) || Date.now() >= bootstrap.deadlineAt) return;
+          if (!bootstrap || customHomeProbe || customHomeWork || !isCurrentHomeRoot(bootstrap.root) || monotonicNow() >= bootstrap.deadlineAt) return;
           scheduleLateHomeDiscovery(bootstrap, () => getCustomHomeHass(bootstrap.root));
         });
         window.addEventListener("pagehide", () => {
