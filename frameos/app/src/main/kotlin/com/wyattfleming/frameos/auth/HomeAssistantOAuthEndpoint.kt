@@ -4,7 +4,8 @@ import org.json.JSONObject
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-import java.util.Base64
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 class OAuthState private constructor(val value: String) {
     override fun equals(other: Any?): Boolean = other is OAuthState && value == other.value
@@ -12,9 +13,10 @@ class OAuthState private constructor(val value: String) {
     override fun toString(): String = "OAuthState(redacted)"
 
     companion object {
+        @OptIn(ExperimentalEncodingApi::class)
         fun fromCryptographicBytes(bytes: ByteArray): OAuthState {
             require(bytes.size >= 32) { "OAuth state requires at least 256 bits" }
-            return OAuthState(Base64.getUrlEncoder().withoutPadding().encodeToString(bytes))
+            return OAuthState(Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT).encode(bytes))
         }
     }
 }

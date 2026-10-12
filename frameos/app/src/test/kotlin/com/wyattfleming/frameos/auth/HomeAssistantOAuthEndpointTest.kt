@@ -36,6 +36,25 @@ class HomeAssistantOAuthEndpointTest {
     }
 
     @Test
+    fun `encodes OAuth state as unpadded RFC 4648 base64url`() {
+        assertEquals(
+            "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+            OAuthState.fromCryptographicBytes(ByteArray(32) { it.toByte() }).value,
+        )
+    }
+
+    @Test
+    fun `uses URL-safe alphabet and omits padding for OAuth state`() {
+        // Derived independently with Python stdlib:
+        // base64.urlsafe_b64encode(bytes([0xfb, 0xff]) * 16).decode().rstrip("=")
+        val state = OAuthState.fromCryptographicBytes(ByteArray(32) { if (it % 2 == 0) 0xfb.toByte() else 0xff.toByte() }).value
+        assertEquals("-__7__v_-__7__v_-__7__v_-__7__v_-__7__v_-_8", state)
+        assertFalse(state.contains('+'))
+        assertFalse(state.contains('/'))
+        assertFalse(state.contains('='))
+    }
+
+    @Test
     fun `rejects HTTP cross-origin and invalid callback pages`() {
         assertThrows(IllegalArgumentException::class.java) {
             HomeAssistantOAuthEndpoint.fromDisplayUrl("http://home.example.invalid:8123/local/frameos.html")
