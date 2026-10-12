@@ -7,6 +7,7 @@ const script = html.match(/<script>\s*([\s\S]*?)\s*<\/script>/)[1];
 
 function harness() {
   let now = 0;
+  let wallClock = 1_000_000;
   let nextTimer = 1;
   let mounts = 0;
   let stateEnumerations = 0;
@@ -28,7 +29,8 @@ function harness() {
     document: { visibilityState: 'visible', getElementById(id) { return ({ panel, 'custom-home': { hidden: true, focus() {} }, 'home-chrome': { hidden: true }, loading, status: { textContent: '' } })[id]; } },
     location: { origin: 'https://frame.example', pathname: '/local/frameos-touchscreen-panel.html', search: '', hash: '#home' },
     history: { replaceState(_state, _title, url) { context.location.hash = url.slice(url.indexOf('#')); } },
-    Date: { now: () => now },
+    Date: { now: () => wallClock },
+    performance: { now: () => now },
     MutationObserver: class { observe() {} disconnect() {} },
     setTimeout(callback, delay) { const id = nextTimer++; timers.set(id, { id, callback, due: now + delay, delay, active: true }); return id; },
     clearTimeout(id) { const timer = timers.get(id); if (timer) timer.active = false; },
@@ -46,7 +48,7 @@ function harness() {
     live.connected = false; live.connection.connected = false;
     live.states = new Proxy({}, { ownKeys() { stateEnumerations += 1; throw new Error('disconnected state enumeration'); } });
   };
-  return { context, panel, root, live, loading, listeners, childListeners, start, advanceTo, activeTimers, makeConnected, makeDisconnectedNoEnumeration, mounts: () => mounts, stateEnumerations: () => stateEnumerations, now: () => now };
+  return { context, panel, root, live, loading, listeners, childListeners, start, advanceTo, activeTimers, makeConnected, makeDisconnectedNoEnumeration, mounts: () => mounts, stateEnumerations: () => stateEnumerations, now: () => now, setWallClock: (value) => { wallClock = value; } };
 }
 
 function reachStillConnecting(h) {
@@ -68,10 +70,27 @@ function reachStillConnecting(h) {
   const h = harness();
   h.makeDisconnectedNoEnumeration();
   reachStillConnecting(h);
+  h.setWallClock(-9_999_999);
   h.advanceTo(60_000);
   assert.equal(h.mounts(), 0, 'a disconnected shell never mounts Custom Home');
   assert.equal(h.stateEnumerations(), 0, 'late discovery does not enumerate HA states while disconnected');
-  assert.equal(h.activeTimers(1_000).length, 0, 'the 60-second deadline stops late discovery work');
+  assert.equal(h.activeTimers(1_000).length, 0, 'the monotonic 60-second deadline stops late discovery work despite wall-clock rollback');
+}
+
+{
+  const h = harness();
+  h.start();
+  h.advanceTo(2_000);
+  h.context.document.visibilityState = 'hidden';
+  h.listeners.get('visibilitychange')();
+  h.makeConnected();
+  h.advanceTo(12_000);
+  assert.equal(h.mounts(), 0, 'hiding before the initial window cancels the fast discovery probe');
+  h.context.document.visibilityState = 'visible';
+  h.listeners.get('visibilitychange')();
+  assert.equal(h.activeTimers(1_000).length, 1, 'visible resume restarts one bounded late discovery probe after an interrupted fast probe');
+  h.advanceTo(13_000);
+  assert.equal(h.mounts(), 1, 'the bounded resume probe can mount once Home Assistant is healthy');
 }
 
 for (const [label, cancel] of [
