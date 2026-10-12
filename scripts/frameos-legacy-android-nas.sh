@@ -20,6 +20,7 @@ python3 "$root/scripts/verify-touchscreen-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-bridge-callback-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-touchscreen-route-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-legacy-api-proof.py" "$root"
+python3 "$root/scripts/verify-frameos-weather-touch-proof.py" "$root"
 mkdir -p "$root/reports/frameos-legacy"
 "$root/frameos/gradlew" -p "$root/frameos" --no-daemon --max-workers=2 \
   :app:lintRelease :app:dependencies --configuration releaseRuntimeClasspath \
