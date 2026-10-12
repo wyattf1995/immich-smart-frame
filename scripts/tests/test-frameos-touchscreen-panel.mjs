@@ -115,8 +115,8 @@ const context = {
     observe(target) { this.target = target; }
     disconnect() { this.disconnected = true; }
   },
-  setTimeout(callback, delay) { const timer = { callback, delay, id: timers.length + 1 }; timers.push(timer); return timer.id; },
-  clearTimeout() {},
+  setTimeout(callback, delay) { const timer = { callback, delay, id: timers.length + 1, cleared: false }; timers.push(timer); return timer.id; },
+  clearTimeout(id) { const timer = timers.find((candidate) => candidate.id === id); if (timer) timer.cleared = true; },
 };
 context.window = context;
 context.addEventListener = (type, callback) => windowListeners.set(type, callback);
@@ -152,6 +152,19 @@ headingCards.forEach((card) => {
   assert.ok(card.style.values.some(([name, value]) => name === "--primary-text-color" && value === "#f1ede4"), "Home heading host receives the requested warm-ivory high-contrast text variable");
   assert.equal(card.shadowRoot.styles.filter((style) => style.id === "frameos-heading-contrast").length, 1, "Home heading shadow receives exactly one contrast style");
 });
+const homeStyleObserver = observers.find((observer) => observer.target === root && !observer.disconnected);
+assert.ok(homeStyleObserver, "Home keeps a scoped style observer after readiness completes");
+const lateSectionsView = makeElement("hui-sections-view");
+homeStyleObserver.callback([{ type: "childList", addedNodes: [lateSectionsView] }]);
+const homeLateShadowProbe = timers.filter((timer) => timer.delay === 50 && !timer.cleared).at(-1);
+assert.ok(homeLateShadowProbe, "a late custom Home component without a shadow root arms a bounded style probe");
+lateSectionsView.shadowRoot = makeShadow([]);
+lateSectionsView.shadowRoot.host = lateSectionsView;
+homeLateShadowProbe.callback();
+assert.equal(lateSectionsView.shadowRoot.styles.filter((style) => style.id === "frameos-home-redesign").length, 1, "a shadow root attached without a light-DOM mutation receives the Home palette");
+const neverShadowHost = makeElement("hui-markdown-card");
+homeStyleObserver.callback([{ type: "childList", addedNodes: [neverShadowHost] }]);
+const pendingHomeProbe = timers.filter((timer) => timer.delay === 50 && !timer.cleared).at(-1);
 const firstSpaListener = childListeners.get("location-changed");
 panelListeners.get("load")();
 assert.notEqual(childListeners.get("location-changed"), firstSpaListener, "a full iframe load reattaches navigation listeners even when WindowProxy identity is stable");
@@ -160,6 +173,7 @@ childWindow.location.pathname = "/auth/authorize";
 panelListeners.get("load")();
 assert.equal(homeChrome.hidden, true, "an authentication load removes the Home-only header");
 assert.ok(!panel.classList.classes.has("home-layout"), "an authentication load restores full-frame iframe geometry");
+assert.equal(pendingHomeProbe.cleared, true, "authentication cleanup cancels a pending Home shadow probe");
 
 const oldObservers = observers.slice();
 const cameraCard = makeElement("hui-picture-entity-card");
