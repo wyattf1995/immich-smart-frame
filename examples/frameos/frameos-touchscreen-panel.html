@@ -53,6 +53,8 @@
         const status = document.getElementById("status");
         let currentView = null;
         let activeWork = null;
+        let spaWindow = null;
+        let detachSpaNavigation = null;
 
         const announce = (message) => { status.textContent = message; };
         const focusPanel = () => { try { panel.contentWindow.focus(); } catch (_error) { panel.focus(); } };
@@ -156,7 +158,30 @@
           panel.src = routeFor(view);
         };
 
-        panel.addEventListener("load", () => { if (currentView) observeReadiness(iframeView() || currentView); });
+        const attachSpaNavigationWatcher = () => {
+          let childWindow;
+          try { childWindow = panel.contentWindow; } catch (_error) { return; }
+          if (!childWindow || childWindow === spaWindow) return;
+          if (detachSpaNavigation) detachSpaNavigation();
+          const onNavigation = () => {
+            const view = iframeView() || currentView;
+            if (!view) return;
+            showLoading(view);
+            observeReadiness(view);
+          };
+          childWindow.addEventListener("location-changed", onNavigation);
+          childWindow.addEventListener("popstate", onNavigation);
+          spaWindow = childWindow;
+          detachSpaNavigation = () => {
+            childWindow.removeEventListener("location-changed", onNavigation);
+            childWindow.removeEventListener("popstate", onNavigation);
+          };
+        };
+
+        panel.addEventListener("load", () => {
+          attachSpaNavigationWatcher();
+          if (currentView) observeReadiness(iframeView() || currentView);
+        });
         window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
         navigate(location.hash.slice(1));
       })();
