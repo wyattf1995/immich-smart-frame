@@ -42,16 +42,21 @@ const sanitized = api.__test.sanitize([
   { datetime: "2026-10-14", condition: "cloudy", temperature: 17 },
   { datetime: "2026-10-15T16:00:00+00:00", condition: "fog", temperature: 15 },
 ], "°C", now);
+const isoOnly = api.__test.sanitize([{ datetime: "2026-10-15T16:00:00+00:00", condition: "fog", temperature: 15 }], "°C", now);
+assert.ok(isoOnly, "Home Assistant ISO timestamps become a bounded local calendar day");
+assert.match(isoOnly.days[0].datetime, /^2026-10-1[45]$/, "timestamp normalization returns an ISO day");
 assert.equal(sanitized.days.length, 3, "past, malformed, and duplicate daily records are skipped");
 assert.equal(sanitized.days[0].temperature, 19, "finite bounded numeric strings are accepted");
 assert.equal(sanitized.days[0].templow, null, "missing temperatures do not coerce to zero");
-assert.match(sanitized.days[2].datetime, /^2026-10-1[45]$/, "Home Assistant ISO timestamps become a bounded local calendar day");
 assert.equal(api.__test.sanitize(payload(), "kelvin", now), null, "unsupported temperature units are unavailable");
 
-let recursiveCalls = 0; let recursive;
-recursive = api.create({ readForecast: () => { recursiveCalls += 1; return Promise.resolve(payload()); }, temperatureUnit: () => "°F", now: () => now, timers: context.window, onUpdate: () => recursive.refreshIfNeeded() });
-recursive.setActive(true); await flush();
+let recursiveCalls = 0; let recursive, reentered = false;
+recursive = api.create({ readForecast: () => { recursiveCalls += 1; return Promise.resolve(payload()); }, temperatureUnit: () => "°F", now: () => now, timers: context.window, onUpdate: () => { if (!reentered) { reentered = true; recursive.refreshIfNeeded(); } } });
+recursive.setActive(true); await flush(); await flush();
 assert.equal(recursiveCalls, 1, "a synchronous renderer refresh cannot recurse before the request is fenced");
+reentered = false; now += 30 * 60 * 1000;
+await recursive.refreshIfNeeded(); await flush();
+assert.equal(recursiveCalls, 2, "a later refresh remains fenced before it synchronously redraws");
 recursive.destroy();
 
 let resolveLate;

@@ -15,42 +15,47 @@ command = ["node", str(test.relative_to(root))]
 original = source.read_bytes()
 test_hash = hashlib.sha256(test.read_bytes()).hexdigest()
 
-def run(label: str) -> tuple[int, str]:
+def run(label: str) -> tuple[int, str, str]:
     log = out / f"home-forecast-{label}.log"
     with log.open("w") as stream:
         result = subprocess.run(command, cwd=root, stdout=stream, stderr=subprocess.STDOUT)
-    return result.returncode, log.read_text()
+    return result.returncode, log.read_text(), str(log.relative_to(root))
 
-baseline_exit, baseline_log = run("baseline-green")
+baseline_exit, baseline_log, baseline_path = run("baseline-green")
 if baseline_exit != 0:
     raise RuntimeError(baseline_log)
-before = "const SUCCESS_TTL = 30 * 60 * 1000;"
-after = "const SUCCESS_TTL = 0;"
-try:
-    text = original.decode("utf-8")
-    if text.count(before) != 1:
-        raise RuntimeError("expected one success-TTL guard")
-    source.write_text(text.replace(before, after, 1), encoding="utf-8")
-    red_exit, red_log = run("success-ttl-red")
-    expected = "successful data is cached for thirty minutes"
-    if red_exit == 0 or expected not in red_log:
-        raise RuntimeError("success TTL mutation did not fail its guarding test")
-finally:
-    source.write_bytes(original)
-    if source.read_bytes() != original:
-        raise RuntimeError("exact forecast source restoration failed")
-green_exit, green_log = run("restored-green")
-if green_exit != 0 or hashlib.sha256(test.read_bytes()).hexdigest() != test_hash:
-    raise RuntimeError(green_log)
+checks = (
+    ("success-ttl", "const SUCCESS_TTL = 30 * 60 * 1000;", "const SUCCESS_TTL = 0;", "successful data is cached for thirty minutes"),
+    ("reentrant-fence", "inFlight = request;\n      status = \"loading\"; notify();", "status = \"loading\"; notify();\n      inFlight = request;", "a later refresh remains fenced before it synchronously redraws"),
+    ("iso-timestamp", "if (!/^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d/.test(value)) return null;", "if (!/^\\d{4}-\\d\\d-\\d\\d$/.test(value)) return null;", "Home Assistant ISO timestamps become a bounded local calendar day"),
+    ("timeout-epoch", "if (timedOut) requestEpoch += 1;", "if (timedOut) requestEpoch += 0;", "a late success after timeout cannot overwrite unavailable state"),
+)
+results = {}
+for label, before, after, expected in checks:
+    try:
+        text = original.decode("utf-8")
+        if text.count(before) != 1:
+            raise RuntimeError(f"expected one {label} guard")
+        source.write_text(text.replace(before, after, 1), encoding="utf-8")
+        red_exit, red_log, red_path = run(f"{label}-red")
+        if red_exit == 0 or expected not in red_log:
+            raise RuntimeError(f"{label} mutation did not fail its guarding test")
+    finally:
+        source.write_bytes(original)
+        if source.read_bytes() != original:
+            raise RuntimeError(f"exact {label} source restoration failed")
+    green_exit, green_log, green_path = run(f"{label}-restored-green")
+    if green_exit != 0:
+        raise RuntimeError(green_log)
+    results[label] = {"negative_exit": red_exit, "expected_failure": expected, "negative_log": red_path, "restored_green_exit": green_exit, "restored_log": green_path}
+if hashlib.sha256(test.read_bytes()).hexdigest() != test_hash:
+    raise RuntimeError("forecast test changed during proof")
 (out / "home-forecast-source-proof.json").write_text(json.dumps({
     "passed": True,
     "command": command,
-    "negative_exit": red_exit,
-    "negative_expected_failure": expected,
-    "baseline_log": "home-forecast-baseline-green.log",
-    "negative_log": "home-forecast-success-ttl-red.log",
-    "restored_log": "home-forecast-restored-green.log",
-    "restored_green_exit": green_exit,
+    "baseline_green_exit": baseline_exit,
+    "baseline_log": baseline_path,
+    "checks": results,
     "restored_source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
     "unchanged_test_sha256": test_hash,
 }, indent=2) + "\n", encoding="utf-8")
