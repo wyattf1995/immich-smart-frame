@@ -67,6 +67,58 @@ class TouchModeNavigationRouterTest {
         assertEquals(TouchModeNavigationRoute.PassToChild, router.route(move(x = 780f)))
     }
 
+    @Test
+    fun `policy denied edge gesture stays with child and later reset permits a fresh route`() {
+        var allowPrevious = false
+        val policyRouter = TouchModeNavigationRouter(
+            edgeStartPx = 24f,
+            minimumTravelPx = 96f,
+            shouldRoute = { direction -> allowPrevious && direction == ModeGestureDirection.PREVIOUS },
+        )
+
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(down(x = 10f)))
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(move(x = 106f)))
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(move(x = 200f)))
+
+        policyRouter.reset()
+        allowPrevious = true
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(down(x = 10f)))
+        assertEquals(
+            TouchModeNavigationRoute.Intercept(ModeGestureDirection.PREVIOUS),
+            policyRouter.route(move(x = 106f)),
+        )
+    }
+
+    @Test
+    fun `only first edge route is intercepted after menu policy closes`() {
+        var menuOpen = false
+        var interceptions = 0
+        val policyRouter = TouchModeNavigationRouter(
+            edgeStartPx = 24f,
+            minimumTravelPx = 96f,
+            shouldRoute = { direction ->
+                if (!menuOpen && direction == ModeGestureDirection.PREVIOUS) {
+                    interceptions += 1
+                    menuOpen = true
+                    true
+                } else {
+                    false
+                }
+            },
+        )
+
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(down(x = 10f)))
+        assertEquals(
+            TouchModeNavigationRoute.Intercept(ModeGestureDirection.PREVIOUS),
+            policyRouter.route(move(x = 106f)),
+        )
+        assertEquals(TouchModeNavigationRoute.ConsumeIntercepted, policyRouter.route(up()))
+
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(down(x = 10f)))
+        assertEquals(TouchModeNavigationRoute.PassToChild, policyRouter.route(move(x = 106f)))
+        assertEquals(1, interceptions)
+    }
+
     private fun down(x: Float, touchscreen: Boolean = true) = TouchInputSample(
         action = TouchInputAction.DOWN,
         x = x,
