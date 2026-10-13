@@ -23,7 +23,16 @@ def run(label, failures):
 
 checks={
  'hourly_cap':('private static final int MAX_HOURLY_ENTRIES = 168;','private static final int MAX_HOURLY_ENTRIES = 169;'),
- 'worker_decode':('parsed = parseForecast(response);','parsed = null;'),
+ # Scope this mutation to the live network fetch, not the similarly named cached parser.
+ 'worker_decode':('''            try {
+                response = requestForecast(location);
+                parsed = parseForecast(response);
+                preferences.saveForecast(sourceKey, response, System.currentTimeMillis());
+            } catch (Exception ignored) { }''','''            try {
+                response = requestForecast(location);
+                parsed = null;
+                preferences.saveForecast(sourceKey, response, System.currentTimeMillis());
+            } catch (Exception ignored) { }'''),
 }
 result={}
 try:
