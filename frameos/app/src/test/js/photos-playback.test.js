@@ -46,7 +46,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false, d
   const frameList = (frames || []).map(({ images, visible = true, animations = [] }) => {
     const frame = makeElement(visible);
     frame.parentElement = kiosk;
-    frame.closest = (selector) => selector === "#kiosk" ? kiosk : null;
+    frame.closest = (selector) => selector === "#kiosk" ? kiosk : selector === "#kiosk-container" ? kioskContainer : null;
     frame.images = images.map((source) => Object.assign(new HTMLImageElement(), {
       parentElement: frame,
       complete: true,
@@ -145,7 +145,13 @@ function loadScript({ connectNative, historyValues = [], frames, push = false, d
       // not the separate body-class observer that restores the paused state.
       const observer = observers.find((candidate) => candidate.target === body && candidate.options.childList === true && candidate.options.subtree === true);
       if (!observer) throw new Error("capture MutationObserver is not installed on body");
-      observer.callback(records);
+      // A real MutationRecord always provides NodeLists for childList changes.
+      // Existing focused tests specify only the fields relevant to their scenario.
+      observer.callback(records.map((record) => record.type === "childList" ? {
+        ...record,
+        addedNodes: record.addedNodes || [],
+        removedNodes: record.removedNodes || [],
+      } : record));
     },
     fireEvent(type, detail = {}, target = detail.target) {
       listeners.filter(([eventType]) => eventType === type).forEach(([, listener]) => listener({ type, detail, target }));
