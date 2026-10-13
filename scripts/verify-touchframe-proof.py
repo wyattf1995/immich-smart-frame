@@ -672,7 +672,7 @@ try:
         "calendar-range-end-red", "calendar_ranges",
         "val exclusiveEnd = allDay || endZoned?.toLocalTime() == java.time.LocalTime.MIDNIGHT",
         "val exclusiveEnd = false",
-        {"all day exclusive end does not select following day", "midnight timed end is exclusive of next day"},
+        {"all day exclusive end does not select following day", "honorsExclusiveEndForMultiDayAllDayEvents", "midnight timed end is exclusive of next day"},
     )
     calendar_parser_cap_red = mutate(
         "calendar-range-cap-red", "calendar_parser",
