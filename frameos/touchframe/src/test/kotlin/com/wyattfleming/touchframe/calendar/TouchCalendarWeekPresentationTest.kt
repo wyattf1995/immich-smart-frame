@@ -45,6 +45,29 @@ class TouchCalendarWeekPresentationTest {
     }
 
     @Test
+    fun boundsSelectedDayDetailsToTwelveEventsAndReportsTheVisibleRange() {
+        val events = (1..26).map { index -> event("Event $index", 2026, 3, 9, index % 20, 0) }
+
+        val page = TouchCalendarWeekPresentation.detailsPage(events, requestedPage = 99)
+
+        assertEquals(2, page.page)
+        assertEquals(3, page.pageCount)
+        assertEquals(26, page.totalEvents)
+        assertEquals(25, page.firstEventNumber)
+        assertEquals(26, page.lastEventNumber)
+        assertEquals(listOf("Event 25", "Event 26"), page.events.map { it.title })
+    }
+
+    @Test
+    fun selectedDayDetailPagesKeepEveryEventReachable() {
+        val events = (1..25).map { index -> event("Event $index", 2026, 3, 9, index % 20, 0) }
+
+        val visible = (0..2).flatMap { page -> TouchCalendarWeekPresentation.detailsPage(events, page).events }
+
+        assertEquals(events, visible)
+    }
+
+    @Test
     fun keepsDstTimedEventsOnTheirLocalDayAndFormatsTime() {
         val dstSunday = event("DST meeting", 2026, 3, 8, 10, 0)
         val sundayRange = TouchCalendarRange.forMode(TouchCalendarMode.WEEK, LocalDate.of(2026, 3, 8))
