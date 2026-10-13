@@ -223,6 +223,12 @@ try:
         "const val MAX_BACKDROP_EDGE = 129",
         {"backdrop is bounded while foreground remains original size"},
     )
+    attachment_gate_red = mutate(
+        "offline-attachment-generation-red", "offline",
+        "fun isCurrent(expected: Long): Boolean = generation.get() == expected",
+        "fun isCurrent(expected: Long): Boolean = true",
+        {"stale same session preparation cannot enable capture"},
+    )
     scope_red = mutate(
         "pause-lifecycle-red", "scope",
         "if (closed || !resumed) return\n            resumed = false",
@@ -245,6 +251,7 @@ try:
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red, "mediaCrashRetryRed": media_red,
         "offlineHiddenPhotosRed": offline_red,
         "offlineBackdropBoundRed": blur_red,
+        "offlineAttachmentGenerationRed": attachment_gate_red,
         "pausedTaskEntryRed": scope_red,
         "restored": restored, "preparedBridgeRestored": bridge_restored,
         "preparedBridgeSourceSha256": bridge_source_hash,
