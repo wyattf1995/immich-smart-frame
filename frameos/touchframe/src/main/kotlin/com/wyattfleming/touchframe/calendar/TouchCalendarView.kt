@@ -16,7 +16,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /** Read-only native calendar. The activity supplies real range results and owns network lifecycle. */
-class TouchCalendarView(context: Context, private val onStateRequest: (TouchCalendarMode, LocalDate, LocalDate) -> Unit) : ScrollView(context) {
+class TouchCalendarView(context: Context, private val onStateRequest: (TouchCalendarMode, LocalDate, LocalDate) -> Unit, private val onSignIn: () -> Unit) : ScrollView(context) {
     private val body = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private var state = TouchCalendarState(TouchCalendarMode.AGENDA, LocalDate.now(), LocalDate.now(), TouchCalendarRange.forMode(TouchCalendarMode.AGENDA, LocalDate.now()), emptyList(), TouchCalendarConnection.OFFLINE, null)
     private var night = false
@@ -36,7 +36,7 @@ class TouchCalendarView(context: Context, private val onStateRequest: (TouchCale
         body.addView(text(title(), 26f, ink, bold = true))
         if (state.loading) body.addView(text("Updating schedule…", 18f, ink))
         when (state.connection) {
-            TouchCalendarConnection.SIGN_IN_REQUIRED -> body.addView(text("Sign in to Home Assistant to view your calendar.", 18f, ink))
+            TouchCalendarConnection.SIGN_IN_REQUIRED -> body.addView(Button(context).apply { text = "Sign in to Home Assistant"; minHeight = dp(56); setOnClickListener { onSignIn() } })
             TouchCalendarConnection.OFFLINE -> body.addView(text(if (state.events.isEmpty()) "Calendar is unavailable." else "Offline · showing the last available schedule.", 18f, ink))
             TouchCalendarConnection.CONNECTED -> if (state.partial) body.addView(text("Some calendars could not be refreshed.", 18f, ink))
         }

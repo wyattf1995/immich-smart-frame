@@ -139,7 +139,7 @@ class TouchFrameActivity : Activity() {
             setOnPrimaryActionListener(::signIn)
             visibility = View.GONE
         }
-        calendar = TouchCalendarView(this, ::requestCalendar).apply { visibility = View.GONE }
+        calendar = TouchCalendarView(this, ::requestCalendar, ::signIn).apply { visibility = View.GONE }
         shell.content.addView(home, fill())
         shell.content.addView(weather, fill())
         shell.content.addView(calendar, fill())
@@ -363,7 +363,8 @@ class TouchFrameActivity : Activity() {
         if (!resumed || calendarInFlight || !networkAllowed()) return
         val range = TouchCalendarRange.forMode(mode, anchor)
         calendarInFlight = true
-        calendarState = calendarState.copy(mode = mode, anchor = anchor, selectedDate = selected, range = range, loading = true)
+        val selectedForRange = if (selected < range.start || selected >= range.endExclusive) anchor else selected
+        calendarState = calendarState.copy(mode = mode, anchor = anchor, selectedDate = selectedForRange, range = range, loading = true)
         calendar.render(calendarState)
         val prior = calendarState
         tasks.submit(worker) { isCurrent ->
