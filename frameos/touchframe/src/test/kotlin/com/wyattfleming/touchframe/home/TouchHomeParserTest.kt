@@ -10,12 +10,14 @@ class TouchHomeParserTest {
     private val parser = TouchHomeParser()
 
     @Test
-    fun `climate parser with missing control capability suppresses the controllable card`() {
+    fun `climate parser keeps valid card when target step is absent`() {
         val climate = parser.parseClimate(
             "climate.entryway_entryway",
             """{"entity_id":"climate.entryway_entryway","state":"heat","attributes":{"temperature_unit":"°F","min_temp":50,"max_temp":85}}""",
         )
-        org.junit.Assert.assertNull(climate)
+        assertEquals(null, climate?.step)
+        assertEquals(50.0, climate?.minTemperature)
+        assertEquals(85.0, climate?.maxTemperature)
     }
 
     @Test

@@ -43,18 +43,23 @@ class TouchHomeRepository(
     private val operationLock = Any()
     private var active: Operation? = null
     private var lastConfirmedClimate: TouchClimate? = null
+    /** Only a current, successful state read may authorize a climate service call. */
+    private var climateConnection: TouchConnection = TouchConnection.OFFLINE
     private val cancellableTransport = transport as? CancellableHomeAssistantHttpTransport
 
     fun refresh(previous: TouchHomeModel?): TouchHomeModel {
         val fallback = previous ?: emptyModel(TouchConnection.OFFLINE)
         val operation = beginOperation() ?: return fallback.copy(connection = TouchConnection.OFFLINE)
+        markClimateStale(TouchConnection.REFRESHING)
         val deadline = deadlineFactory(REFRESH_TIMEOUT_MILLIS)
         var accepted = false
         return try {
             val token = tokenProvider.accessToken(deadline)?.takeIf(String::isNotBlank)
-                ?: return fallback.copy(connection = if (deadline.remainingMillis() == 0L) TouchConnection.OFFLINE else TouchConnection.SIGN_IN_REQUIRED)
+                ?: return fallback.copy(connection = if (deadline.remainingMillis() == 0L) TouchConnection.OFFLINE else TouchConnection.SIGN_IN_REQUIRED).also {
+                    markClimateStale(it.connection)
+                }
             if (deadline.remainingMillis() == 0L || !acceptOperation(operation)) {
-                return fallback.copy(connection = TouchConnection.OFFLINE)
+                return fallback.copy(connection = TouchConnection.OFFLINE).also { markClimateStale(it.connection) }
             }
             val headers = headers(token)
             val weather = submit(operation) { getState(configuration.weatherEntityId, headers, deadline) }
@@ -78,12 +83,12 @@ class TouchHomeRepository(
                 connection = TouchConnection.CONNECTED,
                 lastUpdatedEpochMillis = clock(),
             )
-            if (!acceptRefresh(operation, climateModel)) fallback.copy(connection = TouchConnection.OFFLINE)
+            if (!acceptRefresh(operation, climateModel)) fallback.copy(connection = TouchConnection.OFFLINE).also { markClimateStale(it.connection) }
             else fresh.also { accepted = true }
         } catch (error: AuthenticationFailure) {
-            fallback.copy(connection = TouchConnection.SIGN_IN_REQUIRED)
+            fallback.copy(connection = TouchConnection.SIGN_IN_REQUIRED).also { markClimateStale(it.connection) }
         } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
-            fallback.copy(connection = TouchConnection.OFFLINE)
+            fallback.copy(connection = TouchConnection.OFFLINE).also { markClimateStale(it.connection) }
         } finally {
             finishOperation(operation, accepted)
         }
@@ -91,18 +96,24 @@ class TouchHomeRepository(
 
     /** Sends no optimistic local update; the parent refresh owns confirmed readback. */
     fun changeClimateMode(mode: String): Boolean {
-        val climate = synchronized(operationLock) { lastConfirmedClimate } ?: return false
+        val climate = synchronized(operationLock) {
+            lastConfirmedClimate?.takeIf { climateConnection == TouchConnection.CONNECTED }
+        } ?: return false
         if (climate.entityId != configuration.climateEntityId || mode !in climate.modes) return false
         return postClimateService("set_hvac_mode", JSONObject().put("hvac_mode", mode))
     }
 
     /** Sends no optimistic local update; the parent refresh owns confirmed readback. */
     fun changeClimateTarget(value: Double): Boolean {
-        val climate = synchronized(operationLock) { lastConfirmedClimate } ?: return false
+        val climate = synchronized(operationLock) {
+            lastConfirmedClimate?.takeIf { climateConnection == TouchConnection.CONNECTED }
+        } ?: return false
         if (!value.isFinite() || climate.entityId != configuration.climateEntityId) return false
         if (value < climate.minTemperature || value > climate.maxTemperature) return false
-        val steps = (value - climate.minTemperature) / climate.step
-        if (kotlin.math.abs(steps - kotlin.math.round(steps)) > STEP_EPSILON) return false
+        climate.step?.let { step ->
+            val steps = (value - climate.minTemperature) / step
+            if (kotlin.math.abs(steps - kotlin.math.round(steps)) > STEP_EPSILON) return false
+        }
         return postClimateService("set_temperature", JSONObject().put("temperature", value))
     }
 
@@ -146,6 +157,8 @@ class TouchHomeRepository(
             false
         } finally {
             finishOperation(operation, accepted)
+            // A command is not a confirmed state read; require the caller-owned refresh.
+            markClimateStale(TouchConnection.REFRESHING)
         }
     }
 
@@ -188,11 +201,17 @@ class TouchHomeRepository(
     private fun acceptRefresh(operation: Operation, climate: TouchClimate?): Boolean = synchronized(operationLock) {
         if (active !== operation || operation.cancelled) return@synchronized false
         lastConfirmedClimate = climate
+        climateConnection = TouchConnection.CONNECTED
         true
     }
 
     private fun acceptOperation(operation: Operation): Boolean = synchronized(operationLock) {
         active === operation && !operation.cancelled
+    }
+
+    private fun markClimateStale(connection: TouchConnection) = synchronized(operationLock) {
+        lastConfirmedClimate = null
+        climateConnection = connection
     }
 
     private fun <T> submit(operation: Operation, task: () -> T): Future<T> = synchronized(operationLock) {

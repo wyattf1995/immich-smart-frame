@@ -180,7 +180,7 @@ class TouchHomeView private constructor(
             LayoutParams.MATCH_PARENT,
             LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = context.dp(16) })
-        addView(climateCard(snapshot?.climate, type), LinearLayout.LayoutParams(
+        addView(climateCard(snapshot?.climate, snapshot?.connection, type), LinearLayout.LayoutParams(
             LayoutParams.MATCH_PARENT,
             LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = context.dp(16) })
@@ -222,7 +222,7 @@ class TouchHomeView private constructor(
         }
     }
 
-    private fun climateCard(climate: TouchClimate?, type: Typography): View = card().apply {
+    private fun climateCard(climate: TouchClimate?, connection: TouchConnection?, type: Typography): View = card().apply {
         orientation = LinearLayout.VERTICAL
         setPadding(context.dp(18), context.dp(16), context.dp(18), context.dp(16))
         addView(label("Climate", type.small, true))
@@ -231,6 +231,7 @@ class TouchHomeView private constructor(
             return@apply
         }
         val target = draftTarget ?: climate.targetTemperature
+        val canMutate = !climateBusy && connection == TouchConnection.CONNECTED
         addView(label(
             climate.currentTemperature?.let { "Current ${formatTemperature(it, climate.unit)}" } ?: "Current temperature unavailable",
             type.body,
@@ -246,7 +247,7 @@ class TouchHomeView private constructor(
             modes.addView(button(
                 candidate.replaceFirstChar { it.titlecase(Locale.getDefault()) },
                 type.small,
-                enabled = !climateBusy,
+                enabled = canMutate,
             ) { onClimateMode(candidate) }, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)).apply {
                 if (childCount > 0) topMargin = context.dp(8)
             })
@@ -255,18 +256,18 @@ class TouchHomeView private constructor(
             topMargin = context.dp(12)
         })
         val adjust = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        adjust.addView(button("−", type.body, enabled = !climateBusy) { changeTarget(climate, -1) }, LinearLayout.LayoutParams(0, context.dp(56), 1f).apply {
+        adjust.addView(button("−", type.body, enabled = canMutate) { changeTarget(climate, -1) }, LinearLayout.LayoutParams(0, context.dp(56), 1f).apply {
             marginEnd = context.dp(8)
         })
-        adjust.addView(button("+", type.body, enabled = !climateBusy) { changeTarget(climate, 1) }, LinearLayout.LayoutParams(0, context.dp(56), 1f))
+        adjust.addView(button("+", type.body, enabled = canMutate) { changeTarget(climate, 1) }, LinearLayout.LayoutParams(0, context.dp(56), 1f))
         addView(adjust, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
             topMargin = context.dp(8)
         })
         val apply = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        apply.addView(button("Apply", type.small, enabled = !climateBusy && draftDirty) {
+        apply.addView(button("Apply", type.small, enabled = canMutate && draftDirty) {
             draftTarget?.takeIf { it != climate.targetTemperature }?.let(onClimateTarget)
         }, LinearLayout.LayoutParams(0, context.dp(56), 1f).apply { marginEnd = context.dp(8) })
-        apply.addView(button("Cancel", type.small, enabled = !climateBusy && draftDirty) {
+        apply.addView(button("Cancel", type.small, enabled = canMutate && draftDirty) {
             clearDraft(climate)
             rebuild()
         }, LinearLayout.LayoutParams(0, context.dp(56), 1f))
@@ -306,8 +307,11 @@ class TouchHomeView private constructor(
 
     private fun changeTarget(climate: TouchClimate, direction: Int) {
         val initial = draftTarget ?: climate.targetTemperature ?: climate.currentTemperature ?: return
-        val next = round(((initial + direction * climate.step).coerceIn(climate.minTemperature, climate.maxTemperature)) / climate.step) * climate.step
-        draftTarget = next.coerceIn(climate.minTemperature, climate.maxTemperature)
+        // A missing HA capability uses an explicit local display increment, never a server claim.
+        val increment = climate.step ?: if (climate.unit.contains("c", ignoreCase = true)) 0.5 else 1.0
+        val bounded = (initial + direction * increment).coerceIn(climate.minTemperature, climate.maxTemperature)
+        val steps = round((bounded - climate.minTemperature) / increment)
+        draftTarget = (climate.minTemperature + steps * increment).coerceIn(climate.minTemperature, climate.maxTemperature)
         draftDirty = true
         rebuild()
     }

@@ -2,6 +2,7 @@ package com.wyattfleming.touchframe.media
 
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
 import android.util.TypedValue
@@ -12,6 +13,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.wyattfleming.frameos.weather.LegacyIsrgRootTls
+import com.wyattfleming.frameos.weather.WeatherRequestDeadline
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URI
@@ -23,14 +25,15 @@ class TouchCameraView(
     context: Context,
     origin: String,
     cameraIds: List<String>,
-    private val tokenProvider: () -> String?,
+    private val tokenProvider: (WeatherRequestDeadline) -> String?,
 ) : FrameLayout(context) {
     var onSignIn: (() -> Unit)? = null
     private val policy = TouchCameraPolicy(origin, cameraIds)
     private val worker = ScheduledThreadPoolExecutor(1) { runnable -> Thread(runnable, "touch-camera").apply { isDaemon = true } }
+    private val cancellation = ScheduledThreadPoolExecutor(1) { runnable -> Thread(runnable, "touch-camera-cancel").apply { isDaemon = true } }
     private val main = Handler(Looper.getMainLooper())
-    private val image = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = "Camera snapshot" }
-    private val status = TextView(context).apply { setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f); gravity = Gravity.CENTER }
+    private val image = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = "Camera snapshot"; setBackgroundColor(Color.rgb(245, 242, 233)) }
+    private val status = TextView(context).apply { setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f); gravity = Gravity.CENTER; setTextColor(Color.rgb(18, 36, 43)) }
     private val refresh = TextView(context).apply { text = "Refresh"; gravity = Gravity.CENTER; minimumHeight = context.dp(56); isClickable = true; isFocusable = true; setOnClickListener { requestRefresh() } }
     private var selected = cameraIds.first()
     @Volatile private var active = false
@@ -57,51 +60,53 @@ class TouchCameraView(
         this.active = active
         generation += 1
         periodic?.cancel(true); periodic = null
-        connection?.disconnect(); connection = null
+        cancelConnection()
         if (active) periodic = worker.scheduleWithFixedDelay({ requestRefresh() }, 0, 5, TimeUnit.SECONDS)
     }
 
     fun close() {
         if (closed) return
         closed = true; active = false; generation += 1
-        periodic?.cancel(true); connection?.disconnect(); connection = null
-        worker.shutdownNow(); main.removeCallbacksAndMessages(null)
+        periodic?.cancel(true); cancelConnection()
+        worker.shutdownNow(); cancellation.shutdownNow(); main.removeCallbacksAndMessages(null)
     }
 
     private fun requestRefresh() {
         if (!active || closed) return
         val requestGeneration = ++generation
-        connection?.disconnect()
+        cancelConnection()
         val camera = selected
         worker.execute { fetch(camera, requestGeneration) }
     }
 
     private fun fetch(camera: String, requestGeneration: Long) {
-        val token = tokenProvider() ?: return publish(requestGeneration, null, "Sign in required", true)
+        val deadline = WeatherRequestDeadline(timeoutMillis = TOTAL_TIMEOUT_MILLIS)
+        val token = tokenProvider(deadline) ?: return publish(requestGeneration, null, "Sign in required", true)
+        if (deadline.isExpired()) return publish(requestGeneration, null, "Snapshot unavailable", false)
         val url = policy.snapshotUrl(camera) ?: return
-        var deadline: Runnable? = null
         var current: HttpURLConnection? = null
+        var watchdog: java.util.concurrent.ScheduledFuture<*>? = null
         try {
             current = LegacyIsrgRootTls.ConnectionFactory().open(url)
             connection = current
-            deadline = Runnable { current?.disconnect() }.also { main.postDelayed(it, TOTAL_TIMEOUT_MILLIS) }
+            watchdog = cancellation.schedule({
+                if (connection === current && requestGeneration == generation) current?.disconnect()
+            }, deadline.remainingMillis(), TimeUnit.MILLISECONDS)
+            val timeout = deadline.remainingMillis().coerceAtLeast(1).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             current!!.requestMethod = "GET"; current!!.instanceFollowRedirects = false; current!!.useCaches = false
-            current!!.connectTimeout = TOTAL_TIMEOUT_MILLIS.toInt(); current!!.readTimeout = TOTAL_TIMEOUT_MILLIS.toInt()
+            current!!.connectTimeout = timeout; current!!.readTimeout = timeout
             current!!.setRequestProperty("Authorization", "Bearer $token")
             val code = current!!.responseCode
             if (code == 401 || code == 403) return publish(requestGeneration, null, "Sign in required", true)
-            if (code !in 200..299) return publish(requestGeneration, null, "Snapshot unavailable", false)
-            val bytes = current!!.inputStream.use { boundedBytes(it) }
+            if (code !in 200..299 || deadline.isExpired()) return publish(requestGeneration, null, "Snapshot unavailable", false)
+            val bytes = current!!.inputStream.use { boundedBytes(it, deadline) }
             val bitmap = decodeSnapshot(bytes) ?: return publish(requestGeneration, null, "Snapshot unavailable", false)
             publish(requestGeneration, bitmap, null, false)
         } catch (_: Exception) {
             publish(requestGeneration, null, "Snapshot unavailable", false)
         } finally {
-            deadline?.let(main::removeCallbacks)
-            if (connection === current) {
-                current?.disconnect()
-                connection = null
-            }
+            watchdog?.cancel(false)
+            current?.let(::cancelConnection)
         }
     }
 
@@ -112,16 +117,23 @@ class TouchCameraView(
         if (signIn && !signInNotified) { signInNotified = true; onSignIn?.invoke() }
     }
 
-    private fun boundedBytes(input: java.io.InputStream): ByteArray {
+    private fun boundedBytes(input: java.io.InputStream, deadline: WeatherRequestDeadline): ByteArray {
         val output = ByteArrayOutputStream(); val buffer = ByteArray(16 * 1024); var total = 0
-        while (true) { val count = input.read(buffer); if (count < 0) break; total += count; require(total <= MAX_BYTES); output.write(buffer, 0, count) }
+        while (true) { require(!deadline.isExpired()); val count = input.read(buffer); if (count < 0) break; total += count; require(total <= MAX_BYTES); output.write(buffer, 0, count) }
         return output.toByteArray()
     }
 
     private fun decodeSnapshot(bytes: ByteArray): android.graphics.Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }; BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         val sample = TouchCameraPolicy.sampleSize(bounds.outWidth, bounds.outHeight)
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888 })
+        val bitmap = try { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888 }) } catch (_: OutOfMemoryError) { null }
+        if (bitmap != null && (bitmap.width > 1920 || bitmap.height > 1080)) { bitmap.recycle(); return null }
+        return bitmap
+    }
+    private fun cancelConnection(expected: HttpURLConnection? = null) {
+        val observed = connection ?: return
+        if (expected != null && observed !== expected) return
+        cancellation.execute { observed.disconnect(); if (connection === observed) connection = null }
     }
     private fun button(text: String, action: () -> Unit) = TextView(context).apply { this.text = text; gravity = Gravity.CENTER; isClickable = true; isFocusable = true; minimumHeight = context.dp(56); setOnClickListener { action() } }
     private fun cameraLabel(id: String) = id.removePrefix("camera.").replace('_', ' ').replaceFirstChar { it.titlecase() }
@@ -136,7 +148,7 @@ internal class TouchCameraPolicy(origin: String, cameraIds: List<String>) {
     companion object {
         private val CAMERA = Regex("camera\\.[a-z0-9_]+")
         fun validCamera(value: String) = CAMERA.matches(value)
-        fun sampleSize(width: Int, height: Int): Int { var sample = 1; while (width / sample > 1920 || height / sample > 1080) sample *= 2; return sample }
+        fun sampleSize(width: Int, height: Int): Int { var sample = 1; while ((width + sample - 1) / sample > 1920 || (height + sample - 1) / sample > 1080) sample *= 2; return sample }
     }
 }
 

@@ -31,6 +31,25 @@ class TouchHomeModelTest {
     }
 
     @Test
+    fun climateAllowsAnAbsentServerStepButRejectsAnInvalidProvidedStep() {
+        val withoutServerStep = TouchClimate(
+            entityId = "climate.entryway",
+            currentTemperature = 70.0,
+            targetTemperature = 71.0,
+            unit = "°F",
+            mode = "heat",
+            modes = listOf("heat"),
+            minTemperature = 50.0,
+            maxTemperature = 85.0,
+            step = null,
+        )
+        assertEquals(null, withoutServerStep.step)
+        assertRejected {
+            withoutServerStep.copy(step = Double.NaN)
+        }
+    }
+
+    @Test
     fun eventAndClimateRejectInvalidDataBeforeTheViewCanRenderIt() {
         assertRejected {
             TouchCalendarEvent(" ", startEpochMillis = 2, endEpochMillis = null, allDay = false)

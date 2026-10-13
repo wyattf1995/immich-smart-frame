@@ -12,7 +12,9 @@ class TouchCameraPolicyTest {
         assertNull(policy.snapshotUrl("camera.other"))
     }
     @Test fun samplingBoundsLargeImages() {
-        val sample = TouchCameraPolicy.sampleSize(7680, 4320)
-        assertTrue(7680 / sample <= 1920 && 4320 / sample <= 1080)
+        listOf(7680 to 4320, 1921 to 1081).forEach { (width, height) ->
+            val sample = TouchCameraPolicy.sampleSize(width, height)
+            assertTrue((width + sample - 1) / sample <= 1920 && (height + sample - 1) / sample <= 1080)
+        }
     }
 }

@@ -127,6 +127,31 @@ class TouchHomeRepositoryTest {
         }
     }
 
+    @Test
+    fun `failed refresh makes previously confirmed climate read-only`() {
+        val healthy = FakeTransport()
+        TouchHomeRepository(config, { _ -> "token" }, healthy).use { repository ->
+            val connected = repository.refresh(null)
+            assertEquals(TouchConnection.CONNECTED, connected.connection)
+            healthy.status = 500
+            assertEquals(TouchConnection.OFFLINE, repository.refresh(connected).connection)
+            val requestCountAfterFailedRefresh = healthy.requests.size
+            assertTrue(!repository.changeClimateTarget(73.0))
+            assertEquals(requestCountAfterFailedRefresh, healthy.requests.size)
+        }
+    }
+
+    @Test
+    fun `optional server step still yields a connected climate card`() {
+        val transport = FakeTransport(climateBody = """{"entity_id":"climate.entryway_entryway","state":"heat","attributes":{"current_temperature":70,"temperature":71,"temperature_unit":"°F","hvac_modes":["heat"],"min_temp":50,"max_temp":85}}""")
+        TouchHomeRepository(config, { _ -> "token" }, transport).use { repository ->
+            val model = repository.refresh(null)
+            assertEquals(TouchConnection.CONNECTED, model.connection)
+            assertEquals(null, model.climate?.step)
+            assertTrue(repository.changeClimateTarget(72.25))
+        }
+    }
+
     private class BlockingTransport : CancellableHomeAssistantHttpTransport {
         val started = CountDownLatch(2)
         private val released = CountDownLatch(1)
@@ -146,8 +171,9 @@ class TouchHomeRepositoryTest {
     }
 
     private class FakeTransport(
-        private val status: Int = 200,
+        var status: Int = 200,
         private val calendarBodies: Map<String, String> = emptyMap(),
+        private val climateBody: String = """{"entity_id":"climate.entryway_entryway","state":"heat","attributes":{"current_temperature":70,"temperature":71,"temperature_unit":"°F","hvac_modes":["off","heat"],"min_temp":50,"max_temp":85,"target_temp_step":1}}""",
     ) : HomeAssistantHttpTransport {
         val requests = CopyOnWriteArrayList<HomeAssistantHttpRequest>()
         override fun execute(request: HomeAssistantHttpRequest): HomeAssistantHttpResponse {
@@ -155,7 +181,7 @@ class TouchHomeRepositoryTest {
             if (status != 200) return HomeAssistantHttpResponse(status, "{}")
             return when {
                 request.url.contains("weather.home") -> HomeAssistantHttpResponse(200, """{"state":"sunny","attributes":{"temperature":72,"temperature_unit":"°F"}}""")
-                request.url.contains("climate.entryway_entryway") -> HomeAssistantHttpResponse(200, """{"state":"heat","attributes":{"current_temperature":70,"temperature":71,"temperature_unit":"°F","hvac_modes":["off","heat"],"min_temp":50,"max_temp":85,"target_temp_step":1}}""")
+                request.url.contains("climate.entryway_entryway") -> HomeAssistantHttpResponse(200, climateBody)
                 else -> HomeAssistantHttpResponse(200, calendarBodies.entries.firstOrNull { request.url.contains("/api/calendars/${it.key}") }?.value ?: "[]")
             }
         }
