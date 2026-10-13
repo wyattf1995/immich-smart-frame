@@ -12,9 +12,11 @@ import { handleCompanionBirds, close as closeFixtures, fixtureMetadata as otherM
 const require = createRequire('/opt/launchpad-browser-runtime/package.json');
 const { chromium } = require('playwright');
 const repoRoot = process.cwd();
+const homeOnly = process.argv.includes('--home-only');
 const output = resolve('output/playwright/runtime-audit');
 await mkdir(output, { recursive: true });
 const result = { startedAt: new Date().toISOString(), productCommit: '3163d2e8bea938a5d69d656c20fee87df44512ec',
+  auditScope: homeOnly ? 'corrective Home-only run; supersedes invalid run-1 Home controls' : 'four-view continuous audit',
   conditions: { viewport: { width: 1280, height: 800 }, cpuSlowdown: 4, headless: true, trustedSyntheticLoopback: true,
     physicalDevice: false, networkThrottle: 'none; loopback fixtures isolate runtime from network', multipleTabs: 4,
     frameMetric: 'Visible requestAnimationFrame scheduling gaps; not physical display drops',
@@ -95,10 +97,25 @@ async function resetObserver(page) {
 }
 async function action(page, kind, iteration) {
   if (kind === 'home') {
+    const frame = page.frames().find(f => f.url().includes('/frameos-touchscreen/home'));
+    if (!frame) throw Error('Home fixture iframe missing');
+    const readState = () => frame.evaluate(() => ({ calls: window.__fixture.counters.callService,
+      setpoint: window.__fixture.hass.states['climate.entryway_entryway'].attributes.temperature }));
+    const before = await readState();
     if (iteration % 4 === 0) await page.locator('[data-adjust="temperature:1"]').click();
-    else if (iteration % 4 === 1 && await page.locator('[data-apply]').isEnabled()) await page.locator('[data-apply]').click();
-    else if (iteration % 4 === 2) await page.locator('[data-adjust="temperature:-1"]').click();
-    else if (await page.locator('[data-cancel]').isEnabled()) await page.locator('[data-cancel]').click();
+    else if (iteration % 4 === 1) {
+      await page.locator('[data-apply]').click();
+      await frame.waitForFunction(previous => window.__fixture.counters.callService > previous.calls &&
+        window.__fixture.hass.states['climate.entryway_entryway'].attributes.temperature > previous.setpoint, before);
+      return { operation: 'apply', before, after: await readState(), setpointChangeVerified: true };
+    } else if (iteration % 4 === 2) await page.locator('[data-adjust="temperature:-1"]').click();
+    else {
+      await page.locator('[data-cancel]').click();
+      const after = await readState();
+      if (after.calls !== before.calls || after.setpoint !== before.setpoint) throw Error('Cancel unexpectedly changed fixture thermostat');
+      return { operation: 'cancel', before, after, unchangedVerified: true };
+    }
+    if (!await page.locator('[data-apply]').isEnabled()) throw Error('Adjust did not enable Apply');
   } else if (kind === 'art') {
     const beforeSrc = await page.locator('.artwork').getAttribute('src');
     await page.locator('.art-shell').press(iteration % 5 === 4 ? 'ArrowLeft' : 'ArrowRight');
@@ -127,7 +144,7 @@ async function measure(page, cdp, kind, label, seconds, options = {}) {
   const beforeMetrics = await cdpMetrics(cdp), start = Date.now(), actions = [];
   while (Date.now() - start < seconds * 1000) {
     const actionStart = Date.now();
-    try { await action(page, kind, actions.length); actions.push({ elapsedMs: Date.now() - actionStart, success: true }); }
+    try { const semantics = await action(page, kind, actions.length); actions.push({ elapsedMs: Date.now() - actionStart, success: true, semantics }); }
     catch (error) { actions.push({ elapsedMs: Date.now() - actionStart, success: false, error: String(error) }); }
     await sleep(Math.max(50, 2500 - (Date.now() - actionStart)));
   }
@@ -141,6 +158,7 @@ async function measure(page, cdp, kind, label, seconds, options = {}) {
   const fixtureAfter = fixtureBefore ? await page.evaluate(async () => (await fetch('/fixture/config')).json()) : null;
   const homeFixture = kind === 'home' ? await page.frames().find(f => f.url().includes('/frameos-touchscreen/home')).evaluate(() => ({ ...window.__fixture.counters, churn: window.__fixture.getStatesIdentityChurn() })) : null;
   if (label.includes('churn') && (!homeFixture.churn || homeFixture.stateIdentityReplacements < 1)) throw Error('Home identity churn did not execute');
+  if (kind === 'home' && !actions.some(a => a.semantics?.setpointChangeVerified)) throw Error('No successful thermostat setpoint change in measured window');
   if (kind === 'birds' && fixtureAfter.audioEvents.total - fixtureBefore.audioEvents.total < seconds * (label.includes('20hz') ? 10 : 1)) throw Error('Bird audio delivery was not exercised');
   const record = { fixtureBefore, fixtureAfter, homeFixture, workloadBefore, kind, label, secondsRequested: seconds, elapsedMs, actions, observed, beforeMetrics, afterMetrics, before, after, trace,
     longTaskCount: observed.longTasks.length, blockingMs: observed.longTasks.reduce((sum, x) => sum + Math.max(0, x.duration - 50), 0),
@@ -176,7 +194,7 @@ try {
   await pages.birds.page.waitForFunction(() => parseFloat(document.querySelector('#audioMeterLevel')?.style.width) > 0);
   const artCollection = await context.request.get(base + '/art/collection.json');
   if ((await artCollection.json()).artworks.length !== 200) throw Error('Art collection cardinality mismatch');
-  for (const kind of ['home', 'art', 'companion', 'birds']) {
+  for (const kind of (homeOnly ? ['home'] : ['home', 'art', 'companion', 'birds'])) {
     for (let i = 0; i < 5; i++) { await action(pages[kind].page, kind, i); await sleep(300); }
     await pages[kind].page.screenshot({ path: join(output, `${kind}-smoke.png`), fullPage: false });
   }
@@ -185,7 +203,7 @@ try {
   await pages.companion.page.locator('#preferences li').nth(199).waitFor({ state: 'attached' });
   await sleep(3000);
   result.continuousUseStartedAt = new Date().toISOString();
-  for (const kind of ['home', 'companion', 'birds', 'art']) {
+  for (const kind of (homeOnly ? ['home'] : ['home', 'companion', 'birds', 'art'])) {
     const { page, cdp } = pages[kind];
     const baseline = await measure(page, cdp, kind, `${kind}-baseline-30s`, 30, { trace: true });
     if (kind === 'companion') {
@@ -217,7 +235,7 @@ try {
   }
   result.continuousUseEndedAt = new Date().toISOString();
   result.continuousUseSeconds = (Date.parse(result.continuousUseEndedAt) - Date.parse(result.continuousUseStartedAt)) / 1000;
-  if (result.continuousUseSeconds < 300) throw Error('Less than five minutes continuous use');
+  if (!homeOnly && result.continuousUseSeconds < 300) throw Error('Less than five minutes continuous use');
   const failedActions = result.measurements.flatMap(m => m.actions.filter(a => !a.success).map(a => ({ view: m.label, ...a })));
   result.failedActions = failedActions;
   if (failedActions.length) throw Error(`${failedActions.length} fixture interactions failed; retain evidence for correction`);
