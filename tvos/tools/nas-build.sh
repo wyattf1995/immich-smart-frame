@@ -20,7 +20,9 @@ for name in ('source-proof.json', 'grid-proof.json', 'weather-proof.json', 'weat
         raise SystemExit('proof receipt did not pass and restore source: ' + name)
 print('all source-proof receipts passed and restored exact source')
 PY
-./gradlew --no-daemon --max-workers=2 :app:assembleDebug :app:lintDebug
+# Source-negative guards leave focused WeatherSource XML behind. Re-run the full
+# TV suite so the retained NAS archive reports all 27 cases rather than only three.
+./gradlew --no-daemon --max-workers=2 --rerun-tasks :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 python3 - <<'PY'
 from pathlib import Path
 import hashlib,json,os,zipfile
