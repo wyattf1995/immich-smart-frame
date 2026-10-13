@@ -1,12 +1,14 @@
-# Lenovo Smart Frame + Immich
+# Immich Smart Frame — FrameOS and touchscreen displays
 
 [![License](https://img.shields.io/github/license/wyattf1995/immich-smart-frame)](./LICENSE)
 
-Turn a discontinued Lenovo Smart Frame into a fullscreen, native-resolution
-Immich display with a photo-selection algorithm you control.
+Self-hosted photo displays and home dashboards for Android frames, with an
+Immich photo-selection algorithm you control. This repository contains a browser
+slideshow, the existing FrameOS app for Lenovo and selected legacy frames, and
+a separate experimental FrameOS Touch app.
 
-This project keeps the frame deliberately simple: an Android kiosk browser
-([Fully Kiosk Browser](https://www.fully-kiosk.com/)) renders the slideshow
+The browser starter path keeps the frame deliberately simple: an Android kiosk
+browser ([Fully Kiosk Browser](https://www.fully-kiosk.com/)) renders the slideshow
 while a Docker host runs a pinned, lightly patched build of
 [Immich Kiosk](https://github.com/damongolding/immich-kiosk). The default display and Frame remote
 do not modify Immich originals, ratings, albums, tags, or sidecars. The separately
@@ -16,7 +18,41 @@ credential and rollout checks. It is not required for the starter slideshow.
 
 > [!IMPORTANT]
 > This is an experimental community project, not a Lenovo, Immich, or Immich
-> Kiosk product. It is tested on one Lenovo CD-3L501F running stock Android 10.
+> Kiosk product. The browser starter is tested on one Lenovo CD-3L501F running stock Android 10.
+> Other app/device combinations have separate evidence and limitations. A new
+> frame's retail age does not establish its Android version or CPU ABI.
+
+## Choose your app
+
+| Path | Purpose and status | Start here |
+| --- | --- | --- |
+| Browser slideshow | Immich Kiosk in an Android kiosk browser; the original tested Lenovo setup | [Quick start](#quick-start), [Lenovo setup](docs/device-setup.md) |
+| FrameOS (`:app`) | Existing native shell with Lenovo controls, Photos and optional Home Assistant; modern ARM64 default and explicit legacy ARMv7 build | [App setup and builds](docs/android-apps.md#frameos-existing-app), [existing touchscreen guide](docs/frameos-touchscreen-panel.md) |
+| FrameOS Touch (`:touchframe`) | Separate touchscreen app with native Home and direct navigation; development candidate with independent acceptance gates | [Touch guide](docs/frameos-touch-app.md), [setup and builds](docs/android-apps.md#frameos-touch) |
+| Touch Probe | Offline capability diagnostic; does not install FrameOS or root a device | [Probe guide](frameos/touchprobe/README.md) |
+
+Start with the [compatibility table](docs/compatibility.md) before selecting an
+APK. Photos do not require Home Assistant. App installation and device recovery
+are separate: see [hardware access and recovery](docs/hardware-recovery.md).
+
+## Project map
+
+| Directory | Responsibility |
+| --- | --- |
+| `frameos/app/` | Existing `com.wyattfleming.frameos` Android app |
+| `frameos/touchframe/` | Separate `com.wyattfleming.touchframe` Android app |
+| `frameos/frame-shared/` | Internal shared components; currently selects reviewed source from `app/` |
+| `frameos/touchprobe/` | Standalone offline diagnostic Gradle project |
+| `tvos/` | Separate [Frame TV project](tvos/README.md) and TV-specific validation |
+| `custom-image/`, `config/` | Pinned Immich Kiosk patches and public configuration templates |
+| `companion/` | Optional Frame remote service and per-frame controls |
+| `birdnet/`, `examples/` | Optional integrations and public setup examples |
+| `tagging/` | Separate, opt-in write-capable photo tagging pipeline |
+| `docs/`, `scripts/` | [Documentation index](docs/README.md), validation and maintenance tools |
+
+The apps have separate identities, configuration and release notes. Shared code
+does not imply shared login state or device acceptance. See the
+[component release policy](docs/releasing.md).
 
 ![Synthetic privacy-safe demo of the frame UI](docs/images/demo-frame.webp)
 
@@ -39,7 +75,7 @@ experience. This one adds:
   dates hidden when a visible album title starts with the same date;
 - reviewable patches against a pinned upstream release.
 
-## Architecture
+## Browser slideshow architecture
 
 ```text
 Immich originals
@@ -59,7 +95,7 @@ Android frame: Fully Kiosk Browser
 The frame never receives an Immich administrator credential. Use a dedicated,
 read-only API key and keep it in the Compose secret described below.
 
-## Tested stack
+## Tested browser stack
 
 | Component | Tested version |
 | --- | --- |
@@ -71,8 +107,9 @@ read-only API key and keep it in the Compose secret described below.
 | This project | 0.1.0 |
 | Docker | Compose v2 |
 
-Other Android displays may work, especially when their browser reports a CSS
-viewport smaller than the physical panel, but they have not been verified.
+Other browser/device combinations need their own validation. Android app build
+requirements and device observations are listed separately in the
+[compatibility table](docs/compatibility.md).
 
 ## Is this for my display?
 
@@ -82,6 +119,7 @@ viewport smaller than the physical panel, but they have not been verified.
 | Another Android display that can open a LAN web page | The browser slideshow may work, but hardware compatibility is unverified. Check image size, browser memory use, and reconnect behavior before leaving it unattended. |
 | A Lenovo frame with no touchscreen or authorized USB debugging | Provisioning needs a USB-C OTG mouse and the steps in [Device setup](docs/device-setup.md). The slideshow does not require persistent wireless ADB. |
 | Immich plus Home Assistant on the same display | Start with Photos, then consider the optional [FrameOS companion](#optional-frameos-and-home-assistant-companion). Home Assistant is not required for photos. |
+| A touchscreen PF1007/PF1007L or BIGASUO 159K | Check the [device/app matrix](docs/compatibility.md). Existing legacy FrameOS observations and the new Touch candidate have separate acceptance gates. |
 | No Immich server or Docker host, or a plug-and-play cloud photo frame | This project does not provide those services. It requires a self-hosted setup and ongoing maintenance. |
 
 The first milestone is a working slideshow in a browser on your LAN. Device
@@ -243,6 +281,10 @@ Upgrades are reviewed rather than following `latest`.
 
 ## Frame setup
 
+This section describes the Lenovo browser path. Touchscreen app setup starts
+in [Android apps](docs/android-apps.md); model-specific access starts in
+[hardware recovery](docs/hardware-recovery.md).
+
 The Lenovo frame has no touchscreen. Initial provisioning uses a USB-C OTG
 mouse, Android Developer Options, one USB-debugging authorization, the official
 [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools),
@@ -257,13 +299,19 @@ also covers VLAN and firewall isolation for a dedicated Android 10 frame.
 
 ## Optional FrameOS and Home Assistant companion
 
-FrameOS can host the slideshow and Home Assistant in one full-screen Android
+The existing FrameOS app (`:app`) can host the slideshow and Home Assistant in one full-screen Android
 app built for the no-touch Lenovo frame. It keeps separate warm Gecko sessions
 for Photos and Home Assistant, adds a native cached Weather view with subtle
 condition-driven animation, and routes Home, Cameras, and Calendar through one
 same-origin wrapper without browser chrome or repeated tab loads. An optional
 Birds view opens a separately hosted BirdNET-Go frame page in a disposable,
 non-preloaded Gecko session so its live resources are released on exit.
+
+[FrameOS Touch](docs/frameos-touch-app.md) is a different app with native Home,
+its own navigation and lifecycle, and separate authentication. Its source is
+not evidence of an accepted touchscreen release. The
+[existing FrameOS touchscreen panel](docs/frameos-touchscreen-panel.md) describes
+the legacy shell's touch adaptation, not the new app.
 
 The [Home Assistant wall-panel guide](docs/home-assistant-wall-panel.md)
 includes the privacy-safe dashboard and local wrapper. The protected
@@ -338,6 +386,11 @@ network isolation.
 
 ## Release and version policy
 
+Choose the component first: [browser/backend](CHANGELOG.md),
+[FrameOS](frameos/app/CHANGELOG.md), or [FrameOS Touch](frameos/touchframe/CHANGELOG.md).
+An Android `versionName` in source is not a published APK. Modern and legacy
+FrameOS builds share an application ID; Touch has a separate one.
+
 The published [v0.1.0 release](https://github.com/wyattf1995/immich-smart-frame/releases/tag/v0.1.0)
 is the initial release. The default branch also contains later work listed in
 [`Unreleased`](CHANGELOG.md#unreleased); its documentation and optional FrameOS
@@ -348,8 +401,8 @@ Tagged releases follow [Semantic Versioning](https://semver.org/). Before
 `1.0.0`, configuration and deployment behavior may still change faster, but any
 breaking change will be called out in the changelog and release notes.
 
-Use repository tags, not arbitrary upstream versions, for upgrades and
-rollbacks. Each tag identifies the exact upstream Immich Kiosk pin, local
+Use the chosen component's tags, not arbitrary upstream versions, for upgrades
+and rollbacks. Browser/backend tags identify the exact upstream Immich Kiosk pin, local
 patches, and documentation state that were validated together.
 
 See [CHANGELOG.md](CHANGELOG.md), [Upgrade and rollback](docs/upgrade-rollback.md),

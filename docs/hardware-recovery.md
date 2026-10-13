@@ -2,6 +2,9 @@
 
 Recovery/access work is separate from application setup. Start by recording the physical model label, software-reported model, Android API level, ABI, display characteristics, current launcher, and ordinary app-install behavior. Keep device identifiers, network details, backups, credentials, and any personal media out of public issue reports and documentation.
 
+External access references below were checked October 12, 2026. They may evolve;
+this page deliberately does not distribute board-specific boot payloads.
+
 ## Model-specific access
 
 ### Frameo devices

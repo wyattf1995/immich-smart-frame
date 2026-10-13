@@ -22,3 +22,33 @@ frameos/frameos.local.properties
 
 # Private frame-specific photo preference exports.
 frame-preferences/
+
+# Local deployment variants; explicitly public templates remain addable.
+.env.*
+*.env
+!*.env.example
+!.env.example
+*.local.properties
+
+# Private credentials and device evidence, regardless of Android module.
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_ed25519
+/firmware-backups/
+/hardware-evidence/
+/local-artifacts/
+/private/
+*.apk
+*.aab
+
+# Generated worker output. Retain the reviewed, sanitized source-proof summary.
+/.nas-*/
+/reports/*
+!/reports/companion-performance-proof/
+/reports/companion-performance-proof/*
+!/reports/companion-performance-proof/receipt.json

@@ -9,7 +9,7 @@ These are development artifacts for physical-device evaluation. Building an APK
 is not proof of installation, rooting, firmware compatibility, or reliable touch
 handling on an untested frame.
 
-## Two separate artifacts
+## Two artifacts in the initial preparation build
 
 - **FrameOS** keeps its Android 10/API29 minimum and ARM64 Gecko renderer. It adds
   mode navigation from deliberate inward swipes starting within 24dp of a left
@@ -22,11 +22,12 @@ handling on an untested frame.
   actual API/ABI, display, memory and touch capabilities and offers native touch
   and bundled WebView checks. See [probe instructions](../frameos/touchprobe/README.md).
 
-The [matching PF1007L firmware report](https://github.com/wesbos/photo-frame-dashboard/blob/main/docs/allwinner-a33-pf1007l.md)
-uses Android 6/ARMv7. Those properties still need to be queried on the actual
-frame. The current FrameOS APK cannot run on that reported configuration; the
-probe helps determine the backport or replacement-OS work required. The larger
-frame's exact OS and ABI also remain unverified.
+At the time of this initial build, the
+[matching PF1007L firmware report](https://github.com/wesbos/photo-frame-dashboard/blob/main/docs/allwinner-a33-pf1007l.md)
+described Android 6/ARMv7, but neither new frame had been queried. That build's
+modern APK could not run on the reported configuration. Subsequent work added
+an explicit legacy target; use the [current compatibility table](compatibility.md)
+and [app build guide](android-apps.md) rather than this historical snapshot.
 
 ## Historical build and retained evidence
 
@@ -43,6 +44,11 @@ the source upload.
 
 ### Verified overnight build — 2026-10-11 UTC
 
+Integration source: `bf6620cca8eb231c58a0b71bc072af577c5f8222`; build transport:
+`44ab7a3a15e8992a986bb5ac48d4adee2eb063d2`. The app and TV subtrees matched;
+all 295 exported source hashes matched the transport. Raw reports, artifacts
+and worker receipts remain privately retained outside this repository.
+
 A retained historical preparation build compiled and linted cleanly. It recorded
 267 existing FrameOS JVM tests, 24 TV JVM tests, 30 JavaScript tests, and nine
 touch guards. The guards passed, failed under a deliberate source-only
@@ -58,7 +64,7 @@ acceptance on any frame.
 No frame installation, firmware change, launcher replacement, or production
 signing occurred as part of that historical preparation run.
 
-## Device acceptance once access is available
+## Original device acceptance checklist
 
 1. Record the physical model, API, ABI, memory, screen size/density and current
    launcher. First confirm ordinary app installation without replacing the

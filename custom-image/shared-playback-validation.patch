@@ -133,8 +133,8 @@ index 0000000..903be36
 +# Task-owned resource ledger
 +
 +Owner task: shared-playback NAS validation
-+Source worktree: /Users/wyattfleming/.codex/private/frame-sync-20260913/validation (branch sync-validation)
-+Project worktree: /Users/wyattfleming/frame-sync-validation (branch codex/frame-sync-validation-20260913)
++Source worktree: <private-workspace>/validation (branch sync-validation)
++Project worktree: <project-workspace> (branch codex/frame-sync-validation-20260913)
 +Disposable NAS workspace: /workspace/.nas-shared-playback
 +
 +| Resource | Exact identifier/path | Why needed | Closeout proof |
