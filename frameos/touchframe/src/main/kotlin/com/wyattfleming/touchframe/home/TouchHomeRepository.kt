@@ -12,7 +12,6 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.time.ZoneId
-import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -90,22 +89,18 @@ class TouchHomeRepository(
 
     /** Sends no optimistic local update; the parent refresh owns confirmed readback. */
     fun changeClimateMode(mode: String): Boolean {
-        val climate = lastConfirmedClimate ?: return false
+        val climate = synchronized(operationLock) { lastConfirmedClimate } ?: return false
         if (climate.entityId != configuration.climateEntityId || mode !in climate.modes) return false
         return postClimateService("set_hvac_mode", JSONObject().put("hvac_mode", mode))
     }
 
     /** Sends no optimistic local update; the parent refresh owns confirmed readback. */
     fun changeClimateTarget(value: Double): Boolean {
-        val climate = lastConfirmedClimate ?: return false
+        val climate = synchronized(operationLock) { lastConfirmedClimate } ?: return false
         if (!value.isFinite() || climate.entityId != configuration.climateEntityId) return false
-        climate.minTemperature?.let { if (value < it) return false }
-        climate.maxTemperature?.let { if (value > it) return false }
-        climate.step?.takeIf { it > 0.0 }?.let { step ->
-            val anchor = climate.minTemperature ?: 0.0
-            val steps = (value - anchor) / step
-            if (kotlin.math.abs(steps - kotlin.math.round(steps)) > STEP_EPSILON) return false
-        }
+        if (value < climate.minTemperature || value > climate.maxTemperature) return false
+        val steps = (value - climate.minTemperature) / climate.step
+        if (kotlin.math.abs(steps - kotlin.math.round(steps)) > STEP_EPSILON) return false
         return postClimateService("set_temperature", JSONObject().put("temperature", value))
     }
 
@@ -144,7 +139,7 @@ class TouchHomeRepository(
                     ),
                 )
             }, deadline)
-            (response.statusCode in 200..299).also { accepted = it }
+            (response.statusCode in 200..299 && acceptOperation(operation)).also { accepted = it }
         } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
             false
         } finally {
@@ -192,6 +187,10 @@ class TouchHomeRepository(
         if (active !== operation || operation.cancelled) return@synchronized false
         lastConfirmedClimate = climate
         true
+    }
+
+    private fun acceptOperation(operation: Operation): Boolean = synchronized(operationLock) {
+        active === operation && !operation.cancelled
     }
 
     private fun <T> submit(operation: Operation, task: () -> T): Future<T> = synchronized(operationLock) {
