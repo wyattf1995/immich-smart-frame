@@ -22,4 +22,8 @@ android {
     }
     lint { abortOnError true }
 }
-dependencies { testImplementation 'junit:junit:4.13.2' }
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    // JVM unit tests must use a real JSON implementation; android.jar provides stubs.
+    testImplementation 'org.json:json:20260814'
+}
