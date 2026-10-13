@@ -12,7 +12,9 @@ readonly sdk_dir="$work_dir/sdk"
 readonly base_sdk_dir="${ANDROID_SDK_ROOT:?admitted Android SDK root is required}"
 readonly sdk_report="$report_dir/sdk-bootstrap.json"
 readonly manifest="$work_dir/transport-source-manifest.json"
-readonly artifact_receipt="$report_dir/artifacts.json"
+readonly post_manifest="$work_dir/transport-source-manifest-after.json"
+readonly source_identity="$report_dir/source-identity.json"
+readonly junit_summary="$report_dir/junit-summary.json"
 readonly report_zip="$root_dir/reports/touchframe-android-validation.zip"
 readonly touch_apk="$frameos_dir/touchframe/build/outputs/apk/release/touchframe-release-unsigned.apk"
 readonly touch_mapping="$frameos_dir/touchframe/build/outputs/mapping/release/mapping.txt"
@@ -69,13 +71,30 @@ run_step() { local name="$1"; shift; printf '\n== %s ==\n' "$name" | tee -a "$ra
 bootstrap_api37_sdk
 export ANDROID_SDK_ROOT="$sdk_dir" ANDROID_HOME="$sdk_dir"
 
-python3 - "$root_dir" "$manifest" <<'PY'
+write_source_inventory() {
+  local destination="$1"
+  python3 - "$root_dir" "$destination" <<'PY'
 import hashlib,json,sys
 from pathlib import Path
-root,out=map(Path,sys.argv[1:]); excluded={'.git','.nas-touchframe-android','reports'}
-files={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file() and p.relative_to(root).parts[0] not in excluded}
-payload={'schema':1,'files':files}; payload['sha256']=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest(); out.write_text(json.dumps(payload,indent=2,sort_keys=True)+'\n')
+root,out=map(Path,sys.argv[1:])
+files={}
+excluded={'.git','.gradle','.nas-touchframe-android','reports'}
+for path in sorted(root.rglob('*')):
+    relative=path.relative_to(root)
+    if relative.parts and (relative.parts[0] in excluded or 'build' in relative.parts):
+        continue
+    if path.is_file():
+        files[relative.as_posix()]=hashlib.sha256(path.read_bytes()).hexdigest()
+payload={'schema':1,'files':files}
+payload['sha256']=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+out.write_text(json.dumps(payload,indent=2,sort_keys=True)+'\n')
 PY
+}
+write_source_inventory "$manifest"
+# agent-nas verifies every source.tar member before extraction and binds the
+# requested commit in its retained remote receipt. Android containers receive
+# neither a Git checkout nor a mounted identity document, so this runner records
+# the exact extracted payload without making an unverifiable commit claim.
 
 run_step touchframe-source-proof python3 "$root_dir/scripts/verify-touchframe-proof.py" "$root_dir"
 run_step touchframe-shared-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :frame-shared:testDebugUnitTest"
@@ -83,13 +102,38 @@ run_step touchframe-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --
 run_step touchframe-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:lintRelease"
 run_step touchframe-assemble-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:assembleRelease"
 
+write_source_inventory "$post_manifest"
+cmp -- "$manifest" "$post_manifest" || { printf 'extracted transport source inventory changed during TouchFrame validation\n' >&2; exit 73; }
+python3 - "$frameos_dir" "$junit_summary" <<'PY'
+import json,sys
+from pathlib import Path
+import xml.etree.ElementTree as ET
+frame,out=map(Path,sys.argv[1:])
+roots=[frame/'frame-shared/build/test-results/testDebugUnitTest',frame/'touchframe/build/test-results/testDebugUnitTest']
+files=[]; totals={'tests':0,'failures':0,'errors':0,'skipped':0}
+for base in roots:
+    if not base.is_dir():
+        raise SystemExit(f'missing JUnit results directory: {base}')
+    for xml in sorted(base.rglob('TEST-*.xml')):
+        node=ET.parse(xml).getroot()
+        item={key:int(node.get(key,'0')) for key in totals}
+        item['path']=xml.relative_to(frame).as_posix()
+        files.append(item)
+        for key in totals:
+            totals[key]+=item[key]
+if not files or totals['failures'] or totals['errors'] or totals['skipped']:
+    raise SystemExit(f'unexpected JUnit summary: files={len(files)} totals={totals}')
+out.write_text(json.dumps({'schema':1,'files':files,'totals':totals},indent=2,sort_keys=True)+'\n')
+PY
+
 [[ -f "$touch_apk" && -f "$touch_mapping" ]] || { printf 'missing TouchFrame unsigned APK or mapping\n' >&2; exit 72; }
-python3 - "$root_dir" "$artifact_receipt" "$manifest" "$sdk_report" "$touch_apk" "$touch_mapping" <<'PY'
+python3 - "$root_dir" "$source_identity" "$manifest" "$post_manifest" "$sdk_report" "$junit_summary" "$touch_apk" "$touch_mapping" <<'PY'
 import hashlib,json,sys
 from pathlib import Path
-root,out,manifest,sdk,*artifacts=map(Path,sys.argv[1:])
+root,identity,manifest,post_manifest,sdk,junit,*artifacts=map(Path,sys.argv[1:])
 def item(p): return {'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size,'signing':'unsigned'}
-out.write_text(json.dumps({'schema':1,'transportSourceManifest':json.loads(manifest.read_text()),'sdkBootstrap':json.loads(sdk.read_text()),'artifacts':{p.relative_to(root).as_posix():item(p) for p in artifacts}},indent=2,sort_keys=True)+'\n')
+artifact_items={p.relative_to(root).as_posix():item(p) for p in artifacts}
+identity.write_text(json.dumps({'schema':1,'transportSourceManifest':json.loads(manifest.read_text()),'postValidationSourceManifest':json.loads(post_manifest.read_text()),'sdkBootstrap':json.loads(sdk.read_text()),'junitSummary':json.loads(junit.read_text()),'artifactSummary':{'count':len(artifact_items),'totalBytes':sum(item['bytes'] for item in artifact_items.values())},'artifacts':artifact_items},indent=2,sort_keys=True)+'\n')
 PY
 python3 - "$raw_log" "$log_file" <<'PY'
 import re,sys

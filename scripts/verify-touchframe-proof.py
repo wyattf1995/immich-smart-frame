@@ -25,6 +25,7 @@ suites = {
     "shell": (module / "src/main/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayout.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayoutTest.kt", "com.wyattfleming.touchframe.ui.TouchShellLayoutTest"),
     "parser": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeParser.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeParserTest.kt", "com.wyattfleming.touchframe.home.TouchHomeParserTest"),
     "repository": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepository.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepositoryTest.kt", "com.wyattfleming.touchframe.home.TouchHomeRepositoryTest"),
+    "media": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchMediaLoadStateTest.kt", "com.wyattfleming.touchframe.media.TouchMediaLoadStateTest"),
 }
 
 
@@ -41,8 +42,9 @@ def static_contract() -> dict[str, object]:
     shell = suites["shell"][0].read_text()
     repo = suites["repository"][0].read_text()
     parser = suites["parser"][0].read_text()
+    media = suites["media"][0].read_text()
     required = {
-        "media-only edge gesture": "destination.isImmersiveMedia",
+        "media-only edge gesture": "destination.isImmersiveMedia &&",
         "48dp edge target": "EDGE_WIDTH_DP = 48",
         "56dp horizontal threshold": "HORIZONTAL_THRESHOLD_DP = 56",
         "32dp vertical tolerance": "VERTICAL_TOLERANCE_DP = 32",
@@ -51,8 +53,9 @@ def static_contract() -> dict[str, object]:
         "bounded request workers": "MAX_REQUEST_WORKERS = 2",
         "cancel operation generation gate": "!acceptOperation(operation)",
         "calendar event cap": "MAX_EVENTS_PER_CALENDAR = 200",
+        "same-url crash retry": "if (configuredUrl == url) return if (contentProcessClosed)",
     }
-    combined = shell + repo + parser
+    combined = shell + repo + parser + media
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -121,8 +124,8 @@ try:
     initial = run("initial-green", set())
     edge_red = mutate(
         "edge-media-only-red", "shell",
-        "if (!destination.isImmersiveMedia || menuVisible) return false",
-        "if (menuVisible) return false",
+        "destination.isImmersiveMedia &&\n        downX in 0f..edgeWidth.toFloat()",
+        "true &&\n        downX in 0f..edgeWidth.toFloat()",
         {"only media destinations accept a qualified left edge reveal"},
     )
     cap_red = mutate(
@@ -133,18 +136,25 @@ try:
     )
     cancel_red = mutate(
         "cancel-generation-red", "repository",
-        "operation.cancelled = true",
-        "operation.cancelled = false",
+        "active = null\n            operation.cancelled = true",
+        "active = operation\n            operation.cancelled = false",
         {"cancellation during token acquisition prevents every HTTP request"},
+    )
+    media_red = mutate(
+        "media-crash-retry-red", "media",
+        "return if (contentProcessClosed) Decision.RETRY_REQUIRED else Decision.LOAD",
+        "return Decision.LOAD",
+        {"content crash requires explicit retry and uses the most recent configured url"},
     )
     restored = run("restored-green", set())
     unchanged_tests = {str(test.relative_to(root)): digest(test) for _, (_, test, _) in suites.items()}
     if unchanged_tests != test_hashes:
         raise RuntimeError("proof changed test bytes")
     (out / "touchframe-source-proof.json").write_text(json.dumps({
-        "proof": "touchframe-native-direct-data-v1", "passed": True, "command": command,
+        "proof": "touchframe-native-direct-data-v2", "passed": True, "command": command,
         "sourceTestAnnotationCount": expected_tests, "initial": initial, "edgeRed": edge_red,
-        "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red, "restored": restored,
+        "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red, "mediaCrashRetryRed": media_red,
+        "restored": restored,
         "originalSourceSha256": source_hashes,
         "restoredSourceSha256": {name: digest(source) for name, (source, _, _) in suites.items()},
         "unchangedTestSha256": test_hashes, "staticContract": static,
