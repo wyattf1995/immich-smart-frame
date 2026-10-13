@@ -13,17 +13,18 @@ assert.ok(preferenceWindowSource, 'preferenceWindow must remain a source-owned p
 const sandbox = { preferencePageSize: pageSize };
 vm.runInNewContext(`${preferenceWindowSource}; globalThis.preferenceWindow=preferenceWindow`, sandbox);
 const preferenceWindow = sandbox.preferenceWindow;
+const windowFor = (total, page) => JSON.parse(JSON.stringify(preferenceWindow(total, page)));
 
 test('preference pages render at most fifty rows and preserve a final remainder', () => {
-  assert.deepEqual(preferenceWindow(0, 0), { page: 0, pageCount: 0, start: 0, end: 0 });
-  assert.deepEqual(preferenceWindow(1_000, 0), { page: 0, pageCount: 20, start: 0, end: 50 });
-  assert.deepEqual(preferenceWindow(1_000, 19), { page: 19, pageCount: 20, start: 950, end: 1_000 });
-  assert.deepEqual(preferenceWindow(51, 1), { page: 1, pageCount: 2, start: 50, end: 51 });
+  assert.deepEqual(windowFor(0, 0), { page: 0, pageCount: 0, start: 0, end: 0 });
+  assert.deepEqual(windowFor(1_000, 0), { page: 0, pageCount: 20, start: 0, end: 50 });
+  assert.deepEqual(windowFor(1_000, 19), { page: 19, pageCount: 20, start: 950, end: 1_000 });
+  assert.deepEqual(windowFor(51, 1), { page: 1, pageCount: 2, start: 50, end: 51 });
 });
 
 test('preference pages clamp after an Undo removes the final row', () => {
-  assert.deepEqual(preferenceWindow(50, 1), { page: 0, pageCount: 1, start: 0, end: 50 });
-  assert.deepEqual(preferenceWindow(100, 9), { page: 1, pageCount: 2, start: 50, end: 100 });
+  assert.deepEqual(windowFor(50, 1), { page: 0, pageCount: 1, start: 0, end: 50 });
+  assert.deepEqual(windowFor(100, 9), { page: 1, pageCount: 2, start: 50, end: 100 });
 });
 
 test('saved choices remain lazy, selected-device guarded, and page-sliced', () => {
