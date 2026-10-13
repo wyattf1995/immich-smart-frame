@@ -49,7 +49,7 @@ def run(label: str, expected_failures: int, expected_failed_cases: set[str]) -> 
     failed = {case.get("name") for case in cases if case.find("failure") is not None}
     errors = [error for case in cases for error in case.findall("error")]
     skipped = [item for case in cases for item in case.findall("skipped")]
-    assert len(cases) == 4, len(cases)
+    assert len(cases) == 6, len(cases)
     assert failed == expected_failed_cases, failed
     assert len(failed) == expected_failures, failed
     assert not errors and not skipped, (errors, skipped)
@@ -76,22 +76,38 @@ def run(label: str, expected_failures: int, expected_failed_cases: set[str]) -> 
 original = source.read_bytes()
 source_hash = digest(source)
 test_hash = digest(test)
-needle = "const val PREVIEW_PER_DAY = 3"
-replacement = "const val PREVIEW_PER_DAY = 4"
 source_text = original.decode()
-assert source_text.count(needle) == 1 and replacement not in source_text
-try:
-    source.write_text(source_text.replace(needle, replacement), encoding="utf-8")
-    red = run(
-        "week-calendar-overflow-source-red",
-        1,
-        {"groupsSevenDaysWithAllDayFirstAndBoundedPreview"},
-    )
-    assert red["exit"] != 0
-finally:
-    source.write_bytes(original)
-    assert digest(source) == source_hash
 
+
+def prove_mutation(
+    needle: str,
+    replacement: str,
+    label: str,
+    failed_case: str,
+) -> dict:
+    assert source_text.count(needle) == 1 and replacement not in source_text
+    try:
+        source.write_text(source_text.replace(needle, replacement), encoding="utf-8")
+        red = run(label, 1, {failed_case})
+        assert red["exit"] != 0
+        return {"negative_assertion_failures": 1, **red}
+    finally:
+        source.write_bytes(original)
+        assert digest(source) == source_hash
+
+
+preview_red = prove_mutation(
+    "const val PREVIEW_PER_DAY = 3",
+    "const val PREVIEW_PER_DAY = 4",
+    "week-calendar-overflow-source-red",
+    "groupsSevenDaysWithAllDayFirstAndBoundedPreview",
+)
+detail_red = prove_mutation(
+    "const val DETAILS_PER_PAGE = 12",
+    "const val DETAILS_PER_PAGE = 13",
+    "week-calendar-detail-bound-source-red",
+    "boundsSelectedDayDetailsToTwelveEventsAndReportsTheVisibleRange",
+)
 green = run("week-calendar-restored-green", 0, set())
 assert green["exit"] == 0
 assert digest(source) == source_hash
@@ -101,7 +117,7 @@ assert digest(test) == test_hash
     "target": args.target,
     "source_sha256": source_hash,
     "unchanged_test_sha256": test_hash,
-    "negative": {"negative_assertion_failures": 1, **red},
+    "negative_mutations": [preview_red, detail_red],
     "restored_green": green,
 }, indent=2) + "\n")
-print("Week calendar grouping source-only red / exact restore green verified")
+print("Week calendar overflow/detail source-only red / exact restore green verified")
