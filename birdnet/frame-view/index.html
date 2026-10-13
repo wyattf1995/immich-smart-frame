@@ -762,11 +762,13 @@
 
       .audio-meter-level {
         display: block;
-        width: 0%;
+        width: 100%;
         height: 100%;
         border-radius: inherit;
+        transform: scaleX(0);
+        transform-origin: left center;
         background: var(--green);
-        transition: width 280ms ease-out;
+        transition: transform 280ms ease-out;
       }
 
       .novelty-badge {
@@ -1887,7 +1889,7 @@
           lastUpdatedAt: null,
           attributionSpecies: "",
           attribution: null,
-          renderKeys: { hero: "", species: "", recent: "" },
+          renderKeys: { hero: "", species: "", recent: "", ambient: "" },
         };
 
         let refreshPromise = null;
@@ -1986,7 +1988,7 @@
 
         function renderAudioHealth() {
           const age = state.audioLastAt ? Math.max(0, Math.round((Date.now() - state.audioLastAt.getTime()) / 1000)) : null;
-          els.audioMeterLevel.style.width = `${Math.round(Math.max(0, Math.min(1, state.audioLevel)) * 100)}%`;
+          els.audioMeterLevel.style.transform = `scaleX(${Math.max(0, Math.min(1, state.audioLevel))})`;
           els.audioFreshness.textContent = age === null ? "Audio freshness checking" : age <= 5 ? "Audio fresh now" : `Audio last heard ${age}s ago`;
         }
 
@@ -2466,7 +2468,25 @@
             bar.title = `${hourIndex}:00 · ${value} detections`;
             els.activityStrip.appendChild(bar);
           });
+        }
+
+        function ambientRenderKey() {
+          return JSON.stringify([state.speciesPeriod, state.kpis, state.expectedInsight, state.hourly, new Date().getHours()]);
+        }
+
+        // Audio streams may be frequent. Keep their status and empty-hero semantics current
+        // without rebuilding hourly analytics, species, or recent cards.
+        function renderAudioState() {
           renderAudioHealth();
+          const status = statusFromState();
+          setStatus(status.title, status.detail, status.tone);
+          if (!latestDetection()) {
+            const heroKey = JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length, state.audioLevelsActive, audioFreshnessState()]);
+            if (heroKey !== state.renderKeys.hero) {
+              state.renderKeys.hero = heroKey;
+              renderHero();
+            }
+          }
         }
 
         function renderSpecies() {
@@ -2631,7 +2651,12 @@
           els.callCount.textContent = String(count);
           els.speciesMetricLabel.textContent = `species detected ${metricPeriod}`;
           els.callMetricLabel.textContent = `detections ${metricPeriod}`;
-          renderAmbientSummary();
+          const ambientKey = ambientRenderKey();
+          if (ambientKey !== state.renderKeys.ambient) {
+            state.renderKeys.ambient = ambientKey;
+            renderAmbientSummary();
+          }
+          renderAudioHealth();
           if (state.lastUpdatedAt) {
             const updated = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" })
               .format(state.lastUpdatedAt);
@@ -2841,10 +2866,10 @@
                 window.clearTimeout(audioFreshnessTimer);
                 audioFreshnessTimer = window.setTimeout(() => {
                   state.audioLevelsActive = false;
-                  render();
+                  renderAudioState();
                 }, AUDIO_LEVEL_STALE_MS);
               }
-              render();
+              renderAudioState();
             } catch (_error) {
               // Invalid stream events are not evidence that audio is arriving.
             }

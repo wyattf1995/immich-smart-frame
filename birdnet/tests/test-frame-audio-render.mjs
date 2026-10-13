@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const html=readFileSync(new URL('../frame-view/index.html',import.meta.url),'utf8');
+const audio=html.slice(html.indexOf('const handleAudioLevel'),html.indexOf('audioStream.onmessage'));
+assert.match(html,/transform: scaleX\(0\)/,'meter has stable geometry');
+assert.match(html,/transform-origin: left center/,'meter scales from left');
+assert.doesNotMatch(html,/transition: width/,'meter does not animate layout width');
+assert.match(html,/renderKeys: \{ hero: "", species: "", recent: "", ambient: "" \}/,'ambient content has a change key');
+assert.match(html,/if \(ambientKey !== state\.renderKeys\.ambient\)/,'analytics render only changes when its key changes');
+assert.match(audio,/renderAudioState\(\);/,'audio events use the narrow state helper');
+assert.doesNotMatch(audio,/\brender\(\);/,'audio events do not request broad rendering');
+console.log('PASS: audio events bypass unchanged analytics and width animation');
