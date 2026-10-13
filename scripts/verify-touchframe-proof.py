@@ -34,6 +34,7 @@ suites = {
     "blur": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflineBlurPlanTest.kt", "com.wyattfleming.touchframe.media.TouchOfflineBlurPlanTest"),
     "offline_store": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStore.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStoreScopeGateTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoStoreScopeGateTest"),
     "hidden_commit": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStore.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoCommitContractTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoCommitContractTest"),
+    "companion": (module / "src/main/kotlin/com/wyattfleming/touchframe/control/TouchCompanionController.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/control/TouchCompanionControllerTest.kt", "com.wyattfleming.touchframe.control.TouchCompanionControllerTest"),
     "scope": (module / "src/main/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScope.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScopeTest.kt", "com.wyattfleming.touchframe.concurrent.TouchTaskScopeTest"),
 }
 
@@ -56,6 +57,7 @@ def static_contract() -> dict[str, object]:
     blur = suites["blur"][0].read_text()
     offline_store = suites["offline_store"][0].read_text()
     hidden_commit = suites["hidden_commit"][0].read_text()
+    companion = suites["companion"][0].read_text()
     scope = suites["scope"][0].read_text()
     required = {
         "media-only edge gesture": "destination.isImmersiveMedia &&",
@@ -74,8 +76,12 @@ def static_contract() -> dict[str, object]:
         "uncropped foreground mapping": "TouchOfflineBlurPlan.forForeground",
         "offline scope generation": "class TouchOfflineStoreScopeGate",
         "hidden commit cancellation gate": "!task.isCancelled && !Thread.currentThread().isInterrupted",
+        "worker credential reread": "if (credentials() != currentCredentials)",
+        "worker event acceptance": "onEvent(it, expectedGeneration) { isCurrent(expectedGeneration) }",
+        "main callback timeout cancellation": "task.cancel(false)",
+        "dispatch-time command expiry": "if (nowMillis() > command.expiresAtMillis)",
     }
-    combined = shell + repo + parser + media + offline + blur + offline_store + hidden_commit + scope
+    combined = shell + repo + parser + media + offline + blur + offline_store + hidden_commit + companion + scope
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -265,6 +271,30 @@ try:
         "true",
         {"canceled hidden policy operation is checked at the reserve commit boundary"},
     )
+    credential_red = mutate(
+        "companion-credential-reread-red", "companion",
+        "if (credentials() != currentCredentials) {",
+        "if (false) {",
+        {"credential change during poll commits none of the old snapshot"},
+    )
+    event_worker_red = mutate(
+        "companion-event-worker-red", "companion",
+        "onEvent(it, expectedGeneration) { isCurrent(expectedGeneration) }",
+        "onMain(expectedGeneration) { onEvent(it, expectedGeneration) { isCurrent(expectedGeneration) } } == true",
+        {"event acceptance runs on poll worker and blocks snapshot command when persistence rejects"},
+    )
+    expiry_red = mutate(
+        "companion-expiry-before-dispatch-red", "companion",
+        "if (nowMillis() > command.expiresAtMillis)",
+        "if (false)",
+        {"command that expires while queued is terminally expired without dispatch"},
+    )
+    timeout_cancel_red = mutate(
+        "companion-delayed-main-cancel-red", "companion",
+        "task.cancel(false)",
+        "Unit",
+        {"timed out queued callback is cancelled before a delayed main executor runs it"},
+    )
     scope_red = mutate(
         "pause-lifecycle-red", "scope",
         "if (closed || !resumed) return\n            resumed = false",
@@ -293,6 +323,8 @@ try:
         "offlineHiddenCachedRed": hidden_cached_red,
         "offlineStoreSameScopeRed": offline_store_red,
         "offlineHiddenCommitCancelRed": hidden_commit_red,
+        "credentialRereadRed": credential_red, "eventWorkerRed": event_worker_red,
+        "dispatchExpiryRed": expiry_red, "delayedMainCancellationRed": timeout_cancel_red,
         "pausedTaskEntryRed": scope_red,
         "restored": restored, "preparedBridgeRestored": bridge_restored,
         "preparedBridgeSourceSha256": bridge_source_hash,

@@ -86,6 +86,9 @@ class TouchCompanionControllerTest {
         val eventWorker = AtomicReference<String?>()
         val controller = controller(
             scheduler = scheduler,
+            mainExecutor = Executor { task ->
+                Thread(task, "controller-main").apply { start(); join() }
+            },
             poll = { _, _, _, _ -> FrameCompanionPollResult.Success(eventAndCommandEnvelope()) },
             onEvent = { _, _, canCommit ->
                 eventWorker.set(Thread.currentThread().name)
