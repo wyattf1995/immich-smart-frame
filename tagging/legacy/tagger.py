@@ -3,7 +3,7 @@
 VLM emits FREE-FORM tags + caption (accurate); we MAP free-form terms -> the controlled
 taxonomy in code (folder name + caption + free tags feed the match). Sidecar queue MUST be paused.
 Modes:  --dry-run --ids <file>    |    --full [--limit N]"""
-import json, base64, os, sys, time, re, urllib.request
+import json, base64, os, sys, time, re, sqlite3, urllib.request
 
 IMMICH = os.environ.get("IMMICH_URL", "http://localhost:8080")
 OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434")
@@ -16,22 +16,80 @@ LIMIT    = int(_arg("--limit", "0")) or None
 IDS_FILE = _arg("--ids")
 CKPT = os.path.join(WORK, "processed.txt"); LOGF = os.path.join(WORK, "tagger.log"); LOCK = os.path.join(WORK, "tagger.lock")
 
+# These ceilings are deliberately separate because preview pixels, Immich JSON,
+# and a model response have very different expected sizes. They bound an
+# unhealthy peer without changing tag selection or write behavior.
+MAX_METADATA_RESPONSE_BYTES = 8 * 1024 * 1024
+MAX_MODEL_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_PREVIEW_RESPONSE_BYTES = 16 * 1024 * 1024
+METADATA_TIMEOUT_SECONDS = 30
+PREVIEW_TIMEOUT_SECONDS = 60
+MODEL_TIMEOUT_SECONDS = 300
+
+class ResponseTooLarge(RuntimeError): pass
+
+class Checkpoint:
+    """Disk-backed processed-ID index with streaming legacy text compatibility."""
+    def __init__(self, path):
+        self.path = path
+        self.db = sqlite3.connect(path + ".sqlite3")
+        self.db.execute("CREATE TABLE IF NOT EXISTS processed (asset_id TEXT PRIMARY KEY)")
+        # Existing deployments use processed.txt. Import it one line at a time
+        # on every start, so an older runner can still add entries between runs.
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as legacy:
+                for line in legacy:
+                    asset_id = line.strip()
+                    if asset_id:
+                        self.db.execute("INSERT OR IGNORE INTO processed(asset_id) VALUES (?)", (asset_id,))
+        self.db.commit()
+        self.legacy = open(path, "a", encoding="utf-8")
+
+    def contains(self, asset_id):
+        return self.db.execute("SELECT 1 FROM processed WHERE asset_id = ?", (asset_id,)).fetchone() is not None
+
+    def count(self):
+        return self.db.execute("SELECT COUNT(*) FROM processed").fetchone()[0]
+
+    def mark(self, asset_id):
+        self.db.execute("INSERT OR IGNORE INTO processed(asset_id) VALUES (?)", (asset_id,))
+        self.db.commit()
+        # Preserve the text checkpoint for existing operators and rollback
+        # tooling. Repeated writes remain harmless because SQLite deduplicates.
+        self.legacy.write(asset_id + "\n")
+        self.legacy.flush()
+
+    def close(self):
+        self.legacy.close()
+        self.db.close()
+
 def log(m):
     line = time.strftime("%Y-%m-%d %H:%M:%S ") + m
     print(line, flush=True)
     try: open(LOGF, "a").write(line + "\n")
     except Exception: pass
 
-def http(method, url, body=None, headers=None, timeout=300):
+def http(method, url, body=None, headers=None, timeout=METADATA_TIMEOUT_SECONDS, max_bytes=MAX_METADATA_RESPONSE_BYTES):
     h = dict(headers or {}); data = None
     if body is not None:
         data = json.dumps(body).encode(); h["Content-Type"] = "application/json"
     with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=h, method=method), timeout=timeout) as r:
-        return r.read()
+        deadline = time.monotonic() + timeout
+        chunks = []; total = 0
+        while True:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"request deadline exceeded after {timeout}s")
+            chunk = r.read(min(64 * 1024, max_bytes + 1 - total))
+            if not chunk: break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ResponseTooLarge(f"response exceeds {max_bytes} bytes")
+            chunks.append(chunk)
+        return b"".join(chunks)
 def im(method, path, body=None):
-    b = http(method, IMMICH + path, body, {"x-api-key": KEY}); return json.loads(b) if b else None
+    b = http(method, IMMICH + path, body, {"x-api-key": KEY}, timeout=METADATA_TIMEOUT_SECONDS, max_bytes=MAX_METADATA_RESPONSE_BYTES); return json.loads(b) if b else None
 def im_bytes(path):
-    return http("GET", IMMICH + path, headers={"x-api-key": KEY})
+    return http("GET", IMMICH + path, headers={"x-api-key": KEY}, timeout=PREVIEW_TIMEOUT_SECONDS, max_bytes=MAX_PREVIEW_RESPONSE_BYTES)
 
 # ---- controlled-vocabulary keyword map: taxonomy tag -> substrings implying it ----
 KW = {
@@ -121,7 +179,7 @@ def vlm(asset_id):
     img = im_bytes(f"/api/assets/{asset_id}/thumbnail?size=preview")
     payload = {"model":MODEL,"prompt":PROMPT,"images":[base64.b64encode(img).decode()],
                "stream":False,"keep_alive":"30m","think":False,"format":SCHEMA,"options":{"temperature":0.2,"num_ctx":8192,"num_predict":1200}}
-    out = json.loads(http("POST", OLLAMA+"/api/generate", payload, {"Content-Type":"application/json"}, timeout=300))
+    out = json.loads(http("POST", OLLAMA+"/api/generate", payload, {"Content-Type":"application/json"}, timeout=MODEL_TIMEOUT_SECONDS, max_bytes=MAX_MODEL_RESPONSE_BYTES))
     return parse_vlm(out["response"])
 
 def process(asset_id, path, existing_desc):
@@ -161,8 +219,8 @@ def main():
         try: os.kill(int(open(LOCK).read()), 0); log("already running; exit"); return
         except Exception: pass
     open(LOCK,"w").write(str(os.getpid()))
-    done = set(l.strip() for l in open(CKPT)) if os.path.exists(CKPT) else set()
-    log(f"FULL start — {len(done)} already done"); ck = open(CKPT,"a"); ok=err=n=0; page=1; stop=False
+    checkpoint = Checkpoint(CKPT)
+    log(f"FULL start — {checkpoint.count()} already done"); ok=err=n=0; page=1; stop=False
     while not stop:
         try:
             res = im("POST","/api/search/metadata",{"page":page,"size":1000,"withExif":True,"type":"IMAGE"})
@@ -172,7 +230,7 @@ def main():
         if not items: break
         for a in items:
             aid = a["id"]
-            if aid in done: continue
+            if checkpoint.contains(aid): continue
             if LIMIT and n >= LIMIT: stop=True; break
             b = ml_busy()
             while b: log(f"Immich ML busy ({b}); wait 90s"); time.sleep(90); b = ml_busy()
@@ -181,12 +239,13 @@ def main():
                 if ok % 100 == 0: log(f"progress: {ok} tagged, {err} err (page {page})")
             except Exception as e:
                 err+=1; log(f"ERR {aid[:8]}: {e}")
-            ck.write(aid+"\n"); ck.flush(); done.add(aid); n+=1
+            checkpoint.mark(aid); n+=1
             if n % 500 == 0:
                 try: im("PUT","/api/jobs/sidecar",{"command":"empty"})   # discard held SidecarWrite jobs
                 except Exception: pass
         page += 1
     log(f"FULL done — {ok} tagged, {err} err")
+    checkpoint.close()
     try: os.remove(LOCK)
     except OSError: pass
 
