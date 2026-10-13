@@ -73,18 +73,18 @@ class TouchTaskScope : AutoCloseable {
     private inner class ScopedTask(
         private val submissionEpoch: Long,
         private val block: (isCurrent: () -> Boolean) -> Unit,
-    ) : FutureTask<Unit>({ Unit }) {
+    ) : FutureTask<Unit>({
+        if (isCurrent(submissionEpoch)) {
+            block { isCurrent(submissionEpoch) }
+        }
+        Unit
+    }) {
         override fun run() {
             if (isCancelled || !isCurrent(submissionEpoch)) {
                 cancel(false)
                 return
             }
-            try {
-                block { isCurrent(submissionEpoch) }
-                set(Unit)
-            } catch (error: Throwable) {
-                setException(error)
-            }
+            super.run()
         }
 
         override fun done() {
