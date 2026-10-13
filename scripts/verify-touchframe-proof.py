@@ -84,7 +84,8 @@ def static_contract() -> dict[str, object]:
         "media-only edge gesture": "destination.isImmersiveMedia &&",
         "48dp edge target": "EDGE_WIDTH_DP = 48",
         "Home configuration relayout": "home.refreshLayoutForConfiguration(newConfig)",
-        "Home first-measure layout gate": "fun needsRebuild(previous: Boolean?, next: Boolean): Boolean = previous != next",
+        "Home measured-content configuration width": "fun contentWidthDp(screenWidthDp: Float, railWidthDp: Float): Float =",
+        "Home transition scheduler": "fun needsTransition(previous: Boolean?, next: Boolean): Boolean = previous != next",
         "56dp horizontal threshold": "HORIZONTAL_THRESHOLD_DP = 56",
         "32dp vertical tolerance": "VERTICAL_TOLERANCE_DP = 32",
         "AA Settings and selected rail ink": "private const val ACCESSIBLE_RAIL_INK = -15722718",
@@ -341,10 +342,10 @@ try:
         {"only media destinations accept a qualified left edge reveal"},
     )
     home_first_measure_red = mutate(
-        "home-first-measure-layout-red", "home_layout",
-        "fun needsRebuild(previous: Boolean?, next: Boolean): Boolean = previous != next",
-        "fun needsRebuild(previous: Boolean?, next: Boolean): Boolean = previous != null && previous != next",
-        {"first measured compact size rebuilds a large fallback layout exactly once"},
+        "home-layout-transition-red", "home_layout",
+        "fun needsTransition(previous: Boolean?, next: Boolean): Boolean = previous != next",
+        "fun needsTransition(previous: Boolean?, next: Boolean): Boolean = previous != null && previous != next",
+        {"layout transition emits initial and changed classes exactly once"},
     )
     shell_contrast_red = mutate(
         "shell-contrast-red", "shell",
@@ -565,7 +566,7 @@ try:
         "packagingRestored": packaging_restored, "packagingUnchangedSha256": packaging_hashes,
         "sourceTestAnnotationCount": expected_tests, "initial": initial, "preparedBridgeInitial": bridge_initial,
         "preparedBridgeSessionGateRed": bridge_red, "edgeRed": edge_red,
-        "homeFirstMeasureLayoutRed": home_first_measure_red,
+        "homeLayoutTransitionRed": home_first_measure_red,
         "shellContrastRed": shell_contrast_red,
         "settingsReturnOverlayRed": settings_return_red,
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red,
