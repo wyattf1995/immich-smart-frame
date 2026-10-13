@@ -76,6 +76,7 @@ def static_contract() -> dict[str, object]:
         "48dp edge target": "EDGE_WIDTH_DP = 48",
         "56dp horizontal threshold": "HORIZONTAL_THRESHOLD_DP = 56",
         "32dp vertical tolerance": "VERTICAL_TOLERANCE_DP = 32",
+        "AA Settings and selected rail ink": "private const val ACCESSIBLE_RAIL_INK = -15722718",
         "direct state API": "/api/states/$entityId",
         "direct calendar API": "/api/calendars/$calendarId",
         "bounded request workers": "MAX_REQUEST_WORKERS = 2",
@@ -318,6 +319,12 @@ try:
         "true &&\n        downX in 0f..edgeWidth.toFloat()",
         {"only media destinations accept a qualified left edge reveal"},
     )
+    shell_contrast_red = mutate(
+        "shell-contrast-red", "shell",
+        "private const val ACCESSIBLE_RAIL_INK = -15722718",
+        "private const val ACCESSIBLE_RAIL_INK = -922140",
+        {"selected and Settings rail ink satisfy AA contrast in both palettes"},
+    )
     cap_red = mutate(
         "calendar-cap-red", "parser",
         "const val MAX_EVENTS_PER_CALENDAR = 200",
@@ -498,6 +505,7 @@ try:
         "packagingRestored": packaging_restored, "packagingUnchangedSha256": packaging_hashes,
         "sourceTestAnnotationCount": expected_tests, "initial": initial, "preparedBridgeInitial": bridge_initial,
         "preparedBridgeSessionGateRed": bridge_red, "edgeRed": edge_red,
+        "shellContrastRed": shell_contrast_red,
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red,
         "climateStaleGateRed": climate_stale_red, "mediaCrashRetryRed": media_red,
         "offlineHiddenPhotosRed": offline_red,
