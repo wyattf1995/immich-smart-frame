@@ -30,8 +30,12 @@ class TouchMediaView(
     context: Context,
     private val runtime: GeckoRuntime,
     private val urlPolicy: FrameUrlPolicy = FrameUrlPolicy(),
+    photoStore: TouchOfflinePhotoStore? = null,
 ) : FrameLayout(context) {
     var onStatus: ((String?) -> Unit)? = null
+    var onPhotoObserved: ((com.wyattfleming.frameos.photos.FramePhotoBridge.PhotoObserved) -> Unit)? = null
+    private val ownsPhotoStore = photoStore == null
+    private val offlineStore = photoStore ?: TouchOfflinePhotoStore(context)
 
     private val requiresFullAccessibilityTree = context.getSystemService(AccessibilityManager::class.java)
         ?.isTouchExplorationEnabled == true
@@ -57,7 +61,7 @@ class TouchMediaView(
     }
 
     private var session: GeckoSession? = null
-    private val offlinePhotos = TouchOfflinePhotos(context)
+    private val offlinePhotos = TouchOfflinePhotos(context, offlineStore) { photo -> onPhotoObserved?.invoke(photo) }
     private var photosProfile: String? = null
     private val loadState = TouchMediaLoadState()
     private val configuredUrl: String? get() = loadState.configuredUrl
@@ -93,8 +97,17 @@ class TouchMediaView(
 
     fun movePhoto(forward: Boolean): Boolean = photosProfile != null && offlinePhotos.move(forward)
 
-    fun applyHiddenPhotos(assetIds: Set<String>, canCommit: () -> Boolean = { true }): Future<Boolean>? =
-        if (photosProfile == null) null else offlinePhotos.applyHiddenAssets(assetIds, canCommit)
+    fun applyHiddenPhotos(assetIds: Set<String>, canCommit: () -> Boolean = { true }): Future<Boolean> =
+        offlineStore.applyHiddenAssets(assetIds, canCommit)
+
+    fun activateOfflinePhotosScope(validatedPhotosUrl: String, profile: String): Future<Boolean> =
+        offlineStore.activateScope(validatedPhotosUrl, profile)
+
+    fun hideOfflinePhotoIfHidden(assetIds: Set<String>) = offlinePhotos.hideFallbackIfHidden(assetIds)
+
+    val offlineVisible: Boolean get() = offlinePhotos.isOfflineVisible()
+
+    fun offlineStatus(): com.wyattfleming.frameos.photos.FrameOfflineReserve.Status = offlineStore.publishedStatus()
 
     fun showUrl(url: String, label: String) {
         if (label != "Photos") {
@@ -140,6 +153,7 @@ class TouchMediaView(
         closed = true
         retryButton.visibility = View.GONE
         offlinePhotos.close()
+        if (ownsPhotoStore) offlineStore.close()
         onStatus?.invoke(null)
         session?.let { current ->
             runCatching { current.setFocused(false) }
