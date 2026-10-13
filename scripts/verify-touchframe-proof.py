@@ -126,6 +126,13 @@ bridge_command = [
 ]
 
 
+def missing_results(log: Path, exit_code: int, detail: str) -> RuntimeError:
+    # Source-only builds contain no device credentials. Surface a bounded compiler
+    # tail so a script failure is diagnosable without waiting for artifact export.
+    tail = "\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-80:])[-12000:]
+    return RuntimeError(f"{detail}; Gradle exit={exit_code}; log={log.name}\n{tail}")
+
+
 def run(label: str, expected_failures: set[str]) -> dict[str, object]:
     if result_dir.exists():
         shutil.rmtree(result_dir)
@@ -136,7 +143,7 @@ def run(label: str, expected_failures: set[str]) -> dict[str, object]:
     for _, (_, _, klass) in suites.items():
         xmls = list(result_dir.rglob(f"TEST-{klass}.xml"))
         if len(xmls) != 1:
-            raise RuntimeError(f"expected one JUnit XML for {klass}, found {xmls}")
+            raise missing_results(log, result.returncode, f"expected one JUnit XML for {klass}, found {xmls}")
         cases.extend(ET.parse(xmls[0]).getroot().iter("testcase"))
     failed = {case.get("name") or "" for case in cases if case.find("failure") is not None}
     errors = [case for case in cases if case.find("error") is not None]
@@ -156,7 +163,7 @@ def run_bridge(label: str, expected_failures: set[str]) -> dict[str, object]:
         result = subprocess.run(bridge_command, cwd=frame, stdout=stream, stderr=subprocess.STDOUT)
     xmls = list(bridge_result_dir.rglob(f"TEST-{bridge_class}.xml"))
     if len(xmls) != 1:
-        raise RuntimeError(f"expected one prepared-bridge JUnit XML, found {xmls}")
+        raise missing_results(log, result.returncode, f"expected one prepared-bridge JUnit XML, found {xmls}")
     cases = list(ET.parse(xmls[0]).getroot().iter("testcase"))
     failed = {case.get("name") or "" for case in cases if case.find("failure") is not None}
     errors = [case for case in cases if case.find("error") is not None]
