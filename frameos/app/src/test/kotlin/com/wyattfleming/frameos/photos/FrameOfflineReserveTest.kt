@@ -93,6 +93,29 @@ class FrameOfflineReserveTest {
     }
 
     @Test
+    fun `published status remains lock free while a hidden snapshot owns reserve mutation`() {
+        val root = Files.createTempDirectory("frame-offline-reserve-published-status").toFile()
+        val asset = "11111111-1111-4111-8111-111111111111"
+        val reserve = FrameOfflineReserve(root, FixedDecoder())
+        assertTrue(reserve.activateScope("https://photos.example/kiosk", "family"))
+        assertTrue(reserve.persist(asset, "visible"))
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val worker = Thread {
+            reserve.applyHiddenAssets(setOf(asset)) {
+                entered.countDown()
+                release.await(5, TimeUnit.SECONDS)
+            }
+        }.apply { start() }
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        val started = System.nanoTime()
+        assertEquals(1, reserve.publishedStatus().offlineAssets)
+        assertTrue("published read blocked on reserve monitor", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 250)
+        release.countDown(); worker.join(5_000)
+        assertEquals(0, reserve.publishedStatus().offlineAssets)
+    }
+
+    @Test
     fun `bridge persists only exact configured top level photos session and reports health`() {
         val root = Files.createTempDirectory("frame-photo-bridge-test").toFile()
         val reserve = FrameOfflineReserve(root, FixedDecoder())
