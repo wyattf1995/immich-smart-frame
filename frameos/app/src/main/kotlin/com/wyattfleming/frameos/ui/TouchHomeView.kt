@@ -51,9 +51,12 @@ class TouchHomeView private constructor(
     private var model: TouchHomeModel? = null
     private var nowMillis: Long = System.currentTimeMillis()
     private var style = TouchDashboardStyle.forHour(hourAt(nowMillis))
-    private var draftMode: String? = null
     private var draftTarget: Double? = null
     private var draftDirty = false
+    private var climateBusy = false
+    private var climateMessage: String? = null
+    private var clockView: TextView? = null
+    private var dateView: TextView? = null
     private var lastLargeLayout: Boolean? = null
 
     init {
@@ -63,6 +66,7 @@ class TouchHomeView private constructor(
 
     /** Renders the newest caller-owned snapshot without clearing an active draft. */
     fun render(model: TouchHomeModel) {
+        if (this.model == model) return
         val previousClimate = this.model?.climate
         this.model = model
         val climate = model.climate
@@ -71,12 +75,25 @@ class TouchHomeView private constructor(
         rebuild()
     }
 
-    /** Updates the local clock and day/night palette without fetching data. */
+    /** Lets the activity reflect a real command outcome without inventing one. */
+    fun setClimateBusy(busy: Boolean, message: String? = null) {
+        if (climateBusy == busy && climateMessage == message) return
+        climateBusy = busy
+        climateMessage = message
+        rebuild()
+    }
+
+    /** Updates the retained clock nodes; only a day/night transition rebuilds cards. */
     fun tick(nowMillis: Long) {
         this.nowMillis = nowMillis
         val nextStyle = TouchDashboardStyle.forHour(hourAt(nowMillis))
-        if (nextStyle != style) style = nextStyle
-        rebuild()
+        if (nextStyle != style) {
+            style = nextStyle
+            rebuild()
+        } else {
+            clockView?.text = timeText()
+            dateView?.text = dateText()
+        }
     }
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
@@ -131,8 +148,10 @@ class TouchHomeView private constructor(
 
     private fun header(type: Typography): View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        addView(label(timeText(), type.clock, true))
-        addView(label(dateText(), type.body, false))
+        clockView = label(timeText(), type.clock, true)
+        dateView = label(dateText(), type.body, false)
+        addView(clockView)
+        addView(dateView)
     }
 
     private fun statusCard(snapshot: TouchHomeModel?, type: Typography): View = card().apply {
@@ -220,11 +239,11 @@ class TouchHomeView private constructor(
         ))
         val modes = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         climate.modes.distinct().forEach { candidate ->
-            modes.addView(button(candidate.replaceFirstChar { it.titlecase(Locale.getDefault()) }, type.small) {
-                draftMode = candidate
-                draftDirty = true
-                rebuild()
-            }, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)).apply {
+            modes.addView(button(
+                candidate.replaceFirstChar { it.titlecase(Locale.getDefault()) },
+                type.small,
+                enabled = !climateBusy,
+            ) { onClimateMode(candidate) }, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)).apply {
                 if (childCount > 0) topMargin = context.dp(8)
             })
         }
@@ -232,29 +251,30 @@ class TouchHomeView private constructor(
             topMargin = context.dp(12)
         })
         val adjust = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        adjust.addView(button("−", type.body) { changeTarget(climate, -1) }, LinearLayout.LayoutParams(0, context.dp(56), 1f).apply {
+        adjust.addView(button("−", type.body, enabled = !climateBusy) { changeTarget(climate, -1) }, LinearLayout.LayoutParams(0, context.dp(56), 1f).apply {
             marginEnd = context.dp(8)
         })
-        adjust.addView(button("+", type.body) { changeTarget(climate, 1) }, LinearLayout.LayoutParams(0, context.dp(56), 1f))
+        adjust.addView(button("+", type.body, enabled = !climateBusy) { changeTarget(climate, 1) }, LinearLayout.LayoutParams(0, context.dp(56), 1f))
         addView(adjust, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
             topMargin = context.dp(8)
         })
         val apply = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        apply.addView(button("Apply", type.small) {
-            val selectedMode = draftMode
-            val selectedTarget = draftTarget
-            if (selectedMode != null && selectedMode != climate.mode) onClimateMode(selectedMode)
-            if (selectedTarget != null && selectedTarget != climate.targetTemperature) onClimateTarget(selectedTarget)
-            clearDraft(climate)
-            rebuild()
+        apply.addView(button("Apply", type.small, enabled = !climateBusy && draftDirty) {
+            draftTarget?.takeIf { it != climate.targetTemperature }?.let(onClimateTarget)
         }, LinearLayout.LayoutParams(0, context.dp(56), 1f).apply { marginEnd = context.dp(8) })
-        apply.addView(button("Cancel", type.small) {
+        apply.addView(button("Cancel", type.small, enabled = !climateBusy && draftDirty) {
             clearDraft(climate)
             rebuild()
         }, LinearLayout.LayoutParams(0, context.dp(56), 1f))
         addView(apply, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
             topMargin = context.dp(8)
         })
+        climateMessage?.let { message ->
+            addView(label(message, type.small, false), LinearLayout.LayoutParams(
+                LayoutParams.MATCH_PARENT,
+                LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = context.dp(8) })
+        }
     }
 
     private fun exploreCard(type: Typography): View = card().apply {
@@ -289,7 +309,6 @@ class TouchHomeView private constructor(
     }
 
     private fun clearDraft(climate: TouchClimate?) {
-        draftMode = climate?.mode
         draftTarget = climate?.targetTemperature
         draftDirty = false
     }
@@ -299,11 +318,13 @@ class TouchHomeView private constructor(
         background = style.card(context.dp(20).toFloat())
     }
 
-    private fun button(label: String, size: Float, action: () -> Unit): TextView = TextView(context).apply {
+    private fun button(label: String, size: Float, enabled: Boolean = true, action: () -> Unit): TextView = TextView(context).apply {
         text = label
         gravity = Gravity.CENTER
-        isClickable = true
-        isFocusable = true
+        isClickable = enabled
+        isFocusable = enabled
+        isEnabled = enabled
+        alpha = if (enabled) 1f else 0.45f
         minimumTouchTarget(context)
         background = style.card(context.dp(14).toFloat())
         setPadding(context.dp(12), 0, context.dp(12), 0)
