@@ -1,3 +1,6 @@
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.OutputDirectory
+
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
@@ -6,7 +9,14 @@ plugins {
 // Android source sets accept directories, not PatternFilterable.include. These
 // build-owned mirrors keep the reviewed allowlist while compiling the canonical
 // app sources. Task inputs track source-proof mutations; no source is hand-copied.
-val syncSharedMainSources by tasks.registering(Sync::class) {
+abstract class SharedInputSync : Sync() {
+    @get:OutputDirectory
+    abstract val generatedDirectory: DirectoryProperty
+
+    init { into(generatedDirectory) }
+}
+
+val syncSharedMainSources by tasks.registering(SharedInputSync::class) {
     from("../app/src/main/kotlin") {
         include(
             "com/wyattfleming/frameos/FrameOperationLogger.kt",
@@ -41,10 +51,10 @@ val syncSharedMainSources by tasks.registering(Sync::class) {
             "com/wyattfleming/frameos/web/FrameOAuthWebSurface.kt",
         )
     }
-    into(layout.buildDirectory.dir("generated/shared/main/kotlin"))
+    generatedDirectory.set(layout.buildDirectory.dir("generated/shared/main/kotlin"))
 }
 
-val syncSharedTestSources by tasks.registering(Sync::class) {
+val syncSharedTestSources by tasks.registering(SharedInputSync::class) {
     from("../app/src/test/kotlin") {
         include(
             "com/wyattfleming/frameos/auth/**",
@@ -62,12 +72,12 @@ val syncSharedTestSources by tasks.registering(Sync::class) {
             "com/wyattfleming/frameos/control/FrameCompanionEventStoreTest.kt",
         )
     }
-    into(layout.buildDirectory.dir("generated/shared/test/kotlin"))
+    generatedDirectory.set(layout.buildDirectory.dir("generated/shared/test/kotlin"))
 }
 
-val syncSharedAssets by tasks.registering(Sync::class) {
+val syncSharedAssets by tasks.registering(SharedInputSync::class) {
     from("../app/src/main/assets") { include("frame-photo-bridge/**") }
-    into(layout.buildDirectory.dir("generated/shared/main/assets"))
+    generatedDirectory.set(layout.buildDirectory.dir("generated/shared/main/assets"))
 }
 
 android {
@@ -96,13 +106,22 @@ android {
 
     sourceSets {
         getByName("main") {
-            java.setSrcDirs(listOf("src/main/kotlin", syncSharedMainSources))
-            assets.srcDir(syncSharedAssets)
+            java.setSrcDirs(listOf("src/main/kotlin"))
         }
         getByName("test") {
-            java.setSrcDirs(listOf("src/test/kotlin", syncSharedTestSources))
+            java.setSrcDirs(listOf("src/test/kotlin"))
             resources.srcDir("../app/src/test/resources")
         }
+    }
+}
+
+// Variant sources retain producer dependencies and mark these inputs generated.
+// AGP 9 intentionally rejects task Providers passed to the static source-set DSL.
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.sources.java?.addGeneratedSourceDirectory(syncSharedMainSources, SharedInputSync::generatedDirectory)
+        variant.sources.assets?.addGeneratedSourceDirectory(syncSharedAssets, SharedInputSync::generatedDirectory)
+        variant.unitTest?.sources?.java?.addGeneratedSourceDirectory(syncSharedTestSources, SharedInputSync::generatedDirectory)
     }
 }
 
