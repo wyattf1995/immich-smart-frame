@@ -12,7 +12,12 @@ class MainActivityCompanionContractTest {
         assertTrue(source.contains("private var companionPollGeneration"))
         assertTrue(source.contains("invalidateCompanionPoll()"))
         assertTrue(source.contains("generation != companionPollGeneration"))
-        assertTrue(source.contains("FrameCompanionCredentialsStore(this).read() != credentials"))
+        assertTrue(source.contains("val credentialsStillCurrent = FrameCompanionCredentialsStore(this).read() == credentials"))
+    }
+
+    @Test fun `credential changes retire the companion snapshot revision`() {
+        assertTrue(source.contains("if (!credentialsStillCurrent) invalidateCompanionPoll()"))
+        assertTrue(source.contains("companionSnapshotRevision = null"))
     }
 
     @Test fun `pause keeps the visible Gecko surface active and controls the slideshow separately`() {
