@@ -9,8 +9,8 @@ class TouchCalendarRangeParserTest {
     private val zone = ZoneId.of("America/Los_Angeles")
     @Test fun `agenda is seven days and month grid is bounded to forty two`() {
         val date = LocalDate.of(2026, 10, 14)
-        assertEquals(7, TouchCalendarRange.forMode(TouchCalendarMode.AGENDA, date).days)
-        assertEquals(7, TouchCalendarRange.forMode(TouchCalendarMode.WEEK, date).days)
+        assertEquals(7L, TouchCalendarRange.forMode(TouchCalendarMode.AGENDA, date).days)
+        assertEquals(7L, TouchCalendarRange.forMode(TouchCalendarMode.WEEK, date).days)
         val month = TouchCalendarRange.forMode(TouchCalendarMode.MONTH, date)
         assertTrue(month.days <= 42)
         assertEquals(month.days / 7, TouchCalendarRenderPlan.monthWeeks(month).toLong())
