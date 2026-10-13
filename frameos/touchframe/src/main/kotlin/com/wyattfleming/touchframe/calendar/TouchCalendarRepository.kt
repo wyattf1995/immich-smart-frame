@@ -57,9 +57,11 @@ class TouchCalendarRepository(
             val responses = submitted.map { (id, future) -> id to future.get(remaining(deadline), TimeUnit.MILLISECONDS) }
             val authRequired = responses.any { it.second === CalendarResponse.AuthRequired }
             if (authRequired) return TouchCalendarLoad(emptyList(), TouchCalendarConnection.SIGN_IN_REQUIRED)
-            val failures = responses.count { it.second === CalendarResponse.Failed }
+            var failures = responses.count { it.second === CalendarResponse.Failed }
             val events = responses.flatMap { (id, response) ->
-                (response as? CalendarResponse.Success)?.let { parser.parse(id, it.body, range, zoneId) }.orEmpty()
+                (response as? CalendarResponse.Success)?.let {
+                    runCatching { parser.parse(id, it.body, range, zoneId) }.getOrElse { failures++; emptyList() }
+                }.orEmpty()
             }.distinctBy { listOf(it.title, it.startEpochMillis, it.endEpochMillis, it.allDay) }
                 .sortedBy(TouchCalendarEvent::startEpochMillis).take(MAX_EVENTS)
             if (!isCurrent(operation)) TouchCalendarLoad(emptyList(), TouchCalendarConnection.OFFLINE)
