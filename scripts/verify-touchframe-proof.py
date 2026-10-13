@@ -31,6 +31,7 @@ suites = {
     "parser": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeParser.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeParserTest.kt", "com.wyattfleming.touchframe.home.TouchHomeParserTest"),
     "repository": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepository.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepositoryTest.kt", "com.wyattfleming.touchframe.home.TouchHomeRepositoryTest"),
     "media": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchMediaLoadStateTest.kt", "com.wyattfleming.touchframe.media.TouchMediaLoadStateTest"),
+    "camera_palette": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchCameraView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchCameraPaletteTest.kt", "com.wyattfleming.touchframe.media.TouchCameraPaletteTest"),
     "offline": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoLifecycleTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoLifecycleTest"),
     "blur": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflineBlurPlanTest.kt", "com.wyattfleming.touchframe.media.TouchOfflineBlurPlanTest"),
     "offline_store": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStore.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStoreScopeGateTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoStoreScopeGateTest"),
@@ -63,6 +64,7 @@ def static_contract() -> dict[str, object]:
     repo = suites["repository"][0].read_text()
     parser = suites["parser"][0].read_text()
     media = suites["media"][0].read_text()
+    camera_palette = suites["camera_palette"][0].read_text()
     offline = suites["offline"][0].read_text()
     blur = suites["blur"][0].read_text()
     offline_store = suites["offline_store"][0].read_text()
@@ -89,6 +91,7 @@ def static_contract() -> dict[str, object]:
         "cancel operation generation gate": "!acceptOperation(operation)",
         "calendar event cap": "MAX_EVENTS_PER_CALENDAR = 200",
         "same-url crash retry": "if (configuredUrl == url) return if (contentProcessClosed)",
+        "Camera palette accessible accent": "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
         "pause lifecycle gate": "if (closed || !resumed) return\n            resumed = false",
         "Photos-active fallback gate": "active = value && attachment != null",
         "bounded blurred backdrop": "const val MAX_BACKDROP_EDGE = 128",
@@ -108,7 +111,7 @@ def static_contract() -> dict[str, object]:
         "calendar weekday header allowance": "WEEKDAY_HEADER_MIN_HEIGHT_DP = 48",
         "Birds URL validation": "if (birds != null && !urlPolicy.isSafeConfigurationUrl(birds)) return null",
     }
-    combined = shell + settings_return + repo + parser + media + offline + blur + offline_store + hidden_commit + companion + destination_order + settings_policy + provisioning + scope + calendar_repository + calendar_presentation + configuration
+    combined = shell + settings_return + repo + parser + media + camera_palette + offline + blur + offline_store + hidden_commit + companion + destination_order + settings_policy + provisioning + scope + calendar_repository + calendar_presentation + configuration
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -369,6 +372,12 @@ try:
         "return Decision.LOAD",
         {"contentCrashRequiresExplicitRetryAndUsesTheMostRecentConfiguredUrl"},
     )
+    camera_palette_red = mutate(
+        "camera-palette-contrast-red", "camera_palette",
+        "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
+        "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFFF1EDE4.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
+        {"camera controls keep readable foregrounds on each explicit palette"},
+    )
     offline_red = mutate(
         "offline-hidden-photos-red", "offline",
         "active = value && attachment != null",
@@ -531,6 +540,7 @@ try:
         "settingsReturnOverlayRed": settings_return_red,
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red,
         "climateStaleGateRed": climate_stale_red, "mediaCrashRetryRed": media_red,
+        "cameraPaletteContrastRed": camera_palette_red,
         "offlineHiddenPhotosRed": offline_red,
         "offlineBackdropBoundRed": blur_red,
         "offlineAttachmentGenerationRed": attachment_gate_red,
