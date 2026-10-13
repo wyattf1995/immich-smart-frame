@@ -72,6 +72,7 @@ PY
 }
 
 run_step() { local name="$1"; shift; printf '\n== %s ==\n' "$name" | tee -a "$raw_log"; "$@" 2>&1 | tee -a "$raw_log"; }
+run_step mutation-target-preflight python3 "$root_dir/scripts/verify-touchframe-mutation-targets.py" "$root_dir"
 bootstrap_api37_sdk
 export ANDROID_SDK_ROOT="$sdk_dir" ANDROID_HOME="$sdk_dir"
 
