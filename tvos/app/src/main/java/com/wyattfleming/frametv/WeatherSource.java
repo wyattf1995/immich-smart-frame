@@ -23,6 +23,10 @@ final class WeatherSource {
         void onStatus(String title, String detail, String provider);
     }
     private static final int MAX_RESPONSE_BYTES = 128 * 1024;
+    // The native panels show a short forecast. Keep untrusted JSON arrays bounded even
+    // though the response byte cap is also enforced at the network boundary.
+    private static final int MAX_HOURLY_ENTRIES = 168;
+    private static final int MAX_DAILY_ENTRIES = 16;
     private final Context context;
     private final Listener listener;
     private final WeatherPreferences preferences;
@@ -180,6 +184,7 @@ final class WeatherSource {
         JSONArray hourCodes = hourly.optJSONArray("weather_code");
         JSONArray precipitation = hourly.optJSONArray("precipitation_probability");
         JSONArray daylight = hourly.optJSONArray("is_day");
+        requireAligned("hourly.time", hourTimes, MAX_HOURLY_ENTRIES, hourTemps, hourCodes, precipitation, daylight);
         List<WeatherForecast.Hour> hours = new ArrayList<>();
         for (int i = 0; i < hourTimes.length(); i++) hours.add(new WeatherForecast.Hour(
                 longAt(hourTimes, i, -1), numberAt(hourTemps, i), integerAt(hourCodes, i), integerAt(precipitation, i), daylightAt(daylight, i)));
@@ -187,12 +192,22 @@ final class WeatherSource {
         JSONArray highs = daily.getJSONArray("temperature_2m_max");
         JSONArray lows = daily.getJSONArray("temperature_2m_min");
         JSONArray dayCodes = daily.optJSONArray("weather_code");
+        requireAligned("daily.time", dayTimes, MAX_DAILY_ENTRIES, highs, lows, dayCodes);
         List<WeatherForecast.Day> days = new ArrayList<>();
         for (int i = 0; i < dayTimes.length(); i++) days.add(new WeatherForecast.Day(
                 longAt(dayTimes, i, -1), numberAt(highs, i), numberAt(lows, i), integerAt(dayCodes, i)));
         String id = root.optString("timezone", "UTC");
         TimeZone zone = TimeZone.getTimeZone(id);
         return new WeatherForecast(numberAt(current, "temperature_2m"), integerAt(current, "weather_code"), hours, days, zone);
+    }
+
+    /** Required and optional series must describe the same bounded timeline. */
+    private static void requireAligned(String name, JSONArray timeline, int maximum, JSONArray... values) throws JSONException {
+        int size = timeline.length();
+        if (size < 1 || size > maximum) throw new JSONException(name + " must contain 1.." + maximum + " entries");
+        for (JSONArray value : values) {
+            if (value != null && value.length() != size) throw new JSONException(name + " arrays must be aligned");
+        }
     }
 
     private static Boolean daylightAt(JSONArray values, int index) {
