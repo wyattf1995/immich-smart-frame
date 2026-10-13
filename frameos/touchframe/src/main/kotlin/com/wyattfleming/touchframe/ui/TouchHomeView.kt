@@ -539,8 +539,14 @@ class TouchHomeView private constructor(
 
     private fun setpointState(kit: TouchKit, climate: TouchClimate, connection: TouchConnection?, shown: Double?): View = when {
         climateBusy -> kit.chip("Sending…", TouchKit.Tone.PENDING)
-        climateResult == ClimateResult.FAILED && draft.dirty && shown != null ->
-            kit.chip("Couldn’t set to ${formatTemperature(shown)}", TouchKit.Tone.ERROR)
+        climateResult == ClimateResult.FAILED && draft.dirty && shown != null -> LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(kit.chip("Couldn’t set to ${formatTemperature(shown)}", TouchKit.Tone.ERROR))
+            // The command path reports only confirmed or not, so the reason is stated at that level.
+            addView(kit.text("Home Assistant didn’t confirm it.", scale.caption, color = kit.palette.inkMuted),
+                LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(6) })
+        }
         climateResult == ClimateResult.FAILED -> kit.chip("Couldn’t confirm the change", TouchKit.Tone.ERROR)
         draft.dirty -> kit.chip("Not sent yet", TouchKit.Tone.PENDING)
         climateResult == ClimateResult.CONFIRMED && shown != null -> kit.chip("Set to ${formatTemperature(shown)}", TouchKit.Tone.OK)

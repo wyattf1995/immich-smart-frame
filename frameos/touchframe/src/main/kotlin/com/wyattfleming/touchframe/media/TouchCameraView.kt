@@ -64,6 +64,7 @@ class TouchCameraView(
     }
     private val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private var imageCamera: String? = null
+    private var listSignedOut = false
     private var imageAtMillis: Long? = null
     private var stageState: Stage = Stage.Loading
 
@@ -301,8 +302,9 @@ class TouchCameraView(
         list.removeAllViews()
         cameraButtons.clear()
         val wall = kit.scale == TouchScale.WALL
+        listSignedOut = stageState == Stage.SignIn
         cameraIds.forEach { id ->
-            val button = cameraButton(kit, palette, id, id == selected)
+            val button = cameraButton(kit, palette, id, id == selected && !listSignedOut, enabled = !listSignedOut)
             cameraButtons[id] = button
             list.addView(button, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, kit.dp(if (wall) 88 else 76)).apply {
                 if (list.childCount > 0) topMargin = kit.dp(12)
@@ -323,29 +325,38 @@ class TouchCameraView(
         renderStage()
     }
 
-    private fun cameraButton(kit: TouchKit, palette: TouchCameraPalette, id: String, isSelected: Boolean) = LinearLayout(context).apply {
+    private fun cameraButton(kit: TouchKit, palette: TouchCameraPalette, id: String, isSelected: Boolean, enabled: Boolean) = LinearLayout(context).apply {
         val p = kit.palette
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(kit.dp(20), 0, kit.dp(16), 0)
-        isClickable = true
-        isFocusable = true
+        isClickable = enabled
+        isFocusable = enabled
+        isEnabled = enabled
         this.isSelected = isSelected
         val label = TouchCameraLabels.forEntityId(id)
         contentDescription = label
-        val ink = if (isSelected) palette.accentInk else palette.ink
-        val base = if (isSelected) kit.rounded(palette.accent, kit.scale.radiusSmall, p.accentStroke, 2)
-            else kit.rounded(p.matRaised, kit.scale.radiusSmall, p.stroke, 2)
-        background = kit.pressable(base, kit.scale.radiusSmall)
+        val ink = when {
+            !enabled -> palette.disabledInk
+            isSelected -> palette.accentInk
+            else -> palette.ink
+        }
+        background = when {
+            !enabled -> kit.rounded(0x00000000, kit.scale.radiusSmall, palette.disabledInk, 2, dashed = true)
+            isSelected -> kit.pressable(kit.rounded(palette.accent, kit.scale.radiusSmall, p.accentStroke, 2), kit.scale.radiusSmall)
+            else -> kit.pressable(kit.rounded(p.matRaised, kit.scale.radiusSmall, p.stroke, 2), kit.scale.radiusSmall)
+        }
         addView(kit.icon(R.drawable.ic_touch_cameras, ink, 30))
         addView(kit.text(label, kit.scale.body, TouchFonts.Face.TEXT_BOLD, ink, maxLines = 2).apply {
             importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
         }, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = kit.dp(14) })
-        setOnClickListener { selectCamera(id) }
+        if (enabled) setOnClickListener { selectCamera(id) }
     }
 
     /** Applies the current stage without rebuilding the controls (snapshots arrive every few seconds). */
     private fun renderStage() {
+        // Signing out disables the list (and signing back in restores it); rebuild once per change.
+        if ((stageState == Stage.SignIn) != listSignedOut) return rebuild()
         val kit = kit()
         val p = kit.palette
         val name = TouchCameraLabels.forEntityId(selected)

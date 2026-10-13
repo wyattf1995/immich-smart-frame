@@ -110,19 +110,21 @@ class TouchCalendarView(
             addView(kit.text(title(), kit.scale.title, TouchFonts.Face.DISPLAY_BOLD, maxLines = 1))
             addView(kit.text(freshness(), kit.scale.caption, color = p.inkMuted), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(2) })
         }
-        val segmented = kit.segmented(modes, state.mode, enabled = true, sizeSp = TouchCalendarPresentation.CONTROL_TEXT_SP) { mode ->
+        // Signed out, navigation has nothing to load: the controls are drawn disabled instead of looking live.
+        val live = state.connection != TouchCalendarConnection.SIGN_IN_REQUIRED
+        val segmented = kit.segmented(modes, state.mode, enabled = live, sizeSp = TouchCalendarPresentation.CONTROL_TEXT_SP) { mode ->
             request(mode, state.anchor, state.selectedDate, true)
         }
         val period = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(kit.iconButton(R.drawable.ic_touch_chevron_left, TouchCalendarPresentation.contentDescriptionFor("Previous")) {
+            addView(kit.iconButton(R.drawable.ic_touch_chevron_left, TouchCalendarPresentation.contentDescriptionFor("Previous"), enabled = live) {
                 request(state.mode, previousAnchor(), state.selectedDate, true)
             })
-            addView(kit.button("Today", sizeSp = TouchCalendarPresentation.CONTROL_TEXT_SP) {
+            addView(kit.button("Today", enabled = live, sizeSp = TouchCalendarPresentation.CONTROL_TEXT_SP) {
                 request(state.mode, LocalDate.now(), LocalDate.now(), true)
             }, LinearLayout.LayoutParams(WRAP, kit.dp(kit.scale.target)).apply { marginStart = kit.dp(12); marginEnd = kit.dp(12) })
-            addView(kit.iconButton(R.drawable.ic_touch_chevron_right, TouchCalendarPresentation.contentDescriptionFor("Next")) {
+            addView(kit.iconButton(R.drawable.ic_touch_chevron_right, TouchCalendarPresentation.contentDescriptionFor("Next"), enabled = live) {
                 request(state.mode, nextAnchor(), state.selectedDate, true)
             })
         }

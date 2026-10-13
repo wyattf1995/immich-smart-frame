@@ -141,7 +141,7 @@ internal data class TouchScale(
         )
         val PANEL = TouchScale(
             clock = 120f, clockSuffix = 32f, display = 56f, title = 32f, headline = 26f, body = 22f,
-            label = 20f, caption = 18f, rail = 15f, target = 64, stepper = 84, setpoint = 80f,
+            label = 20f, caption = 18f, rail = 15f, target = 72, stepper = 84, setpoint = 80f,
             pad = 32, gap = 24, radius = 20, radiusSmall = 14,
         )
 
