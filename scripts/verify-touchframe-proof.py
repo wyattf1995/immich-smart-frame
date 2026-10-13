@@ -26,6 +26,7 @@ suites = {
     "parser": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeParser.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeParserTest.kt", "com.wyattfleming.touchframe.home.TouchHomeParserTest"),
     "repository": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepository.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepositoryTest.kt", "com.wyattfleming.touchframe.home.TouchHomeRepositoryTest"),
     "media": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchMediaLoadStateTest.kt", "com.wyattfleming.touchframe.media.TouchMediaLoadStateTest"),
+    "offline": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoLifecycleTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoLifecycleTest"),
     "scope": (module / "src/main/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScope.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScopeTest.kt", "com.wyattfleming.touchframe.concurrent.TouchTaskScopeTest"),
 }
 
@@ -44,6 +45,7 @@ def static_contract() -> dict[str, object]:
     repo = suites["repository"][0].read_text()
     parser = suites["parser"][0].read_text()
     media = suites["media"][0].read_text()
+    offline = suites["offline"][0].read_text()
     scope = suites["scope"][0].read_text()
     required = {
         "media-only edge gesture": "destination.isImmersiveMedia &&",
@@ -57,8 +59,9 @@ def static_contract() -> dict[str, object]:
         "calendar event cap": "MAX_EVENTS_PER_CALENDAR = 200",
         "same-url crash retry": "if (configuredUrl == url) return if (contentProcessClosed)",
         "pause lifecycle gate": "if (closed || !resumed) return\n            resumed = false",
+        "Photos-active fallback gate": "active = value && attachment != null",
     }
-    combined = shell + repo + parser + media + scope
+    combined = shell + repo + parser + media + offline + scope
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -149,6 +152,12 @@ try:
         "return Decision.LOAD",
         {"content crash requires explicit retry and uses the most recent configured url"},
     )
+    offline_red = mutate(
+        "offline-hidden-photos-red", "offline",
+        "active = value && attachment != null",
+        "active = attachment != null",
+        {"hidden Photos never exposes a reserve bitmap"},
+    )
     scope_red = mutate(
         "pause-lifecycle-red", "scope",
         "if (closed || !resumed) return\n            resumed = false",
@@ -167,6 +176,7 @@ try:
         "proof": "touchframe-native-direct-data-v2", "passed": True, "command": command,
         "sourceTestAnnotationCount": expected_tests, "initial": initial, "edgeRed": edge_red,
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red, "mediaCrashRetryRed": media_red,
+        "offlineHiddenPhotosRed": offline_red,
         "pausedTaskEntryRed": scope_red,
         "restored": restored,
         "originalSourceSha256": source_hashes,
