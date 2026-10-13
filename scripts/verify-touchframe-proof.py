@@ -384,7 +384,7 @@ try:
     kill_generation_red = mutate(
         "media-kill-generation-red", "media",
         "it == configuredUrl && ticket.generation == sessionGeneration",
-        "it == configuredUrl",
+        "it == configuredUrl && true /* generation fence disabled */",
         {"retainedTicketCannotRecoverADifferentSessionGeneration"},
     )
     week_preview_red = mutate(
