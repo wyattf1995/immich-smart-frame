@@ -229,6 +229,12 @@ try:
         "fun isCurrent(expected: Long): Boolean = true",
         {"stale same session preparation cannot enable capture"},
     )
+    attachment_scope_red = mutate(
+        "offline-exact-scope-red", "offline",
+        "session === target && photosUrl == url && profile == requestedProfile",
+        "session === target",
+        {"same session and exact scope retain the offline attachment"},
+    )
     scope_red = mutate(
         "pause-lifecycle-red", "scope",
         "if (closed || !resumed) return\n            resumed = false",
@@ -252,6 +258,7 @@ try:
         "offlineHiddenPhotosRed": offline_red,
         "offlineBackdropBoundRed": blur_red,
         "offlineAttachmentGenerationRed": attachment_gate_red,
+        "offlineExactScopeRed": attachment_scope_red,
         "pausedTaskEntryRed": scope_red,
         "restored": restored, "preparedBridgeRestored": bridge_restored,
         "preparedBridgeSourceSha256": bridge_source_hash,
