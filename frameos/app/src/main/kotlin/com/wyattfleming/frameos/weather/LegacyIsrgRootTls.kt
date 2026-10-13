@@ -21,7 +21,7 @@ import javax.net.ssl.X509TrustManager
  * API 23 lacks ISRG Root X1. This keeps platform trust authoritative, with one
  * supplemental root only for the app's Home Assistant HTTPS connections.
  */
-internal object LegacyIsrgRootTls {
+object LegacyIsrgRootTls {
     private const val PINNED_ROOT_DER_SHA256 =
         "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6"
 
