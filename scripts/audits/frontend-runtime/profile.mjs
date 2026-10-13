@@ -13,10 +13,21 @@ const require = createRequire('/opt/launchpad-browser-runtime/package.json');
 const { chromium } = require('playwright');
 const repoRoot = process.cwd();
 const homeOnly = process.argv.includes('--home-only');
+const optimizedViews = process.argv.includes('--optimized-views');
 const output = resolve('output/playwright/runtime-audit');
+const auditIdentity = JSON.parse(await readFile(resolve('AUDIT-SOURCE-IDENTITY.json'), 'utf8'));
+if (!/^[0-9a-f]{40}$/.test(auditIdentity.productCommit || '') || !Array.isArray(auditIdentity.files)) throw Error('AUDIT-SOURCE-IDENTITY.json is incomplete');
+const productIdentityFiles = auditIdentity.files.filter(item => typeof item?.path === 'string' && !item.path.startsWith('scripts/audits/frontend-runtime/'));
+if (!productIdentityFiles.length) throw Error('AUDIT-SOURCE-IDENTITY.json has no product files');
+for (const item of productIdentityFiles) {
+  if (!Number.isInteger(item.bytes) || item.bytes < 0 || !/^[0-9a-f]{64}$/.test(item.sha256 || '')) throw Error(`invalid source identity entry: ${item.path}`);
+  const bytes = await readFile(resolve(item.path));
+  if (bytes.length !== item.bytes || createHash('sha256').update(bytes).digest('hex') !== item.sha256) throw Error(`source identity mismatch: ${item.path}`);
+}
+
 await mkdir(output, { recursive: true });
-const result = { startedAt: new Date().toISOString(), productCommit: '3163d2e8bea938a5d69d656c20fee87df44512ec',
-  auditScope: homeOnly ? 'corrective Home-only run; supersedes invalid run-1 Home controls' : 'four-view continuous audit',
+const result = { startedAt: new Date().toISOString(), productCommit: auditIdentity.productCommit,
+  auditScope: optimizedViews ? 'four-view optimized renderer comparison' : homeOnly ? 'corrective Home-only run; supersedes invalid run-1 Home controls' : 'four-view continuous audit',
   conditions: { viewport: { width: 1280, height: 800 }, cpuSlowdown: 4, headless: true, trustedSyntheticLoopback: true,
     physicalDevice: false, networkThrottle: 'none; loopback fixtures isolate runtime from network', multipleTabs: 4,
     frameMetric: 'Visible requestAnimationFrame scheduling gaps; not physical display drops',
@@ -36,6 +47,21 @@ const server = createServer(async (req, res) => {
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const save = (name, data) => writeFile(join(output, name), JSON.stringify(data, null, 2));
 const log = message => console.log(new Date().toISOString(), message);
+
+// This callback is serialized by Playwright; it must receive all mode state as an argument.
+function browserAudioMeterReady(optimized) {
+  const meter = document.querySelector('#audioMeterLevel');
+  if (!meter) return false;
+  if (!optimized) return parseFloat(meter.style.width) > 0;
+  const transform = getComputedStyle(meter).transform;
+  if (!transform || transform === 'none') return false;
+  try {
+    const matrix = new DOMMatrixReadOnly(transform);
+    return Number.isFinite(matrix.a) && matrix.a > 0;
+  } catch {
+    return false;
+  }
+}
 
 function instrument() {
   const a = window.__runtimeAudit = { longTasks: [], events: [], raf: { count: 0, over25: 0, over50: 0, max: 0 },
@@ -137,7 +163,17 @@ async function measure(page, cdp, kind, label, seconds, options = {}) {
   log(`MEASURE ${label} ${seconds}s`);
   await page.bringToFront(); await page.evaluate(() => scrollTo(0, 0));
   const fixtureBefore = kind === 'birds' || kind === 'companion' ? await page.evaluate(async () => (await fetch('/fixture/config')).json()) : null;
-  const workloadBefore = await page.evaluate(() => ({ preferences: document.querySelectorAll('#preferences li').length, choicesClosed: !document.querySelector('#preferences')?.closest('details')?.open, artwork: document.querySelector('.artwork')?.getAttribute('src'), species: document.querySelectorAll('#speciesGrid > *').length, audioMeterWidth: document.querySelector('#audioMeterLevel')?.style.width }));
+  const workloadBefore = await page.evaluate(() => {
+    const meter = document.querySelector('#audioMeterLevel');
+    return {
+      preferences: document.querySelectorAll('#preferences li').length,
+      choicesClosed: !document.querySelector('#preferences')?.closest('details')?.open,
+      artwork: document.querySelector('.artwork')?.getAttribute('src'),
+      species: document.querySelectorAll('#speciesGrid > *').length,
+      audioMeterWidth: meter?.style.width ?? null,
+      audioMeterTransform: meter ? getComputedStyle(meter).transform : null,
+    };
+  });
   const before = await snapshot(cdp, `${label}-before`);
   await sleep(250); // Drain profiler-induced observer deliveries before timing begins.
   await resetObserver(page); if (options.trace) await startTrace(cdp);
@@ -189,9 +225,10 @@ try {
   }
   await pages.home.page.locator('#custom-home:not([hidden]) [data-adjust="temperature:1"]').waitFor({ timeout: 20000 });
   await pages.art.page.locator('.artwork').waitFor();
-  await pages.companion.page.locator('#preferences li').first().waitFor({ state: 'attached' });
+  if (!optimizedViews) await pages.companion.page.locator('#preferences li').first().waitFor({ state: 'attached' });
+  else await pages.companion.page.getByText('Connected · updates every 5 seconds', { exact: true }).waitFor();
   await pages.birds.page.locator('#speciesGrid > *').first().waitFor();
-  await pages.birds.page.waitForFunction(() => parseFloat(document.querySelector('#audioMeterLevel')?.style.width) > 0);
+  await pages.birds.page.waitForFunction(browserAudioMeterReady, optimizedViews);
   const artCollection = await context.request.get(base + '/art/collection.json');
   if ((await artCollection.json()).artworks.length !== 200) throw Error('Art collection cardinality mismatch');
   for (const kind of (homeOnly ? ['home'] : ['home', 'art', 'companion', 'birds'])) {
@@ -200,7 +237,7 @@ try {
   }
   await context.request.post(base + '/fixture/config', { data: { preferences: 200 } });
   await pages.companion.page.reload({ waitUntil: 'domcontentloaded' });
-  await pages.companion.page.locator('#preferences li').nth(199).waitFor({ state: 'attached' });
+  if (!optimizedViews) await pages.companion.page.locator('#preferences li').nth(199).waitFor({ state: 'attached' });
   await sleep(3000);
   result.continuousUseStartedAt = new Date().toISOString();
   for (const kind of (homeOnly ? ['home'] : ['home', 'companion', 'birds', 'art'])) {
@@ -209,15 +246,68 @@ try {
     if (kind === 'companion') {
       await context.request.post(base + '/fixture/config', { data: { preferences: 1000 } });
       await startTrace(cdp);
-      await page.reload({ waitUntil: 'domcontentloaded' }); await page.locator('#preferences li').nth(999).waitFor({ state: 'attached' });
-      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-      result.companionInitial1000 = { observed: await page.evaluate(() => ({ ...window.__runtimeAudit, preferences: document.querySelectorAll('#preferences li').length, detailsOpen: document.querySelector('#preferences').closest('details').open })), metrics: await cdpMetrics(cdp), trace: await endTrace(cdp, 'companion-load-1000') };
-      await save('companion-load-1000.json', result.companionInitial1000);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      if (!optimizedViews) {
+        await page.locator('#preferences li').nth(999).waitFor({ state: 'attached' });
+      } else {
+        await page.getByText('Connected · updates every 5 seconds', { exact: true }).waitFor();
+        const closed = await page.evaluate(() => ({
+          rows: document.querySelectorAll('#preferences li').length,
+          detailsOpen: document.querySelector('#preferencesDetails')?.open === true,
+        }));
+        const beforeExpand = await context.request.get(base + '/fixture/config');
+        const beforeRequests = (await beforeExpand.json()).requests?.['GET /api/preferences'] || 0;
+        if (closed.rows !== 0 || closed.detailsOpen || beforeRequests !== 0) throw Error('optimized Companion requested or rendered choices before expansion');
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        result.companionInitial1000 = {
+          observed: await page.evaluate(() => ({ ...window.__runtimeAudit, preferences: document.querySelectorAll('#preferences li').length, detailsOpen: document.querySelector('#preferencesDetails')?.open === true })),
+          metrics: await cdpMetrics(cdp), trace: await endTrace(cdp, 'companion-load-1000'),
+        };
+        await save('companion-load-1000.json', result.companionInitial1000);
+        await startTrace(cdp);
+        await page.locator('#preferencesDetails > summary').click();
+        await page.locator('#preferences li').nth(49).waitFor({ state: 'attached' });
+        const expanded = await page.evaluate(() => ({
+          rows: document.querySelectorAll('#preferences li').length,
+          status: document.querySelector('#preferencesStatus')?.textContent,
+          page: document.querySelector('#preferencesPage')?.textContent,
+          detailsOpen: document.querySelector('#preferencesDetails')?.open === true,
+        }));
+        const availableTotal = Number(expanded.status?.match(/of (\d+) saved photo choices/)?.[1]);
+        const afterExpand = await context.request.get(base + '/fixture/config');
+        const afterRequests = (await afterExpand.json()).requests?.['GET /api/preferences'] || 0;
+        if (!expanded.detailsOpen || expanded.rows !== 50 || availableTotal !== 1000 || afterRequests !== beforeRequests + 1) throw Error('optimized Companion expansion did not render one bounded preference page');
+        await page.locator('#preferencesNext').click();
+        await page.getByText('Page 2 of 20', { exact: true }).waitFor();
+        const pagination = await page.evaluate(() => ({
+          rows: document.querySelectorAll('#preferences li').length,
+          page: document.querySelector('#preferencesPage')?.textContent,
+          status: document.querySelector('#preferencesStatus')?.textContent,
+        }));
+        if (pagination.rows !== 50 || pagination.page !== 'Page 2 of 20') throw Error('optimized Companion pagination did not preserve a bounded second page');
+        await page.locator('#preferencesPrevious').click();
+        await page.getByText('Page 1 of 20', { exact: true }).waitFor();
+        await page.locator('#preferencesDetails > summary').click();
+        await page.waitForFunction(() => document.querySelector('#preferencesDetails')?.open === false);
+        result.companionOptimizedContract = {
+          closed, beforeRequests, expanded, availableTotal, afterRequests, pagination,
+          closedAfterExpansion: await page.evaluate(() => document.querySelector('#preferencesDetails')?.open === false),
+          metrics: await cdpMetrics(cdp), trace: await endTrace(cdp, 'companion-expand-1000'),
+        };
+      }
+      if (!result.companionInitial1000) {
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        result.companionInitial1000 = {
+          observed: await page.evaluate(() => ({ ...window.__runtimeAudit, preferences: document.querySelectorAll('#preferences li').length, detailsOpen: document.querySelector('#preferences')?.closest('details')?.open === true })),
+          metrics: await cdpMetrics(cdp), trace: await endTrace(cdp, 'companion-load-1000'),
+        };
+        await save('companion-load-1000.json', result.companionInitial1000);
+      }
       await measure(page, cdp, kind, 'companion-stress-1000-30s', 30, { trace: true });
     } else if (kind === 'birds') {
       await context.request.post(base + '/fixture/config', { data: { audioHz: 20, summaryCount: 500, recentCount: 500 } });
       await page.reload({ waitUntil: 'domcontentloaded' }); await sleep(2000);
-      await page.waitForFunction(() => parseFloat(document.querySelector('#audioMeterLevel')?.style.width) > 0);
+      await page.waitForFunction(browserAudioMeterReady, optimizedViews);
       await measure(page, cdp, kind, 'birds-stress-20hz-30s', 30, { trace: true });
       await context.request.post(base + '/fixture/config', { data: { audioHz: 2, summaryCount: 200, recentCount: 10 } });
     } else if (kind === 'home') {
