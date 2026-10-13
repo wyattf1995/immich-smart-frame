@@ -140,7 +140,13 @@ function loadScript({ connectNative, historyValues = [], frames, push = false, d
     setFrameVisible(index, visible) { frameList[index].visible = visible; },
     frameAnimations(index) { return frameList[index].animations; },
     frame(index) { return frameList[index]; },
-    mutate(records) { observers.find((observer) => observer.target === context.document.documentElement).callback(records); },
+    mutate(records) {
+      // The bridge observes the stable body subtree; select the capture observer,
+      // not the separate body-class observer that restores the paused state.
+      const observer = observers.find((candidate) => candidate.target === body && candidate.options.childList === true && candidate.options.subtree === true);
+      if (!observer) throw new Error("capture MutationObserver is not installed on body");
+      observer.callback(records);
+    },
     fireEvent(type, detail = {}, target = detail.target) {
       listeners.filter(([eventType]) => eventType === type).forEach(([, listener]) => listener({ type, detail, target }));
     },
