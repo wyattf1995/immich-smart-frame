@@ -2413,11 +2413,11 @@
           state.attribution = null;
           window.clearTimeout(attributionRetry);
           const request = fetchJson(`/api/v2/media/species-image/info?name=${encodeURIComponent(scientificName)}`).then((info) => {
-            if (state.attributionSpecies !== scientificName) return;
+            if (attributionRequest?.promise !== request || state.attributionSpecies !== scientificName) return;
             state.attribution = info;
             renderAttribution(info);
           }).catch(() => {
-            if (disposed || document.hidden || state.attributionSpecies !== scientificName) return;
+            if (attributionRequest?.promise !== request || disposed || document.hidden || state.attributionSpecies !== scientificName) return;
             els.heroCredit.textContent = "Species photo resolving via BirdNET-Go";
             attributionRetry = window.setTimeout(() => loadAttribution(scientificName), IMAGE_RETRY_MS);
           }).finally(() => {
@@ -2733,7 +2733,7 @@
           const generation = activeGeneration;
           const { start, end } = periodRange(requestedPeriod);
           const request = fetchJson(`/api/v2/analytics/species/summary?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`, controller.signal).then((result) => {
-            if (disposed || document.hidden || generation !== activeGeneration) return;
+            if (rangeRequest?.promise !== request || disposed || document.hidden || generation !== activeGeneration) return;
             state.rangeSummaries[requestedPeriod] = summaryItems(result);
             if (state.speciesPeriod !== requestedPeriod) return;
             state.rangeLoadingPeriod = "";
@@ -2741,7 +2741,7 @@
             state.renderKeys.species = "";
             render();
           }).catch(() => {
-            if (disposed || document.hidden || generation !== activeGeneration) return;
+            if (rangeRequest?.promise !== request || disposed || document.hidden || generation !== activeGeneration) return;
             if (state.speciesPeriod !== requestedPeriod) return;
             state.rangeLoadingPeriod = "";
             state.renderKeys.species = "";
