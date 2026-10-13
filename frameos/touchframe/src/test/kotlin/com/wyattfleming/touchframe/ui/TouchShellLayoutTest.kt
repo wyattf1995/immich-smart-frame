@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class TouchShellLayoutTest {
     @Test
@@ -26,6 +27,16 @@ class TouchShellLayoutTest {
     fun `wide layouts use the intended rail width`() {
         assertEquals(80, TouchShellLayout.railWidthDpFor(1399))
         assertEquals(96, TouchShellLayout.railWidthDpFor(1400))
+    }
+
+    @Test
+    fun `short rails attach through a fill viewport`() {
+        val source = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayout.kt").readText()
+
+        assertTrue(source.contains("private val railViewport = ScrollView(context).apply {\n        isFillViewport = true\n    }"))
+        assertTrue(source.contains("railViewport.addView(rail, ScrollView.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))"))
+        assertTrue(source.contains("const val RAIL_BUTTON_HEIGHT_DP = 68"))
+        assertTrue(source.contains("LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(RAIL_BUTTON_HEIGHT_DP))"))
     }
 
     @Test

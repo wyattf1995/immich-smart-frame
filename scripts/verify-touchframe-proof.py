@@ -350,6 +350,12 @@ try:
             "stale render does not discard a pending display layout transition",
         },
     )
+    rail_viewport_red = mutate(
+        "rail-scroll-viewport-red", "shell",
+        "railViewport.addView(rail, ScrollView.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))",
+        "addView(rail, LayoutParams(dp(80), LayoutParams.MATCH_PARENT, Gravity.START))",
+        {"short rails attach through a fill viewport"},
+    )
     shell_contrast_red = mutate(
         "shell-contrast-red", "shell",
         "private const val ACCESSIBLE_RAIL_INK = -15722718",
@@ -571,6 +577,7 @@ try:
         "preparedBridgeSessionGateRed": bridge_red, "edgeRed": edge_red,
         "homeLayoutTransitionRed": home_first_measure_red,
         "shellContrastRed": shell_contrast_red,
+        "railScrollableViewportRed": rail_viewport_red,
         "settingsReturnOverlayRed": settings_return_red,
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red,
         "climateStaleGateRed": climate_stale_red,
