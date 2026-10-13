@@ -60,6 +60,8 @@ class TouchCalendarRepository(
         } finally { finishOperation(operation, accepted) }
     }
 
+    /** Main-safe generation fence: cancelling Futures is nonblocking and never disconnects a socket. */
+    fun invalidate() { cancelOperation().forEach { it.cancel(true) } }
     fun cancel() { cleanup(cancelOperation()) }
     override fun close() { cancel(); executor.shutdownNow() }
 
