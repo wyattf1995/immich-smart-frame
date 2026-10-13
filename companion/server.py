@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Small, authenticated control plane. Never executes shell or proxies arbitrary URLs."""
 import base64
+import hashlib
 import hmac
 import json
 import os
@@ -10,7 +11,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -73,7 +74,12 @@ class FrameStore:
         self.clock = clock or (lambda: int(time.time() * 1000))
         self.preferences_export = Path(preferences_export) if preferences_export else None
         self.export_lock = threading.Lock()
+        self.maintenance_lock = threading.Lock()
+        self.last_maintenance = None
+        self.snapshot_epoch = secrets.token_hex(16)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(self.path, timeout=10)) as bootstrap:
+            bootstrap.execute('PRAGMA journal_mode=WAL')
         with self.db() as db:
             db.executescript('''
             CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, label TEXT NOT NULL, settings TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT '{}', seen INTEGER);
@@ -82,7 +88,12 @@ class FrameStore:
             CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, device TEXT NOT NULL, payload TEXT NOT NULL, issued INTEGER NOT NULL, expires INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS device_events ON events(device, issued);
             CREATE TABLE IF NOT EXISTS preferences (device TEXT NOT NULL, asset TEXT NOT NULL, preference TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY(device, asset));
+            CREATE INDEX IF NOT EXISTS queued_device_expiry ON commands(device,expires) WHERE status='queued';
+            CREATE INDEX IF NOT EXISTS queued_expiry ON commands(expires) WHERE status='queued';
+            CREATE INDEX IF NOT EXISTS terminal_history ON commands(issued DESC,id DESC) WHERE status!='queued';
             ''')
+            if 'preferences_revision' not in {column['name'] for column in db.execute('PRAGMA table_info(devices)')}:
+                db.execute('ALTER TABLE devices ADD COLUMN preferences_revision INTEGER NOT NULL DEFAULT 0')
             for device, conf in devices.items():
                 if not IDENTIFIER.fullmatch(device): raise FrameError('Invalid device identifier')
                 defaults = json.loads(json.dumps(DEFAULTS))
@@ -92,13 +103,13 @@ class FrameStore:
         self.export_preferences()
 
     @contextmanager
-    def db(self):
+    def db(self, write=True):
         connection = sqlite3.connect(self.path, timeout=10)
         connection.row_factory = sqlite3.Row
-        connection.execute('PRAGMA journal_mode=WAL')
         connection.execute('PRAGMA busy_timeout=10000')
         try:
-            connection.execute('BEGIN IMMEDIATE')
+            if not write: connection.execute('PRAGMA query_only=ON')
+            connection.execute('BEGIN IMMEDIATE' if write else 'BEGIN')
             yield connection
             connection.commit()
         except Exception:
@@ -108,7 +119,7 @@ class FrameStore:
             connection.close()
 
     def _device(self, db, device):
-        row = db.execute('SELECT * FROM devices WHERE id=?', (device,)).fetchone()
+        row = db.execute('SELECT id,label,settings,revision,status,seen,preferences_revision FROM devices WHERE id=?', (device,)).fetchone()
         if row is None: raise FrameError('Unknown frame', 404)
         return row
 
@@ -116,7 +127,23 @@ class FrameStore:
         db.execute("UPDATE commands SET status='expired' WHERE status='queued' AND expires <= ?", (self.clock(),))
         db.execute("DELETE FROM commands WHERE status != 'queued' AND issued < ?", (self.clock() - 7*86400000,))
         # Keep the history bounded even on a busy remote.
-        db.execute('DELETE FROM commands WHERE id IN (SELECT id FROM commands ORDER BY issued DESC LIMIT -1 OFFSET 1000)')
+        db.execute("DELETE FROM commands WHERE id IN (SELECT id FROM commands WHERE status!='queued' ORDER BY issued DESC,id DESC LIMIT -1 OFFSET 1000)")
+        db.execute('DELETE FROM events WHERE expires < ?', (self.clock()-86400000,))
+
+    def _maintain(self):
+        # Operator actions amortize global history cleanup. Polls only touch
+        # their own at-most-16 pending commands, even on an unchanged snapshot.
+        if not self.maintenance_lock.acquire(blocking=False): return
+        try:
+            now = time.monotonic()
+            if self.last_maintenance is not None and now-self.last_maintenance < 60: return
+            with self.db() as db: self._expire(db)
+            self.last_maintenance = now
+        finally:
+            self.maintenance_lock.release()
+
+    def _expire_device(self, db, device, now):
+        db.execute("UPDATE commands SET status='expired' WHERE device=? AND status='queued' AND expires<=?", (device,now))
 
     def _status(self, raw):
         if not isinstance(raw, dict): raise FrameError('Invalid status')
@@ -142,16 +169,29 @@ class FrameStore:
         acks = body.get('acks', [])
         if not isinstance(acks, list) or len(acks) > 16: raise FrameError('Invalid acknowledgements')
         status = self._status(body.get('status', {}))
+        known = body.get('knownSnapshotRevision')
+        now = self.clock()
         with self.db() as db:
             row = self._device(db, device)
-            self._expire(db)
+            self._expire_device(db, device, now)
             for ack in acks:
                 if not isinstance(ack, dict) or not isinstance(ack.get('id'), str) or ack.get('status') not in TERMINAL: raise FrameError('Invalid acknowledgement')
                 message = re.sub(r'[^a-zA-Z0-9 _:.\-]', '', str(ack.get('message', '')))[:80]
-                db.execute("UPDATE commands SET status=?,message=?,acknowledged=? WHERE id=? AND device=? AND status='queued'", (ack['status'],message,self.clock(),ack['id'],device))
-            db.execute('UPDATE devices SET status=?,seen=? WHERE id=?', (json.dumps(status),self.clock(),device))
-            commands = [json.loads(c['payload']) for c in db.execute("SELECT payload FROM commands WHERE device=? AND status='queued' AND expires>? ORDER BY issued,id LIMIT 1", (device,self.clock()))]
-            return {'schema':1,'deviceId':device,'serverTime':self.clock(),'pollAfterMs':5000,'settingsRevision':row['revision'],'settings':json.loads(row['settings']),'commands':commands,'hiddenAssets':[p['asset'] for p in db.execute("SELECT asset FROM preferences WHERE device=? AND preference='hide' ORDER BY asset LIMIT 1000",(device,))],'events':[json.loads(e['payload']) for e in db.execute('SELECT payload FROM events WHERE device=? AND expires>? ORDER BY issued DESC LIMIT 1',(device,self.clock()))] if json.loads(row['settings']).get('eventOverlays') else []}
+                db.execute("UPDATE commands SET status=?,message=?,acknowledged=? WHERE id=? AND device=? AND status='queued'", (ack['status'],message,now,ack['id'],device))
+            db.execute('UPDATE devices SET status=?,seen=? WHERE id=?', (json.dumps(status),now,device))
+            command = db.execute("SELECT id,payload FROM commands WHERE device=? AND status='queued' AND expires>? ORDER BY issued,id LIMIT 1", (device,now)).fetchone()
+            settings = json.loads(row['settings'])
+            event = db.execute('SELECT id,payload FROM events WHERE device=? AND expires>? ORDER BY issued DESC,id DESC LIMIT 1',(device,now)).fetchone() if settings.get('eventOverlays') else None
+            # Include every delivered mutable domain, including expiration-driven
+            # command/event disappearance. Clock/status changes do not invalidate.
+            revision = hashlib.sha256(json.dumps([self.snapshot_epoch,device,row['revision'],row['preferences_revision'],command['id'] if command else None,event['id'] if event else None],separators=(',',':')).encode()).hexdigest()
+            response = {'schema':1,'deviceId':device,'serverTime':now,'pollAfterMs':5000,'snapshotRevision':revision}
+            if isinstance(known,str) and hmac.compare_digest(known.encode(),revision.encode()):
+                response['unchanged'] = True
+                return response
+            hidden = [p['asset'] for p in db.execute("SELECT asset FROM preferences WHERE device=? AND preference='hide' ORDER BY asset LIMIT 1000",(device,))]
+        response.update(settingsRevision=row['revision'],settings=settings,commands=[json.loads(command['payload'])] if command else [],hiddenAssets=hidden,events=[json.loads(event['payload'])] if event else [])
+        return response
 
     def command(self, device, payload):
         if not isinstance(payload,dict) or not isinstance(payload.get('type'),str) or payload.get('type') not in COMMANDS: raise FrameError('Unsupported command')
@@ -161,9 +201,10 @@ class FrameStore:
         if kind=='show_mode' and payload['mode'] not in MODES: raise FrameError('Unknown view')
         if kind=='set_profile' and payload['profile'] not in self.profiles: raise FrameError('Unknown profile')
         if kind=='photo_hold' and not integer(payload['durationSeconds'],15,3600): raise FrameError('Invalid hold duration')
+        self._maintain()
         with self.db() as db:
             row = self._device(db, device)
-            self._expire(db)
+            self._expire_device(db,device,self.clock())
             if row['seen'] is None or self.clock()-row['seen']>90000: raise FrameError('Frame is offline; commands are not queued for later',409)
             count = db.execute("SELECT COUNT(*) FROM commands WHERE device=? AND status='queued'", (device,)).fetchone()[0]
             if count>=16: raise FrameError('Frame command queue is full',429)
@@ -198,7 +239,7 @@ class FrameStore:
             return event
 
     def preferences(self, device):
-        with self.db() as db:
+        with self.db(write=False) as db:
             self._device(db,device)
             return [dict(row) for row in db.execute('SELECT asset AS assetId,preference,updated FROM preferences WHERE device=? ORDER BY updated DESC',(device,))]
 
@@ -210,27 +251,44 @@ class FrameStore:
             else:
                 if db.execute('SELECT COUNT(*) FROM preferences WHERE device=?',(device,)).fetchone()[0]>=1000 and db.execute('SELECT 1 FROM preferences WHERE device=? AND asset=?',(device,payload['assetId'])).fetchone() is None: raise FrameError('Preference limit reached; clear old choices first',409)
                 db.execute('INSERT INTO preferences VALUES(?,?,?,?) ON CONFLICT(device,asset) DO UPDATE SET preference=excluded.preference,updated=excluded.updated',(device,payload['assetId'],payload['preference'],self.clock()))
+            db.execute('UPDATE devices SET preferences_revision=preferences_revision+1 WHERE id=?',(device,))
         self.export_preferences()
         return {'saved':True,'assetId':payload['assetId'],'preference':payload['preference']}
 
     def export_preferences(self):
         if not self.preferences_export: return
         with self.export_lock:
-            with self.db() as db:
-                devices={row['id']:{'assets':{}} for row in db.execute('SELECT id FROM devices')}
-                for row in db.execute('SELECT * FROM preferences'): devices[row['device']]['assets'][row['asset']]=row['preference']
             self.preferences_export.parent.mkdir(parents=True,exist_ok=True)
             temp=self.preferences_export.with_suffix('.tmp')
-            temp.write_text(json.dumps({'version':1,'updatedAt':self.clock(),'devices':devices}),encoding='utf-8')
-            os.chmod(temp,0o640)
-            os.replace(temp,self.preferences_export)
+            try:
+                # Stream one SQLite snapshot: memory is independent of fleet size,
+                # and readers never see a partly-written version-1 export.
+                with self.db(write=False) as db, temp.open('w',encoding='utf-8') as output:
+                    os.chmod(temp,0o640)
+                    output.write('{"version":1,"updatedAt":'+str(self.clock())+',"devices":{')
+                    first_device = True
+                    for device in db.execute('SELECT id FROM devices ORDER BY id'):
+                        if not first_device: output.write(',')
+                        first_device = False
+                        output.write(json.dumps(device['id'])+':{"assets":{')
+                        first_asset = True
+                        for preference in db.execute('SELECT asset,preference FROM preferences WHERE device=? ORDER BY asset',(device['id'],)):
+                            if not first_asset: output.write(',')
+                            first_asset = False
+                            output.write(json.dumps(preference['asset'])+':'+json.dumps(preference['preference']))
+                        output.write('}}')
+                    output.write('}}')
+                os.replace(temp,self.preferences_export)
+            finally:
+                temp.unlink(missing_ok=True)
 
     def state(self):
-        with self.db() as db:
-            self._expire(db)
+        self._maintain()
+        with self.db(write=False) as db:
             frames=[]
-            for row in db.execute('SELECT * FROM devices ORDER BY label'):
-                commands=[dict(id=c['id'],type=json.loads(c['payload'])['type'],issuedAt=c['issued'],expiresAt=c['expires'],status=c['status'],message=c['message']) for c in db.execute('SELECT * FROM commands WHERE device=? ORDER BY issued DESC,rowid DESC LIMIT 20',(row['id'],))]
+            now = self.clock()
+            for row in db.execute('SELECT id,label,settings,revision,status,seen FROM devices ORDER BY label'):
+                commands=[dict(id=c['id'],type=json.loads(c['payload'])['type'],issuedAt=c['issued'],expiresAt=c['expires'],status='expired' if c['status']=='queued' and c['expires']<=now else c['status'],message=c['message']) for c in db.execute('SELECT id,payload,issued,expires,status,message FROM commands WHERE device=? ORDER BY issued DESC,rowid DESC LIMIT 20',(row['id'],))]
                 frames.append({'id':row['id'],'label':row['label'],'settings':json.loads(row['settings']),'settingsRevision':row['revision'],'status':json.loads(row['status']),'lastSeenAt':row['seen'],'online':row['seen'] is not None and self.clock()-row['seen']<=90000,'commands':commands})
             return {'schema':1,'serverTime':self.clock(),'profiles':self.profiles,'devices':frames}
 
