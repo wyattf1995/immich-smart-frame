@@ -49,7 +49,8 @@ class TouchHomeParserTest {
             ZoneOffset.UTC,
         )
         assertEquals(listOf("Offset"), events.map { it.title })
-        assertEquals(Instant.parse("2026-10-14T20:00:00Z").toEpochMilli(), events.single().endEpochMillis)
+        assertEquals(Instant.parse("2026-10-14T20:00:00Z").toEpochMilli(), events.single().startEpochMillis)
+        assertEquals(Instant.parse("2026-10-14T21:00:00Z").toEpochMilli(), events.single().endEpochMillis)
     }
 
     @Test
