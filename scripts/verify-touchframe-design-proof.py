@@ -35,6 +35,8 @@ CLASSES = {
     "theme": ("com.wyattfleming.touchframe.ui.TouchThemeTest", tests / "ui/TouchThemeTest.kt"),
     "day": ("com.wyattfleming.touchframe.calendar.TouchCalendarDayStyleTest", tests / "calendar/TouchCalendarDayStyleTest.kt"),
     "today": ("com.wyattfleming.touchframe.calendar.TouchCalendarTodayColumnTest", tests / "calendar/TouchCalendarTodayColumnTest.kt"),
+    "chip": ("com.wyattfleming.touchframe.ui.TouchShellChipOrderTest", tests / "ui/TouchShellChipOrderTest.kt"),
+    "month": ("com.wyattfleming.touchframe.calendar.TouchCalendarMonthLayoutTest", tests / "calendar/TouchCalendarMonthLayoutTest.kt"),
 }
 
 MUTATIONS = [
@@ -70,6 +72,16 @@ MUTATIONS = [
      "(event.endEpochMillis ?: event.startEpochMillis) <= nowMillis -> EventTiming.ENDED", "false -> EventTiming.ENDED", "today",
      {"finished events collapse into a count and the current one reads Now",
       "timing treats all-day events as current all day and open-ended ones as finished once started"}),
+    ("tab-chip-padding-order-red", main / "ui/TouchShellLayout.kt",
+     """        background = insetChip(rounded(palette.settings, palette.settingsStroke), 0)
+        setPadding(dp(20), 0, dp(20), 0)""",
+     """        setPadding(dp(20), 0, dp(20), 0)
+        background = insetChip(rounded(palette.settings, palette.settingsStroke), 0)""", "chip",
+     {"tab chips are assigned before their padding so the inset background cannot erase it"}),
+    ("month-six-week-fit-red", main / "calendar/TouchCalendarView.kt",
+     "val fitted = (viewportHeightDp - (if (wall) WALL_CHROME_DP else PANEL_CHROME_DP)) / weeks - ROW_GAP_DP",
+     "val fitted = (viewportHeightDp - (if (wall) WALL_CHROME_DP else PANEL_CHROME_DP)) / 5 - ROW_GAP_DP", "month",
+     {"six-week months shrink their cells to fit the frame"}),
 ]
 
 
