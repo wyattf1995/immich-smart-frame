@@ -9,11 +9,16 @@ const MAX_PORT_RETRY_DELAY_MS = 60000;
 const MAX_SETTLING_KIOSK_REQUESTS = 4;
 const MAX_DIAGNOSTICS_PER_PAGE = 16;
 const MAX_DIAGNOSTIC_EPOCH = 4096;
+const MAX_SHARED_PLAYBACK_DETAIL_CHARS = 512;
+const SHARED_SCALAR = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 let lastFingerprint = "";
 let inFlightFingerprint = "";
+let inFlightCaptureToken = 0;
+let nextCaptureToken = 0;
 let rejectedFingerprint = "";
 let rejectedRetries = 0;
 let queued = false;
+let captureMutationTimer = 0;
 let retryTimer = 0;
 let desiredPlaybackPaused = null;
 let pauseSnapshotNonce = null;
@@ -28,6 +33,7 @@ let domReady = false;
 let hasObservedKioskRequest = false;
 let unreadableKioskRequest = false;
 let settledKioskEpoch = 0;
+let sharedPlaybackEpoch = 0;
 let pauseSnapshotRequiresSettleEpoch = null;
 let diagnosticReports = 0;
 const firstDiagnosticStages = new Set();
@@ -112,11 +118,17 @@ function capture() {
   const fingerprint = `${assetId}:${base64.length}:${base64.slice(0, 24)}`;
   const captureFingerprint = snapshotNonce ? `${fingerprint}:${snapshotNonce}` : fingerprint;
   if ((!snapshotNonce && fingerprint === lastFingerprint) || captureFingerprint === inFlightFingerprint) return;
+  const captureToken = ++nextCaptureToken;
   inFlightFingerprint = captureFingerprint;
+  inFlightCaptureToken = captureToken;
   const message = { type: "loaded-photo", assetId, image: base64 };
   if (snapshotNonce) message.snapshotNonce = snapshotNonce;
-  browser.runtime.sendNativeMessage("frame_photo_bridge", message).then((response) => {
+  const completeCapture = (response) => {
+    // A different visible image may have replaced this request while native persistence ran.
+    // Only the current owner may clear capture, retry, or paused-snapshot state.
+    if (captureToken !== inFlightCaptureToken || captureFingerprint !== inFlightFingerprint) return;
     inFlightFingerprint = "";
+    inFlightCaptureToken = 0;
     if (response && response.accepted) {
       lastFingerprint = fingerprint;
       if (snapshotNonce === pauseSnapshotNonce) {
@@ -129,10 +141,8 @@ function capture() {
       return;
     }
     retryRejectedCapture(captureFingerprint);
-  }).catch(() => {
-    inFlightFingerprint = "";
-    retryRejectedCapture(captureFingerprint);
-  });
+  };
+  browser.runtime.sendNativeMessage("frame_photo_bridge", message).then(completeCapture, () => completeCapture(null));
 }
 
 function retryRejectedCapture(fingerprint) {
@@ -216,6 +226,69 @@ function settleKioskHtmxRequest(event) {
   scheduleCapture();
 }
 
+function sharedPlaybackPayload(event, requireSettled) {
+  const kiosk = document.querySelector("#kiosk");
+  if (!(kiosk instanceof HTMLElement) || event.target !== kiosk) return null;
+  const sessionId = kiosk.dataset.sharedPlaybackSession;
+  const slideId = kiosk.dataset.sharedPlaybackSlide;
+  const datasetPaused = kiosk.dataset.sharedPlaybackPaused;
+  let serializedDetail;
+  try {
+    serializedDetail = event.detail;
+  } catch (_) {
+    return null;
+  }
+  // Firefox content scripts may not read page-owned CustomEvent detail objects.
+  // A primitive JSON string crosses the isolated-world boundary safely.
+  if (typeof serializedDetail !== "string" || serializedDetail.length > MAX_SHARED_PLAYBACK_DETAIL_CHARS) return null;
+  let detail;
+  try {
+    detail = JSON.parse(serializedDetail);
+  } catch (_) {
+    return null;
+  }
+  const paused = detail && detail.sharedPlaybackPaused;
+  if (!SHARED_SCALAR.test(sessionId || "") || !SHARED_SCALAR.test(slideId || "") ||
+      typeof paused !== "boolean" || (datasetPaused !== "true" && datasetPaused !== "false") ||
+      paused !== (datasetPaused === "true")) return null;
+  if (requireSettled) {
+    // This is a DOM pair validation only. It does not pretend an HTMX request settled.
+    const histories = Array.from(document.querySelectorAll("#kiosk-history input[name='history']"))
+      .filter((history) => typeof history.value === "string" && history.value.startsWith("*"));
+    const frame = currentFrame();
+    const image = frame && Array.from(frame.querySelectorAll("img[alt='Main image']"))
+      .find((candidate) => candidate instanceof HTMLImageElement && candidate.complete && candidate.naturalWidth > 0 && candidate.naturalHeight > 0 && isVisible(candidate));
+    if (histories.length !== 1 || !/^\*[a-f0-9-]{36}:[^:]*$/i.test(histories[0].value) || !image) return null;
+  }
+  return { sessionId, slideId, paused };
+}
+
+function reportSharedPlayback(type, payload) {
+  browser.runtime.sendNativeMessage("frame_photo_bridge", {
+    type, sessionId: payload.sessionId, slideId: payload.slideId, paused: payload.paused, epoch: sharedPlaybackEpoch,
+  }).catch(() => {});
+}
+
+function sharedPlaybackState(event) {
+  const payload = sharedPlaybackPayload(event, false);
+  if (!payload) return;
+  // Server state wins over a delayed native mutation observer command.
+  desiredPlaybackPaused = payload.paused;
+  setPollingPaused(payload.paused);
+  reportSharedPlayback("shared-playback-state", payload);
+}
+
+function sharedPhotoSettled(event) {
+  const payload = sharedPlaybackPayload(event, true);
+  if (!payload) return;
+  sharedPlaybackEpoch = Math.min(sharedPlaybackEpoch + 1, MAX_DIAGNOSTIC_EPOCH);
+  settledKioskEpoch += 1;
+  desiredPlaybackPaused = payload.paused;
+  setPollingPaused(payload.paused);
+  reportSharedPlayback("shared-photo-settled", payload);
+  scheduleCapture();
+}
+
 function failKioskHtmxRequest(event, inspected = null) {
   const { request } = inspected || kioskHtmxRequest(event, "htmx_error");
   if (!request || !settlingKioskRequests.delete(request)) return;
@@ -231,25 +304,23 @@ function failKioskHtmxRequest(event, inspected = null) {
 function skipNoSwapKioskRequest(event) {
   const inspected = kioskHtmxRequest(event);
   if (inspected.request && inspected.request.status === 204) {
-    reportDiagnostic("htmx_error", inspected.fields);
+    reportDiagnostic("htmx_no_content", inspected.fields);
     failKioskHtmxRequest(event, inspected);
   }
 }
 
+function isKioskNode(node) {
+  return node instanceof HTMLElement && (node.id === "kiosk-container" || node.id === "kiosk" || typeof node.closest === "function" && node.closest("#kiosk-container") !== null);
+}
 function isCaptureMutation(mutation) {
-  if (mutation.type === "childList") return true;
-  if (mutation.type !== "attributes") return false;
-  if (mutation.attributeName === "src" || mutation.attributeName === "value") return true;
-  if (mutation.attributeName !== "class" && mutation.attributeName !== "style") return false;
-  const target = mutation.target;
-  if (target === document.documentElement || target === document.body) return true;
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.id === "kiosk-container" || target.id === "kiosk") return true;
-  return typeof target.closest === "function" && target.closest("#kiosk") !== null;
+  if (mutation.type === "childList") return isKioskNode(mutation.target) || Array.from(mutation.addedNodes).some(isKioskNode) || Array.from(mutation.removedNodes).some(isKioskNode);
+  if (mutation.type !== "attributes" || !["src", "value", "class", "style"].includes(mutation.attributeName)) return false;
+  return isKioskNode(mutation.target);
 }
 
 function scheduleCaptureMutations(mutations) {
-  if (mutations.some(isCaptureMutation)) scheduleCapture();
+  if (!mutations.some(isCaptureMutation) || captureMutationTimer) return;
+  captureMutationTimer = setTimeout(() => { captureMutationTimer = 0; scheduleCapture(); }, 50);
 }
 
 function setPollingPaused(paused) {
@@ -337,6 +408,8 @@ document.addEventListener("htmx:sendError", failKioskHtmxRequest, true);
 document.addEventListener("htmx:sendAbort", failKioskHtmxRequest, true);
 document.addEventListener("htmx:timeout", failKioskHtmxRequest, true);
 document.addEventListener("htmx:afterRequest", skipNoSwapKioskRequest, true);
+document.addEventListener("frame:shared-playback-state", sharedPlaybackState, true);
+document.addEventListener("frame:shared-photo-settled", sharedPhotoSettled, true);
 
 function initializeDomCapture() {
   if (domReady) return;
@@ -344,7 +417,9 @@ function initializeDomCapture() {
   new MutationObserver(() => {
     if (desiredPlaybackPaused && !document.body.classList.contains("polling-paused")) setPollingPaused(true);
   }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
-  new MutationObserver(scheduleCaptureMutations).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
+  // Body is stable across Kiosk outerHTML swaps; isCaptureMutation strictly rejects
+  // unrelated descendants while HTMX remains the primary transaction signal.
+  new MutationObserver(scheduleCaptureMutations).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
   // Only a document with no observed main#kiosk request has a DOM-ready baseline.
   // A failed or 204 request may already have left the settle set, but has no pair.
   if (!hasObservedKioskRequest && settlingKioskRequests.size === 0) kioskCaptureReady = true;

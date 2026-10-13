@@ -1,0 +1,115 @@
+diff --git a/ci/shared-photo-quality-browser.mjs b/ci/shared-photo-quality-browser.mjs
+new file mode 100644
+index 00000000..4e2db6c1
+--- /dev/null
++++ b/ci/shared-photo-quality-browser.mjs
+@@ -0,0 +1,88 @@
++import assert from 'node:assert/strict';
++import { createRequire } from 'node:module';
++import { spawn, spawnSync } from 'node:child_process';
++import { mkdir, readFile, writeFile } from 'node:fs/promises';
++import { resolve } from 'node:path';
++
++const require = createRequire('/opt/launchpad-browser-runtime/package.json');
++const { chromium } = require('playwright');
++const root = process.cwd();
++const reports = resolve(root, 'reports/shared-playback/photo-quality');
++await mkdir(reports, { recursive: true });
++const fixture = resolve(process.env.TMPDIR, 'photo-quality-fixture');
++const readyFile = resolve(process.env.TMPDIR, `photo-quality-ready-${process.pid}.json`);
++assert.equal(spawnSync('go', ['test', '-c', '-o', fixture, './internal/routes'], { stdio: 'inherit' }).status, 0);
++const server = spawn(fixture, ['-test.run=^TestSharedPlaybackBrowserFixture$', '-test.timeout=4m'], {
++  cwd: root,
++  env: { ...process.env, FRAME_SYNC_FIXTURE_READY: readyFile, FRAME_SYNC_SOURCE_ROOT: root },
++  stdio: ['ignore', 'pipe', 'pipe'],
++});
++let log = '';
++server.stdout.on('data', data => { log += data; });
++server.stderr.on('data', data => { log += data; });
++const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
++async function eventually(work, label) {
++  for (let attempt = 0; attempt < 100; attempt++) {
++    const result = await work().catch(() => undefined);
++    if (result) return result;
++    await delay(100);
++  }
++  throw Error(label);
++}
++let browser;
++const contexts = [];
++const report = { synthetic: true, cases: [], resources: { fixturePid: server.pid } };
++try {
++  const ready = await eventually(async () => JSON.parse(await readFile(readyFile, 'utf8')), 'fixture readiness');
++  assert.equal(ready.pid, server.pid);
++  browser = await chromium.launch({ headless: true, chromiumSandbox: false });
++  for (const specimen of [
++    { name: 'standard', width: 960, height: 540, dpr: 1, request: [960, 540], decoded: [960, 540] },
++    { name: 'sony-density', width: 960, height: 540, dpr: 2, request: [1920, 1080], decoded: [1920, 1080] },
++    { name: 'bounded-4k', width: 1920, height: 1080, dpr: 3, request: [3840, 2160], decoded: [1920, 1080] },
++  ]) {
++    const context = await browser.newContext({ viewport: { width: specimen.width, height: specimen.height }, deviceScaleFactor: specimen.dpr });
++    contexts.push(context);
++    const page = await context.newPage();
++    const requests = [];
++    const errors = [];
++    page.on('pageerror', error => errors.push(error.message));
++    page.on('request', request => {
++      const url = new URL(request.url());
++      if (url.searchParams.has('client_width')) requests.push([Number(url.searchParams.get('client_width')), Number(url.searchParams.get('client_height'))]);
++    });
++    assert.equal((await page.goto(`${ready.url}/?sync_group=shared-test&frame_id=quality-${specimen.name}`)).status(), 200);
++    await eventually(() => page.evaluate(() => {
++      const image = document.querySelector('#kiosk img[alt="Main image"]');
++      return image?.complete && image.naturalWidth > 0;
++    }), 'photo decodes');
++    assert.ok(requests.length > 0, 'slide requested');
++    for (const dimensions of requests) assert.deepEqual(dimensions, specimen.request, `physical photo request: ${specimen.name}`);
++    const decoded = await page.evaluate(() => {
++      const image = document.querySelector('#kiosk img[alt="Main image"]');
++      return [image.naturalWidth, image.naturalHeight];
++    });
++    assert.deepEqual(decoded, specimen.decoded, `delivered photo resolution: ${specimen.name}`);
++    assert.deepEqual(errors, []);
++    report.cases.push({ ...specimen, actualRequested: requests, actualDecoded: decoded });
++    await page.screenshot({ path: resolve(reports, `${specimen.name}.png`) });
++    await context.close();
++  }
++  report.status = 'passed';
++} catch (error) {
++  report.status = 'failed';
++  report.error = error.stack;
++  throw error;
++} finally {
++  for (const context of contexts) await context.close().catch(() => {});
++  if (browser) await browser.close();
++  if (server.exitCode === null && server.signalCode === null) {
++    server.kill('SIGTERM');
++    await Promise.race([new Promise(resolve => server.once('exit', resolve)), delay(5000)]);
++  }
++  report.resources.fixtureExited = server.exitCode !== null || server.signalCode !== null;
++  report.resources.browserClosed = Boolean(browser);
++  await writeFile(resolve(reports, 'photo-quality.json'), JSON.stringify(report, null, 2));
++  await writeFile(resolve(reports, 'fixture.log'), log);
++  assert.ok(report.resources.fixtureExited, 'fixture shut down');
++}
+diff --git a/internal/routes/routes_shared_playback_browser_test.go b/internal/routes/routes_shared_playback_browser_test.go
+index 7b2e99d2..95d6809c 100644
+--- a/internal/routes/routes_shared_playback_browser_test.go
++++ b/internal/routes/routes_shared_playback_browser_test.go
+@@ -53,11 +53,13 @@ func TestSharedPlaybackBrowserFixture(t *testing.T) {
+ 			http.NotFound(w, r)
+ 			return
+ 		}
+-		canvas := image.NewRGBA(image.Rect(0, 0, 480, 270))
++		// Full-HD source lets the density regression assert delivered pixels,
++		// rather than only checking the requested viewport in a URL.
++		canvas := image.NewRGBA(image.Rect(0, 0, 1920, 1080))
+ 		var n uint64
+ 		_, _ = fmt.Sscanf(id, "00000000-0000-4000-8000-%012d", &n)
+-		for y := 0; y < 270; y++ {
+-			for x := 0; x < 480; x++ {
++		for y := 0; y < canvas.Bounds().Dy(); y++ {
++			for x := 0; x < canvas.Bounds().Dx(); x++ {
+ 				canvas.SetRGBA(x, y, color.RGBA{R: uint8((uint64(x) + n*47) % 256), G: uint8((uint64(y) + n*71) % 256), B: uint8((n * 39) % 256), A: 255})
+ 			}
+ 		}

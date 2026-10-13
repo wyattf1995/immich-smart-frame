@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Offline WebView check</title>
+  <style>
+    body { background:#101510; color:#f4f7f2; font:18px sans-serif; margin:0; padding:28px; }
+    h1 { font-size:28px; margin:0 0 16px; }
+    .card { background:#1e2a1e; border:2px solid #6fcf75; border-radius:14px; padding:20px; }
+    button { background:#6fcf75; border:0; border-radius:10px; color:#102010; font-size:20px; font-weight:bold; min-height:56px; padding:10px 18px; width:100%; }
+    code { overflow-wrap:anywhere; }
+  </style>
+</head>
+<body>
+  <h1>Offline WebView check</h1>
+  <div class="card">
+    <p id="result">Loading bundled page…</p>
+    <button id="touch">Tap here</button>
+  </div>
+  <p id="capabilities"></p>
+  <p><code id="agent"></code></p>
+  <script>
+    var result = document.getElementById('result');
+    var capabilities = document.getElementById('capabilities');
+    var canvas = document.createElement('canvas');
+    var canvas2d = false;
+    var grid = false;
+    var flex = false;
+    try { canvas2d = canvas.getContext('2d') !== null; } catch (error) {}
+    try {
+      grid = typeof CSS !== 'undefined' && CSS.supports('display', 'grid');
+      flex = typeof CSS !== 'undefined' && CSS.supports('display', 'flex');
+    } catch (error) {}
+    result.textContent = 'Bundled HTML, CSS, and JavaScript loaded. Touch the button to test touch delivery.';
+    capabilities.textContent = 'Promise: ' + typeof Promise + ' · fetch: ' + typeof fetch
+      + ' · WebSocket: ' + typeof WebSocket + ' · Canvas 2D: ' + canvas2d
+      + ' · CSS grid: ' + grid + ' · CSS flex: ' + flex;
+    document.getElementById('agent').textContent = navigator.userAgent;
+    document.addEventListener('touchstart', function (event) {
+      result.textContent = 'Touch event received: ' + event.touches.length + ' active touch point(s).';
+    }, false);
+    document.getElementById('touch').addEventListener('click', function () {
+      this.textContent = 'Tap or click received';
+    });
+  </script>
+</body>
+</html>

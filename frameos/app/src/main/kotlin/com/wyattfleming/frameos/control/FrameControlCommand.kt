@@ -47,12 +47,36 @@ object FrameControlContract {
     const val ACTION_CONTROL = "com.wyattfleming.frameos.CONTROL"
     const val EXTRA_COMMAND = "frameos.command"
     const val EXTRA_MODE = "frameos.mode"
+    const val EXTRA_TOUCH_DASHBOARD_ENABLED = "frameos.touch_dashboard_enabled"
+    const val EXTRA_DETACH_HIDDEN_HOME = "frameos.detach_hidden_home"
+    const val EXTRA_START_WITH_PHOTOS = "frameos.start_with_photos"
     const val EXTRA_PHOTOS_URL = "frameos.photos_url"
     const val EXTRA_HOME_ASSISTANT_URL = "frameos.home_assistant_url"
     const val EXTRA_HOME_ASSISTANT_FALLBACK_URL = "frameos.home_assistant_fallback_url"
     const val EXTRA_WEATHER_ENTITY_ID = "frameos.weather_entity_id"
     const val EXTRA_BIRDS_URL = "frameos.birds_url"
+    const val EXTRA_ART_URL = "frameos.art_url"
     const val EXTRA_COMPANION_URL = "frameos.companion_url"
     const val EXTRA_COMPANION_TOKEN = "frameos.companion_token"
     const val EXTRA_COMPANION_DEVICE_ID = "frameos.companion_device_id"
+    const val EXTRA_PHOTOS_SYNC_GROUP = "frameos.photos_sync_group"
+    const val EXTRA_QUERY_PHOTOS_SYNC_GROUP = "frameos.query_photos_sync_group"
+
+    sealed interface PhotosSyncGroupCommand {
+        data class Set(val group: String) : PhotosSyncGroupCommand
+        data object Query : PhotosSyncGroupCommand
+        data object Invalid : PhotosSyncGroupCommand
+    }
+
+    fun photosSyncGroupCommand(
+        hasSyncGroup: Boolean,
+        syncGroup: String?,
+        querySyncGroup: Boolean,
+    ): PhotosSyncGroupCommand? = when {
+        hasSyncGroup && querySyncGroup -> PhotosSyncGroupCommand.Invalid
+        querySyncGroup -> PhotosSyncGroupCommand.Query
+        hasSyncGroup && syncGroup == null -> PhotosSyncGroupCommand.Invalid
+        hasSyncGroup -> PhotosSyncGroupCommand.Set(requireNotNull(syncGroup))
+        else -> null
+    }
 }

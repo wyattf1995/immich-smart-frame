@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#101722">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'">
+    <title>FrameOS touchscreen panel</title>
+    <link rel="stylesheet" href="/local/frameos-custom-home.css?v=290c6b35a378">
+    <style>
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #102025; color: #f1ede4; font-family: system-ui, sans-serif; }
+      #panel { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #102025; }
+      #panel.home-layout { top: 78px; height: calc(100% - 78px); }
+      #panel.custom-home-backend { visibility: hidden; pointer-events: none; }
+      #custom-home { position: fixed; inset: 0; z-index: 1; overflow: auto; }
+      #custom-home[hidden] { display: none !important; }
+      #home-chrome { position: fixed; z-index: 1; inset: 0 0 auto; height: 78px; display: flex; align-items: center; justify-content: space-between; box-sizing: border-box; padding: 0 28px; background: #102025; color: #f1ede4; pointer-events: none; }
+      #home-chrome[hidden] { display: none; }
+      #home-title { font-size: 1rem; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: #d8c390; }
+      #home-hint { font-size: .9rem; color: rgba(241,237,228,.68); }
+      #loading { position: fixed; z-index: 2; inset: 0; display: grid; place-items: center; pointer-events: none; background: radial-gradient(circle at 50% 42%, #23354d, #101722 62%); font-size: clamp(1.1rem, 2.2vw, 1.8rem); }
+      #loading[hidden] { display: none; }
+      #loading.still-connecting { inset: auto 1rem 1rem; width: fit-content; padding: .65rem .9rem; border: 1px solid rgba(255,255,255,.15); border-radius: .75rem; background: rgba(16,23,34,.88); font-size: 1rem; }
+      #status { position: fixed; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); }
+    </style>
+  </head>
+  <body>
+    <iframe id="panel" title="FrameOS touchscreen Home Assistant panel" allow="autoplay; fullscreen" referrerpolicy="same-origin"></iframe>
+    <main id="custom-home" hidden aria-label="Home controls"></main>
+    <header id="home-chrome" hidden><span id="home-title">Home</span><span id="home-hint">Swipe from the left edge for photos</span></header>
+    <div id="loading">Opening Home…</div>
+    <p id="status" aria-live="polite" aria-atomic="true"></p>
+    <script src="/local/frameos-home-forecast.js?v=0f231d991fbe"></script>
+    <script src="/local/frameos-custom-home.js?v=02f6ccc29915"></script>
+    <script>
+      (() => {
+        "use strict";
+        const routes = Object.freeze({
+          home: "/frameos-touchscreen/home?kiosk",
+          cameras: "/frameos-touchscreen/cameras?kiosk",
+          calendar: "/frameos-touchscreen/calendar?kiosk",
+        });
+        const labels = Object.freeze({ home: "Home", cameras: "Cameras", calendar: "Calendar" });
+        const readiness = Object.freeze({
+          home: Object.freeze(["today", "up next", "home status", "comfort"]),
+          cameras: Object.freeze(["camera chooser"]),
+          calendar: Object.freeze(["ha-full-calendar"]),
+        });
+        const READY_TIMEOUT_MILLIS = 12_000;
+        // Native HA remains visible after the initial 12-second readiness window.
+        // This is only a bounded liveness check for an already-authenticated, same-origin shell.
+        const HOME_LATE_DISCOVERY_INTERVAL_MILLIS = 1_000;
+        const HOME_LATE_DISCOVERY_DEADLINE_MILLIS = 60_000;
+        const HOME_STYLE_PROBE_TIMEOUT_MILLIS = 12_000;
+        const MAX_NAVIGATION_GUARD_NODES = 4096;
+        // performance.now() is monotonic in supported Gecko; Date is only a legacy test fallback.
+        const monotonicNow = () => typeof window.performance?.now === "function" ? window.performance.now() : Date.now();
+        const HOME_STYLE_SHADOW_LEAVES = new Set(["ha-markdown-element"]);
+        const validView = (value) => Object.prototype.hasOwnProperty.call(routes, value);
+        const normalizeView = (value) => validView(value) ? value : "home";
+        const routeFor = (value) => routes[normalizeView(value)];
+        const iframeView = () => {
+          try {
+            const match = panel.contentWindow.location.pathname.match(/^\/frameos-touchscreen\/(home|cameras|calendar|camera-[1-4])\/?$/);
+            return match ? match[1] : null;
+          } catch (_error) {
+            return null;
+          }
+        };
+
+        window.FrameOSTouchscreenPanel = Object.freeze({ normalizeView, routeFor });
+
+        const panel = document.getElementById("panel");
+        const homeChrome = document.getElementById("home-chrome");
+        const customHomeRoot = document.getElementById("custom-home");
+        const loading = document.getElementById("loading");
+        const status = document.getElementById("status");
+        let currentView = null;
+        let activeWork = null;
+        let spaWindow = null;
+        let detachSpaNavigation = null;
+        let homeStyleWork = null;
+        let customHomeWork = null;
+        let customHomeProbe = null;
+        let homeBootstrap = null;
+        let homeProjectionCache = null;
+        const HOME_CALENDAR_REVALIDATE_MILLIS = 60_000;
+        let forecastOwner = null;
+        const FORECAST_ENTITY = "weather.forecast_home";
+        const disposeForecast = () => {
+          forecastOwner?.controller.destroy();
+          forecastOwner = null;
+        };
+        const homeForecast = (root, live) => {
+          const unavailable = { forecast: null, forecastStatus: "unavailable" };
+          if (!window.FrameOSHomeForecast || !live.connection || typeof live.callWS !== "function") return unavailable;
+          if (forecastOwner?.root !== root || forecastOwner?.connection !== live.connection) {
+            disposeForecast();
+            const connection = live.connection;
+            const currentLive = () => {
+              if (panel.contentDocument !== root || iframeView() !== "home" || currentView !== "home" || document.visibilityState === "hidden") return null;
+              const fresh = root.querySelector?.("home-assistant")?.hass;
+              return fresh?.connection === connection && fresh.connected !== false && connection.connected === true ? fresh : null;
+            };
+            const controller = window.FrameOSHomeForecast.create({
+              readForecast: async () => {
+                const fresh = currentLive();
+                if (!fresh || typeof fresh.callWS !== "function") throw new Error("Forecast unavailable");
+                // Read-only weather response through HA's existing authenticated socket.
+                const result = await fresh.callWS({ type: "call_service", domain: "weather", service: "get_forecasts",
+                  target: { entity_id: FORECAST_ENTITY }, service_data: { type: "daily" }, return_response: true });
+                if (!currentLive()) throw new Error("Forecast unavailable");
+                return result?.response?.[FORECAST_ENTITY]?.forecast;
+              },
+              temperatureUnit: () => currentLive()?.states?.[FORECAST_ENTITY]?.attributes?.temperature_unit || "",
+              onUpdate: () => {
+                if (forecastOwner?.controller === controller && currentLive()) customHomeWork?.instance.refresh();
+              },
+            });
+            forecastOwner = { root, connection, controller };
+          }
+          forecastOwner.controller.setActive(document.visibilityState !== "hidden" && live.connected !== false && live.connection.connected === true);
+          forecastOwner.controller.refreshIfNeeded();
+          return forecastOwner.controller.snapshot();
+        };
+
+        const isCurrentHomeRoot = (root) => panel.contentDocument === root && iframeView() === "home" && currentView === "home" && !isAuthenticationRoute();
+        const clearHomeBootstrap = () => {
+          if (customHomeProbe) window.clearTimeout(customHomeProbe.timer);
+          customHomeProbe = null;
+          if (homeBootstrap?.lateTimer) window.clearTimeout(homeBootstrap.lateTimer);
+          homeBootstrap = null;
+        };
+        const pauseHomeDiscovery = () => {
+          if (customHomeProbe) window.clearTimeout(customHomeProbe.timer);
+          customHomeProbe = null;
+          if (!homeBootstrap?.lateTimer) return;
+          window.clearTimeout(homeBootstrap.lateTimer);
+          homeBootstrap.lateTimer = null;
+        };
+        const disposeCustomHome = () => {
+          forecastOwner?.controller.setActive(false);
+          clearHomeBootstrap();
+          if (customHomeWork) customHomeWork.instance.destroy();
+          customHomeWork = null;
+          if (customHomeRoot) customHomeRoot.hidden = true;
+          panel.classList?.toggle("custom-home-backend", false);
+        };
+        const connectedHomeHass = (root) => {
+          if (!isCurrentHomeRoot(root)) return null;
+          const live = root.querySelector?.("home-assistant")?.hass;
+          // This guard deliberately avoids Object.keys(live.states) until the existing
+          // authenticated HA connection says it is live.
+          if (!live?.states || typeof live.callService !== "function" || live.connected === false || live.connection?.connected === false) return null;
+          return live;
+        };
+        const getCustomHomeHass = (root) => {
+          const live = connectedHomeHass(root);
+          if (!live) return null;
+          // Expose data needed by this view, not HA's auth/connection object.
+          const calendarFresh = homeProjectionCache?.states === live.states && Date.now() - homeProjectionCache.checkedAt < HOME_CALENDAR_REVALIDATE_MILLIS;
+          const calendarIds = calendarFresh ? homeProjectionCache.calendarIds : Object.keys(live.states).filter((id) => id.startsWith("calendar.") && id !== "calendar.family").sort().slice(0, 3);
+          if (!calendarFresh) homeProjectionCache = { states: live.states, calendarIds, checkedAt: Date.now() };
+          const ids = ["climate.entryway_entryway", "weather.forecast_home", "weather.home", "calendar.family",
+            ...calendarIds, "camera.backyard_backyard_camera", "camera.dining_room_dining_room_camera",
+            "camera.garage_garage_camera", "camera.living_room_living_room_camera"];
+          const keys = ["friendly_name", "current_temperature", "current_humidity", "temperature",
+            "min_temp", "max_temp", "target_temp_step", "target_temp_low", "target_temp_high",
+            "hvac_modes", "hvac_action", "temperature_unit", "humidity", "message", "start_time", "end_time", "all_day"];
+          const states = {};
+          ids.forEach((id) => {
+            const entity = live.states[id];
+            if (!entity) return;
+            const attributes = {};
+            keys.forEach((key) => {
+              const value = entity.attributes?.[key];
+              if (["string", "number", "boolean"].includes(typeof value) || value === null) attributes[key] = value;
+              else if (key === "hvac_modes" && Array.isArray(value)) attributes[key] = Object.freeze(value.filter((item) => typeof item === "string"));
+            });
+            states[id] = Object.freeze({ entity_id: id, state: entity.state, attributes: Object.freeze(attributes) });
+          });
+          const forecast = homeForecast(root, live);
+          return Object.freeze({
+            forecast: forecast.forecast,
+            forecastStatus: forecast.forecastStatus,
+            states: Object.freeze(states),
+            connected: true,
+            config: Object.freeze({ unit_system: Object.freeze({ temperature: live.config?.unit_system?.temperature }) }),
+            callService: async (domain, service, data) => {
+              const fresh = root.querySelector?.("home-assistant")?.hass;
+              if (!isCurrentHomeRoot(root) || fresh?.connected === false || fresh?.connection?.connected === false) throw new Error("Connection unavailable");
+              if (domain !== "climate" || !["set_temperature", "set_hvac_mode"].includes(service) || data?.entity_id !== "climate.entryway_entryway") throw new Error("Unsupported Home action");
+              const allowed = service === "set_hvac_mode" ? ["entity_id", "hvac_mode"] : ["entity_id", "temperature", "target_temp_low", "target_temp_high"];
+              if (Object.keys(data).some((key) => !allowed.includes(key))) throw new Error("Unsupported Home action");
+              return fresh.callService(domain, service, data);
+            },
+          });
+        };
+        const mountCustomHome = (root, getHass) => {
+          let instance;
+          try {
+            instance = window.FrameOSCustomHome.mount(customHomeRoot, {
+              getHass,
+              navigate: (view) => { if (validView(view)) navigate(view); },
+              onUnavailable: () => {
+                if (panel.contentDocument !== root || isAuthenticationRoute()) {
+                  disposeCustomHome();
+                  if (isAuthenticationRoute()) showSignInRequired();
+                }
+              },
+            });
+          } catch (_error) {
+            disposeCustomHome();
+            setHomeChrome("home");
+            return false;
+          }
+          clearHomeBootstrap();
+          customHomeWork = { root, instance };
+          disposeRouteWork();
+          removeHomeStyles();
+          setHomeChrome(null);
+          panel.classList?.toggle("custom-home-backend", true);
+          customHomeRoot.hidden = false;
+          loading.hidden = true;
+          announce("Home ready");
+          return true;
+        };
+        const scheduleLateHomeDiscovery = (bootstrap, getHass) => {
+          if (homeBootstrap !== bootstrap || customHomeWork) return;
+          if (!isCurrentHomeRoot(bootstrap.root)) { clearHomeBootstrap(); return; }
+          if (document.visibilityState === "hidden") return;
+          if (monotonicNow() >= bootstrap.deadlineAt) return;
+          if (monotonicNow() + HOME_LATE_DISCOVERY_INTERVAL_MILLIS > bootstrap.deadlineAt) return;
+          if (bootstrap.lateTimer) return;
+          bootstrap.lateTimer = window.setTimeout(() => {
+            bootstrap.lateTimer = null;
+            if (homeBootstrap !== bootstrap) return;
+            if (!isCurrentHomeRoot(bootstrap.root)) { clearHomeBootstrap(); return; }
+            if (document.visibilityState === "hidden") return;
+            if (monotonicNow() >= bootstrap.deadlineAt) return;
+            // Never enumerate HA state while its existing authenticated connection is down.
+            if (connectedHomeHass(bootstrap.root) && mountCustomHome(bootstrap.root, getHass)) return;
+            scheduleLateHomeDiscovery(bootstrap, getHass);
+          }, HOME_LATE_DISCOVERY_INTERVAL_MILLIS);
+        };
+        const discoverCustomHome = (root) => {
+          if (!customHomeRoot || !window.FrameOSCustomHome) return false;
+          if (customHomeWork?.root === root) {
+            setHomeChrome(null);
+            loading.hidden = true;
+            return true;
+          }
+          disposeCustomHome();
+          const bootstrap = { root, deadlineAt: monotonicNow() + HOME_LATE_DISCOVERY_DEADLINE_MILLIS, lateTimer: null };
+          homeBootstrap = bootstrap;
+          // A hidden iframe must not begin even the fast probe; visibility resume owns its bounded restart.
+          if (document.visibilityState === "hidden") return false;
+          const getHass = () => getCustomHomeHass(root);
+          const probe = { root, timer: null, attempts: 0 };
+          customHomeProbe = probe;
+          const attempt = () => {
+            if (customHomeProbe !== probe || homeBootstrap !== bootstrap) return false;
+            if (!isCurrentHomeRoot(root)) { clearHomeBootstrap(); return false; }
+            const hass = getHass();
+            if (hass?.states && typeof hass.callService === "function" && hass.connected !== false) return mountCustomHome(root, getHass);
+            // Preserve the existing 12-second fast discovery window, then use a low-cost 1 Hz liveness probe.
+            if (++probe.attempts < 240) probe.timer = window.setTimeout(attempt, 50);
+            else {
+              customHomeProbe = null;
+              scheduleLateHomeDiscovery(bootstrap, getHass);
+            }
+            return false;
+          };
+          return attempt();
+        };
+
+        const announce = (message) => { status.textContent = message; };
+        const focusPanel = () => { try { panel.contentWindow.focus(); } catch (_error) { panel.focus(); } };
+        const labelFor = (view) => labels[view] || "Camera";
+        const setHomeChrome = (view) => {
+          const isHome = view === "home";
+          if (homeChrome) homeChrome.hidden = !isHome;
+          panel.classList?.toggle("home-layout", isHome);
+        };
+        const showLoading = (view) => { setHomeChrome(view); loading.textContent = `Opening ${labelFor(view)}…`; loading.classList.remove("still-connecting"); loading.hidden = false; announce(`Loading ${labelFor(view)}`); };
+        const showReady = (view) => { loading.hidden = true; announce(`${labelFor(view)} ready`); focusPanel(); };
+        const showStillConnecting = (view) => { loading.textContent = `${labelFor(view)} still connecting…`; loading.classList.add("still-connecting"); loading.hidden = false; announce(`${labelFor(view)} still connecting`); focusPanel(); };
+
+        const disposeRouteWork = () => {
+          if (!activeWork) return;
+          window.clearTimeout(activeWork.timeout);
+          window.clearTimeout(activeWork.shadowProbeTimer);
+          activeWork.observers.forEach((observer) => observer.disconnect());
+          activeWork = null;
+        };
+
+        const removeHomeStyles = () => {
+          if (!homeStyleWork) return;
+          homeStyleWork.observers.forEach((observer) => observer.disconnect());
+          window.clearTimeout(homeStyleWork.shadowProbeTimer);
+          window.clearTimeout(homeStyleWork.shadowProbeDeadlineTimer);
+          homeStyleWork.styleRoots.forEach((root) => root.querySelector?.("#frameos-home-redesign")?.remove?.());
+          homeStyleWork.cardRoots.forEach((root) => root.querySelector?.("#frameos-home-card")?.remove?.());
+          homeStyleWork.markdownRoots.forEach((root) => root.querySelector?.("#frameos-home-markdown")?.remove?.());
+          homeStyleWork = null;
+        };
+        const homeStyle = (document, id, text) => {
+          const style = document.createElement("style");
+          style.id = id;
+          style.textContent = text;
+          return style;
+        };
+        const styleHomeElement = (element, work) => {
+          if (!element || element.ownerDocument !== work.root || !element.shadowRoot) return;
+          const shadow = element.shadowRoot;
+          if (element.localName === "hui-sections-view" && !shadow.querySelector?.("#frameos-home-redesign")) {
+            shadow.append(homeStyle(element.ownerDocument, "frameos-home-redesign", `
+              :host { --primary-text-color:#f1ede4; --secondary-text-color:rgba(241,237,228,.72); --card-background-color:#182a2c; --ha-card-background:#182a2c; --divider-color:rgba(216,195,144,.22); display:block; min-height:100%; background:#102025; }
+              div.wrapper, div.container, div.content { background:#102025 !important; }
+              div.container { padding:12px 28px 22px !important; }
+              div.section-container { gap:22px !important; }
+            `));
+            work.styleRoots.add(shadow);
+          }
+          if (["hui-markdown-card", "hui-thermostat-card"].includes(element.localName) && !shadow.querySelector?.("#frameos-home-card")) {
+            const extra = element.localName === "hui-thermostat-card"
+              ? "p.title{color:#d8c390!important;letter-spacing:.08em;text-transform:uppercase} div.container{color:#f1ede4!important}"
+              : "ha-markdown{color:#f1ede4!important}";
+            shadow.append(homeStyle(element.ownerDocument, "frameos-home-card", `ha-card{background:#182a2c!important;color:#f1ede4!important;border:1px solid rgba(216,195,144,.22);border-radius:20px;box-shadow:0 12px 28px rgba(0,0,0,.18)} ${extra}`));
+            work.cardRoots.add(shadow);
+          }
+          if (element.localName === "ha-markdown") {
+            const markdownElement = [...shadow.querySelectorAll("*")].find((child) => child.localName === "ha-markdown-element");
+            const firstStrong = markdownElement?.querySelector?.("strong");
+            const isClock = /^([01]?\d|2[0-3]):[0-5]\d$/.test(firstStrong?.textContent?.trim() || "");
+            const clockStyle = isClock
+              ? "ha-markdown-element{color:#f1ede4!important} ha-markdown-element strong:first-child{display:block;font-size:clamp(3.8rem,9vw,6.25rem);line-height:.96;letter-spacing:-.055em;color:#f1ede4!important}"
+              : "ha-markdown-element{color:#f1ede4!important;font-size:1.18rem;line-height:1.45}";
+            const existingStyle = shadow.querySelector?.("#frameos-home-markdown");
+            if (!existingStyle) shadow.append(homeStyle(element.ownerDocument, "frameos-home-markdown", clockStyle));
+            else if (existingStyle.textContent !== clockStyle) existingStyle.textContent = clockStyle;
+            work.markdownRoots.add(shadow);
+          }
+        };
+        const styleHomeSubtree = (node, work) => {
+          if (!node || homeStyleWork !== work || panel.contentDocument !== work.root) return;
+          if (node.nodeType === 1) {
+            styleHomeElement(node, work);
+            if (node.shadowRoot) observeHomeStyleRoot(node.shadowRoot, work);
+            else queueHomeShadowHost(node, work);
+          }
+          if (!node.querySelectorAll) return;
+          node.querySelectorAll("*").forEach((element) => {
+            styleHomeElement(element, work);
+            if (element.shadowRoot) observeHomeStyleRoot(element.shadowRoot, work);
+            else queueHomeShadowHost(element, work);
+          });
+        };
+        const queueHomeShadowHost = (element, work) => {
+          if (element.ownerDocument !== work.root || !element.localName?.includes("-") || HOME_STYLE_SHADOW_LEAVES.has(element.localName)) return;
+          work.pendingShadowHosts.add(element);
+          scheduleHomeShadowProbe(work);
+        };
+        const scheduleHomeShadowProbe = (work) => {
+          if (homeStyleWork !== work || work.shadowProbeExpired || work.shadowProbeTimer || work.pendingShadowHosts.size === 0) return;
+          work.shadowProbeTimer = window.setTimeout(() => {
+            work.shadowProbeTimer = null;
+            if (homeStyleWork !== work || work.shadowProbeExpired) return;
+            work.pendingShadowHosts.forEach((host) => {
+              if (host.shadowRoot) {
+                work.pendingShadowHosts.delete(host);
+                styleHomeElement(host, work);
+                observeHomeStyleRoot(host.shadowRoot, work);
+              }
+            });
+            scheduleHomeShadowProbe(work);
+          }, 50);
+        };
+        const observeHomeStyleRoot = (root, work) => {
+          if (work.observedRoots.has(root)) return;
+          work.observedRoots.add(root);
+          const observer = new MutationObserver((records) => {
+            if (homeStyleWork !== work || iframeView() !== "home") return;
+            records.forEach((record) => {
+              if ((record.type === "characterData" || record.type === "childList") && root.host?.localName === "ha-markdown") styleHomeElement(root.host, work);
+              (record.addedNodes || []).forEach((node) => styleHomeSubtree(node, work));
+            });
+          });
+          observer.observe(root, { childList: true, subtree: true, characterData: true });
+          work.observers.push(observer);
+          styleHomeSubtree(root, work);
+        };
+        const activateHomeStyles = (root) => {
+          if (homeStyleWork?.root === root) return;
+          removeHomeStyles();
+          const work = { root, observers: [], observedRoots: new WeakSet(), styleRoots: new Set(), cardRoots: new Set(), markdownRoots: new Set(), pendingShadowHosts: new Set(), shadowProbeTimer: null, shadowProbeDeadlineTimer: null, shadowProbeExpired: false };
+          homeStyleWork = work;
+          work.shadowProbeDeadlineTimer = window.setTimeout(() => {
+            if (homeStyleWork !== work) return;
+            work.shadowProbeExpired = true;
+            window.clearTimeout(work.shadowProbeTimer);
+            work.shadowProbeTimer = null;
+            work.pendingShadowHosts.clear();
+          }, HOME_STYLE_PROBE_TIMEOUT_MILLIS);
+          observeHomeStyleRoot(root, work);
+        };
+        const disposeHomeStyles = () => { removeHomeStyles(); setHomeChrome(null); };
+        const isAuthenticationRoute = () => {
+          try { return /^\/auth(?:\/|$)/.test(panel.contentWindow.location.pathname); } catch (_error) { return false; }
+        };
+        const showSignInRequired = () => {
+          disposeCustomHome();
+          disposeForecast();
+          disposeRouteWork();
+          disposeHomeStyles();
+          loading.hidden = true;
+          announce("Sign-in required");
+          focusPanel();
+        };
+
+        const textFor = (element) => [element.heading, element.getAttribute?.("heading"), element.textContent, element.shadowRoot?.textContent].filter((value) => typeof value === "string").join(" ").toLowerCase();
+        const applyHeadingContrast = (element, state) => {
+          if (state.view !== "home" || element.localName !== "hui-heading-card") return;
+          if (!state.styledHeadings.has(element)) {
+            element.style.setProperty(
+              "background",
+              "linear-gradient(90deg, rgba(9, 15, 24, 0.82), rgba(9, 15, 24, 0.58))",
+              "important",
+            );
+            element.style.setProperty("border-radius", "14px", "important");
+            element.style.setProperty("box-shadow", "inset 0 0 0 1px rgba(255,255,255,.1)", "important");
+            element.style.setProperty("--primary-text-color", "#f1ede4", "important");
+            element.style.setProperty("--secondary-text-color", "#d8c390", "important");
+            state.styledHeadings.add(element);
+          }
+          const headingShadow = element.shadowRoot;
+          if (headingShadow && !state.styledHeadingShadows.has(headingShadow)) {
+            if (!headingShadow.querySelector("#frameos-heading-contrast")) {
+              const style = element.ownerDocument.createElement("style");
+              style.id = "frameos-heading-contrast";
+              style.textContent = ":host,*{color:#f1ede4!important;text-shadow:0 1px 3px rgba(0,0,0,.9)}";
+              headingShadow.append(style);
+            }
+            state.styledHeadingShadows.add(headingShadow);
+          }
+        };
+        const isActiveElement = (element, state) => Boolean(element && element.isConnected && element.ownerDocument === state.root && panel.contentDocument === state.root);
+        const pruneEvidence = (state) => {
+          state.headings.forEach((element, heading) => { if (!isActiveElement(element, state)) state.headings.delete(heading); });
+          if (!isActiveElement(state.calendarRoot, state)) state.calendarRoot = null;
+          state.cameraCards.forEach((element) => { if (!isActiveElement(element, state)) state.cameraCards.delete(element); });
+          state.pendingShadowHosts.forEach((element) => { if (!isActiveElement(element, state)) state.pendingShadowHosts.delete(element); });
+        };
+        const routeReady = (state) => {
+          pruneEvidence(state);
+          if (/^camera-[1-4]$/.test(state.view)) return state.cameraCards.size === 1;
+          if (state.view === "calendar") return Boolean(state.calendarRoot);
+          return readiness[state.view].every((heading) => state.headings.has(heading));
+        };
+        const observeRoot = (root, state) => {
+          if (activeWork !== state || state.ready) return;
+          if (state.observedRoots.has(root)) return;
+          state.observedRoots.add(root);
+          const observer = new MutationObserver((records) => {
+            if (activeWork !== state) return;
+            const activeView = iframeView() || currentView;
+            if (activeView !== state.view) { observeReadiness(activeView); return; }
+            records.forEach((record) => {
+              if (record.type === "characterData") {
+                inspectAddedSubtree(record.target.parentElement, state);
+              } else {
+                record.addedNodes.forEach((node) => inspectAddedSubtree(node, state));
+              }
+            });
+          });
+          observer.observe(root, { childList: true, subtree: true, characterData: true });
+          state.observers.push(observer);
+        };
+        const inspectElement = (element, state) => {
+          if (activeWork !== state || state.ready) return;
+          if (!isActiveElement(element, state)) return;
+          if (element.shadowRoot) {
+            state.pendingShadowHosts.delete(element);
+            observeRoot(element.shadowRoot, state);
+            inspectAddedSubtree(element.shadowRoot, state);
+          } else if (!state.ready && element.localName?.includes("-")) {
+            state.pendingShadowHosts.add(element);
+            scheduleShadowProbe(state);
+          }
+          const text = textFor(element);
+          applyHeadingContrast(element, state);
+          if (/^camera-[1-4]$/.test(state.view) && element.localName === "hui-picture-entity-card") state.cameraCards.add(element);
+          if (state.view === "calendar" && element.localName === "ha-full-calendar") state.calendarRoot = element;
+          if (readiness[state.view]) readiness[state.view].forEach((heading) => { if (text.includes(heading)) state.headings.set(heading, element); });
+        };
+        const inspectAddedSubtree = (node, state) => {
+          if (activeWork !== state || state.ready) return;
+          if (!node) return;
+          if (node.nodeType === 3) {
+            if (node.parentElement) inspectElement(node.parentElement, state);
+            finishIfReady(state);
+            return;
+          }
+          if (!node.querySelectorAll) return;
+          if (node.nodeType === 1) inspectElement(node, state);
+          node.querySelectorAll("*").forEach((element) => inspectElement(element, state));
+          finishIfReady(state);
+        };
+        const scheduleShadowProbe = (state) => {
+          if (activeWork !== state || state.ready || state.shadowProbeExpired || state.shadowProbeTimer || state.pendingShadowHosts.size === 0) return;
+          state.shadowProbeTimer = window.setTimeout(() => {
+            state.shadowProbeTimer = null;
+            if (activeWork !== state || state.ready || state.shadowProbeExpired) return;
+            state.pendingShadowHosts.forEach((host) => {
+              if (host.shadowRoot) { state.pendingShadowHosts.delete(host); observeRoot(host.shadowRoot, state); inspectAddedSubtree(host.shadowRoot, state); }
+            });
+            scheduleShadowProbe(state);
+          }, 50);
+        };
+        const finishIfReady = (state) => {
+          if (activeWork !== state || state.ready || !routeReady(state)) return;
+          state.ready = true;
+          disposeRouteWork();
+          showReady(state.view);
+        };
+
+        const observeReadiness = (view) => {
+          disposeRouteWork();
+          const root = panel.contentDocument;
+          if (!root) {
+            disposeCustomHome();
+            if (view !== "home") disposeHomeStyles();
+            return;
+          }
+          if (view === "home") {
+            if (discoverCustomHome(root)) return;
+          } else disposeCustomHome();
+          if (view === "home") activateHomeStyles(root); else disposeHomeStyles();
+          const state = { view, root, ready: false, timeout: null, shadowProbeTimer: null, shadowProbeExpired: false, observers: [], observedRoots: new WeakSet(), pendingShadowHosts: new Set(), styledHeadings: new WeakSet(), styledHeadingShadows: new WeakSet(), headings: new Map(), calendarRoot: null, cameraCards: new Set() };
+          activeWork = state;
+          activeWork.timeout = window.setTimeout(() => {
+            if (activeWork?.view !== view) return;
+            activeWork.shadowProbeExpired = true;
+            disposeRouteWork();
+            showStillConnecting(view);
+          }, READY_TIMEOUT_MILLIS);
+          observeRoot(root, state);
+          inspectAddedSubtree(root, state);
+          scheduleShadowProbe(state);
+        };
+
+        const hasActiveHaNavigationGuard = (root) => {
+          const selector = "ha-dialog[open],ha-dialog:not([hidden]),ha-more-info-dialog[open],ha-more-info-dialog:not([hidden]),[data-unsaved-changes='true'],[data-dirty='true']";
+          const roots = [root];
+          let inspected = 0;
+          try {
+            while (roots.length) {
+              const candidate = roots.pop();
+              if (++inspected > MAX_NAVIGATION_GUARD_NODES) return true;
+              if (candidate?.querySelector?.(selector)) return true;
+              const elements = candidate?.querySelectorAll?.("*") || [];
+              for (const element of elements) {
+                if (++inspected > MAX_NAVIGATION_GUARD_NODES) return true;
+                if (element.shadowRoot) roots.push(element.shadowRoot);
+              }
+            }
+          } catch (_error) {
+            return true;
+          }
+          return false;
+        };
+
+        const trySpaNavigation = (view) => {
+          try {
+            const childWindow = panel.contentWindow;
+            const root = panel.contentDocument;
+            if (!childWindow || childWindow !== spaWindow || !root) return false;
+            if (childWindow.location.origin !== window.location.origin || childWindow.location.search !== "?kiosk" || isAuthenticationRoute()) return false;
+            const sourceView = iframeView();
+            if (!sourceView || !validView(view) || hasActiveHaNavigationGuard(root)) return false;
+            const hass = root.querySelector?.("home-assistant")?.hass;
+            if (!hass?.states || hass.connected === false || hass.connection?.connected !== true) return false;
+            const sourcePath = `${childWindow.location.pathname}${childWindow.location.search}`;
+            const target = routeFor(view);
+            childWindow.history.pushState({ from: sourcePath }, "", target);
+            const event = new childWindow.Event("location-changed", { bubbles: true, composed: true });
+            event.detail = { replace: false };
+            childWindow.dispatchEvent(event);
+            return true;
+          } catch (_error) {
+            return false;
+          }
+        };
+
+        const navigate = (rawView) => {
+          const view = normalizeView(rawView);
+          if (location.hash !== `#${view}`) history.replaceState(null, "", `${location.pathname}${location.search}#${view}`);
+          currentView = view;
+          disposeCustomHome();
+          disposeRouteWork();
+          if (view !== "home") disposeHomeStyles();
+          showLoading(view);
+          if (trySpaNavigation(view)) return;
+          panel.src = routeFor(view);
+        };
+
+        const attachSpaNavigationWatcher = () => {
+          let childWindow;
+          try { childWindow = panel.contentWindow; } catch (_error) { return; }
+          if (!childWindow) return;
+          if (detachSpaNavigation) detachSpaNavigation();
+          const onNavigation = () => {
+            if (isAuthenticationRoute()) { showSignInRequired(); return; }
+            const view = iframeView() || currentView;
+            if (!view) return;
+            showLoading(view);
+            observeReadiness(view);
+          };
+          childWindow.addEventListener("location-changed", onNavigation);
+          childWindow.addEventListener("popstate", onNavigation);
+          spaWindow = childWindow;
+          detachSpaNavigation = () => {
+            childWindow.removeEventListener("location-changed", onNavigation);
+            childWindow.removeEventListener("popstate", onNavigation);
+          };
+        };
+
+        panel.addEventListener("load", () => {
+          disposeCustomHome();
+          attachSpaNavigationWatcher();
+          const loadedView = iframeView();
+          if (!loadedView) {
+            if (isAuthenticationRoute()) { showSignInRequired(); return; }
+          }
+          if (currentView) observeReadiness(loadedView || currentView);
+        });
+        window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
+        window.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "hidden") { pauseHomeDiscovery(); return; }
+          const bootstrap = homeBootstrap;
+          if (!bootstrap || customHomeProbe || customHomeWork || !isCurrentHomeRoot(bootstrap.root) || monotonicNow() >= bootstrap.deadlineAt) return;
+          scheduleLateHomeDiscovery(bootstrap, () => getCustomHomeHass(bootstrap.root));
+        });
+        window.addEventListener("pagehide", () => {
+          disposeCustomHome();
+          disposeForecast();
+          disposeRouteWork();
+          disposeHomeStyles();
+          if (detachSpaNavigation) detachSpaNavigation();
+        });
+        navigate(location.hash.slice(1));
+      })();
+    </script>
+  </body>
+</html>

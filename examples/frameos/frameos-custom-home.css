@@ -1,0 +1,99 @@
+.frameos-custom-home {
+  --fch-paper: #f5f2e9;
+  --fch-ink: #12242b;
+  --fch-line: #9bbcc5;
+  --fch-sky: #bceef8;
+  --fch-yellow: #f6d400;
+  --fch-card: #e8f8f7;
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: 18px 24px 18px 86px;
+  color: var(--fch-ink);
+  background: var(--fch-paper);
+  font-family: Arial, "Roboto", system-ui, sans-serif;
+}
+.frameos-custom-home *, .frameos-custom-home *::before, .frameos-custom-home *::after { box-sizing: border-box; }
+.frameos-custom-home.night { --fch-paper:#102226; --fch-ink:#f5f2e9; --fch-line:#547985; --fch-sky:#173941; --fch-yellow:#d6ad00; --fch-card:#18343a; }
+.fch-top { display:grid; grid-template-columns:1.15fr .9fr .72fr; align-items:end; gap:20px; min-height:135px; border-bottom:3px solid var(--fch-ink); padding-bottom:10px; }
+.fch-time { font-size:clamp(68px, 10vw, 128px); font-weight:700; letter-spacing:-.095em; line-height:.78; white-space:nowrap; }
+.fch-date, .fch-eyebrow { margin-top:10px; font-size:13px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; }
+.fch-weather { display:grid; grid-template-columns:auto 1fr; gap:0 10px; align-items:center; }
+.fch-weather-icon { grid-row:span 2; font-size:44px; }.fch-weather-temp { font-size:44px; font-weight:700; letter-spacing:-.06em; }.fch-weather-state { font-weight:800; text-transform:capitalize; }
+.fch-status { align-self:center; padding:9px 0 9px 14px; border-left:2px solid var(--fch-line); font-size:13px; line-height:1.55; }.fch-status strong{display:block;font-size:15px}
+.fch-grid { display:grid; grid-template-columns:1.18fr .92fr; gap:16px; padding-top:15px; }.fch-card { border:2px solid var(--fch-ink); border-radius:14px; background:var(--fch-card); overflow:hidden; }.fch-card h2 { margin:0; padding:8px 12px; font-size:13px; letter-spacing:.06em; text-transform:uppercase; border-bottom:2px solid var(--fch-ink); }
+.fch-next { min-height:166px; padding:18px; background:var(--fch-yellow); color:#162226; display:grid; grid-template-columns:1fr auto; align-items:center; gap:18px; }.fch-next-title{font-size:clamp(28px,3.7vw,54px);font-weight:700;line-height:.95;letter-spacing:-.055em}.fch-next-meta{margin-top:9px;font-size:15px;font-weight:800}.fch-next-time{font-size:46px;font-weight:700;letter-spacing:-.06em;text-align:right}.fch-next-empty{font-size:24px;font-weight:800}
+.fch-climate { padding:13px; }.fch-climate-reading { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:12px; }.fch-climate-temp{font-size:52px;font-weight:700;letter-spacing:-.07em}.fch-state{font-size:16px;font-weight:700;text-transform:capitalize}.fch-mode-row,.fch-adjust-row,.fch-actions{display:flex;gap:8px;flex-wrap:wrap}.fch-mode,.fch-adjust,.fch-action{min-height:52px;border:2px solid var(--fch-ink);border-radius:9px;background:var(--fch-paper);color:var(--fch-ink);padding:0 13px;font:700 16px Arial,sans-serif;cursor:pointer}.fch-mode.active,.fch-action.apply{background:var(--fch-ink);color:var(--fch-paper)}.fch-mode:focus-visible,.fch-adjust:focus-visible,.fch-action:focus-visible,.fch-link:focus-visible{outline:4px solid var(--fch-yellow);outline-offset:2px}.fch-mode[disabled],.fch-adjust[disabled],.fch-action[disabled]{opacity:.45;cursor:not-allowed}.fch-draft{font-size:17px;font-weight:700;margin:13px 0 8px}.fch-feedback{min-height:20px;margin:8px 0 0;font-size:13px;font-weight:800}.fch-feedback.error{color:#a8231c}.fch-feedback.pending{color:#735c00}
+.fch-bottom { grid-column:1/-1; display:grid; grid-template-columns:1.25fr .75fr; gap:16px; }.fch-list{padding:7px 12px 12px}.fch-event{display:flex;gap:12px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--fch-line);font-size:14px;font-weight:700}.fch-event:last-child{border:0}.fch-event time{min-width:160px;white-space:nowrap;font-weight:700}.fch-links{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px}.fch-link{min-height:76px;border:2px solid var(--fch-ink);border-radius:11px;background:var(--fch-sky);color:var(--fch-ink);font:700 18px Arial,sans-serif;cursor:pointer;text-align:left;padding:12px}.fch-link small{display:block;margin-top:4px;font-size:12px;font-weight:700}
+@media (max-width: 720px) { .frameos-custom-home{padding:12px 12px 12px 76px}.fch-top{grid-template-columns:1fr 1fr;gap:8px}.fch-status{display:none}.fch-grid,.fch-bottom{grid-template-columns:1fr}.fch-time{font-size:72px}.fch-next{min-height:130px}.fch-weather-temp{font-size:34px} }
+
+/* A clock and an event are the visual anchors, not oversized UI chrome. */
+.fch-time {font-size:112px;letter-spacing:-.065em;display:flex;align-items:flex-start;gap:10px}
+.fch-time small {font-size:18px;letter-spacing:0;padding-top:5px}
+.fch-top > div {min-width:0}
+.fch-grid {grid-template-columns:1.18fr .92fr;grid-template-rows:auto auto auto;align-items:start}
+.fch-next-card {grid-column:1;grid-row:1}
+.fch-climate-card {grid-column:2;grid-row:1 / 3;align-self:stretch}
+.fch-bottom {display:contents}
+.fch-calendar-card {grid-column:1;grid-row:2}
+.fch-links-card {grid-column:1/-1;grid-row:3}
+.fch-next {grid-template-columns:1fr;min-height:160px}
+.fch-next-title {font:normal 42px/1.08 Georgia,serif;letter-spacing:-.035em;overflow-wrap:anywhere}
+.fch-climate-temp {font-size:64px;letter-spacing:-.06em}
+.fch-adjust-row {margin-bottom:10px}
+.fch-adjust {min-width:64px;font-size:24px}
+.fch-actions .fch-action {min-width:90px}
+.fch-links {padding:10px;gap:12px}
+.fch-link {min-height:64px}
+.fch-feedback.error {color:#a8231c}
+.night .fch-feedback.error {color:#ffaaa1}
+.night .fch-feedback.pending {color:#ead578}
+@media (max-width:720px) {
+ .fch-time{font-size:72px}.fch-grid{display:flex;flex-direction:column}.fch-card{width:100%}.fch-bottom{display:contents}.fch-next-title{font-size:32px}
+}
+/* Keep navigation labels intact on the 1280px frame. */
+.frameos-custom-home {padding-left:24px}
+@media (max-width:720px) {.frameos-custom-home {padding-left:12px}}
+
+/* Native FrameOS owns the persistent rail; this page keeps content spacious. */
+.fch-weather { grid-template-columns:auto auto 1fr; }
+.fch-forecast { grid-column:1/-1; display:flex; gap:8px; margin-top:7px; }
+.fch-forecast-day { display:grid; grid-template-columns:auto auto; column-gap:4px; min-width:0; padding:4px 6px; border-left:1px solid var(--fch-line); font-size:11px; line-height:1.15; }
+.fch-forecast-day b { grid-column:1/-1; font-size:10px; text-transform:uppercase; }
+.fch-forecast-day i { font-style:normal; }
+.fch-forecast-day strong { font-size:13px; }
+.fch-forecast-day small,.fch-forecast-status { grid-column:1/-1; font-size:10px; }
+
+/* Scale readable dashboard text from the 1280px frame to the 1920px panel. */
+.frameos-custom-home {
+  --fch-body: clamp(16px, calc(16px + (100vw - 1280px) * 0.0125), 24px);
+  --fch-label: clamp(14px, calc(14px + (100vw - 1280px) * 0.009375), 20px);
+  --fch-control: clamp(16px, calc(16px + (100vw - 1280px) * 0.009375), 22px);
+  --fch-heading: clamp(16px, calc(16px + (100vw - 1280px) * 0.0125), 24px);
+  font-size: var(--fch-body);
+}
+
+.fch-time { font-size: clamp(112px, calc(112px + (100vw - 1280px) * 0.0875), 168px); }
+.fch-time small { font-size: var(--fch-control); }
+.fch-date, .fch-eyebrow, .fch-card h2 { font-size: var(--fch-label); }
+.fch-weather-icon { font-size: clamp(44px, calc(44px + (100vw - 1280px) * 0.03125), 64px); }
+.fch-weather-temp { font-size: clamp(44px, calc(44px + (100vw - 1280px) * 0.046875), 74px); }
+.fch-weather-state { font-size: var(--fch-body); }
+.fch-status { font-size: var(--fch-label); }
+.fch-status strong { font-size: var(--fch-body); }
+.fch-next-meta, .fch-state, .fch-draft { font-size: var(--fch-control); }
+.fch-feedback { font-size: var(--fch-label); }
+.fch-event { font-size: var(--fch-body); line-height: 1.3; }
+.fch-mode, .fch-adjust, .fch-action { min-height: 48px; font-size: var(--fch-control); }
+.fch-link { min-height: 64px; font-size: var(--fch-control); }
+.fch-link small { font-size: var(--fch-label); }
+.fch-forecast { gap: clamp(8px, calc(8px + (100vw - 1280px) * 0.00625), 12px); }
+.fch-forecast-day { font-size: var(--fch-label); line-height: 1.25; padding: 6px 8px; }
+.fch-forecast-day b, .fch-forecast-day small, .fch-forecast-status { font-size: var(--fch-label); }
+.fch-forecast-day strong { font-size: var(--fch-control); }
+
+@media (max-width: 720px) {
+  .frameos-custom-home { overflow-wrap: anywhere; }
+  .fch-time { font-size: 72px; }
+  .fch-forecast { flex-wrap: wrap; }
+  .fch-event time { min-width: 0; }
+}

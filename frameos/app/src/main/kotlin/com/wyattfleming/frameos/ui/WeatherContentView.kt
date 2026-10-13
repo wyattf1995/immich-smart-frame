@@ -28,6 +28,8 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 class WeatherContentView(context: Context) : View(context) {
+    private var onPrimaryAction: (() -> Unit)? = null
+
     var presentation: WeatherPresentation = previewPresentation()
         set(value) {
             if (field.sceneCondition != value.sceneCondition) sceneEpochMillis = SystemClock.uptimeMillis()
@@ -36,11 +38,18 @@ class WeatherContentView(context: Context) : View(context) {
             pageEpochMillis = SystemClock.uptimeMillis()
             pageAnchorIndex = 0
             staticLayerState.invalidatePresentation()
-            val metricSummary = value.metrics.joinToString { "${it.label} ${it.value}" }
-            contentDescription = value.emptyMessage ?: buildString {
-                append("${value.condition}, ${value.temperature}. ${value.status}")
-                if (metricSummary.isNotEmpty()) append(". $metricSummary")
-            }
+            updateInteractionState()
+            invalidate()
+        }
+
+    /** Optional user-configured city or location label; null leaves the header unchanged. */
+    var locationLabel: String? = null
+        set(value) {
+            val normalized = WeatherHeaderLayout.locationLabel(value)
+            if (field == normalized) return
+            field = normalized
+            staticLayerState.invalidatePresentation()
+            updateInteractionState()
             invalidate()
         }
 
@@ -71,7 +80,16 @@ class WeatherContentView(context: Context) : View(context) {
 
     init {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
-        contentDescription = "Clear night, 79°F. Preview weather"
+        setOnClickListener {
+            if (isPrimaryActionAvailable()) onPrimaryAction?.invoke()
+        }
+        updateInteractionState()
+    }
+
+    /** Enables the visible Weather sign-in affordance without changing hardware-key behavior. */
+    fun setOnPrimaryActionListener(listener: (() -> Unit)?) {
+        onPrimaryAction = listener
+        updateInteractionState()
     }
 
     fun moveHourlyPage(forward: Boolean): String? {
@@ -133,13 +151,25 @@ class WeatherContentView(context: Context) : View(context) {
             paint.alpha = 255
             paint.style = Paint.Style.FILL
             drawFixedTerrain(staticCanvas)
-            drawText(staticCanvas, "Weather", width * 0.05f, height * 0.10f, 40f, Color.WHITE, true)
+            val header = WeatherHeaderLayout.forSize(width.toFloat(), height.toFloat())
+            drawText(staticCanvas, "Weather", header.titleX, header.titleBaseline, header.titleTextSp, Color.WHITE, true)
+            locationLabel?.let { label ->
+                drawRightAlignedText(
+                    staticCanvas,
+                    label,
+                    header.locationRightX,
+                    header.titleBaseline,
+                    header.locationTextSp,
+                    MUTED,
+                    true,
+                )
+            }
 
             val emptyMessage = presentation.emptyMessage
             if (emptyMessage != null) {
                 drawEmptyState(staticCanvas, emptyMessage)
             } else {
-                drawText(staticCanvas, presentation.status, width * 0.05f, height * 0.145f, 19f, MUTED)
+                drawText(staticCanvas, presentation.status, header.titleX, header.statusBaseline, header.statusTextSp, MUTED)
                 drawCurrent(staticCanvas, pageIndex)
                 drawDaily(staticCanvas)
                 drawHourly(staticCanvas, pageIndex)
@@ -427,9 +457,31 @@ class WeatherContentView(context: Context) : View(context) {
     private fun drawEmptyState(canvas: Canvas, message: String) {
         drawCard(canvas, RectF(width * 0.23f, height * 0.30f, width * 0.77f, height * 0.69f))
         drawWeatherIcon(canvas, WeatherCondition.CLOUDY, width * 0.50f, height * 0.41f, dp(38f))
-        drawCenteredText(canvas, message, width * 0.50f, height * 0.53f, 28f, Color.WHITE, true)
-        val detail = if (message.contains("sign-in")) "Press ★ to connect securely" else "The last forecast will return automatically"
-        drawCenteredText(canvas, detail, width * 0.50f, height * 0.60f, 19f, MUTED)
+        drawCenteredText(canvas, message, width * 0.50f, height * 0.53f, 34f, Color.WHITE, true)
+        val detail = WeatherTouchPrimaryAction.detailFor(message, isPrimaryActionAvailable())
+        drawCenteredText(canvas, detail, width * 0.50f, height * 0.60f, 23f, MUTED)
+    }
+
+    private fun isPrimaryActionAvailable(): Boolean = WeatherTouchPrimaryAction.isAvailable(
+        emptyMessage = presentation.emptyMessage,
+        actionConfigured = onPrimaryAction != null,
+    )
+
+    private fun updateInteractionState() {
+        val primaryActionAvailable = isPrimaryActionAvailable()
+        isClickable = primaryActionAvailable
+        isFocusable = primaryActionAvailable
+        val metricSummary = presentation.metrics.joinToString { "${it.label} ${it.value}" }
+        val fallbackDescription = buildString {
+            locationLabel?.let { append("$it. ") }
+            append("${presentation.condition}, ${presentation.temperature}. ${presentation.status}")
+            if (metricSummary.isNotEmpty()) append(". $metricSummary")
+        }
+        contentDescription = WeatherTouchPrimaryAction.contentDescriptionFor(
+            emptyMessage = presentation.emptyMessage,
+            fallbackDescription = fallbackDescription,
+            actionConfigured = primaryActionAvailable,
+        )
     }
 
     private fun drawCurrent(canvas: Canvas, forecastPageIndex: Int) {
@@ -442,11 +494,11 @@ class WeatherContentView(context: Context) : View(context) {
         } else {
             "CURRENT CONDITIONS"
         }
-        drawText(canvas, metricHeading, card.left + dp(24f), card.top + dp(36f), 15f, MUTED, true)
+        drawText(canvas, metricHeading, card.left + dp(24f), card.top + dp(36f), 18f, MUTED, true)
         val condition = presentation.sceneCondition
         drawWeatherIcon(canvas, condition, card.left + card.width() * 0.18f, card.top + card.height() * 0.42f, dp(38f))
-        drawText(canvas, presentation.temperature, card.left + card.width() * 0.34f, card.top + card.height() * 0.48f, 62f, Color.WHITE, true)
-        drawText(canvas, presentation.condition, card.left + card.width() * 0.34f, card.top + card.height() * 0.61f, 23f, Color.WHITE, true)
+        drawText(canvas, presentation.temperature, card.left + card.width() * 0.34f, card.top + card.height() * 0.48f, 74f, Color.WHITE, true)
+        drawText(canvas, presentation.condition, card.left + card.width() * 0.34f, card.top + card.height() * 0.61f, 28f, Color.WHITE, true)
 
         val metrics = metricPager.page(presentation.metrics, metricPageIndex)
         metrics.forEachIndexed { index, metric ->
@@ -458,18 +510,18 @@ class WeatherContentView(context: Context) : View(context) {
     private fun drawDaily(canvas: Canvas) {
         val card = RectF(width * 0.45f, height * 0.17f, width * 0.95f, height * 0.55f)
         drawCard(canvas, card)
-        drawText(canvas, "DAILY FORECAST", card.left + dp(24f), card.top + dp(36f), 15f, MUTED, true)
+        drawText(canvas, "DAILY FORECAST", card.left + dp(24f), card.top + dp(36f), 18f, MUTED, true)
         val days = presentation.daily.take(7)
         days.forEachIndexed { index, item ->
             val center = card.left + card.width() * (index + 0.5f) / maxOf(days.size, 1)
-            drawCenteredText(canvas, item.time, center, card.top + card.height() * 0.29f, 17f, MUTED, true)
+            drawCenteredText(canvas, item.time, center, card.top + card.height() * 0.29f, 20f, MUTED, true)
             drawWeatherIcon(canvas, item.condition, center, card.top + card.height() * 0.49f, dp(20f))
-            drawCenteredText(canvas, "${item.temperature}°", center, card.top + card.height() * 0.72f, 24f, Color.WHITE, true)
+            drawCenteredText(canvas, "${item.temperature}°", center, card.top + card.height() * 0.72f, 29f, Color.WHITE, true)
             item.lowTemperature?.let {
-                drawCenteredText(canvas, "$it°", center, card.top + card.height() * 0.84f, 17f, 0xFFADB7C6.toInt())
+                drawCenteredText(canvas, "$it°", center, card.top + card.height() * 0.84f, 20f, 0xFFADB7C6.toInt())
             }
             item.precipitation?.takeUnless { it == "0%" }?.let { precipitation ->
-                drawCenteredText(canvas, precipitation, center, card.top + card.height() * 0.94f, 12f, 0xFF91C9FF.toInt(), true)
+                drawCenteredText(canvas, precipitation, center, card.top + card.height() * 0.94f, 14f, 0xFF91C9FF.toInt(), true)
             }
         }
     }
@@ -487,17 +539,17 @@ class WeatherContentView(context: Context) : View(context) {
             append("HOURLY FORECAST")
             if (pageDays.isNotEmpty()) append(" · ${pageDays.joinToString("–")}")
         }
-        drawText(canvas, hourlyHeading, card.left + dp(24f), card.top + dp(36f), 15f, MUTED, true)
+        drawText(canvas, hourlyHeading, card.left + dp(24f), card.top + dp(36f), 18f, MUTED, true)
         if (presentation.hourly.isNotEmpty()) {
-            drawText(canvas, "$rangeStart–$rangeEnd of ${presentation.hourly.size} hours", card.right - dp(190f), card.top + dp(36f), 15f, MUTED)
+            drawText(canvas, "$rangeStart–$rangeEnd of ${presentation.hourly.size} hours", card.right - dp(215f), card.top + dp(36f), 18f, MUTED)
         }
         items.forEachIndexed { index, item ->
             val center = card.left + card.width() * (index + 0.5f) / maxOf(items.size, 1)
-            drawCenteredText(canvas, item.time, center, card.top + card.height() * 0.34f, 15f, MUTED, true)
+            drawCenteredText(canvas, item.time, center, card.top + card.height() * 0.34f, 18f, MUTED, true)
             drawWeatherIcon(canvas, item.condition, center, card.top + card.height() * 0.56f, dp(17f))
-            drawCenteredText(canvas, "${item.temperature}°", center, card.top + card.height() * 0.79f, 22f, Color.WHITE, true)
+            drawCenteredText(canvas, "${item.temperature}°", center, card.top + card.height() * 0.79f, 26f, Color.WHITE, true)
             item.precipitation?.takeUnless { it == "0%" }?.let { precipitation ->
-                drawCenteredText(canvas, precipitation, center, card.top + card.height() * 0.91f, 13f, 0xFF91C9FF.toInt(), true)
+                drawCenteredText(canvas, precipitation, center, card.top + card.height() * 0.91f, 16f, 0xFF91C9FF.toInt(), true)
             }
         }
     }
@@ -509,8 +561,8 @@ class WeatherContentView(context: Context) : View(context) {
     }
 
     private fun drawMetric(canvas: Canvas, metric: WeatherMetric, x: Float, y: Float) {
-        drawText(canvas, metric.label, x, y, 14f, MUTED)
-        drawText(canvas, metric.value, x, y + dp(25f), 18f, Color.WHITE, true)
+        drawText(canvas, metric.label, x, y, 17f, MUTED)
+        drawText(canvas, metric.value, x, y + dp(25f), 22f, Color.WHITE, true)
     }
 
     private fun drawWeatherIcon(canvas: Canvas, condition: WeatherCondition, centerX: Float, centerY: Float, radius: Float) {
@@ -595,6 +647,11 @@ class WeatherContentView(context: Context) : View(context) {
         canvas.drawText(text, x, baseline, paint)
     }
 
+    private fun drawRightAlignedText(canvas: Canvas, text: String, rightX: Float, baseline: Float, sizeSp: Float, color: Int, medium: Boolean = false) {
+        configureText(sizeSp, color, medium)
+        canvas.drawText(text, rightX - paint.measureText(text), baseline, paint)
+    }
+
     private fun configureText(sizeSp: Float, color: Int, medium: Boolean) {
         paint.shader = null
         paint.style = Paint.Style.FILL
@@ -646,4 +703,60 @@ class WeatherContentView(context: Context) : View(context) {
             },
         )
     }
+}
+
+internal object WeatherTouchPrimaryAction {
+    private const val SIGN_IN_MESSAGE = "Weather needs Home Assistant sign-in"
+    private const val TOUCH_CONNECT_HINT = "Tap to connect securely"
+    private const val OFFLINE_HINT = "The last forecast will return automatically"
+
+    fun isAvailable(emptyMessage: String?, actionConfigured: Boolean): Boolean =
+        actionConfigured && emptyMessage == SIGN_IN_MESSAGE
+
+    fun detailFor(emptyMessage: String?, actionConfigured: Boolean): String =
+        if (isAvailable(emptyMessage, actionConfigured)) TOUCH_CONNECT_HINT else OFFLINE_HINT
+
+    fun contentDescriptionFor(
+        emptyMessage: String?,
+        fallbackDescription: String,
+        actionConfigured: Boolean,
+    ): String = emptyMessage?.let { message ->
+        if (isAvailable(message, actionConfigured)) "$message. $TOUCH_CONNECT_HINT" else message
+    } ?: fallbackDescription
+}
+
+
+/** Keeps an optional location label inside the Weather header without configuration side effects. */
+internal object WeatherHeaderLayout {
+    const val MAX_LOCATION_CHARACTERS = 28
+
+    data class Header(
+        val titleX: Float,
+        val locationRightX: Float,
+        val titleBaseline: Float,
+        val statusBaseline: Float,
+        val titleTextSp: Float,
+        val locationTextSp: Float,
+        val statusTextSp: Float,
+    )
+
+    fun locationLabel(value: String?): String? {
+        val normalized = value
+            ?.trim()
+            ?.replace(Regex("\\s+"), " ")
+            ?.takeIf(String::isNotEmpty)
+            ?: return null
+        return if (normalized.length <= MAX_LOCATION_CHARACTERS) normalized else
+            normalized.take(MAX_LOCATION_CHARACTERS - 1) + "…"
+    }
+
+    fun forSize(width: Float, height: Float): Header = Header(
+        titleX = width * 0.05f,
+        locationRightX = width * 0.95f,
+        titleBaseline = height * 0.10f,
+        statusBaseline = height * 0.145f,
+        titleTextSp = 48f,
+        locationTextSp = 22f,
+        statusTextSp = 23f,
+    )
 }

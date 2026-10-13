@@ -149,12 +149,15 @@ Run the builder before copying the dashboard as well as the media. This is
 required because Home Assistant may cache `/local/` media for 31 days: replacing
 a file without its new versioned URL can otherwise keep the previous scene.
 
-The OAuth return page declares Home Assistant's native-app redirect marker
-(`frameos://oauth/callback`) in a same-origin client-id page. Native
-authorization therefore returns the one-time code directly to FrameOS instead
-of putting it in the HTTPS `/local/frameos-oauth.html` URL. The page also
-scrubs query parameters immediately and declares a no-store cache policy as a
-defense for deployments that still load it directly. The Home Assistant server
+Native Weather identifies itself and redirects to the exact same-origin
+`/local/frameos-oauth.html` URL. Its embedded authorization surface intercepts
+that exact HTTPS callback before Gecko loads it, so the one-time code does not
+enter page history or reach the static server. Any malformed attempt at that
+reserved callback URL is denied rather than falling through to ordinary
+same-origin browsing. FrameOS still recognizes the legacy
+`frameos://oauth/callback` URI for compatibility, but does not depend on it
+for this authorization flow. The return page keeps its native-app redirect
+marker and no-store behavior for direct legacy loads. The Home Assistant server
 must independently send `Cache-Control: no-store, private` for this path;
 static `/local/` response headers are deployment-specific and remain
 **UNVERIFIED** by this repository's example validator.

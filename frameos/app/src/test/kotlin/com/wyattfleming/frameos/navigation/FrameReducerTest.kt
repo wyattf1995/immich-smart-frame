@@ -86,7 +86,7 @@ class FrameReducerTest {
     }
 
     @Test
-    fun `idle expiry always restores an unpaused photo frame`() {
+    fun `idle expiry restores an unpaused photo frame for non-touch routing`() {
         val state = FrameState(
             mode = FrameMode.CAMERAS,
             photosPaused = true,
@@ -98,6 +98,20 @@ class FrameReducerTest {
         assertEquals(FrameMode.PHOTOS, transition.state.mode)
         assertFalse(transition.state.photosPaused)
         assertEquals(70, transition.state.brightnessOverridePercent)
+    }
+
+    @Test
+    fun `stale idle expiry preserves a selected Art mode`() {
+        val state = FrameState(
+            mode = FrameMode.ART,
+            photosPaused = true,
+            brightnessOverridePercent = 70,
+        )
+
+        val transition = reducer.reduce(state, FrameIntent.IdleExpired)
+
+        assertEquals(state, transition.state)
+        assertTrue(transition.effects.isEmpty())
     }
 
     @Test

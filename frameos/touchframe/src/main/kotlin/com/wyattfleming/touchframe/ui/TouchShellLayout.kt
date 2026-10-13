@@ -1,0 +1,333 @@
+package com.wyattfleming.touchframe.ui
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.Space
+import android.widget.TextView
+import kotlin.math.abs
+import kotlin.math.pow
+
+/**
+ * Owns only persistent shell chrome. The caller owns each destination's content and lifecycle.
+ * Media destinations keep the content frame edge-to-edge until a deliberate left-edge gesture
+ * reveals this navigation menu.
+ */
+// Constructed by TouchFrameActivity with callbacks; never inflated from XML.
+@SuppressLint("ViewConstructor")
+class TouchShellLayout(
+    context: Context,
+    private val onNavigate: (TouchDestination) -> Unit,
+    private val onSettings: () -> Unit,
+) : FrameLayout(context) {
+    val content: FrameLayout = FrameLayout(context).apply {
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
+    }
+
+    private val scrim = View(context).apply {
+        setBackgroundColor(Color.argb(145, 0, 0, 0))
+        contentDescription = context.getString(com.wyattfleming.touchframe.R.string.return_to_navigation)
+        isClickable = true
+        setOnClickListener { hideMenu() }
+    }
+    private val railViewport = ScrollView(context).apply {
+        isFillViewport = true
+    }
+    private val rail = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private var destination = TouchDestination.HOME
+    private var destinations: List<TouchDestination> = TouchDestinationOrder.defaults
+    private var night = false
+    private var menuVisible = false
+    private val edgeStream = TouchShellEdgeStream()
+
+    init {
+        addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(scrim, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(railViewport, LayoutParams(dp(80), LayoutParams.MATCH_PARENT, Gravity.START))
+        railViewport.addView(rail, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        select(TouchDestination.HOME)
+    }
+
+    fun select(next: TouchDestination) {
+        destination = next
+        menuVisible = !next.isImmersiveMedia
+        applyChrome()
+    }
+
+    /** Applies already-supported remote modes in their requested order; Home remains first. */
+    fun setDestinations(remoteOrder: List<TouchDestination>) {
+        val normalized = TouchDestinationOrder.normalize(remoteOrder)
+        if (destinations == normalized) return
+        destinations = normalized
+        val selected = TouchDestinationOrder.selectedOrHome(destination, destinations)
+        if (selected != destination) {
+            select(selected)
+            onNavigate(selected)
+        } else {
+            applyChrome()
+        }
+    }
+
+    fun showMenu() {
+        if (!destination.isImmersiveMedia) return
+        menuVisible = true
+        applyChrome()
+    }
+
+    fun hideMenu() {
+        if (!destination.isImmersiveMedia) return
+        menuVisible = false
+        applyChrome()
+    }
+
+    fun setNight(isNight: Boolean) {
+        if (night == isNight) return
+        night = isNight
+        applyChrome()
+    }
+
+    /**
+     * Claims qualifying media-edge streams at DOWN, before child hit testing. Retry/loading covers
+     * can be non-clickable, so waiting for interception leaves their later MOVE events unobserved.
+     */
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        val result = edgeStream.onEvent(
+            action = event.actionMasked,
+            x = event.x,
+            y = event.y,
+            destination = destination,
+            menuVisible = menuVisible,
+            edgeWidth = dp(EDGE_WIDTH_DP),
+            horizontalThreshold = dp(HORIZONTAL_THRESHOLD_DP),
+            verticalTolerance = dp(VERTICAL_TOLERANCE_DP),
+        )
+        if (result.reveal) showMenu()
+        return result.ownsStream || super.dispatchTouchEvent(event)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!menuVisible) return super.onTouchEvent(event)
+        if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
+        return true
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
+    }
+
+    private fun applyChrome() {
+        val palette = Palette.forNight(night)
+        setBackgroundColor(palette.background)
+        railViewport.setBackgroundColor(palette.rail)
+        rebuildRail(palette)
+
+        val railWidth = dp(railWidthDpFor(resources.configuration.screenWidthDp))
+        railViewport.layoutParams = (railViewport.layoutParams as LayoutParams).apply { width = railWidth }
+        railViewport.visibility = if (menuVisible) View.VISIBLE else View.GONE
+        scrim.visibility = if (destination.isImmersiveMedia && menuVisible) View.VISIBLE else View.GONE
+        content.layoutParams = (content.layoutParams as LayoutParams).apply {
+            leftMargin = if (destination.isImmersiveMedia) 0 else railWidth
+        }
+        content.requestLayout()
+    }
+
+    private fun rebuildRail(palette: Palette) {
+        rail.removeAllViews()
+        destinations.forEach { item -> rail.addView(destinationButton(item, palette)) }
+        rail.addView(Space(context), LinearLayout.LayoutParams(0, 0, 1f))
+        rail.addView(settingsButton(palette))
+    }
+
+    private fun destinationButton(item: TouchDestination, palette: Palette): View {
+        val selected = item == destination
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            contentDescription = item.label
+            minimumHeight = dp(MIN_TARGET_DP)
+            setPadding(dp(4), dp(5), dp(4), dp(5))
+            background = rounded(if (selected) palette.selected else Color.TRANSPARENT)
+            setOnClickListener {
+                hideMenu()
+                onNavigate(item)
+            }
+            addView(label(item.glyph, 20f, if (selected) palette.selectedInk else palette.muted))
+            addView(label(item.label, if (railWidthDpFor(resources.configuration.screenWidthDp) >= 96) 16f else 14f,
+                if (selected) palette.selectedInk else palette.ink))
+        }.also { view ->
+            view.layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(RAIL_BUTTON_HEIGHT_DP)).apply {
+                setMargins(dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP), dp(RAIL_BUTTON_TOP_MARGIN_DP), dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP), 0)
+            }
+        }
+    }
+
+    private fun settingsButton(palette: Palette): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER
+        isClickable = true
+        isFocusable = true
+        contentDescription = "Settings"
+        minimumHeight = dp(MIN_TARGET_DP)
+        setPadding(dp(4), dp(5), dp(4), dp(5))
+        background = rounded(palette.settings)
+        setOnClickListener { onSettings() }
+        addView(label("⚙", 20f, palette.settingsInk))
+        addView(label("Settings", if (railWidthDpFor(resources.configuration.screenWidthDp) >= 96) 16f else 14f, palette.settingsInk))
+    }.also { view ->
+        view.layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(RAIL_BUTTON_HEIGHT_DP)).apply {
+            setMargins(
+                dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP),
+                dp(RAIL_BUTTON_TOP_MARGIN_DP),
+                dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP),
+                dp(SETTINGS_BOTTOM_MARGIN_DP),
+            )
+        }
+    }
+
+    private fun label(value: String, sizeSp: Float, color: Int): TextView = TextView(context).apply {
+        text = value
+        setTextColor(color)
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
+        gravity = Gravity.CENTER
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        maxLines = 1
+    }
+
+    private fun rounded(color: Int) = GradientDrawable().apply {
+        cornerRadius = dp(12).toFloat()
+        setColor(color)
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
+
+    internal companion object {
+        const val EDGE_WIDTH_DP = 48
+        const val HORIZONTAL_THRESHOLD_DP = 56
+        const val VERTICAL_TOLERANCE_DP = 32
+        const val MIN_TARGET_DP = 56
+        const val RAIL_BUTTON_HEIGHT_DP = 68
+        private const val RAIL_BUTTON_HORIZONTAL_MARGIN_DP = 6
+        const val RAIL_BUTTON_TOP_MARGIN_DP = 6
+        const val SETTINGS_BOTTOM_MARGIN_DP = 8
+
+        fun railWidthDpFor(screenWidthDp: Int): Int = if (screenWidthDp >= 1400) 96 else 80
+
+    }
+}
+
+internal object TouchShellGesture {
+    fun shouldReveal(
+        destination: TouchDestination,
+        downX: Float,
+        downY: Float,
+        upX: Float,
+        upY: Float,
+        edgeWidth: Int,
+        horizontalThreshold: Int = TouchShellLayout.HORIZONTAL_THRESHOLD_DP,
+        verticalTolerance: Int = TouchShellLayout.VERTICAL_TOLERANCE_DP,
+    ): Boolean = destination.isImmersiveMedia &&
+        downX in 0f..edgeWidth.toFloat() &&
+        upX - downX >= horizontalThreshold &&
+        abs(upY - downY) <= verticalTolerance
+}
+
+/** Stateful ownership policy for an edge stream claimed before any child accepts DOWN. */
+internal class TouchShellEdgeStream {
+    private var active = false
+    private var revealed = false
+    private var downX = 0f
+    private var downY = 0f
+
+    data class Result(val ownsStream: Boolean, val reveal: Boolean)
+
+    fun onEvent(
+        action: Int,
+        x: Float,
+        y: Float,
+        destination: TouchDestination,
+        menuVisible: Boolean,
+        edgeWidth: Int,
+        horizontalThreshold: Int = TouchShellLayout.HORIZONTAL_THRESHOLD_DP,
+        verticalTolerance: Int = TouchShellLayout.VERTICAL_TOLERANCE_DP,
+    ): Result = when (action) {
+        MotionEvent.ACTION_DOWN -> {
+            active = destination.isImmersiveMedia && !menuVisible && x in 0f..edgeWidth.toFloat()
+            revealed = false
+            downX = x
+            downY = y
+            Result(active, false)
+        }
+        MotionEvent.ACTION_MOVE -> {
+            if (!active) {
+                Result(false, false)
+            } else {
+                val revealNow = !revealed && TouchShellGesture.shouldReveal(
+                    destination, downX, downY, x, y, edgeWidth, horizontalThreshold, verticalTolerance,
+                )
+                revealed = revealed || revealNow
+                Result(true, revealNow)
+            }
+        }
+        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+            val ownsStream = active
+            active = false
+            revealed = false
+            Result(ownsStream, false)
+        }
+        else -> Result(active, false)
+    }
+}
+
+internal data class Palette(
+    val background: Int,
+    val rail: Int,
+    val ink: Int,
+    val muted: Int,
+    val selected: Int,
+    val selectedInk: Int,
+    val settings: Int,
+    val settingsInk: Int,
+) {
+    internal companion object {
+        // #101722 provides AA contrast on both the teal selected state and gold Settings state.
+        private const val ACCESSIBLE_RAIL_INK = -15722718
+
+        fun forNight(night: Boolean): Palette = if (night) {
+            Palette(
+                0xFF101722.toInt(), 0xFF172536.toInt(), 0xFFF1EDE4.toInt(), 0xFFA9B2B8.toInt(),
+                0xFF4F9F9A.toInt(), ACCESSIBLE_RAIL_INK, 0xFFD8C390.toInt(), ACCESSIBLE_RAIL_INK,
+            )
+        } else {
+            Palette(
+                0xFFF1EDE4.toInt(), 0xFFE3E6DF.toInt(), 0xFF182630.toInt(), 0xFF56646A.toInt(),
+                0xFF4F9F9A.toInt(), ACCESSIBLE_RAIL_INK, 0xFFD8C390.toInt(), ACCESSIBLE_RAIL_INK,
+            )
+        }
+
+        /** Returns the WCAG contrast ratio for opaque sRGB colors. */
+        fun contrastRatio(foreground: Int, background: Int): Double {
+            fun luminance(color: Int): Double {
+                fun linear(channel: Int): Double {
+                    val value = channel / 255.0
+                    return if (value <= 0.04045) value / 12.92 else ((value + 0.055) / 1.055).pow(2.4)
+                }
+                return 0.2126 * linear((color ushr 16) and 0xFF) +
+                    0.7152 * linear((color ushr 8) and 0xFF) +
+                    0.0722 * linear(color and 0xFF)
+            }
+            val first = luminance(foreground)
+            val second = luminance(background)
+            return (maxOf(first, second) + 0.05) / (minOf(first, second) + 0.05)
+        }
+    }
+}

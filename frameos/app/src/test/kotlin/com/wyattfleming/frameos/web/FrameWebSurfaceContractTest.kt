@@ -95,7 +95,8 @@ class FrameWebSurfaceContractTest {
         assertContainsInOrder(
             maybeReportRendered,
             listOf(
-                "if (!newlyRendered) return",
+                "if ((!newlyRendered && !photoObserved) || !renderedState.rendered) return",
+                "if (!hasCurrentPhotoObservation())",
                 "val pageLoad = disarmPageLoadWatchdog()",
                 "if (pageLoad.timedOut)",
                 "renderedState.recordFailure()",
@@ -155,7 +156,7 @@ class FrameWebSurfaceContractTest {
             retry,
             listOf(
                 "val managed = displayedManagedSession() ?: return false",
-                "if (managed.renderedState.rendered) return false",
+                "if (managed.isReadyForDisplay()) return false",
                 "val url = managed.loadState.recoveryUrl() ?: return false",
                 "cancelRecovery(managed)",
                 "managed.request(url)",
@@ -186,13 +187,16 @@ class FrameWebSurfaceContractTest {
             stopWatching,
             listOf(
                 "val pageLoad = disarmPageLoadWatchdog()",
-                "if (pageLoad.hadActiveLoad && !renderedState.rendered)",
+                "if (pageLoad.hadActiveLoad && !isReadyForDisplay())",
                 "loadState.recordFailure()",
             ),
         )
         assertContainsInOrder(
             show,
             listOf(
+                "if (slot != FrameWebSlot.PHOTOS)",
+                "photosContentActive = false",
+                "photoBridge?.setCaptureEnabled(false, true)",
                 "if (displayedSlot != null && displayedSlot != slot)",
                 "displayedManagedSession()?.stopWatchingDisplayedContent()",
             ),
@@ -218,10 +222,48 @@ class FrameWebSurfaceContractTest {
         assertContainsInOrder(
             reportRendered,
             listOf(
-                "managed.renderedState.rendered",
+                "managed.isReadyForDisplay()",
                 "managed === displayedManagedSession()",
                 "displayedSurfaceVisible()",
                 "listener.onPageRendered(managed.label)",
+            ),
+        )
+    }
+
+    @Test
+    fun `Photos requires a trusted current bridge observation before surface readiness`() {
+        val source = source()
+        val request = methodBody(source, "fun request(url: String)")
+        val observed = methodBody(source, "fun onCurrentPhotoObserved(")
+        val record = methodBody(source, "fun recordCurrentPhotoObserved(")
+
+        assertContainsInOrder(
+            request,
+            listOf(
+                "if (label == \"Photos\" && !fragmentOnly)",
+                "photoReadiness.begin(photoBridge?.beginPageLoad(session))",
+                "session.loadUri(url)",
+            ),
+        )
+        assertContainsInOrder(
+            observed,
+            listOf(
+                "displayedSlot != FrameWebSlot.PHOTOS",
+                "!photosContentActive",
+                "!displayedSurfaceVisible()",
+                "photosSession.recordCurrentPhotoObserved(photo)",
+            ),
+        )
+        assertContainsInOrder(
+            record,
+            listOf(
+                "photoBridge?.isCurrentObservation(photo) != true",
+                "lifecycleSuspended",
+                "this !== displayedManagedSession()",
+                "!photosContentActive",
+                "!displayedSurfaceVisible()",
+                "photoReadiness.recordObservation(photo.generation)",
+                "maybeReportRendered(newlyRendered = false, photoObserved = true)",
             ),
         )
     }
@@ -245,6 +287,84 @@ class FrameWebSurfaceContractTest {
             ),
         )
         assertFalse("watchdog logging should not include the timed-out URL", armPageLoadWatchdog.contains("url ="))
+    }
+
+    @Test
+    fun `opt in hidden Home detachment releases the warm renderer and blocks background preload`() {
+        val source = source()
+        val preload = methodBody(source, "fun preload(slot: FrameWebSlot, url: String)")
+        val show = methodBody(source, "fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean)")
+        val hide = methodBody(source, "fun hide()")
+        val detach = methodBody(source, "private fun detachWarmHomeWhenRequired(slot: FrameWebSlot?)")
+
+        assertTrue(source.contains("private val detachHiddenHomeAssistant: Boolean = false"))
+        assertContainsInOrder(
+            preload,
+            listOf(
+                "require(slot.canPreload)",
+                "if (!homeAttachmentPolicy.allowsBackgroundPreload(slot)) return",
+                "ensureWarmHomeAttached(managed)",
+            ),
+        )
+        assertContainsInOrder(
+            show,
+            listOf(
+                "} else {",
+                "detachWarmHomeWhenRequired(slot)",
+                "attachForeground(slot, managed)",
+            ),
+        )
+        assertTrue(hide.contains("detachWarmHomeWhenRequired(slot = null)"))
+        assertContainsInOrder(
+            detach,
+            listOf(
+                "releaseWarmHomeAttachedSession()",
+                "homeAssistantSession?.setActive(false)",
+            ),
+        )
+    }
+
+    @Test
+    fun `opt in releases foreground before attaching Home and preserves the default warm path`() {
+        val show = methodBody(source(), "fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean)")
+
+        assertTrue("The default must retain the established warm attachment behavior", show.contains(
+            "if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()",
+        ))
+        assertContainsInOrder(
+            show,
+            listOf(
+                "if (slot == FrameWebSlot.HOME_ASSISTANT) {",
+                "if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()",
+                "ensureWarmHomeAttached(managed)",
+            ),
+        )
+    }
+
+    @Test
+    fun `opt in hide releases both Home and foreground renderer bindings`() {
+        val source = source()
+        val hide = methodBody(source, "fun hide()")
+        val detach = methodBody(source, "private fun detachWarmHomeWhenRequired(slot: FrameWebSlot?)")
+
+        assertTrue("The established default must not release a retained foreground binding", hide.contains(
+            "if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()",
+        ))
+        assertContainsInOrder(
+            hide,
+            listOf(
+                "detachWarmHomeWhenRequired(slot = null)",
+                "if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()",
+                "displayedSlot = null",
+            ),
+        )
+        assertContainsInOrder(
+            detach,
+            listOf(
+                "releaseWarmHomeAttachedSession()",
+                "homeAssistantSession?.setActive(false)",
+            ),
+        )
     }
 
     @Test
@@ -293,6 +413,28 @@ class FrameWebSurfaceContractTest {
                 "post(close)",
             ),
         )
+    }
+
+    @Test
+    fun `Art uses its own disposable session without Photos bridge ownership`() {
+        val source = source()
+        val disposeArtSession = methodBody(source, "private fun disposeArtSession()")
+
+        assertContainsInOrder(
+            disposeArtSession,
+            listOf(
+                "cancelRecovery(disposable)",
+                "disposable.prepareForDisposal()",
+                "if (foregroundSlot == FrameWebSlot.ART)",
+                "releaseForegroundAttachedSession()",
+                "val close = Runnable",
+                "disposable.close()",
+                "post(close)",
+            ),
+        )
+        assertTrue(source.contains("FrameWebSlot.ART -> artSession ?: ManagedSession("))
+        assertTrue(source.contains("configuredUrls = listOf(requireNotNull(artUrl))"))
+        assertFalse(source.contains("FrameWebSlot.ART -> photosSession"))
     }
 
     private fun source(): String {

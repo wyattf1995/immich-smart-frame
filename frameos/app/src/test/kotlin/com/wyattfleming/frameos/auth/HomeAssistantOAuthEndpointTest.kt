@@ -12,7 +12,7 @@ class HomeAssistantOAuthEndpointTest {
     private val callback = "https://home.example.invalid:8123/local/frameos-oauth.html"
 
     @Test
-    fun `uses same-origin authorize and token URLs with the callback page as client ID`() {
+    fun `uses the exact same-origin callback page as client and redirect ID`() {
         val state = OAuthState.fromCryptographicBytes(ByteArray(32) { it.toByte() })
         val authorization = endpoint.authorizationRequest(
             callbackPageUrl = callback,
@@ -22,7 +22,7 @@ class HomeAssistantOAuthEndpointTest {
         assertEquals("https://home.example.invalid:8123/auth/token", endpoint.tokenUrl())
         assertEquals(state, authorization.state)
         assertEquals(
-            "https://home.example.invalid:8123/auth/authorize?response_type=code&client_id=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&redirect_uri=frameos%3A%2F%2Foauth%2Fcallback&state=${state.value}",
+            "https://home.example.invalid:8123/auth/authorize?response_type=code&client_id=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&redirect_uri=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html&state=${state.value}",
             authorization.url,
         )
         assertEquals(
@@ -33,6 +33,25 @@ class HomeAssistantOAuthEndpointTest {
             "grant_type=refresh_token&refresh_token=refresh-secret&client_id=https%3A%2F%2Fhome.example.invalid%3A8123%2Flocal%2Fframeos-oauth.html",
             endpoint.refreshTokenRequestBody(callback, "refresh-secret"),
         )
+    }
+
+    @Test
+    fun `encodes OAuth state as unpadded RFC 4648 base64url`() {
+        assertEquals(
+            "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+            OAuthState.fromCryptographicBytes(ByteArray(32) { it.toByte() }).value,
+        )
+    }
+
+    @Test
+    fun `uses URL-safe alphabet and omits padding for OAuth state`() {
+        // Derived independently with Python stdlib:
+        // base64.urlsafe_b64encode(bytes([0xfb, 0xff]) * 16).decode().rstrip("=")
+        val state = OAuthState.fromCryptographicBytes(ByteArray(32) { if (it % 2 == 0) 0xfb.toByte() else 0xff.toByte() }).value
+        assertEquals("-__7__v_-__7__v_-__7__v_-__7__v_-__7__v_-_8", state)
+        assertFalse(state.contains('+'))
+        assertFalse(state.contains('/'))
+        assertFalse(state.contains('='))
     }
 
     @Test

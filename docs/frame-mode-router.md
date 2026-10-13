@@ -32,6 +32,21 @@ without Weather.
 
 ## Verification boundary
 
+With the touchscreen dashboard enabled, Today and ordinary function views keep
+their navigation rail visible. Photos and Art use the full viewport. A deliberate
+one-finger swipe inward from the left edge reveals an overlay menu; tapping
+outside it closes it, and Today returns to the dashboard. The overlay does not
+resize the media. Center gestures remain with the content, while touchscreen
+edge swipes no longer cycle views in this dashboard configuration. Hardware
+gesture navigation on the original Lenovo configuration is unchanged.
+
+Art keeps the entire painting visible, with a blurred copy behind it filling
+space left by the image's aspect ratio. Only the backdrop is cropped. Update the
+Art page URL's version query when publishing changed assets; stylesheet and
+script queries are also versioned so no authentication or Photos cache needs
+clearing. Actual-frame fullscreen and overlay acceptance remains a deployment
+check in addition to the regression suite.
+
 The protected receiver, direct `show` commands for the original five
 destinations, the forward/reverse cycle, warm Home Assistant routing, native
 Weather UI, and foreground recovery were exercised on a mounted Lenovo
@@ -109,7 +124,11 @@ embedded-route readiness remains separate from native document paint.
 
 Deploy the two local pages to Home Assistant's `/config/www/` directory so they
 are available as `/local/frameos-panel.html` and `/local/frameos-oauth.html`.
-Keep them same-origin with the configured Home Assistant URL.
+Keep them same-origin with the configured Home Assistant URL. Native Weather
+uses the exact `/local/frameos-oauth.html` HTTPS URL as both its OAuth client
+identifier and redirect URI; FrameOS intercepts that exact callback before
+Gecko loads it. Do not change its path, host, scheme, or port independently of
+`frameos.home_assistant_url`.
 
 Initial provisioning goes through a receiver protected by Android's
 `android.permission.DUMP`; ordinary applications cannot send it. Run the
@@ -134,6 +153,30 @@ native Weather stores the resulting OAuth session with Android Keystore.
 Omit `frameos.birds_url` until the BirdNET-Go frame view is reachable. Legacy
 stored configurations remain valid and omit Birds from the cycle. FrameOS
 rejects a Birds URL containing user information or other forbidden URL data.
+
+## Configure shared Photos playback
+
+The same DUMP-protected, explicitly targeted receiver can add, replace, or
+remove the `sync_group` query option on the already configured Photos URL. It
+never accepts a replacement Photos URL. Groups use lowercase letters, digits,
+`_`, and `-`, are 1–48 characters, and an empty value removes the option.
+Restart the activity after a successful change so a currently foreground
+instance cannot retain its previous in-memory Photos URL:
+
+```sh
+adb -s DEVICE_SERIAL shell am broadcast --user 0 --receiver-foreground \
+  -a com.wyattfleming.frameos.CONTROL \
+  -n com.wyattfleming.frameos/.control.FrameControlReceiver \
+  --es frameos.photos_sync_group 'living-room'
+adb -s DEVICE_SERIAL shell am force-stop com.wyattfleming.frameos
+adb -s DEVICE_SERIAL shell am start \
+  -n com.wyattfleming.frameos/.MainActivity
+```
+
+Use `--es frameos.photos_sync_group ''` to remove it. To read back only the
+configured group (never the Photos URL or credentials), send an ordered
+broadcast with `--ez frameos.query_photos_sync_group true`; its result data is
+the group or an empty string when no group is configured.
 
 ## Install the router
 

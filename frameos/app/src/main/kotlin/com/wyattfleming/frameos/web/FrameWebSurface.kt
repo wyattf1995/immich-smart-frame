@@ -30,6 +30,7 @@ class FrameWebSurface(
     homeAssistantUrl: String,
     homeAssistantFallbackUrl: String? = null,
     birdsUrl: String? = null,
+    artUrl: String? = null,
     private val warmHomeAssistantView: GeckoView,
     private val listener: Listener,
     private val urlPolicy: FrameUrlPolicy = FrameUrlPolicy(),
@@ -39,8 +40,11 @@ class FrameWebSurface(
     // Kept opt-in until device measurements prove an inactive attached GeckoView
     // avoids background work without reintroducing the Lenovo blank-panel issue.
     private val deactivateHiddenHomeAssistant: Boolean = false,
+    // Some legacy TextureView stacks require a single visible Gecko attachment.
+    // Default false preserves the established warm Home Assistant behavior.
+    private val detachHiddenHomeAssistant: Boolean = false,
     private val elapsedRealtime: () -> Long = { SystemClock.uptimeMillis() },
-    private val pageLoadWatchdogMillis: Long = PAGE_LOAD_WATCHDOG_MILLIS,
+    private val pageLoadWatchdogMillis: Long? = null,
 ) : GeckoView(context) {
     interface Listener {
         fun onPageLoading(label: String, loading: Boolean)
@@ -52,7 +56,9 @@ class FrameWebSurface(
     }
 
     private val frameRuntime = runtime
+    private val pageLoadBudget = FrameWebPageLoadBudget()
     private val retentionPolicy = FrameWebSessionRetentionPolicy()
+    private val homeAttachmentPolicy = FrameWebHomeAttachmentPolicy(detachHiddenHomeAssistant)
     private val requiresFullAccessibilityTree = context.getSystemService(AccessibilityManager::class.java)
         ?.isTouchExplorationEnabled == true
     private val recoveryPolicy = FrameWebRecoveryPolicy()
@@ -74,7 +80,9 @@ class FrameWebSurface(
         private var traceGeneration = 0L
         private var traceEvents = 0
         private var tracedCompositeGeneration = -1L
+        private var tracedPaintGeneration = -1L
         private val photoLoadGate = FramePhotoLoadGate()
+        private val photoReadiness = FrameWebPhotosReadinessState()
         private val pageLoadWatchdogState = FrameWebPageLoadWatchdogState()
         private var pageLoadWatchdog: Runnable? = null
 
@@ -213,6 +221,9 @@ class FrameWebSurface(
                     photoLoadGate.defer(url)
                     return true
                 }
+                if (label == "Photos" && !fragmentOnly) {
+                    photoReadiness.begin(photoBridge?.beginPageLoad(session))
+                }
                 session.loadUri(url)
                 return true
             } catch (error: RuntimeException) {
@@ -270,8 +281,31 @@ class FrameWebSurface(
             if (label == "Photos" && photoLoadGate.dropPending()) loadState.recordFailure()
         }
 
-        private fun maybeReportRendered(newlyRendered: Boolean) {
-            if (!newlyRendered) return
+        fun recordCurrentPhotoObserved(photo: FramePhotoBridge.PhotoObserved): Boolean {
+            if (
+                label != "Photos" ||
+                photoBridge?.isCurrentObservation(photo) != true ||
+                lifecycleSuspended ||
+                this !== displayedManagedSession() ||
+                !photosContentActive ||
+                !displayedSurfaceVisible()
+            ) return false
+            if (!photoReadiness.recordObservation(photo.generation)) return false
+            maybeReportRendered(newlyRendered = false, photoObserved = true)
+            return true
+        }
+
+        private fun hasCurrentPhotoObservation(): Boolean =
+            label != "Photos" || photoBridge == null || photoReadiness.isReady()
+
+        fun isReadyForDisplay(): Boolean = renderedState.rendered && hasCurrentPhotoObservation()
+
+        private fun maybeReportRendered(newlyRendered: Boolean, photoObserved: Boolean = false) {
+            if ((!newlyRendered && !photoObserved) || !renderedState.rendered) return
+            if (!hasCurrentPhotoObservation()) {
+                trace("render_waiting_photo")
+                return
+            }
             trace("rendered")
             val pageLoad = disarmPageLoadWatchdog()
             if (pageLoad.timedOut) {
@@ -298,7 +332,7 @@ class FrameWebSurface(
 
         fun stopWatchingDisplayedContent() {
             val pageLoad = disarmPageLoadWatchdog()
-            if (pageLoad.hadActiveLoad && !renderedState.rendered) {
+            if (pageLoad.hadActiveLoad && !isReadyForDisplay()) {
                 loadState.recordFailure()
             }
         }
@@ -374,7 +408,7 @@ class FrameWebSurface(
                 reportUnavailable(this)
             }
             pageLoadWatchdog = watchdog
-            this@FrameWebSurface.postDelayed(watchdog, pageLoadWatchdogMillis)
+            this@FrameWebSurface.postDelayed(watchdog, pageLoadBudget.millisFor(label, pageLoadWatchdogMillis))
         }
 
         private fun disarmPageLoadWatchdog(): FrameWebPageLoadDisarm {
@@ -385,6 +419,12 @@ class FrameWebSurface(
 
         fun trace(event: String) {
             if (!Log.isLoggable(SURFACE_TRACE_TAG, Log.DEBUG) || traceEvents >= MAX_SURFACE_TRACE_EVENTS) return
+            // Gecko may repeat FCP while a slow document is loading. Preserve the
+            // bounded trace budget for page-stop, watchdog and recovery evidence.
+            if (event == "first_contentful_paint") {
+                if (tracedPaintGeneration == traceGeneration) return
+                tracedPaintGeneration = traceGeneration
+            }
             traceEvents += 1
             val current = this === displayedManagedSession()
             val visible = displayedSurfaceVisible()
@@ -400,9 +440,11 @@ class FrameWebSurface(
     private val homeAssistantUrl = homeAssistantUrl
     private val homeAssistantFallbackUrl = homeAssistantFallbackUrl
     private val birdsUrl = birdsUrl
+    private val artUrl = artUrl
     private var homeAssistantSession: ManagedSession? = null
     private var cameraSession: ManagedSession? = null
     private var birdsSession: ManagedSession? = null
+    private var artSession: ManagedSession? = null
     private var foregroundSlot: FrameWebSlot? = null
     private var displayedSlot: FrameWebSlot? = null
     private var foregroundAttachedSession: ManagedSession? = null
@@ -424,6 +466,7 @@ class FrameWebSurface(
 
     fun preload(slot: FrameWebSlot, url: String) {
         require(slot.canPreload) { "$slot cannot be preloaded" }
+        if (!homeAttachmentPolicy.allowsBackgroundPreload(slot)) return
         val managed = sessionFor(slot)
         managed.lifecycleSuspended = false
         ensureWarmHomeAttached(managed)
@@ -448,7 +491,10 @@ class FrameWebSurface(
     }
 
     fun show(slot: FrameWebSlot, url: String, takeFocus: Boolean) {
-        if (slot != FrameWebSlot.PHOTOS) photosContentActive = false
+        if (slot != FrameWebSlot.PHOTOS) {
+            photosContentActive = false
+            photoBridge?.setCaptureEnabled(false, true)
+        }
         if (displayedSlot != null && displayedSlot != slot) {
             displayedManagedSession()?.stopWatchingDisplayedContent()
         }
@@ -464,6 +510,9 @@ class FrameWebSurface(
         if (displayedSlot == FrameWebSlot.BIRDS && slot != FrameWebSlot.BIRDS) {
             disposeBirdsSession()
         }
+        if (displayedSlot == FrameWebSlot.ART && slot != FrameWebSlot.ART) {
+            disposeArtSession()
+        }
         val managed = sessionFor(slot)
         managed.lifecycleSuspended = false
         allSessions().filter { it !== managed && it !== homeAssistantSession }.forEach {
@@ -478,10 +527,12 @@ class FrameWebSurface(
         if (slot == FrameWebSlot.HOME_ASSISTANT) {
             preloadDeactivation?.let(::removeCallbacks)
             preloadDeactivation = null
+            if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()
             ensureWarmHomeAttached(managed)
             visibility = View.GONE
             warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         } else {
+            detachWarmHomeWhenRequired(slot)
             attachForeground(slot, managed)
             visibility = View.VISIBLE
             warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
@@ -508,6 +559,7 @@ class FrameWebSurface(
         visibility = View.GONE
         if (displayedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
         if (displayedSlot == FrameWebSlot.BIRDS) disposeBirdsSession()
+        if (displayedSlot == FrameWebSlot.ART) disposeArtSession()
         allSessions().filter { it !== homeAssistantSession }.forEach {
             cancelRecovery(it)
             it.setFocused(false)
@@ -515,6 +567,8 @@ class FrameWebSurface(
         }
         homeAssistantSession?.setFocused(false)
         if (deactivateHiddenHomeAssistant) homeAssistantSession?.setActive(false)
+        detachWarmHomeWhenRequired(slot = null)
+        if (detachHiddenHomeAssistant) releaseForegroundAttachedSession()
         warmHomeAssistantView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         displayedSlot = null
         scheduleHiddenHomeEviction()
@@ -533,6 +587,10 @@ class FrameWebSurface(
             disposeBirdsSession()
             return
         }
+        if (!active && displayedSlot == FrameWebSlot.ART) {
+            disposeArtSession()
+            return
+        }
         displayedSlot?.let { slot ->
             val managed = sessionFor(slot)
             if (active) managed.lifecycleSuspended = false
@@ -549,12 +607,12 @@ class FrameWebSurface(
 
     fun isDisplayingRenderedLabel(label: String): Boolean {
         val managed = displayedManagedSession() ?: return false
-        return managed.label == label && managed.renderedState.rendered && displayedSurfaceVisible()
+        return managed.label == label && managed.isReadyForDisplay() && displayedSurfaceVisible()
     }
 
     fun retryDisplayedContentIfUnrendered(): Boolean {
         val managed = displayedManagedSession() ?: return false
-        if (managed.renderedState.rendered) return false
+        if (managed.isReadyForDisplay()) return false
         val url = managed.loadState.recoveryUrl() ?: return false
         cancelRecovery(managed)
         return managed.request(url)
@@ -562,11 +620,18 @@ class FrameWebSurface(
 
     fun refreshPhotos(): Boolean = photosSession.request(photosSession.configuredUrls.first())
 
+    /** Called only after the bridge has verified a current Photos observation. */
+    fun onCurrentPhotoObserved(photo: FramePhotoBridge.PhotoObserved): Boolean {
+        if (displayedSlot != FrameWebSlot.PHOTOS || !photosContentActive || !displayedSurfaceVisible()) return false
+        return photosSession.recordCurrentPhotoObserved(photo)
+    }
+
     fun suspendAllContent() {
         photosContentActive = false
         photoBridge?.setCaptureEnabled(false, true)
         if (displayedSlot == FrameWebSlot.CAMERAS) disposeCameraSession()
         if (displayedSlot == FrameWebSlot.BIRDS) disposeBirdsSession()
+        if (displayedSlot == FrameWebSlot.ART) disposeArtSession()
         allSessions().forEach {
             cancelRecovery(it)
             it.suspendForLifecycle()
@@ -576,7 +641,7 @@ class FrameWebSurface(
     fun forwardKey(event: KeyEvent): Boolean {
         val displayedView = when (displayedSlot) {
             FrameWebSlot.HOME_ASSISTANT -> warmHomeAssistantView
-            FrameWebSlot.PHOTOS, FrameWebSlot.CAMERAS, FrameWebSlot.BIRDS -> this
+            FrameWebSlot.PHOTOS, FrameWebSlot.ART, FrameWebSlot.CAMERAS, FrameWebSlot.BIRDS -> this
             null -> return false
         }
         displayedView.requestFocus()
@@ -622,6 +687,8 @@ class FrameWebSurface(
         cameraSession = null
         birdsSession?.close()
         birdsSession = null
+        artSession?.close()
+        artSession = null
         homeAssistantSession?.close()
         homeAssistantSession = null
         photosSession.close()
@@ -643,6 +710,10 @@ class FrameWebSurface(
             configuredUrls = listOf(requireNotNull(birdsUrl)),
             label = "Birds",
         ).also { birdsSession = it }
+        FrameWebSlot.ART -> artSession ?: ManagedSession(
+            configuredUrls = listOf(requireNotNull(artUrl)),
+            label = "Art",
+        ).also { artSession = it }
     }
 
     private fun homeAssistantOrigins(): List<String> = buildList {
@@ -655,6 +726,7 @@ class FrameWebSurface(
         homeAssistantSession?.let(::add)
         cameraSession?.let(::add)
         birdsSession?.let(::add)
+        artSession?.let(::add)
     }
 
     private fun attachForeground(slot: FrameWebSlot, managed: ManagedSession) {
@@ -674,6 +746,13 @@ class FrameWebSurface(
             warmHomeAttachedSession = managed
         }
         warmHomeAssistantView.visibility = View.VISIBLE
+    }
+
+    private fun detachWarmHomeWhenRequired(slot: FrameWebSlot?) {
+        if (slot != null && !homeAttachmentPolicy.detachWarmHomeWhenShowing(slot)) return
+        if (slot == null && !detachHiddenHomeAssistant) return
+        releaseWarmHomeAttachedSession()
+        homeAssistantSession?.setActive(false)
     }
 
     private fun disposeCameraSession() {
@@ -703,6 +782,25 @@ class FrameWebSurface(
         }
         if (displayedSlot == FrameWebSlot.BIRDS) displayedSlot = null
         birdsSession = null
+        val close = Runnable {
+            pendingCameraClosures.remove(disposable)
+            disposable.close()
+        }
+        pendingCameraClosures[disposable] = close
+        post(close)
+    }
+
+    /** Art never reuses Photos' bridge, playback reserve, or session. */
+    private fun disposeArtSession() {
+        val disposable = artSession ?: return
+        cancelRecovery(disposable)
+        disposable.prepareForDisposal()
+        if (foregroundSlot == FrameWebSlot.ART) {
+            if (session != null) releaseForegroundAttachedSession()
+            foregroundSlot = null
+        }
+        if (displayedSlot == FrameWebSlot.ART) displayedSlot = null
+        artSession = null
         val close = Runnable {
             pendingCameraClosures.remove(disposable)
             disposable.close()
@@ -800,7 +898,7 @@ class FrameWebSurface(
 
     private fun reportRenderedIfDisplayed(managed: ManagedSession) {
         if (
-            managed.renderedState.rendered &&
+            managed.isReadyForDisplay() &&
             managed === displayedManagedSession() &&
             displayedSurfaceVisible()
         ) {
@@ -813,7 +911,7 @@ class FrameWebSurface(
 
     private fun displayedSurfaceVisible(): Boolean = when (displayedSlot) {
         FrameWebSlot.HOME_ASSISTANT -> warmHomeAssistantView.visibility == View.VISIBLE
-        FrameWebSlot.PHOTOS, FrameWebSlot.CAMERAS, FrameWebSlot.BIRDS -> visibility == View.VISIBLE
+        FrameWebSlot.PHOTOS, FrameWebSlot.ART, FrameWebSlot.CAMERAS, FrameWebSlot.BIRDS -> visibility == View.VISIBLE
         null -> false
     }
 
@@ -848,7 +946,6 @@ class FrameWebSurface(
 
     private companion object {
         const val PHOTO_TAP_MILLIS = 36L
-        const val PAGE_LOAD_WATCHDOG_MILLIS = 20_000L
         const val SURFACE_TRACE_TAG = "FrameSurfaceTrace"
         const val MAX_SURFACE_TRACE_EVENTS = 128
     }

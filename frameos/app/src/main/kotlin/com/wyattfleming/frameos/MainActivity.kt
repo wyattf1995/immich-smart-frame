@@ -1,7 +1,8 @@
 package com.wyattfleming.frameos
 
 import android.app.Activity
-import android.content.ActivityNotFoundException
+import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.Color
@@ -13,8 +14,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.net.Uri
 import android.view.GestureDetector
+import android.view.InputDevice
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -41,6 +42,8 @@ import com.wyattfleming.frameos.navigation.FrameState
 import com.wyattfleming.frameos.navigation.FrameStartupPolicy
 import com.wyattfleming.frameos.navigation.ModeGestureBurst
 import com.wyattfleming.frameos.navigation.ModeGestureDirection
+import com.wyattfleming.frameos.navigation.TouchMediaNavigation
+import com.wyattfleming.frameos.navigation.TouchNavigationRailPolicy
 import com.wyattfleming.frameos.navigation.PhysicalInputMapper
 import com.wyattfleming.frameos.navigation.VolumeButton
 import com.wyattfleming.frameos.navigation.VolumeInputEffect
@@ -57,6 +60,8 @@ import com.wyattfleming.frameos.config.FrameConfiguration
 import com.wyattfleming.frameos.config.FrameConfigurationStore
 import com.wyattfleming.frameos.config.FrameExperienceSettings
 import com.wyattfleming.frameos.config.FrameExperienceStore
+import com.wyattfleming.frameos.config.FrameTouchscreenSettings
+import com.wyattfleming.frameos.config.FrameTouchscreenSettingsStore
 import com.wyattfleming.frameos.config.QuietHoursBrightnessPolicy
 import com.wyattfleming.frameos.control.FrameControlCommand
 import com.wyattfleming.frameos.control.FrameControlContract
@@ -64,18 +69,23 @@ import com.wyattfleming.frameos.control.FrameControlStore
 import com.wyattfleming.frameos.control.FrameCompanionClient
 import com.wyattfleming.frameos.control.FrameCompanionCredentialsStore
 import com.wyattfleming.frameos.control.FrameRemoteStatus
-import com.wyattfleming.frameos.control.FrameCompanionCommandDecoder
 import com.wyattfleming.frameos.control.FrameRemoteCommand
 import com.wyattfleming.frameos.control.FrameCompanionCommandStore
-import com.wyattfleming.frameos.control.FrameCompanionSettingsDecoder
-import com.wyattfleming.frameos.control.FrameCompanionResponseDecoder
-import com.wyattfleming.frameos.control.FrameCompanionEventDecoder
 import com.wyattfleming.frameos.control.FrameCompanionEventStore
+import com.wyattfleming.frameos.control.FrameCompanionEnvelope
+import com.wyattfleming.frameos.control.FrameCompanionEnvelopeDecoder
+import com.wyattfleming.frameos.control.FrameCompanionSnapshotRevision
 import com.wyattfleming.frameos.control.FramePhotosProfileUrl
+import com.wyattfleming.frameos.photos.FrameSharedPlaybackMetadata
 import com.wyattfleming.frameos.control.FrameRemoteSettings
 import com.wyattfleming.frameos.security.FrameExternalControlPolicy
 import com.wyattfleming.frameos.diagnostics.FrameDiagnosticStore
+import com.wyattfleming.frameos.ui.FrameTouchInputLayout
+import com.wyattfleming.frameos.ui.FrameHomeBackNavigation
 import com.wyattfleming.frameos.ui.WeatherContentView
+import com.wyattfleming.frameos.ui.TouchNavigationRail
+import com.wyattfleming.frameos.ui.AndroidFrameExternalSettingsReturnAdapter
+import com.wyattfleming.frameos.ui.FrameExternalSettingsReturnController
 import com.wyattfleming.frameos.ui.dp
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherEndpoint
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherParser
@@ -94,15 +104,18 @@ import com.wyattfleming.frameos.web.FrameSurfaceTarget
 import com.wyattfleming.frameos.web.FrameWebCompositionPolicy
 import com.wyattfleming.frameos.web.FrameWebSlot
 import com.wyattfleming.frameos.web.FrameWebSurface
+import com.wyattfleming.frameos.web.FrameOAuthWebSurface
 import org.mozilla.geckoview.GeckoView
 import java.net.URI
 import java.security.SecureRandom
 import java.time.ZoneId
 import java.time.LocalTime
+import java.time.ZonedDateTime
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 
 internal fun isNewManualPhotoStepAsset(previousAssetId: String?, observedAssetId: String): Boolean =
@@ -116,6 +129,7 @@ class MainActivity : Activity() {
     private val modeGestureBurst = ModeGestureBurst()
     private val weatherWorkerExecutor: ExecutorService = Executors.newFixedThreadPool(2)
     private val companionWorkerExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val companionReserveExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val weatherRequestExecutor: ExecutorService = Executors.newFixedThreadPool(3)
     private val authorizationExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val secureRandom = SecureRandom()
@@ -126,7 +140,8 @@ class MainActivity : Activity() {
         )
     }
 
-    private lateinit var root: FrameLayout
+    private lateinit var root: FrameTouchInputLayout
+    private lateinit var settingsReturnController: FrameExternalSettingsReturnController
     private lateinit var weatherContent: WeatherContentView
     private lateinit var hud: LinearLayout
     private lateinit var hudLabel: TextView
@@ -134,6 +149,22 @@ class MainActivity : Activity() {
     private lateinit var loading: LinearLayout
     private lateinit var webRecovery: LinearLayout
     private lateinit var webRecoveryLabel: TextView
+    private var touchRail: TouchNavigationRail? = null
+    private val touchMediaNavigation = TouchMediaNavigation()
+    private val insetContentViews = mutableListOf<View>()
+    private var dismissTouchMenu: View? = null
+    private lateinit var touchscreenStore: FrameTouchscreenSettingsStore
+    private var touchscreenSettings = FrameTouchscreenSettings()
+    private val touchNavigationEnabled: Boolean
+        get() = packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
+    private var unregisterHomeBack: (() -> Unit)? = null
+    private val refreshNavigationRailClock = object : Runnable {
+        override fun run() {
+            if (!activityResumed || !touchNavigationEnabled) return
+            touchRail?.updateTime(ZonedDateTime.now())
+            handler.postDelayed(this, 30_000L)
+        }
+    }
 
     private var state = FrameStartupPolicy.initialState()
     private var starLongPressed = false
@@ -165,6 +196,9 @@ class MainActivity : Activity() {
     private var pendingAuthorizationPreviousAuthEpoch: String? = null
     private var surfaceRouter: FrameSurfaceRouter? = null
     private var webSurface: FrameWebSurface? = null
+    private var oauthSurface: FrameOAuthWebSurface? = null
+    private var oauthOverlay: LinearLayout? = null
+    private var embeddedAuthorizationPending = false
     private lateinit var photoReserve: com.wyattfleming.frameos.photos.FrameOfflineReserve
     private lateinit var photoBridge: com.wyattfleming.frameos.photos.FramePhotoBridge
     private var currentPhotoAssetId: String? = null
@@ -194,6 +228,8 @@ class MainActivity : Activity() {
     private var bootRecoveryConfirmed = false
     private var companionPollInFlight = false
     private var companionPollGeneration = 0L
+    private var companionSnapshotRevision: String? = null
+    private val companionReserveToken = AtomicLong(0L)
     private val pollCompanion = Runnable { pollCompanion() }
     private val refreshQuietHours = Runnable {
         if (activityResumed) applyBrightness(state.brightnessOverridePercent)
@@ -223,7 +259,7 @@ class MainActivity : Activity() {
         }
     }
     private val refreshPhotoFreshness = Runnable { checkPhotoFreshness() }
-    private val rotateOfflinePhoto = Runnable { showOfflinePhoto(step = 1) }
+    private val rotateOfflinePhoto = Runnable { if (!sharedPlaybackConfigured()) showOfflinePhoto(step = 1) }
     private val refreshVisibleWeather = Runnable { refreshWeather() }
     private val preloadCalendar = Runnable {
         if (!FrameWebCompositionPolicy.forMode(state.mode).warmCalendarInBackground || !activityResumed) {
@@ -246,7 +282,10 @@ class MainActivity : Activity() {
                     velocityX: Float,
                     velocityY: Float,
                 ): Boolean {
-                    if (start == null) return false
+                    if (start == null ||
+                        start.isFromSource(InputDevice.SOURCE_TOUCHSCREEN) ||
+                        end.isFromSource(InputDevice.SOURCE_TOUCHSCREEN)
+                    ) return false
                     val horizontalDistance = end.x - start.x
                     if (abs(horizontalDistance) < dp(96) || abs(velocityX) < abs(velocityY)) return false
                     queueModeGesture(
@@ -269,14 +308,20 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         configurationStore = FrameConfigurationStore(this)
         experienceStore = FrameExperienceStore(this)
+        touchscreenStore = FrameTouchscreenSettingsStore(this)
+        touchscreenSettings = touchscreenStore.read()
+        if (touchNavigationEnabled && !touchscreenSettings.startWithPhotos) {
+            state = state.copy(mode = FrameMode.HOME)
+        }
         diagnosticStore = FrameDiagnosticStore(this)
         photoReserve = com.wyattfleming.frameos.photos.FrameOfflineReserve(java.io.File(filesDir, "frame-offline-reserve"))
-        photoBridge = com.wyattfleming.frameos.photos.FramePhotoBridge(photoReserve) { photo ->
+        photoBridge = com.wyattfleming.frameos.photos.FramePhotoBridge(photoReserve, onPhotoObserved = { photo ->
             handler.post {
                 if (!photoBridge.isCurrentObservation(photo)) return@post
-                if (!activityResumed || state.mode != FrameMode.PHOTOS ||
-                    (state.photosPaused && photo.pauseSnapshotNonce == null &&
-                        (!manualPhotoStepPending || !isNewManualPhotoStepAsset(manualPhotoStepPreviousAssetId, photo.assetId)))
+                if (!activityResumed || state.mode != FrameMode.PHOTOS) return@post
+                webSurface?.onCurrentPhotoObserved(photo)
+                if (state.photosPaused && photo.pauseSnapshotNonce == null &&
+                    (!manualPhotoStepPending || !isNewManualPhotoStepAsset(manualPhotoStepPreviousAssetId, photo.assetId))
                 ) return@post
                 currentPhotoAssetId = photo.assetId
                 lastPhotoAt = photo.capturedAt
@@ -289,7 +334,13 @@ class MainActivity : Activity() {
                     finishManualPhotoStep.run()
                 }
             }
-        }
+        }, onSharedPlaybackState = { shared ->
+            handler.post {
+                if (!sharedPlaybackConfigured() || state.photosPaused == shared.paused) return@post
+                state = state.copy(photosPaused = shared.paused)
+                render(state, announce = false)
+            }
+        })
         experienceSettings = experienceStore.read()
         controlStore = FrameControlStore(this)
         val savedConfiguration = configurationStore.read()
@@ -299,6 +350,7 @@ class MainActivity : Activity() {
             savedConfiguration
         }
         buildUi()
+        settingsReturnController = FrameExternalSettingsReturnController(AndroidFrameExternalSettingsReturnAdapter(this))
         initializeWeatherRuntime()
         enterImmersiveMode()
         render(state, announce = false)
@@ -313,6 +365,7 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        refreshLocalProvisioning()
         handleOAuthCallback(intent)
         handleFrameCommand(intent)
         handlePendingControl()
@@ -323,11 +376,21 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        settingsReturnController.onResume()
         activityResumed = true
         refreshLocalProvisioning()
+        unregisterHomeBack?.invoke()
+        unregisterHomeBack = if (touchNavigationEnabled && configuration != null) {
+            FrameHomeBackNavigation.register(this) {
+                if (oauthSurface != null) closeWeatherAuthorization(consumeState = true)
+                else showMode(FrameMode.HOME, announceHud = false)
+            }
+        } else null
         applyBrightness(state.brightnessOverridePercent)
         enterImmersiveMode()
         render(state, announce = false)
+        handler.removeCallbacks(refreshNavigationRailClock)
+        refreshNavigationRailClock.run()
         if (configuration == null) confirmBootRecoveryAfterNextDraw()
         scheduleCompanionPoll()
         if (pendingAuthorizationCode != null && !weatherAuthorizationInProgress) {
@@ -344,14 +407,21 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         activityResumed = false
+        closeWeatherAuthorization(consumeState = true)
+        unregisterHomeBack?.invoke()
+        unregisterHomeBack = null
         invalidateCompanionPoll()
         cancelPendingBootRecoveryConfirmation()
         volumeInput.reset()
+        root.resetTouchNavigation()
+        touchMediaNavigation.dismissMenu()
+        updateTouchNavigation()
         cancelModeGesture()
         handler.removeCallbacks(refreshVisibleWeather)
         handler.removeCallbacks(preloadCalendar)
         handler.removeCallbacks(pollCompanion)
         handler.removeCallbacks(refreshQuietHours)
+        handler.removeCallbacks(refreshNavigationRailClock)
         cancelPhotoWork()
         hideOfflinePhoto()
         photoBridge.setCaptureEnabled(false, true)
@@ -362,6 +432,7 @@ class MainActivity : Activity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (!hasFocus) volumeInput.reset()
+        if (!hasFocus) root.resetTouchNavigation()
     }
 
     override fun onStop() {
@@ -370,10 +441,13 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        settingsReturnController.onDestroy()
+        closeWeatherAuthorization(consumeState = true)
         invalidateCompanionPoll()
         cancelHomeAssistantWork(stage = "activity_destroy", clearPendingAuthorizationCode = true)
         weatherWorkerExecutor.shutdownNow()
         companionWorkerExecutor.shutdownNow()
+        companionReserveExecutor.shutdownNow()
         cancelPhotoWork()
         hideOfflinePhoto()
         photoWorkerExecutor.shutdownNow()
@@ -388,7 +462,21 @@ class MainActivity : Activity() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         webSurface?.trimMemory(level)
-        if (level >= TRIM_MEMORY_RUNNING_LOW) photoReserve.clearForLowMemory()
+        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            photoReserve.clearForLowMemory()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    @SuppressLint("GestureBackNavigation")
+    override fun onBackPressed() {
+        if (oauthSurface != null) {
+            closeWeatherAuthorization(consumeState = true)
+        } else if (touchNavigationEnabled && configuration != null) {
+            showMode(FrameMode.HOME, announceHud = false)
+        } else {
+            super.onBackPressed()
+        }
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -571,28 +659,53 @@ class MainActivity : Activity() {
     }
 
     private fun buildUi() {
-        root = FrameLayout(this).apply {
+        root = FrameTouchInputLayout(this, onModeGesture = { direction, eventTimeMillis ->
+            if (touchMediaNavigation.immersiveMedia) {
+                cancelModeGesture()
+                touchMediaNavigation.revealMenu()
+                updateTouchNavigation()
+                scheduleIdleReset()
+            } else {
+                queueModeGesture(direction, eventTimeMillis, repeatCount = 0)
+            }
+        }, shouldRoute = { direction ->
+            oauthSurface == null && touchMediaNavigation.acceptsEdgeSwipe(direction)
+        }, isImmersiveMedia = {
+            touchMediaNavigation.immersiveMedia
+        }).apply {
             setBackgroundColor(getColor(R.color.frame_dark))
             isFocusable = true
             isFocusableInTouchMode = true
             setOnClickListener { }
             setOnTouchListener { view, event ->
+                if (consumesCurrentModeGesture()) return@setOnTouchListener true
                 val handled = gestureDetector.onTouchEvent(event)
                 if (event.action == MotionEvent.ACTION_UP) view.performClick()
                 handled
             }
         }
-        weatherContent = WeatherContentView(this).apply { visibility = View.GONE }
+        weatherContent = WeatherContentView(this).apply {
+            visibility = View.GONE
+            setOnPrimaryActionListener {
+                if (state.mode == FrameMode.WEATHER && weatherNeedsAuthentication) {
+                    dispatch(FrameIntent.PrimaryAction)
+                }
+            }
+        }
         offlinePhoto = ImageView(this).apply {
             visibility = View.GONE
             scaleType = ImageView.ScaleType.FIT_CENTER
             setBackgroundColor(Color.BLACK)
             contentDescription = "Recent photo while Photos reconnects"
         }
-        val fullScreenLayout = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT,
-        )
+        insetContentViews.clear()
+        fun addContentView(view: View) {
+            insetContentViews.add(view)
+            root.addView(view, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+        }
         val activeConfiguration = configuration
         if (activeConfiguration != null) {
             val runtime = (application as FrameOsApplication).geckoRuntime
@@ -659,19 +772,32 @@ class MainActivity : Activity() {
                 homeAssistantUrl = activeConfiguration.homeAssistantUrl,
                 homeAssistantFallbackUrl = activeConfiguration.homeAssistantFallbackUrl,
                 birdsUrl = activeConfiguration.birdsUrl,
+                artUrl = activeConfiguration.artUrl,
                 warmHomeAssistantView = warmHomeAssistantView,
                 listener = webListener,
                 operationLogger = operationLogger,
                 photoBridge = photoBridge,
                 photosProfile = FramePhotosProfileUrl.profile(activeConfiguration.photosUrl) ?: "balanced",
                 deactivateHiddenHomeAssistant = experienceSettings.deactivateHiddenHomeAssistant,
+                detachHiddenHomeAssistant = touchscreenSettings.detachHiddenHome,
             )
-            root.addView(warmHomeAssistantView, fullScreenLayout)
-            root.addView(webSurface, fullScreenLayout)
-            root.addView(weatherContent, fullScreenLayout)
-            root.addView(offlinePhoto, fullScreenLayout)
+            addContentView(warmHomeAssistantView)
+            addContentView(requireNotNull(webSurface))
+            addContentView(weatherContent)
+            addContentView(requireNotNull(offlinePhoto))
         } else {
-            root.addView(buildConfigurationView(), fullScreenLayout)
+            addContentView(buildConfigurationView())
+        }
+        touchRail = null
+        if (touchNavigationEnabled && activeConfiguration != null) {
+            touchRail = TouchNavigationRail(this,
+                onOpenSettings = { openAndroidSettings() },
+                onOpenMode = { showMode(it, announceHud = false) },
+            ).also {
+                it.setModes(TouchNavigationRailPolicy.ordered(availableModes()))
+                it.updateTime(ZonedDateTime.now())
+                root.addView(it, FrameLayout.LayoutParams(dp(88), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START))
+            }
         }
         hud = buildModeHud()
         root.addView(
@@ -692,9 +818,39 @@ class MainActivity : Activity() {
             },
         )
         webRecovery = buildWebRecoveryView()
-        root.addView(webRecovery, fullScreenLayout)
+        addContentView(webRecovery)
+        dismissTouchMenu = View(this).apply {
+            visibility = View.GONE
+            contentDescription = "Close navigation menu"
+            setOnClickListener {
+                touchMediaNavigation.dismissMenu()
+                updateTouchNavigation()
+                scheduleIdleReset()
+            }
+        }.also {
+            root.addView(it, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+        }
+        touchRail?.bringToFront()
+        updateTouchNavigation()
         setContentView(root)
         root.requestFocus()
+    }
+
+    private fun updateTouchNavigation() {
+        touchMediaNavigation.setScreen(touchNavigationEnabled && configuration != null, state.mode)
+        val inset = if (touchMediaNavigation.contentHasRailInset) dp(88) else 0
+        insetContentViews.forEach { view ->
+            val params = view.layoutParams as FrameLayout.LayoutParams
+            if (params.leftMargin != inset) {
+                params.leftMargin = inset
+                view.layoutParams = params
+            }
+        }
+        dismissTouchMenu?.visibility = if (touchMediaNavigation.dismissLayerVisible) View.VISIBLE else View.GONE
+        touchRail?.visibility = if (touchMediaNavigation.railVisible) View.VISIBLE else View.GONE
     }
 
     private fun buildModeHud(): LinearLayout {
@@ -827,6 +983,11 @@ class MainActivity : Activity() {
 
     private fun dispatch(intent: FrameIntent) {
         cancelModeGesture()
+        if (intent == FrameIntent.IdleExpired && state.mode.persistsAcrossIdle) return
+        if (touchNavigationEnabled && (intent == FrameIntent.GoHome || intent == FrameIntent.IdleExpired)) {
+            showMode(FrameMode.HOME, announceHud = false)
+            return
+        }
         if (intent == FrameIntent.PrimaryAction && state.mode == FrameMode.PHOTOS) {
             handler.removeCallbacks(resumePhotosAfterHold)
         }
@@ -871,6 +1032,8 @@ class MainActivity : Activity() {
     }
 
     private fun render(next: FrameState, announce: Boolean) {
+        updateTouchNavigation()
+        touchRail?.setSelection(next.mode)
         if (::diagnosticStore.isInitialized) diagnosticStore.recordMode(next.mode)
         if (next.mode != FrameMode.PHOTOS || !activityResumed) {
             cancelPhotoWork()
@@ -889,7 +1052,7 @@ class MainActivity : Activity() {
                     webSurface?.setContentActive(activityResumed)
                     webSurface?.setPhotosPaused(next.photosPaused)
                     root.requestFocus()
-                    if (photoFallbackPolicy.isShowing) showOfflinePhoto(manual = true)
+                    if (photoFallbackPolicy.isShowing && !sharedPlaybackConfigured()) showOfflinePhoto(manual = true)
                     schedulePhotoFreshness()
                 }
                 FrameWebSlot.HOME_ASSISTANT, FrameWebSlot.CAMERAS -> {
@@ -898,7 +1061,7 @@ class MainActivity : Activity() {
                     hideWebRecovery()
                     webSurface?.show(target.slot, target.url, takeFocus = true)
                 }
-                FrameWebSlot.BIRDS -> {
+                FrameWebSlot.BIRDS, FrameWebSlot.ART -> {
                     hideOfflinePhoto()
                     weatherContent.visibility = View.GONE
                     hideWebRecovery()
@@ -986,6 +1149,7 @@ class MainActivity : Activity() {
 
     private fun isWebLabelActive(label: String): Boolean = when (label) {
         FrameMode.PHOTOS.label -> state.mode == FrameMode.PHOTOS
+        FrameMode.ART.label -> state.mode == FrameMode.ART
         "Home Assistant" -> state.mode in HOME_ASSISTANT_MODES
         FrameMode.CAMERAS.label -> state.mode == FrameMode.CAMERAS
         FrameMode.BIRDS.label -> state.mode == FrameMode.BIRDS
@@ -1023,9 +1187,12 @@ class MainActivity : Activity() {
     }
 
     private fun showMode(mode: FrameMode, announceHud: Boolean = true) {
+        touchMediaNavigation.dismissMenu()
+        closeWeatherAuthorization(consumeState = true)
         cancelModeGesture()
         val resolvedMode = availability().resolve(mode)
         val unavailableBirds = mode == FrameMode.BIRDS && resolvedMode != mode
+        val unavailableArt = mode == FrameMode.ART && resolvedMode != mode
         val changed = state.mode != resolvedMode
         state = state.copy(
             mode = resolvedMode,
@@ -1035,14 +1202,27 @@ class MainActivity : Activity() {
         if (resolvedMode == FrameMode.WEATHER) refreshWeather()
         if (unavailableBirds) {
             showHud("Birds is not configured")
+        } else if (unavailableArt) {
+            showHud("Art is not configured")
         } else if (changed && announceHud) {
             showHud()
         }
         scheduleIdleReset()
     }
 
+    private fun openAndroidSettings() {
+        when (settingsReturnController.openSettings()) {
+            FrameExternalSettingsReturnController.Outcome.LAUNCHED -> Unit
+            FrameExternalSettingsReturnController.Outcome.OVERLAY_PERMISSION_DENIED ->
+                showHud("Android Settings is unavailable until the FrameOS return button is enabled")
+            FrameExternalSettingsReturnController.Outcome.EXTERNAL_LAUNCH_FAILED ->
+                showHud("Android Settings could not be opened")
+        }
+    }
+
     private fun availability(): FrameModeAvailability = FrameModeAvailability(
         birdsUrl = configuration?.birdsUrl,
+        artUrl = configuration?.artUrl,
         requestedModes = experienceSettings.orderedEnabledModes,
     )
 
@@ -1063,6 +1243,7 @@ class MainActivity : Activity() {
             homeAssistantFallbackUrl = intent
                 .getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_FALLBACK_URL),
             birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
+            artUrl = intent.getStringExtra(FrameControlContract.EXTRA_ART_URL),
         ) ?: return null
         configurationStore.write(provisioned)
         SharedPreferencesWeatherCache(this).clear()
@@ -1092,7 +1273,7 @@ class MainActivity : Activity() {
             oauthCallbackPageUrl = callbackPageUrl
             pendingOAuthStateStore = pendingStateStore
             oauthClient = client
-            callbackVerifier = OAuthCallbackVerifier(pendingStateStore)
+            callbackVerifier = OAuthCallbackVerifier(pendingStateStore, callbackPageUrl)
             weatherCoordinator = WeatherCoordinator(
                 accessTokenProvider = client,
                 repository = WeatherRepository(
@@ -1133,7 +1314,7 @@ class MainActivity : Activity() {
 
     private fun refreshWeather() {
         val coordinator = weatherCoordinator ?: return
-        if (weatherAuthorizationInProgress || weatherRefreshInProgress || pendingAuthorizationCode != null) return
+        if (oauthSurface != null || weatherAuthorizationInProgress || weatherRefreshInProgress || pendingAuthorizationCode != null) return
         weatherRefreshInProgress = true
         weatherRefreshStartedAtUptimeMillis = SystemClock.uptimeMillis()
         handler.removeCallbacks(refreshVisibleWeather)
@@ -1170,7 +1351,7 @@ class MainActivity : Activity() {
             weatherVisible = state.mode == FrameMode.WEATHER,
             activityResumed = activityResumed,
             authenticationRequired = weatherNeedsAuthentication,
-            authorizationInProgress = weatherAuthorizationInProgress || weatherRefreshInProgress || pendingAuthorizationCode != null,
+            authorizationInProgress = oauthSurface != null || weatherAuthorizationInProgress || weatherRefreshInProgress || pendingAuthorizationCode != null,
         )?.let { delay -> handler.postDelayed(refreshVisibleWeather, delay) }
     }
 
@@ -1187,102 +1368,128 @@ class MainActivity : Activity() {
         companionPollInFlight = true
         val generation = companionPollGeneration
         val snapshot = diagnosticStore.snapshot()
-        val reserveStatus = photoReserve.status()
-        val status = FrameRemoteStatus(
-            mode = state.mode,
-            photosPaused = state.photosPaused,
+        val pollMode = state.mode
+        val pollPhotosPaused = state.photosPaused
+        val pollOffline = ::offlinePhoto.isInitialized && offlinePhoto.visibility == View.VISIBLE
+        val pollCurrentAssetId = currentPhotoAssetId
+        val pollLastPhotoAt = lastPhotoAt
+        val pollProfile = configuration?.photosUrl?.let(FramePhotosProfileUrl::profile)
+        val pollAppVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"
+        val sentSnapshotRevision = FrameCompanionSnapshotRevision.forRequest(companionSnapshotRevision)
+        companionWorkerExecutor.submit {
+            val reserveStatus = photoReserve.publishedStatus()
+            val status = FrameRemoteStatus(
+            mode = pollMode,
+            photosPaused = pollPhotosPaused,
             lastPaintAt = snapshot.lastPaintEpochMillis.takeIf { it > 0 },
             lastWeatherAt = snapshot.lastWeatherSuccessEpochMillis.takeIf { it > 0 },
             recoveryCount = snapshot.recoveryCount,
             lastError = snapshot.lastError,
-            offline = ::offlinePhoto.isInitialized && offlinePhoto.visibility == View.VISIBLE,
-            appVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown",
-            currentAssetId = currentPhotoAssetId,
-            lastPhotoAt = lastPhotoAt,
-            profile = configuration?.photosUrl?.let(FramePhotosProfileUrl::profile),
+            offline = pollOffline,
+            appVersion = pollAppVersion,
+            currentAssetId = pollCurrentAssetId,
+            lastPhotoAt = pollLastPhotoAt,
+            profile = pollProfile,
             offlineAssets = reserveStatus.offlineAssets,
             offlineBytes = reserveStatus.offlineBytes,
-        )
-        companionWorkerExecutor.submit {
+            )
             val pendingAcks = FrameCompanionCommandStore(this).consumeAcks()
             val result = FrameCompanionClient(credentials.endpoint, credentials.token).poll(
                 credentials.deviceId,
                 status,
                 pendingAcks,
+                sentSnapshotRevision,
             )
+            val envelope = (result as? com.wyattfleming.frameos.control.FrameCompanionPollResult.Success)?.let {
+                FrameCompanionEnvelopeDecoder.decode(it.body, credentials.deviceId, System.currentTimeMillis(), sentSnapshotRevision)
+            }
             handler.post {
                 companionPollInFlight = false
+                val credentialsStillCurrent = FrameCompanionCredentialsStore(this).read() == credentials
                 if (
                     generation != companionPollGeneration ||
                     !activityResumed ||
                     isFinishing ||
                     isDestroyed ||
-                    FrameCompanionCredentialsStore(this).read() != credentials
+                    !credentialsStillCurrent
                 ) {
+                    if (!credentialsStillCurrent) invalidateCompanionPoll()
                     scheduleCompanionPoll()
                     return@post
                 }
-                if (
-                    result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success &&
-                    FrameCompanionResponseDecoder.isForDevice(result.body, credentials.deviceId)
-                ) {
-                    FrameCompanionCommandStore(this).clearAcks(pendingAcks)
-                    FrameCompanionSettingsDecoder.decode(result.body)?.let(::applyCompanionSettings)
-                    applyHiddenPhotoSnapshot(result.body)
-                    maybeShowCompanionEvent(result.body)
-                    FrameCompanionCommandDecoder.decode(result.body, System.currentTimeMillis())?.let { command ->
-                        val store = FrameCompanionCommandStore(this)
-                        if (store.claim(command.id)) {
-                            store.ack(command.id, applyCompanionCommand(command))
-                        }
-                    }
-                }
+                if (envelope != null) applyCompanionEnvelope(envelope, pendingAcks)
                 scheduleCompanionPoll(if (result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success) 5_000L else 10_000L)
             }
         }
     }
 
     private fun invalidateCompanionPoll() {
+        // Retire queued reserve changes before changing the lifecycle generation. A task
+        // that already crossed reserve's guarded commit boundary completes atomically.
+        companionReserveToken.incrementAndGet()
+        companionSnapshotRevision = null
         companionPollGeneration += 1
     }
 
     private fun refreshLocalProvisioning() {
         val persisted = experienceStore.read()
         if (persisted.settingsRevision < experienceSettings.settingsRevision) experienceSettings = persisted
+        val updatedTouchscreen = touchscreenStore.read()
+        val touchscreenChanged = updatedTouchscreen != touchscreenSettings
+        if (touchscreenChanged) {
+            touchscreenSettings = updatedTouchscreen
+        }
         val updated = configurationStore.read() ?: return
-        if (updated != configuration) {
+        if (updated != configuration || touchscreenChanged) {
             configuration = updated
             invalidateCompanionPoll()
             rebuildExperienceUi()
         }
     }
 
-    private fun applyHiddenPhotoSnapshot(payload: String) {
-        val ids = runCatching {
-            val values = org.json.JSONObject(payload).optJSONArray("hiddenAssets") ?: return
-            require(values.length() <= 1_000)
-            buildSet {
-                repeat(values.length()) { index ->
-                    val id = values.getString(index)
-                    require(Regex("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$").matches(id))
-                    add(id.lowercase(Locale.ROOT))
+    private fun applyCompanionEnvelope(envelope: FrameCompanionEnvelope, pendingAcks: List<com.wyattfleming.frameos.control.FrameRemoteAck>) {
+        FrameCompanionCommandStore(this).clearAcks(pendingAcks)
+        when (envelope) {
+            is FrameCompanionEnvelope.Unchanged -> Unit
+            is FrameCompanionEnvelope.Full -> {
+                envelope.settings?.let(::applyCompanionSettings)
+                envelope.event?.let(::maybeShowCompanionEvent)
+                envelope.command?.let { command ->
+                    val store = FrameCompanionCommandStore(this)
+                    if (store.claim(command.id)) store.ack(command.id, applyCompanionCommand(command))
                 }
-            }
-        }.getOrNull() ?: return
-        if (!photoReserve.applyHiddenAssets(ids)) return
-        if (currentPhotoAssetId?.lowercase(Locale.ROOT) in ids) {
-            currentPhotoAssetId = null
-            if (state.mode == FrameMode.PHOTOS) {
-                if (photoFallbackPolicy.isShowing) showOfflinePhoto(manual = true) else movePhoto(true)
+                val hiddenAssets = envelope.hiddenAssets
+                if (hiddenAssets == null) {
+                    companionSnapshotRevision = envelope.snapshotRevision
+                } else {
+                    applyHiddenPhotoSnapshot(hiddenAssets, envelope.snapshotRevision)
+                }
             }
         }
     }
 
-    private fun maybeShowCompanionEvent(payload: String) {
+    /** Queued reserve work is rejected after invalidation; accepted disk work is atomic. */
+    private fun applyHiddenPhotoSnapshot(ids: Set<String>, revision: String?) {
+        val token = companionReserveToken.incrementAndGet()
+        companionReserveExecutor.submit {
+            val applied = photoReserve.applyHiddenAssets(ids) { companionReserveToken.get() == token }
+            handler.post {
+                if (companionReserveToken.get() != token || !applied) return@post
+                companionSnapshotRevision = revision
+                if (currentPhotoAssetId?.lowercase(Locale.ROOT) in ids) {
+                    currentPhotoAssetId = null
+                    if (state.mode == FrameMode.PHOTOS) {
+                        if (photoFallbackPolicy.isShowing) showOfflinePhoto(manual = true) else movePhoto(true)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun maybeShowCompanionEvent(event: com.wyattfleming.frameos.control.FrameCompanionEvent) {
         if (!experienceSettings.eventOverlaysEnabled || state.mode != FrameMode.PHOTOS || state.photosPaused) return
         if (experienceSettings.quietHours?.isActiveAt(LocalTime.now()) == true) return
         val now = System.currentTimeMillis()
-        val event = FrameCompanionEventDecoder.decode(payload, now) ?: return
         if (!FrameCompanionEventStore(this).claim(event.id, now)) return
         showHud(event.text)
         handler.removeCallbacks(hideHud)
@@ -1344,6 +1551,7 @@ class MainActivity : Activity() {
             weatherEntityId = current.weatherEntityId,
             homeAssistantFallbackUrl = current.homeAssistantFallbackUrl,
             birdsUrl = current.birdsUrl,
+            artUrl = current.artUrl,
         ) ?: return false
         configuration = updated
         configurationStore.write(updated)
@@ -1356,6 +1564,7 @@ class MainActivity : Activity() {
     }
 
     private fun rebuildExperienceUi() {
+        closeWeatherAuthorization(consumeState = true)
         cancelPhotoWork()
         hideOfflinePhoto()
         currentPhotoAssetId = null
@@ -1370,28 +1579,88 @@ class MainActivity : Activity() {
     }
 
     private fun beginWeatherAuthorization() {
+        if (oauthSurface != null) return
+        if (callbackVerifier == null) return
         val endpoint = oauthEndpoint ?: return
         val callbackPageUrl = oauthCallbackPageUrl ?: return
         val pendingStateStore = pendingOAuthStateStore ?: return
+        val homeUrl = configuration?.homeAssistantUrl ?: return
         val randomBytes = ByteArray(OAUTH_STATE_BYTES).also(secureRandom::nextBytes)
         val state = OAuthState.fromCryptographicBytes(randomBytes)
+        embeddedAuthorizationPending = true
         pendingStateStore.write(state)
         val authorization = endpoint.authorizationRequest(callbackPageUrl, state)
-        weatherContent.presentation = WeatherPresentation(emptyMessage = "Continue sign-in in the browser")
+        weatherContent.presentation = WeatherPresentation(emptyMessage = "Sign in to Home Assistant")
         weatherNeedsAuthentication = false
+        handler.removeCallbacks(expireIdle)
+        handler.removeCallbacks(refreshVisibleWeather)
+        webSurface?.hide()
+        webSurface?.suspendAllContent()
         try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(authorization.url)))
-        } catch (error: ActivityNotFoundException) {
-            pendingStateStore.consume()
-            weatherNeedsAuthentication = true
-            weatherContent.presentation = WeatherPresentation(emptyMessage = "Weather needs Home Assistant sign-in")
+            val overlay = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.BLACK)
+            }
+            val cancel = android.widget.Button(this).apply {
+                setText(R.string.frame_oauth_cancel)
+                setOnClickListener { closeWeatherAuthorization(consumeState = true) }
+            }
+            overlay.addView(cancel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+            val surface = FrameOAuthWebSurface(
+                context = this,
+                runtime = (application as FrameOsApplication).geckoRuntime,
+                authorizationUrl = authorization.url,
+                configuredHomeAssistantUrl = homeUrl,
+                callbackPageUrl = callbackPageUrl,
+                onCallback = { callback ->
+                    closeWeatherAuthorization(consumeState = false)
+                    handleOAuthCallbackUrl(callback)
+                },
+                onFailure = { closeWeatherAuthorization(consumeState = true) },
+            )
+            oauthSurface = surface
+            oauthOverlay = overlay
+            overlay.addView(surface, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            root.addView(overlay, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            surface.requestFocus()
+            surface.start()
+        } catch (_: RuntimeException) {
+            closeWeatherAuthorization(consumeState = true)
+        }
+    }
+
+    private fun closeWeatherAuthorization(consumeState: Boolean) {
+        val hadSurface = oauthSurface != null || oauthOverlay != null
+        val hadAuthorization = hadSurface || embeddedAuthorizationPending
+        embeddedAuthorizationPending = false
+        oauthSurface?.close()
+        oauthSurface = null
+        oauthOverlay?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        oauthOverlay = null
+        if (consumeState && hadAuthorization) {
+            // Never retain an abandoned embedded authorization challenge.
+            pendingOAuthStateStore?.consume()
+            if (hadSurface || !weatherAuthorizationInProgress) {
+                weatherNeedsAuthentication = true
+                if (::weatherContent.isInitialized) {
+                    weatherContent.presentation = WeatherPresentation(emptyMessage = "Weather needs Home Assistant sign-in")
+                }
+            }
         }
     }
 
     private fun handleOAuthCallback(intent: Intent) {
         val callbackUrl = intent.dataString ?: return
-        val verifier = callbackVerifier ?: return
+        handleOAuthCallbackUrl(callbackUrl)
+    }
+
+    private fun handleOAuthCallbackUrl(callbackUrl: String) {
+        val verifier = callbackVerifier ?: run {
+            pendingOAuthStateStore?.consume()
+            return
+        }
         val code = verifier.verify(callbackUrl) ?: run {
+            pendingOAuthStateStore?.consume()
             setIntent(Intent(this, MainActivity::class.java))
             pendingAuthorizationCode = null
             pendingAuthorizationPreviousAuthEpoch = null
@@ -1573,14 +1842,14 @@ class MainActivity : Activity() {
     private fun scheduleIdleReset() {
         handler.removeCallbacks(expireIdle)
         // Idle return applies to other views; Photos pause/hold owns its own lifetime.
-        if (state.mode != FrameMode.PHOTOS) {
+        if (state.mode != FrameMode.PHOTOS && !state.mode.persistsAcrossIdle) {
             handler.postDelayed(expireIdle, experienceSettings.idleReturnSeconds * 1_000L)
         }
     }
 
     private fun movePhoto(forward: Boolean): Boolean {
         if (state.mode != FrameMode.PHOTOS || !activityResumed) return false
-        if (photoFallbackPolicy.isShowing) return showOfflinePhoto(if (forward) 1 else -1, manual = true)
+        if (photoFallbackPolicy.isShowing) return if (sharedPlaybackConfigured()) false else showOfflinePhoto(if (forward) 1 else -1, manual = true)
         if (state.photosPaused) {
             manualPhotoStepPreviousAssetId = currentPhotoAssetId
             manualPhotoStepPending = true
@@ -1595,6 +1864,7 @@ class MainActivity : Activity() {
 
     private fun showOfflinePhoto(step: Int = 0, manual: Boolean = false): Boolean {
         if (!activityResumed || state.mode != FrameMode.PHOTOS || (state.photosPaused && !manual)) return false
+        if (sharedPlaybackConfigured() && step != 0) return false
         val entries = photoReserve.entries()
         if (entries.isEmpty()) { hideOfflinePhoto(); return false }
         fallbackIndex = Math.floorMod(fallbackIndex + step, entries.size)
@@ -1620,7 +1890,7 @@ class MainActivity : Activity() {
                 offlinePhoto.visibility = View.VISIBLE
                 hideWebRecovery()
                 showHud("Offline photos · reconnecting")
-                if (!state.photosPaused) handler.postDelayed(rotateOfflinePhoto, OFFLINE_PHOTO_ROTATION_MILLIS)
+                if (!state.photosPaused && !sharedPlaybackConfigured()) handler.postDelayed(rotateOfflinePhoto, OFFLINE_PHOTO_ROTATION_MILLIS)
             }
         }
         return true
@@ -1663,7 +1933,7 @@ class MainActivity : Activity() {
         if (active && !photosWereActive) photosVisibleSince = System.currentTimeMillis()
         photosWereActive = active
         if (active && !photoProbeInFlight) handler.postDelayed(refreshPhotoFreshness, PHOTO_FRESHNESS_CHECK_MILLIS)
-        if (!active) handler.removeCallbacks(rotateOfflinePhoto)
+        if (!active || sharedPlaybackConfigured()) handler.removeCallbacks(rotateOfflinePhoto)
     }
 
     private fun checkPhotoFreshness() {
@@ -1702,7 +1972,7 @@ class MainActivity : Activity() {
                 }
                 healthyPhotoProbeAt = completedAt.takeIf { reachable }
                 if (reachable) photoFallbackPolicy.recordReachable()
-                else if (photoFallbackPolicy.recordFailure(true, photoReserve.latest() != null) && offlinePhoto.visibility != View.VISIBLE) showOfflinePhoto()
+                else if (!sharedPlaybackConfigured() && photoFallbackPolicy.recordFailure(true, photoReserve.latest() != null) && offlinePhoto.visibility != View.VISIBLE) showOfflinePhoto()
                 if (reachable && photoFallbackPolicy.shouldRecover(lastPhotoAt, photosVisibleSince, System.currentTimeMillis(), true, false)) {
                     diagnosticStore.recordRecovery("Photos data stale")
                     webSurface?.refreshPhotos()
@@ -1711,6 +1981,8 @@ class MainActivity : Activity() {
             }
         }
     }
+
+    private fun sharedPlaybackConfigured(): Boolean = FrameSharedPlaybackMetadata.configuredGroup(configuration?.photosUrl) != null
 
     private fun applyBrightness(percent: Int?) {
         val attributes = window.attributes

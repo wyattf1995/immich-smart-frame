@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+
+    <!-- Gecko bundles ExoPlayer NotificationUtil. This declaration does not
+         request notification access; Touch does not post or request notifications. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- API 33+ uses the registered OnBackInvokedCallback. Older Android ignores
+         this opt-in attribute and uses TouchFrameActivity.onBackPressed instead. -->
+    <application
+        android:name=".TouchFrameApplication"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:enableOnBackInvokedCallback="true"
+        android:dataExtractionRules="@xml/touch_data_extraction_rules"
+        android:icon="@drawable/ic_touchframe"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.TouchFrame"
+        android:usesCleartextTraffic="true"
+        tools:ignore="UnusedAttribute">
+        <receiver
+            android:name=".control.TouchProvisionReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="com.wyattfleming.touchframe.PROVISION" />
+            </intent-filter>
+        </receiver>
+        <activity
+            android:name=".TouchFrameActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

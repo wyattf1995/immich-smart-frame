@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import org.json.JSONObject
+import org.mozilla.gecko.util.GeckoBundle
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
@@ -29,6 +30,7 @@ class FramePhotoBridge(
     private val isMainThread: () -> Boolean = { Looper.myLooper() === Looper.getMainLooper() },
     private val diagnosticLog: (String) -> Unit = { message -> Log.i(TAG, message) },
     private val onPhotoObserved: (PhotoObserved) -> Unit = {},
+    private val onSharedPlaybackState: (SharedPlaybackState) -> Unit = {},
 ) {
     data class Sender(val session: Any, val url: String, val topLevel: Boolean, val contentScript: Boolean)
     /** A session-bound content-script port used only for the Photos playback controls. */
@@ -45,6 +47,7 @@ class FramePhotoBridge(
         internal val scopeKey: String,
         internal val pauseSnapshotNonce: String?,
     )
+    data class SharedPlaybackState(val sessionId: String, val slideId: String, val paused: Boolean, val epoch: Long)
 
     @Volatile private var configuredSession: Any? = null
     @Volatile private var configuredScope: FramePhotoScope? = null
@@ -52,6 +55,9 @@ class FramePhotoBridge(
     private var extension: WebExtension? = null
     @Volatile private var captureEnabled = false
     @Volatile private var generation = 0L
+    private var sharedPlaybackSession: String? = null
+    private var sharedPlaybackEpoch = -1L
+    private var sharedPlaybackPaused: Boolean? = null
     private var playbackPort: PlaybackPort? = null
     @Volatile private var desiredPlaybackPaused = false
     @Volatile private var photosVisible = false
@@ -91,6 +97,9 @@ class FramePhotoBridge(
         configuredSession = session
         configuredScope = requested
         diagnosticCounts.clear()
+        sharedPlaybackSession = null
+        sharedPlaybackEpoch = -1L
+        sharedPlaybackPaused = null
         photosVisible = false
         captureEnabled = false
         return true
@@ -113,7 +122,10 @@ class FramePhotoBridge(
         }
     }
 
-    /** Installs the APK-bundled extension and attaches its message delegate to this Photos session. */
+    /**
+     * Legacy combined path. It deliberately retains its established behavior for FrameOS:
+     * scope preparation and extension attachment happen as one call.
+     */
     @Synchronized
     fun attach(
         runtime: GeckoRuntime,
@@ -123,6 +135,20 @@ class FramePhotoBridge(
         onReady: (Boolean) -> Unit = {},
     ): Boolean {
         if (!configure(session, photosUrl, profile)) return false
+        return attachPrepared(runtime, session, onReady)
+    }
+
+    /**
+     * UI-thread extension step for a session already prepared with [configure] on a worker.
+     * It never activates disk scope state and refuses a session/scope invalidated after preparation.
+     */
+    @Synchronized
+    fun attachPrepared(
+        runtime: GeckoRuntime,
+        session: GeckoSession,
+        onReady: (Boolean) -> Unit = {},
+    ): Boolean {
+        if (configuredSession !== session) return false
         val expectedAttachmentEpoch = attachmentEpoch.current()
         val expectedScopeKey = configuredScope?.key ?: return false
         runtime.webExtensionController.ensureBuiltIn(EXTENSION_LOCATION, EXTENSION_ID).accept({ installed ->
@@ -194,10 +220,31 @@ class FramePhotoBridge(
         return playbackPort?.let { dispatchPlayback(it, pauseCommand(paused), queuePauseWhenOffMain = true) } ?: false
     }
 
+    /**
+     * Starts a new top-level Photos document generation. This invalidates a
+     * decoded callback from the preceding document before its result can be
+     * delivered to the surface readiness gate.
+     */
+    @Synchronized
+    internal fun beginPageLoad(session: Any): Long? {
+        if (configuredSession !== session) return null
+        generation += 1
+        clearPausedSnapshot()
+        if (photosVisible && desiredPlaybackPaused) issuePausedSnapshot()
+        clearPlaybackPort()
+        return generation
+    }
+
     private fun issuePausedSnapshot() {
         if (!photosVisible || !desiredPlaybackPaused) return
         pauseSnapshotNonce = UUID.randomUUID().toString()
         consumedPauseSnapshotNonce = null
+    }
+
+    private fun issueSharedSettledPausedSnapshot() {
+        if (!photosVisible || !desiredPlaybackPaused) return
+        issuePausedSnapshot()
+        playbackPort?.let { dispatchPlayback(it, pauseCommand(true), queuePauseWhenOffMain = true) }
     }
 
     private fun clearPausedSnapshot() {
@@ -283,6 +330,40 @@ class FramePhotoBridge(
         val capture = captureFrom(message, sender) ?: return false
         if (!reserve.persist(capture.assetId, capture.image, capture.capturedAt, capture.scope.key) { canCommit(capture) }) return false
         return reportIfCurrent(capture)
+    }
+
+    /** Accepts only ordered shared-state events from this exact configured content script. */
+    @Synchronized
+    internal fun acceptSharedPlayback(message: Any, sender: Sender): Boolean {
+        val scope = configuredScope ?: return false
+        if (!isTrustedSender(scope, sender) || FrameSharedPlaybackMetadata.configuredGroup(scope.photosUrl) == null) return false
+        val value = message as? JSONObject ?: return false
+        val type = value.optString("type")
+        if (type != SHARED_STATE_TYPE && type != SHARED_SETTLED_TYPE) return false
+        val sessionId = value.opt("sessionId") as? String ?: return false
+        val slideId = value.opt("slideId") as? String ?: return false
+        val paused = value.opt("paused") as? Boolean ?: return false
+        val epoch = value.opt("epoch") as? Number ?: return false
+        if (!SHARED_SCALAR.matches(sessionId) || !SHARED_SCALAR.matches(slideId) || !boundedWholeNumber(epoch, MAX_DIAGNOSTIC_EPOCH)) return false
+        val epochValue = epoch.toLong()
+        if (type == SHARED_SETTLED_TYPE) {
+            // The document epoch orders settled slides across a server restart.
+            if (epochValue <= sharedPlaybackEpoch) return false
+            sharedPlaybackSession = sessionId
+            sharedPlaybackEpoch = epochValue
+        } else if (sharedPlaybackSession == null && epochValue == 0L) {
+            // A page may publish its authoritative pause state before its first slide settles.
+            sharedPlaybackSession = sessionId
+            sharedPlaybackEpoch = epochValue
+        } else if (sharedPlaybackSession != sessionId || epochValue < sharedPlaybackEpoch) return false
+        // BEGIN shared paused snapshot refresh
+        // Only a verified newer server settle may refresh paused capture authority.
+        if (type == SHARED_SETTLED_TYPE && paused) issueSharedSettledPausedSnapshot()
+        // END shared paused snapshot refresh
+        if (sharedPlaybackPaused == paused) return true
+        sharedPlaybackPaused = paused
+        onSharedPlaybackState(SharedPlaybackState(sessionId, slideId, paused, epochValue))
+        return true
     }
 
     /** Accepts only scalar diagnostics from the same configured Photos content script. */
@@ -408,7 +489,7 @@ class FramePhotoBridge(
 
         override fun onMessage(nativeApp: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
             val senderSession = sender.session
-            if (nativeApp != NATIVE_APP || senderSession == null) return GeckoResult.fromValue(JSONObject().put("accepted", false))
+            if (nativeApp != NATIVE_APP || senderSession == null) return GeckoResult.fromValue(acceptanceResponse(false))
             val trustedSender = Sender(
                 session = senderSession,
                 url = sender.url,
@@ -416,21 +497,24 @@ class FramePhotoBridge(
                 contentScript = sender.environmentType == WebExtension.MessageSender.ENV_TYPE_CONTENT_SCRIPT,
             )
             if ((message as? JSONObject)?.optString("type") == DIAGNOSTIC_TYPE) {
-                return GeckoResult.fromValue(JSONObject().put("accepted", acceptDiagnostic(message, trustedSender)))
+                return GeckoResult.fromValue(acceptanceResponse(acceptDiagnostic(message, trustedSender)))
+            }
+            if ((message as? JSONObject)?.optString("type") in setOf(SHARED_STATE_TYPE, SHARED_SETTLED_TYPE)) {
+                return GeckoResult.fromValue(acceptanceResponse(acceptSharedPlayback(message, trustedSender)))
             }
             val capture = captureFrom(
                 message,
                 trustedSender,
             )
-            if (capture == null) return GeckoResult.fromValue(JSONObject().put("accepted", false))
+            if (capture == null) return GeckoResult.fromValue(acceptanceResponse(false))
             val result = GeckoResult<Any>()
             try {
                 decodeWorker.execute {
                     val accepted = reserve.persist(capture.assetId, capture.image, capture.capturedAt, capture.scope.key) { canCommit(capture) } && reportIfCurrent(capture)
-                    result.complete(JSONObject().put("accepted", accepted))
+                    result.complete(acceptanceResponse(accepted))
                 }
             } catch (_: RejectedExecutionException) {
-                result.complete(JSONObject().put("accepted", false))
+                result.complete(acceptanceResponse(false))
             }
             return result
         }
@@ -441,13 +525,21 @@ class FramePhotoBridge(
         const val MAX_BASE64_CHARS = 4 * 1024 * 1024
         const val EXTENSION_LOCATION = "resource://android/assets/frame-photo-bridge/"
         const val EXTENSION_ID = "frame-photo-bridge@wyattfleming.com"
+        /** Gecko 144 serializes native-message callback objects through GeckoBundle. */
+        internal fun acceptanceResponse(accepted: Boolean): GeckoBundle = GeckoBundle(1).apply {
+            putBoolean("accepted", accepted)
+        }
+
         const val NATIVE_APP = "frame_photo_bridge"
         private const val MESSAGE_TYPE = "loaded-photo"
         private const val PAUSE_SNAPSHOT_NONCE = "snapshotNonce"
         private const val DIAGNOSTIC_TYPE = "bridge-diagnostic"
+        private const val SHARED_STATE_TYPE = "shared-playback-state"
+        private const val SHARED_SETTLED_TYPE = "shared-photo-settled"
         private const val MAX_DIAGNOSTICS_PER_SESSION = 32
         private const val MAX_DIAGNOSTIC_EPOCH = 4096L
         private const val MAX_DIAGNOSTIC_TRACKED_COUNT = 4L
-        private val DIAGNOSTIC_STAGES = setOf("pause", "step", "htmx_before", "htmx_primary_settle", "htmx_error")
+        private val DIAGNOSTIC_STAGES = setOf("pause", "step", "htmx_before", "htmx_primary_settle", "htmx_error", "htmx_no_content")
+        private val SHARED_SCALAR = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
     }
 }

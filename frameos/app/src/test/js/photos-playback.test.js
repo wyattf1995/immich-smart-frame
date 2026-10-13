@@ -6,7 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function loadScript({ connectNative, historyValues = [], frames, push = false, documentReady = true } = {}) {
+function loadScript({ connectNative, sendNativeMessage, historyValues = [], frames, push = false, documentReady = true, sharedSession = "session-1", sharedSlide = "slide-1", sharedPaused = false } = {}) {
   const events = [];
   const nativeMessages = [];
   const diagnosticMessages = [];
@@ -40,12 +40,13 @@ function loadScript({ connectNative, historyValues = [], frames, push = false, d
   kioskContainer.classList = { contains: (name) => push && name === "transition-push" };
   const kiosk = makeElement();
   kiosk.id = "kiosk";
+  kiosk.dataset = { sharedPlaybackSession: sharedSession, sharedPlaybackSlide: sharedSlide, sharedPlaybackPaused: String(sharedPaused) };
   kiosk.parentElement = kioskContainer;
   const progress = makeElement();
   const frameList = (frames || []).map(({ images, visible = true, animations = [] }) => {
     const frame = makeElement(visible);
     frame.parentElement = kiosk;
-    frame.closest = (selector) => selector === "#kiosk" ? kiosk : null;
+    frame.closest = (selector) => selector === "#kiosk" ? kiosk : selector === "#kiosk-container" ? kioskContainer : null;
     frame.images = images.map((source) => Object.assign(new HTMLImageElement(), {
       parentElement: frame,
       complete: true,
@@ -105,7 +106,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false, d
     },
     browser: { runtime: { connectNative: connectNative || (() => port), sendNativeMessage(_name, message) {
       if (message.type === "bridge-diagnostic") diagnosticMessages.push(message); else nativeMessages.push(message);
-      return Promise.resolve({ accepted: true });
+      return sendNativeMessage ? sendNativeMessage(message) : Promise.resolve({ accepted: true });
     } } },
     document: {
       body,
@@ -114,6 +115,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false, d
       addEventListener(...args) { listeners.push(args); },
       querySelector(selector) {
         if (selector === "#kiosk-history input[name='history']") return history[0] || null;
+        if (selector === "#kiosk") return kiosk;
         if (selector === "#kiosk-container") return kioskContainer;
         if (selector === ".navigation") return navigation;
         if (selector === ".navigation--next-asset") return next;
@@ -135,10 +137,23 @@ function loadScript({ connectNative, historyValues = [], frames, push = false, d
     body, events, next, previous, navigation, port, timers, observers, listeners, classes, nativeMessages, diagnosticMessages, progress, kiosk,
     runMicrotasks() { while (microtasks.length) microtasks.shift()(); },
     pendingMicrotasks() { return microtasks.length; },
+    runTimers() { while (timers.length) timers.shift().callback(); },
     setFrameVisible(index, visible) { frameList[index].visible = visible; },
     frameAnimations(index) { return frameList[index].animations; },
     frame(index) { return frameList[index]; },
-    mutate(records) { observers.find((observer) => observer.target === context.document.documentElement).callback(records); },
+    mutate(records) {
+      // The bridge observes the stable body subtree; select the capture observer,
+      // not the separate body-class observer that restores the paused state.
+      const observer = observers.find((candidate) => candidate.target === body && candidate.options.childList === true && candidate.options.subtree === true);
+      if (!observer) throw new Error("capture MutationObserver is not installed on body");
+      // A real MutationRecord always provides NodeLists for childList changes.
+      // Existing focused tests specify only the fields relevant to their scenario.
+      observer.callback(records.map((record) => record.type === "childList" ? {
+        ...record,
+        addedNodes: record.addedNodes || [],
+        removedNodes: record.removedNodes || [],
+      } : record));
+    },
     fireEvent(type, detail = {}, target = detail.target) {
       listeners.filter(([eventType]) => eventType === type).forEach(([, listener]) => listener({ type, detail, target }));
     },
@@ -438,6 +453,7 @@ test("failed native port connection backs off without exhausting and leaves capt
   assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000]);
   assert.deepEqual(runtime.listeners.map(([type]) => type), [
     "htmx:beforeSend", "htmx:afterSettle", "htmx:responseError", "htmx:sendError", "htmx:sendAbort", "htmx:timeout", "htmx:afterRequest",
+    "frame:shared-playback-state", "frame:shared-photo-settled",
     "load", "transitionend", "animationend",
   ]);
   assert.equal(runtime.observers.length, 2);
@@ -590,6 +606,8 @@ test("capture ignores progress bar RAF styles but keeps Kiosk visibility mutatio
   runtime.mutate([{ type: "attributes", attributeName: "style", target: runtime.progress }]);
   assert.equal(runtime.pendingMicrotasks(), 0);
   runtime.mutate([{ type: "attributes", attributeName: "style", target: runtime.frame(0) }]);
+  assert.equal(runtime.timers.length, 1, "Kiosk mutation schedules the bounded debounce");
+  runtime.runTimers();
   assert.equal(runtime.pendingMicrotasks(), 1);
 });
 
@@ -708,6 +726,7 @@ test("a no-content Kiosk response keeps capture closed until a later settled res
   runtime.runMicrotasks();
   runtime.fireEvent("htmx:beforeSend", { target: runtime.kiosk, xhr: empty });
   runtime.fireEvent("htmx:afterRequest", { target: runtime.kiosk, xhr: Object.assign(empty, { status: 204 }) });
+  assert.deepEqual(runtime.diagnosticMessages.slice(-1).map(({ stage }) => stage), ["htmx_no_content"]);
   runtime.mutate([{ type: "childList", target: runtime.frame(0) }]);
   runtime.runMicrotasks();
   assert.equal(runtime.nativeMessages.length, 1);
@@ -721,5 +740,117 @@ test("a no-content Kiosk response keeps capture closed until a later settled res
   assert.deepEqual(
     runtime.nativeMessages.slice(-1).map(({ assetId, image }) => ({ assetId, image })),
     [{ assetId: finalId, image: "final" }],
+  );
+});
+
+test("authoritative shared state replaces stale native pause desire and duplicate state is idempotent", () => {
+  const runtime = loadScript();
+  runtime.port.listener({ type: "pause", paused: true });
+  runtime.fireRawEvent("frame:shared-playback-state", { target: runtime.kiosk, detail: JSON.stringify({ sharedPlaybackPaused: false }) });
+  runtime.fireRawEvent("frame:shared-playback-state", { target: runtime.kiosk, detail: JSON.stringify({ sharedPlaybackPaused: false }) });
+  assert.equal(runtime.body.classList.contains("polling-paused"), false);
+  assert.equal(runtime.events.filter((event) => event.code === "KeyP").length, 2);
+  assert.deepEqual(runtime.nativeMessages.map(({ type, epoch }) => ({ type, epoch })), [
+    { type: "shared-playback-state", epoch: 0 }, { type: "shared-playback-state", epoch: 0 },
+  ]);
+});
+
+test("shared settlement requires current decoded history-image pair and advances the paused snapshot epoch", () => {
+  const asset = "11111111-1111-4111-8111-111111111111";
+  const runtime = loadScript({ historyValues: [`*${asset}:one`], frames: [{ images: ["data:image/jpeg;base64,one"] }] });
+  runtime.runMicrotasks();
+  runtime.kiosk.dataset.sharedPlaybackPaused = "true";
+  runtime.fireRawEvent("frame:shared-photo-settled", { target: runtime.kiosk, detail: JSON.stringify({ sharedPlaybackPaused: true }) });
+  assert.deepEqual(runtime.nativeMessages.map(({ type, epoch }) => ({ type, epoch })), [
+    { type: "loaded-photo", epoch: undefined }, { type: "shared-photo-settled", epoch: 1 },
+  ]);
+  runtime.kiosk.dataset.sharedPlaybackSlide = "bad slide";
+  runtime.kiosk.dataset.sharedPlaybackPaused = "false";
+  runtime.fireRawEvent("frame:shared-photo-settled", { target: runtime.kiosk, detail: JSON.stringify({ sharedPlaybackPaused: false }) });
+  assert.equal(runtime.nativeMessages.filter(({ type }) => type === "shared-photo-settled").length, 1);
+});
+
+test("shared playback ignores page-owned, malformed, oversized, throwing, and dataset-mismatched details", () => {
+  const runtime = loadScript();
+  const invalid = [
+    { sharedPlaybackPaused: false },
+    "{",
+    JSON.stringify({ sharedPlaybackPaused: false, padding: "x".repeat(600) }),
+    JSON.stringify({ sharedPlaybackPaused: true }),
+  ];
+  invalid.forEach((detail) => assert.doesNotThrow(() => runtime.fireRawEvent("frame:shared-playback-state", { target: runtime.kiosk, detail })));
+  const throwing = { target: runtime.kiosk };
+  Object.defineProperty(throwing, "detail", { get() { throw new Error("page-owned detail"); } });
+  assert.doesNotThrow(() => runtime.fireRawEvent("frame:shared-playback-state", throwing));
+  assert.equal(runtime.nativeMessages.filter(({ type }) => type === "shared-playback-state").length, 0);
+  assert.equal(runtime.body.classList.contains("polling-paused"), false);
+});
+
+
+test("stale native completion cannot clear the current capture owner", async () => {
+  const firstId = "11111111-1111-4111-8111-111111111111";
+  const secondId = "22222222-2222-4222-8222-222222222222";
+  const pending = [];
+  const runtime = loadScript({
+    historyValues: [`*${firstId}:first`],
+    frames: [{ images: ["data:image/jpeg;base64,first"] }],
+    sendNativeMessage(message) {
+      let resolve, reject;
+      const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+      pending.push({ message, resolve, reject });
+      return promise;
+    },
+  });
+  runtime.runMicrotasks();
+  assert.deepEqual(runtime.nativeMessages.map(message => message.assetId), [firstId]);
+
+  runtime.setHistory([`*${secondId}:second`]);
+  runtime.setFrameImage(0, "data:image/jpeg;base64,second");
+  runtime.fireEvent("load");
+  runtime.runMicrotasks();
+  assert.deepEqual(runtime.nativeMessages.map(message => message.assetId), [firstId, secondId]);
+
+  pending[0].resolve({ accepted: true });
+  await Promise.resolve();
+  runtime.fireEvent("load");
+  runtime.runMicrotasks();
+  assert.deepEqual(
+    runtime.nativeMessages.map(message => message.assetId),
+    [firstId, secondId],
+    "a stale first completion must not admit a duplicate second capture",
+  );
+
+});
+
+test("stale native rejection cannot schedule retry work for the current capture", async () => {
+  const firstId = "33333333-3333-4333-8333-333333333333";
+  const secondId = "44444444-4444-4444-8444-444444444444";
+  const pending = [];
+  const runtime = loadScript({
+    historyValues: [`*${firstId}:first`],
+    frames: [{ images: ["data:image/jpeg;base64,first"] }],
+    sendNativeMessage(message) {
+      let resolve, reject;
+      const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+      pending.push({ message, resolve, reject });
+      return promise;
+    },
+  });
+  runtime.runMicrotasks();
+  runtime.setHistory([`*${secondId}:second`]);
+  runtime.setFrameImage(0, "data:image/jpeg;base64,second");
+  runtime.fireEvent("load");
+  runtime.runMicrotasks();
+  assert.deepEqual(runtime.nativeMessages.map(message => message.assetId), [firstId, secondId]);
+
+  pending[0].reject(new Error("stale rejection"));
+  await Promise.resolve();
+  runtime.runTimers();
+  runtime.fireEvent("load");
+  runtime.runMicrotasks();
+  assert.deepEqual(
+    runtime.nativeMessages.map(message => message.assetId),
+    [firstId, secondId],
+    "a stale first rejection must not schedule retry work for the newer capture",
   );
 });
