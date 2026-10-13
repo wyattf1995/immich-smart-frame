@@ -67,14 +67,19 @@ class TouchHomeRepositoryTest {
     fun `cancel releases bounded in-flight requests and preserves prior cards`() {
         val transport = BlockingTransport()
         val previous = TouchHomeModel("Sunny", "72°F", emptyList(), null, TouchConnection.CONNECTED, 5L)
-        TouchHomeRepository(config, { "token" }, transport).use { repository ->
-            val future = Executors.newSingleThreadExecutor().submit<TouchHomeModel> { repository.refresh(previous) }
-            assertTrue(transport.started.await(2, TimeUnit.SECONDS))
-            repository.cancel()
-            val result = future.get(2, TimeUnit.SECONDS)
-            assertEquals(TouchConnection.OFFLINE, result.connection)
-            assertEquals("Sunny", result.weatherText)
-            assertTrue(transport.cancelled)
+        val caller = Executors.newSingleThreadExecutor()
+        try {
+            TouchHomeRepository(config, { "token" }, transport).use { repository ->
+                val future = caller.submit<TouchHomeModel> { repository.refresh(previous) }
+                assertTrue(transport.started.await(2, TimeUnit.SECONDS))
+                repository.cancel()
+                val result = future.get(2, TimeUnit.SECONDS)
+                assertEquals(TouchConnection.OFFLINE, result.connection)
+                assertEquals("Sunny", result.weatherText)
+                assertTrue(transport.cancelled)
+            }
+        } finally {
+            caller.shutdownNow()
         }
     }
 
