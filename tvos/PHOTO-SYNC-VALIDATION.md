@@ -30,12 +30,12 @@ Server binary SHA-256:
 `6db5de83eef0592a958a735119572302ac5f49979cf96517af4cec9c7aecd1df`.
 
 Local retained outputs:
-`/Users/wyattfleming/.codex/private/frame-sync-20260913/artifacts/server-browser-5/`.
+`<private-evidence>/frame-sync-20260913/artifacts/server-browser-5/`.
 The validation ZIP contains commands, source identity, browser results/screenshots,
 proof logs, and the source-negative proof receipt. The parent audit and exact patch
 receipt are `server-validation-audit.json` and `patch-stack-verification.json` in
 the containing evidence directory. Cold archive:
-`/mnt/user/agent-archives/frame-sync-server-browser-5-20260913-225719-1f51ede80911`.
+`<private-archive>/frame-sync-server-browser-5-20260913-225719-1f51ede80911`.
 
 ## Android and physical acceptance
 
@@ -61,9 +61,9 @@ FrameOS 0.2.9 (extension 1.0.6) and Frame TV 0.4.1 both compiled on the NAS.
   NAS workspace retired. See `android-validation-audit.json` in the evidence root.
 
 Local Android outputs:
-`/Users/wyattfleming/.codex/private/frame-sync-20260913/artifacts/android-nas-2/`.
+`<private-evidence>/frame-sync-20260913/artifacts/android-nas-2/`.
 Cold archive:
-`/mnt/user/agent-archives/frame-sync-android-2-20260913-233037-f5e8c10cde81`.
+`<private-archive>/frame-sync-android-2-20260913-233037-f5e8c10cde81`.
 
 Local signing passed under the shared Mac resource gate. Both APKs have verified
 alignment, package/version/min-SDK metadata, and v3 signatures matching the existing
@@ -77,7 +77,7 @@ Signed installation files:
   `9421f85c3035958c69c2133fb0db6d339e96874566a64e56eeb8046371722e82`.
 
 Paths above are relative to
-`/Users/wyattfleming/.codex/private/frame-sync-20260913/`.
+`<private-evidence>/frame-sync-20260913/`.
 The signing receipt is `artifacts/signed/signed-artifacts.json`; the FrameOS R8 map
 remains in the verified Android NAS output/archive above.
 
@@ -86,7 +86,7 @@ for a narrow DUMP-protected group setting before any Lenovo installation.
 
 ## September 14 rollout
 
-Evidence root: `/Users/wyattfleming/.codex/private/frame-sync-20260913/rollout-20260914`.
+Evidence root: `<private-evidence>/frame-sync-20260913/rollout-20260914`.
 Server source 433ea1b is deployed in image
 `sha256:47061ec8b33f7d09457ddbf6949f051f8cdf48556e8aa72479f1a79f953942f4`;
 the staged runtime changed only the tested `/kiosk` binary. Existing filtering,
@@ -118,7 +118,7 @@ warnings and no errors. All configuration, parser, reconnect, paused-settle and 
 source-only proofs passed. NAS job
 `frame-shared-settle-android-20260914-072830-cb45905daf86` was exported, checksum
 verified, archived and retired. Cold archive:
-`/mnt/user/agent-archives/frame-shared-settle-android-20260914-073632-430cee7ca199`.
+`<private-archive>/frame-shared-settle-android-20260914-073632-430cee7ca199`.
 Local final build evidence: `settle-android-nas/` under the rollout evidence root.
 
 Signed and installed FrameOS 0.2.11 SHA-256:
@@ -144,7 +144,7 @@ was performed; long-term shutdown/restart resolution is outside these checks.
 Final signed APK, signature/badging, R8 map, release manifest, sanitized physical
 acceptance receipts and rollback instructions were separately archived with all
 eight server-side checksums verified:
-`/mnt/user/agent-archives/frame-sync-final-0211-20260914-074815-59a62b4ea278`.
+`<private-archive>/frame-sync-final-0211-20260914-074815-59a62b4ea278`.
 Original files remain local; private household-photo screenshots were not uploaded.
 The temporary TV DevTools forward was removed, Lenovo ADB was disconnected, and
 both devices remained in automatic Photos mode.
@@ -182,15 +182,15 @@ ADB forward were removed; the shared ADB server and other devices were untouched
 
 Rollback image: `local/immich-smart-frame:rollback-pre-quality-20260914`.
 Prior environment/config/Compose/Dockerfile backup:
-`/mnt/user/appdata/immich-kiosk/backups/pre-quality-20260914`.
+`<private-backups>/pre-quality-20260914`.
 Restore the prior KIOSK_IMAGE selection and recreate only immich-kiosk with
 `docker compose up -d --no-build --no-deps --force-recreate immich-kiosk`; keep
 config.yaml in place. Physical rollback was not exercised after this activation.
 
-Evidence root: `/Users/wyattfleming/.codex/private/frame-performance-audit-20260914`.
+Evidence root: `<private-evidence>/frame-performance-audit-20260914`.
 `QUALITY-RELEASE.json`, `quality-validation.json`, `tv-quality-after.json` and
 `tv-sync-after.json` record the source, proofs, release and actual-device results.
-NAS archive: `/mnt/user/agent-archives/frame-photo-quality-20260914-081841-20af02bc43aa`.
+NAS archive: `<private-archive>/frame-photo-quality-20260914-081841-20af02bc43aa`.
 Export/archive checksums passed and the build workspace was retired. The ZIP
 contains proof logs and pass/fail receipts, but its existing flat exporter omitted
 nested density screenshots/JSON; those are not claimed as retained evidence.

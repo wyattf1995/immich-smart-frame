@@ -1,10 +1,15 @@
-# Touchscreen preparation
+# Historical touchscreen preparation
+
+> **Historical evidence, not a current deployment guide.** For the current public
+> model matrix and recovery/access boundary, see [display compatibility](compatibility.md)
+> and [hardware recovery](hardware-recovery.md). FrameOS Touch is a separate source
+> candidate documented in [FrameOS Touch](frameos-touch-app.md).
 
 These are development artifacts for physical-device evaluation. Building an APK
 is not proof of installation, rooting, firmware compatibility, or reliable touch
 handling on an untested frame.
 
-## Two separate artifacts
+## Two artifacts in the initial preparation build
 
 - **FrameOS** keeps its Android 10/API29 minimum and ARM64 Gecko renderer. It adds
   mode navigation from deliberate inward swipes starting within 24dp of a left
@@ -17,52 +22,49 @@ handling on an untested frame.
   actual API/ABI, display, memory and touch capabilities and offers native touch
   and bundled WebView checks. See [probe instructions](../frameos/touchprobe/README.md).
 
-The [matching PF1007L firmware report](https://github.com/wesbos/photo-frame-dashboard/blob/main/docs/allwinner-a33-pf1007l.md)
-uses Android 6/ARMv7. Those properties still need to be queried on the actual
-frame. The current FrameOS APK cannot run on that reported configuration; the
-probe helps determine the backport or replacement-OS work required. The larger
-frame's exact OS and ABI also remain unverified.
+At the time of this initial build, the
+[matching PF1007L firmware report](https://github.com/wesbos/photo-frame-dashboard/blob/main/docs/allwinner-a33-pf1007l.md)
+described Android 6/ARMv7, but neither new frame had been queried. That build's
+modern APK could not run on the reported configuration. Subsequent work added
+an explicit legacy target; use the [current compatibility table](compatibility.md)
+and [app build guide](android-apps.md) rather than this historical snapshot.
 
-## Build and retained evidence
+## Historical build and retained evidence
 
-Run `bash scripts/touchscreen-prep-android-nas.sh` inside the admitted Android NAS
-runtime. It reuses the reviewed, checksum-pinned SDK bootstrap and existing
-FrameOS/TV regression harness, then runs touch JVM guards with a source-only
-negative control and restored green run. The standalone probe uses the image's
-API36 SDK. Local heavy builds and emulators are unnecessary.
+The historical build used a checksum-pinned Android build environment and
+existing FrameOS/TV regression harness, including touch JVM guards with a
+source-only negative control and restored-green run. Its standalone probe was a
+separate offline API23 artifact.
 
-The outputs are unsigned; signing is a separate local step. Export the two APKs,
-FrameOS mapping, `reports/frame-sync-android-validation.zip`, and
-`reports/touchscreen-prep-validation.zip` with source identity and NAS receipts.
-No household configuration, credentials, signing keys, or personal media belong
-in the source upload. Do not deploy these artifacts automatically.
+Those outputs were unsigned; signing and deployment were intentionally separate.
+Do not treat this historical record as a command to rebuild, export, or deploy an
+artifact. Any future build must use its own reviewed release plan and preserve
+household configuration, credentials, signing keys, and personal media outside
+the source upload.
 
 ### Verified overnight build — 2026-10-11 UTC
 
-NAS job `frameos-touchscreen-prep-20261010-230330-d1b466847f3d` passed at
-06:21 UTC. Built integration source: `bf6620cca8eb231c58a0b71bc072af577c5f8222`;
-build-only transport: `44ab7a3a15e8992a986bb5ac48d4adee2eb063d2`. The FrameOS
-and TV Git subtrees are identical between those commits. All 295 source hashes
-in the exported report also match the committed transport.
+Integration source: `bf6620cca8eb231c58a0b71bc072af577c5f8222`; build transport:
+`44ab7a3a15e8992a986bb5ac48d4adee2eb063d2`. The app and TV subtrees matched;
+all 295 exported source hashes matched the transport. Raw reports, artifacts
+and worker receipts remain privately retained outside this repository.
 
-Compilation and lint passed, with 267 FrameOS JVM tests, 24 TV JVM tests and
-30 JavaScript tests passing. The nine touch guards passed initially, failed on
-a deliberate source-only input-gate reversal (including the named routing test),
-then passed again after exact source restoration with unchanged test hashes.
-This is JVM proof; the Android dispatch checks below remain outstanding.
+A retained historical preparation build compiled and linted cleanly. It recorded
+267 existing FrameOS JVM tests, 24 TV JVM tests, 30 JavaScript tests, and nine
+touch guards. The guards passed, failed under a deliberate source-only
+input-gate reversal, and passed again after exact source restoration with
+unchanged test hashes.
 
-Both unsigned APKs, FrameOS mapping and two report ZIPs were exported and
-verified, archived with server-side checksum verification, and the completed
-NAS workspace was retired. Local evidence and artifacts are under
-`/Users/wyattfleming/frameos-hardware/2026-10-10-pf1007/overnight-prep/retained/`:
-`verified-summary.json`, `verification-supplement.json`, `CLOSEOUT.json` and
-`MANIFEST.sha256`. The NAS archive is
-`/mnt/user/agent-archives/frameos-touchscreen-prep-20261010-232051-a82d05842244`.
+The outputs were unsigned development artifacts. They were independently
+verified and archived before their build workspace was retired. These facts
+preserve the original preparation evidence; they do not establish installation,
+firmware compatibility, launcher replacement, root access, or physical touch
+acceptance on any frame.
 
-No frame installation, firmware change, launcher replacement or production
-signing occurred. The camera-card backup remains paused.
+No frame installation, firmware change, launcher replacement, or production
+signing occurred as part of that historical preparation run.
 
-## Device acceptance once access is available
+## Original device acceptance checklist
 
 1. Record the physical model, API, ABI, memory, screen size/density and current
    launcher. First confirm ordinary app installation without replacing the

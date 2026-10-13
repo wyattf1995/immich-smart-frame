@@ -1,0 +1,19 @@
+# FrameOS Touch changes
+
+Applies only to `com.wyattfleming.touchframe` (`:touchframe`). This package has
+its own release history and Android version fields. Existing FrameOS release
+or device results do not apply automatically.
+
+## Unreleased — initial development candidate
+
+- Separate touchscreen shell with native Home, direct mode navigation and
+  an explicit route back from Android Settings.
+- Shared authentication, weather, photo and companion components through the
+  internal `:frame-shared` module.
+- Fullscreen Photos/Art, bounded offline storage, calendar, camera snapshots
+  and optional Birds source paths.
+
+These are source features pending their own build and physical acceptance.
+No public Touch release is established by this entry. See the
+[Touch guide](../../docs/frameos-touch-app.md) for current gates and
+[release policy](../../docs/releasing.md) for artifact and evidence requirements.

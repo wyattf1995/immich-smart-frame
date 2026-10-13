@@ -1,4 +1,9 @@
-# FrameOS touchscreen Home
+# Existing FrameOS app touchscreen Home
+
+> This guide applies to the existing FrameOS app, not the separate **FrameOS
+> Touch** application. For the Touch candidate and its independent acceptance gates,
+> see [FrameOS Touch](frameos-touch-app.md). For device scope, see [display
+> compatibility](compatibility.md).
 
 `examples/frameos/frameos-touchscreen-panel.html` opts into the dashboard mounted
 at `/frameos-touchscreen`; it does not replace the existing `/wall-panel` used by

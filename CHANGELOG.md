@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+This root file covers the browser/backend and cross-component changes. Android
+development now has separate [FrameOS](frameos/app/CHANGELOG.md) and
+[FrameOS Touch](frameos/touchframe/CHANGELOG.md) changelogs. Historical mixed
+entries below are preserved; an app's source version is not a public release.
+
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 formatting and [Semantic Versioning](https://semver.org/) for tagged releases.
 Until `1.0.0`, releases remain pre-stable; breaking deployment or configuration
@@ -62,6 +67,10 @@ changes will still be called out explicitly.
   four-camera, calendar, weather-background, and physical-key navigation setup.
 
 ### Changed
+
+- Organized the project overview around browser slideshow, existing FrameOS,
+  and the separate FrameOS Touch candidate, with app build/setup guides,
+  device compatibility, hardware recovery and component release boundaries.
 
 - Rebalanced the advanced Qwen `balanced` example around a five-rung recency
   ladder (8/12/10/10 plus a 10-weight all-time rung) with family, photography,
