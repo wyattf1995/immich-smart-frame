@@ -267,7 +267,7 @@ class TouchFrameActivity : Activity() {
         if (destination == TouchDestination.CALENDAR && next != TouchDestination.CALENDAR) {
             calendarRequestGeneration++
             calendarInFlight = false
-            calendarRepository?.cancel()
+            calendarRepository?.let { stale -> cancellationWorker.execute { if (destination != TouchDestination.CALENDAR) stale.cancel() } }
         }
         destination = next
         shell.select(next)
@@ -378,7 +378,7 @@ class TouchFrameActivity : Activity() {
         val prior = calendarState
         val request = ++calendarRequestGeneration
         calendarInFlight = true
-        source.cancel()
+        // The new worker operation cancels its predecessor; avoid socket teardown on touch dispatch.
         calendarState = calendarState.copy(mode = mode, anchor = anchor, selectedDate = selectedForRange, range = range, loading = true, partial = false)
         calendar.render(calendarState)
         tasks.submit(worker) { isCurrent ->
