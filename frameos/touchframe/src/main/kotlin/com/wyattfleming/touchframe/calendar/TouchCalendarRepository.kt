@@ -28,11 +28,13 @@ class TouchCalendarRepository(
 ) : AutoCloseable {
     private val lock = Any()
     private var active: Operation? = null
+    private var closed = false
     private val cancellable = transport as? CancellableHomeAssistantHttpTransport
 
     fun load(range: TouchCalendarRange): TouchCalendarLoad {
         require(range.days in 1..TouchCalendarRange.MAX_RANGE_DAYS)
-        val operation = beginOperation()
+        if (synchronized(lock) { closed }) return TouchCalendarLoad(emptyList(), TouchCalendarConnection.OFFLINE)
+        val operation = beginOperation() ?: return TouchCalendarLoad(emptyList(), TouchCalendarConnection.OFFLINE)
         val deadline = WeatherRequestDeadline(timeoutMillis = TIMEOUT_MILLIS)
         var accepted = false
         return try {
@@ -63,7 +65,7 @@ class TouchCalendarRepository(
     /** Main-safe generation fence: cancelling Futures is nonblocking and never disconnects a socket. */
     fun invalidate() { cancelOperation().forEach { it.cancel(true) } }
     fun cancel() { cleanup(cancelOperation()) }
-    override fun close() { cancel(); executor.shutdownNow() }
+    override fun close() { synchronized(lock) { closed = true }; cancel(); executor.shutdownNow() }
 
     private fun request(id: String, range: TouchCalendarRange, headers: Map<String, String>, deadline: WeatherRequestDeadline): CalendarResponse = try {
         val start = range.start.atStartOfDay(zoneId).toOffsetDateTime().toString()
@@ -74,8 +76,8 @@ class TouchCalendarRepository(
     } catch (interrupted: InterruptedException) { throw interrupted
     } catch (@Suppress("TooGenericExceptionCaught") _: Exception) { CalendarResponse.Failed }
 
-    private fun beginOperation(): Operation {
-        val result = synchronized(lock) { cleanupLocked(active) to Operation().also { active = it } }
+    private fun beginOperation(): Operation? {
+        val result = synchronized(lock) { if (closed) null else cleanupLocked(active) to Operation().also { active = it } } ?: return null
         cleanup(result.first)
         return result.second
     }

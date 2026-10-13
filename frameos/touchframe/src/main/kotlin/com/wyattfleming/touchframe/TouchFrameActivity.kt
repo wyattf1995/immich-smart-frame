@@ -75,7 +75,8 @@ class TouchFrameActivity : Activity() {
     private var repository: TouchHomeRepository? = null
     private var calendarRepository: TouchCalendarRepository? = null
     private var calendarInFlight = false
-    private var calendarRequestGeneration = 0L
+    private val calendarRequestGeneration = java.util.concurrent.atomic.AtomicLong()
+    private var calendarLastRefreshMillis = 0L
     private var oauth: HomeAssistantOAuthClient? = null
     private var weatherRemote: HomeAssistantWeatherRemote? = null
     private var weatherSnapshot: WeatherSnapshot? = null
@@ -110,7 +111,7 @@ class TouchFrameActivity : Activity() {
     private val refresh = Runnable {
         when (destination) {
             TouchDestination.HOME -> refreshHome()
-            TouchDestination.CALENDAR -> requestCalendar(calendarState.mode, calendarState.anchor, calendarState.selectedDate)
+            TouchDestination.CALENDAR -> requestCalendar(calendarState.mode, calendarState.anchor, calendarState.selectedDate, true)
             TouchDestination.WEATHER -> refreshWeather()
             else -> Unit
         }
@@ -265,7 +266,7 @@ class TouchFrameActivity : Activity() {
             return
         }
         if (destination == TouchDestination.CALENDAR && next != TouchDestination.CALENDAR) {
-            calendarRequestGeneration++
+            calendarRequestGeneration.incrementAndGet()
             calendarInFlight = false
             calendarRepository?.invalidate()
         }
@@ -280,7 +281,7 @@ class TouchFrameActivity : Activity() {
         main.removeCallbacks(refresh)
         when (next) {
             TouchDestination.HOME -> refreshHome()
-            TouchDestination.CALENDAR -> requestCalendar(calendarState.mode, calendarState.anchor, calendarState.selectedDate)
+            TouchDestination.CALENDAR -> requestCalendar(calendarState.mode, calendarState.anchor, calendarState.selectedDate, true)
             TouchDestination.WEATHER -> refreshWeather()
             TouchDestination.PHOTOS, TouchDestination.ART, TouchDestination.BIRDS -> {
                 val url = webMediaUrl(next) ?: run { message("${next.label} is not configured"); return }
@@ -364,34 +365,43 @@ class TouchFrameActivity : Activity() {
         }
     }
 
-    private fun requestCalendar(mode: TouchCalendarMode, anchor: java.time.LocalDate, selected: java.time.LocalDate) {
+    private fun requestCalendar(mode: TouchCalendarMode, anchor: java.time.LocalDate, selected: java.time.LocalDate, forceRefresh: Boolean) {
         val source = calendarRepository ?: return
         if (!resumed || !networkAllowed()) return
         val range = TouchCalendarRange.forMode(mode, anchor)
         val selectedForRange = TouchCalendarRenderPlan.selectedFor(range, selected, anchor)
-        // A selected day inside an already-fetched range is local UI state, not another network request.
-        if (!calendarState.loading && calendarState.range == range && calendarState.events.isNotEmpty()) {
+        val sameRange = calendarState.range == range
+        if (sameRange && !forceRefresh) {
+            calendarState = calendarState.copy(mode = mode, anchor = anchor, selectedDate = selectedForRange)
+            calendar.render(calendarState)
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (sameRange && calendarState.updatedEpochMillis != null && now - calendarLastRefreshMillis < 60_000L) {
             calendarState = calendarState.copy(mode = mode, anchor = anchor, selectedDate = selectedForRange)
             calendar.render(calendarState)
             return
         }
         val prior = calendarState
-        val request = ++calendarRequestGeneration
+        val request = calendarRequestGeneration.incrementAndGet()
         calendarInFlight = true
-        // Invalidate the old generation immediately without disconnecting a socket on touch dispatch.
         source.invalidate()
-        calendarState = calendarState.copy(mode = mode, anchor = anchor, selectedDate = selectedForRange, range = range, loading = true, partial = false)
+        calendarState = calendarState.copy(mode = mode, anchor = anchor, selectedDate = selectedForRange, range = range, events = if (sameRange) calendarState.events else emptyList(), loading = true, partial = false)
         calendar.render(calendarState)
         tasks.submit(worker) { isCurrent ->
+            // The atomic request epoch is the only cross-thread request gate; destination stays main-owned.
+            if (!isCurrent() || request != calendarRequestGeneration.get()) return@submit
             val loaded = runCatching { source.load(range) }.getOrElse { TouchCalendarLoad(emptyList(), TouchCalendarConnection.OFFLINE) }
-            if (!isCurrent() || request != calendarRequestGeneration || destination != TouchDestination.CALENDAR) return@submit
+            if (!isCurrent() || request != calendarRequestGeneration.get()) return@submit
             main.post {
-                if (!isCurrent() || request != calendarRequestGeneration || destination != TouchDestination.CALENDAR) return@post
+                if (!isCurrent() || request != calendarRequestGeneration.get() || destination != TouchDestination.CALENDAR) return@post
                 calendarInFlight = false
-                // Offline retention is valid only for exactly the range that was requested.
                 val retained = if (loaded.connection == TouchCalendarConnection.OFFLINE && prior.range == range) prior.events else loaded.events
                 calendarState = calendarState.copy(events = retained, connection = loaded.connection, updatedEpochMillis = loaded.updatedEpochMillis ?: if (prior.range == range) prior.updatedEpochMillis else null, loading = false, partial = loaded.partial)
+                calendarLastRefreshMillis = System.currentTimeMillis()
                 calendar.render(calendarState)
+                main.removeCallbacks(refresh)
+                main.postDelayed(refresh, 60_000L)
             }
         }
     }
