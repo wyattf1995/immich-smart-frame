@@ -97,14 +97,14 @@ test("BirdNET attribution ignores stale A completion and error after A to B to A
   const currentA = context.load("A");
   assert.equal(pending.length, 3);
 
-  pending[0].request.reject(new Error("stale A failure"));
+  pending[0].request.resolve({ authorName: "old A" });
   await oldA;
-  assert.equal(timers.length, 0, "stale A failure must not schedule a retry for current A");
-  assert.equal(context.state.attribution, null, "stale A failure must not alter current loading state");
+  assert.equal(context.state.attribution, null, "stale A success must not overwrite current A loading");
 
-  pending[1].request.resolve({ authorName: "old B" });
+  pending[1].request.reject(new Error("stale B failure"));
   await middleB;
-  assert.equal(context.state.attribution, null, "stale B success must not overwrite current A");
+  assert.equal(timers.length, 0, "stale B failure must not schedule a retry for current A");
+  assert.equal(context.state.attribution, null, "stale B failure must not alter current loading state");
 
   pending[2].request.resolve({ authorName: "current A" });
   await currentA;
