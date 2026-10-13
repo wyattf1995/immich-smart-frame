@@ -11,9 +11,9 @@ import java.time.ZoneId
 
 class TouchCalendarRepositoryTest {
     @Test fun `deduplicates calendar events and reports partial response failure`() {
-        val config = TouchConfiguration("https://photos.example", "https://ha.example", "https://ha.example", "weather.home", null, "climate.home", listOf("calendar.one", "calendar.two"), emptyList())
+        val config = TouchConfiguration("https://photos.example", "https://ha.example", "https://ha.example", "weather.home", null, "climate.home", listOf("calendar.one", "calendar.two", "calendar.three"), emptyList())
         val transport = HomeAssistantHttpTransport { request: HomeAssistantHttpRequest ->
-            when { request.url.contains("calendar.one") -> HomeAssistantHttpResponse(200, """[{"summary":"Dinner","start":{"dateTime":"2026-10-12T18:00:00Z"},"end":{"dateTime":"2026-10-12T19:00:00Z"}}]""")
+            when { request.url.contains("calendar.one") || request.url.contains("calendar.two") -> HomeAssistantHttpResponse(200, """[{"summary":"Dinner","start":{"dateTime":"2026-10-12T18:00:00Z"},"end":{"dateTime":"2026-10-12T19:00:00Z"}}]""")
                 else -> HomeAssistantHttpResponse(500, "") }
         }
         TouchCalendarRepository(config, TouchCalendarTokenProvider { "token" }, transport, ZoneId.of("UTC")).use { repository ->
