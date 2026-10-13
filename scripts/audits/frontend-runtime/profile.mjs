@@ -48,6 +48,21 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const save = (name, data) => writeFile(join(output, name), JSON.stringify(data, null, 2));
 const log = message => console.log(new Date().toISOString(), message);
 
+// This callback is serialized by Playwright; it must receive all mode state as an argument.
+function browserAudioMeterReady(optimized) {
+  const meter = document.querySelector('#audioMeterLevel');
+  if (!meter) return false;
+  if (!optimized) return parseFloat(meter.style.width) > 0;
+  const transform = getComputedStyle(meter).transform;
+  if (!transform || transform === 'none') return false;
+  try {
+    const matrix = new DOMMatrixReadOnly(transform);
+    return Number.isFinite(matrix.a) && matrix.a > 0;
+  } catch {
+    return false;
+  }
+}
+
 function instrument() {
   const a = window.__runtimeAudit = { longTasks: [], events: [], raf: { count: 0, over25: 0, over50: 0, max: 0 },
     mutations: { records: 0, added: 0, removed: 0, activityAdded: 0 }, began: performance.now() };
@@ -148,7 +163,17 @@ async function measure(page, cdp, kind, label, seconds, options = {}) {
   log(`MEASURE ${label} ${seconds}s`);
   await page.bringToFront(); await page.evaluate(() => scrollTo(0, 0));
   const fixtureBefore = kind === 'birds' || kind === 'companion' ? await page.evaluate(async () => (await fetch('/fixture/config')).json()) : null;
-  const workloadBefore = await page.evaluate(() => ({ preferences: document.querySelectorAll('#preferences li').length, choicesClosed: !document.querySelector('#preferences')?.closest('details')?.open, artwork: document.querySelector('.artwork')?.getAttribute('src'), species: document.querySelectorAll('#speciesGrid > *').length, audioMeterWidth: document.querySelector('#audioMeterLevel')?.style.width, audioMeterTransform: getComputedStyle(document.querySelector('#audioMeterLevel')).transform }));
+  const workloadBefore = await page.evaluate(() => {
+    const meter = document.querySelector('#audioMeterLevel');
+    return {
+      preferences: document.querySelectorAll('#preferences li').length,
+      choicesClosed: !document.querySelector('#preferences')?.closest('details')?.open,
+      artwork: document.querySelector('.artwork')?.getAttribute('src'),
+      species: document.querySelectorAll('#speciesGrid > *').length,
+      audioMeterWidth: meter?.style.width ?? null,
+      audioMeterTransform: meter ? getComputedStyle(meter).transform : null,
+    };
+  });
   const before = await snapshot(cdp, `${label}-before`);
   await sleep(250); // Drain profiler-induced observer deliveries before timing begins.
   await resetObserver(page); if (options.trace) await startTrace(cdp);
@@ -203,9 +228,7 @@ try {
   if (!optimizedViews) await pages.companion.page.locator('#preferences li').first().waitFor({ state: 'attached' });
   else await pages.companion.page.getByText('Connected · updates every 5 seconds', { exact: true }).waitFor();
   await pages.birds.page.locator('#speciesGrid > *').first().waitFor();
-  await pages.birds.page.waitForFunction(() => optimizedViews
-    ? (() => { const value = getComputedStyle(document.querySelector('#audioMeterLevel')).transform; return value && value !== 'none' && !value.endsWith(', 0, 0)'); })()
-    : parseFloat(document.querySelector('#audioMeterLevel')?.style.width) > 0);
+  await pages.birds.page.waitForFunction(browserAudioMeterReady, optimizedViews);
   const artCollection = await context.request.get(base + '/art/collection.json');
   if ((await artCollection.json()).artworks.length !== 200) throw Error('Art collection cardinality mismatch');
   for (const kind of (homeOnly ? ['home'] : ['home', 'art', 'companion', 'birds'])) {
@@ -235,6 +258,13 @@ try {
         const beforeExpand = await context.request.get(base + '/fixture/config');
         const beforeRequests = (await beforeExpand.json()).requests?.['GET /api/preferences'] || 0;
         if (closed.rows !== 0 || closed.detailsOpen || beforeRequests !== 0) throw Error('optimized Companion requested or rendered choices before expansion');
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        result.companionInitial1000 = {
+          observed: await page.evaluate(() => ({ ...window.__runtimeAudit, preferences: document.querySelectorAll('#preferences li').length, detailsOpen: document.querySelector('#preferencesDetails')?.open === true })),
+          metrics: await cdpMetrics(cdp), trace: await endTrace(cdp, 'companion-load-1000'),
+        };
+        await save('companion-load-1000.json', result.companionInitial1000);
+        await startTrace(cdp);
         await page.locator('#preferencesDetails > summary').click();
         await page.locator('#preferences li').nth(49).waitFor({ state: 'attached' });
         const expanded = await page.evaluate(() => ({
@@ -257,16 +287,27 @@ try {
         if (pagination.rows !== 50 || pagination.page !== 'Page 2 of 20') throw Error('optimized Companion pagination did not preserve a bounded second page');
         await page.locator('#preferencesPrevious').click();
         await page.getByText('Page 1 of 20', { exact: true }).waitFor();
-        result.companionOptimizedContract = { closed, beforeRequests, expanded, availableTotal, afterRequests, pagination };
+        await page.locator('#preferencesDetails > summary').click();
+        await page.waitForFunction(() => document.querySelector('#preferencesDetails')?.open === false);
+        result.companionOptimizedContract = {
+          closed, beforeRequests, expanded, availableTotal, afterRequests, pagination,
+          closedAfterExpansion: await page.evaluate(() => document.querySelector('#preferencesDetails')?.open === false),
+          metrics: await cdpMetrics(cdp), trace: await endTrace(cdp, 'companion-expand-1000'),
+        };
       }
-      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-      result.companionInitial1000 = { observed: await page.evaluate(() => ({ ...window.__runtimeAudit, preferences: document.querySelectorAll('#preferences li').length, detailsOpen: document.querySelector('#preferencesDetails').open })), metrics: await cdpMetrics(cdp), trace: await endTrace(cdp, 'companion-load-1000') };
-      await save('companion-load-1000.json', result.companionInitial1000);
+      if (!result.companionInitial1000) {
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        result.companionInitial1000 = {
+          observed: await page.evaluate(() => ({ ...window.__runtimeAudit, preferences: document.querySelectorAll('#preferences li').length, detailsOpen: document.querySelector('#preferences')?.closest('details')?.open === true })),
+          metrics: await cdpMetrics(cdp), trace: await endTrace(cdp, 'companion-load-1000'),
+        };
+        await save('companion-load-1000.json', result.companionInitial1000);
+      }
       await measure(page, cdp, kind, 'companion-stress-1000-30s', 30, { trace: true });
     } else if (kind === 'birds') {
       await context.request.post(base + '/fixture/config', { data: { audioHz: 20, summaryCount: 500, recentCount: 500 } });
       await page.reload({ waitUntil: 'domcontentloaded' }); await sleep(2000);
-      await page.waitForFunction(() => optimizedViews ? (() => { const v = getComputedStyle(document.querySelector('#audioMeterLevel')).transform; return v && v !== 'none' && !v.endsWith(', 0, 0)'); })() : parseFloat(document.querySelector('#audioMeterLevel')?.style.width) > 0);
+      await page.waitForFunction(browserAudioMeterReady, optimizedViews);
       await measure(page, cdp, kind, 'birds-stress-20hz-30s', 30, { trace: true });
       await context.request.post(base + '/fixture/config', { data: { audioHz: 2, summaryCount: 200, recentCount: 10 } });
     } else if (kind === 'home') {
