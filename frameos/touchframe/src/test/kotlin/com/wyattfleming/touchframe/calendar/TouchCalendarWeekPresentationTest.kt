@@ -108,8 +108,8 @@ class TouchCalendarWeekPresentationTest {
         assertEquals(8, first.lastEventNumber)
         val second = TouchCalendarWeekPresentation.detailsPage(events, requestedPage = 1, pageSize = 8)
         assertEquals(events.drop(8), second.events)
-        // A larger fitted size never exceeds the verified twelve-event page.
-        assertEquals(12, TouchCalendarWeekPresentation.detailsPage(events, 0, pageSize = 40).events.size)
+        // A larger fitted size never exceeds the verified page cap.
+        assertEquals(TouchCalendarWeekPresentation.DETAILS_PER_PAGE, TouchCalendarWeekPresentation.detailsPage(events, 0, pageSize = 40).events.size)
         assertEquals(1, TouchCalendarWeekPresentation.detailsPage(events, 0, pageSize = 0).events.size)
     }
 }
