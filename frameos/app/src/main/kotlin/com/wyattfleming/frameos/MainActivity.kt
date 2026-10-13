@@ -85,6 +85,8 @@ import com.wyattfleming.frameos.ui.FrameTouchInputLayout
 import com.wyattfleming.frameos.ui.FrameHomeBackNavigation
 import com.wyattfleming.frameos.ui.WeatherContentView
 import com.wyattfleming.frameos.ui.TouchNavigationRail
+import com.wyattfleming.frameos.ui.AndroidFrameExternalSettingsReturnAdapter
+import com.wyattfleming.frameos.ui.FrameExternalSettingsReturnController
 import com.wyattfleming.frameos.ui.dp
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherEndpoint
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherParser
@@ -140,6 +142,7 @@ class MainActivity : Activity() {
     }
 
     private lateinit var root: FrameTouchInputLayout
+    private lateinit var settingsReturnController: FrameExternalSettingsReturnController
     private lateinit var weatherContent: WeatherContentView
     private lateinit var hud: LinearLayout
     private lateinit var hudLabel: TextView
@@ -348,6 +351,7 @@ class MainActivity : Activity() {
             savedConfiguration
         }
         buildUi()
+        settingsReturnController = FrameExternalSettingsReturnController(AndroidFrameExternalSettingsReturnAdapter(this))
         initializeWeatherRuntime()
         enterImmersiveMode()
         render(state, announce = false)
@@ -373,6 +377,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        settingsReturnController.onResume()
         activityResumed = true
         refreshLocalProvisioning()
         unregisterHomeBack?.invoke()
@@ -437,6 +442,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        settingsReturnController.onDestroy()
         closeWeatherAuthorization(consumeState = true)
         invalidateCompanionPoll()
         cancelHomeAssistantWork(stage = "activity_destroy", clearPendingAuthorizationCode = true)
@@ -1211,7 +1217,13 @@ class MainActivity : Activity() {
             .setMessage("Home brings together your calendar, weather and home controls.\n\nPhotos and Art fill the screen. Swipe inward from the left edge to open the menu, then tap Home to return here.")
             .setPositiveButton("Done", null)
             .setNeutralButton("Android settings") { _, _ ->
-                runCatching { startActivity(Intent(android.provider.Settings.ACTION_SETTINGS)) }
+                when (settingsReturnController.openSettings()) {
+                    FrameExternalSettingsReturnController.Outcome.LAUNCHED -> Unit
+                    FrameExternalSettingsReturnController.Outcome.OVERLAY_PERMISSION_DENIED ->
+                        showHud("Android Settings is unavailable until the FrameOS return button is enabled")
+                    FrameExternalSettingsReturnController.Outcome.EXTERNAL_LAUNCH_FAILED ->
+                        showHud("Android Settings could not be opened")
+                }
             }
             .show()
     }
