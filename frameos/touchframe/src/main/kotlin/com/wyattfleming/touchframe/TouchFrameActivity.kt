@@ -592,7 +592,7 @@ class TouchFrameActivity : Activity() {
         } else {
             TouchDestinationOrder.defaults(birdsConfigured)
         }
-        val destinations = requested.filter { it != TouchDestination.BIRDS || birdsConfigured }
+        val destinations = TouchDestinationOrder.available(requested, birdsConfigured)
         home.setDestinations(destinations)
         shell.setDestinations(destinations)
     }

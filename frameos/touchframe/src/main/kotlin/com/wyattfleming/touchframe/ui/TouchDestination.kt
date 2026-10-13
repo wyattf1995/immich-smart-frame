@@ -44,6 +44,10 @@ internal object TouchDestinationOrder {
         }
     }
 
+    /** Removes the optional Birds route unless a validated local configuration supplies it. */
+    fun available(remoteOrder: List<TouchDestination>, birdsConfigured: Boolean): List<TouchDestination> =
+        normalize(remoteOrder).filter { it != TouchDestination.BIRDS || birdsConfigured }
+
     fun explore(remoteOrder: List<TouchDestination>): List<TouchDestination> =
         normalize(remoteOrder).filterNot { it == TouchDestination.HOME }
 
