@@ -186,7 +186,7 @@ class FrameStore:
             # command/event disappearance. Clock/status changes do not invalidate.
             revision = hashlib.sha256(json.dumps([self.snapshot_epoch,device,row['revision'],row['preferences_revision'],command['id'] if command else None,event['id'] if event else None],separators=(',',':')).encode()).hexdigest()
             response = {'schema':1,'deviceId':device,'serverTime':now,'pollAfterMs':5000,'snapshotRevision':revision}
-            if isinstance(known,str) and hmac.compare_digest(known.encode(),revision.encode()):
+            if isinstance(known,str) and re.fullmatch(r'[0-9a-f]{64}',known) and hmac.compare_digest(known,revision):
                 response['unchanged'] = True
                 return response
             hidden = [p['asset'] for p in db.execute("SELECT asset FROM preferences WHERE device=? AND preference='hide' ORDER BY asset LIMIT 1000",(device,))]
