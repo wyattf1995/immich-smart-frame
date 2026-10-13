@@ -68,6 +68,7 @@ class TouchCompanionController private constructor(
     private var inFlight = false
     private var generation = 0L
     private var snapshotRevision: String? = null
+    private var acceptedCredentials: FrameCompanionCredentials? = null
     private var scheduled: java.util.concurrent.ScheduledFuture<*>? = null
 
     /** Enables polling only after an explicit, completed takeover provision. */
@@ -138,15 +139,25 @@ class TouchCompanionController private constructor(
         if (!isCurrent(expectedGeneration)) return false
         val acknowledgements = journal.pendingAcks()
         val sentRevision = synchronized(lock) {
+            if (acceptedCredentials != currentCredentials) snapshotRevision = null
             snapshotRevision?.let(FrameCompanionSnapshotRevision::forRequest)
         }
         val result = poll(currentCredentials, status, acknowledgements, sentRevision)
+        // A provision can change while the request is in flight. Never decode or commit the old
+        // identity's response; the next generation obtains a fresh full snapshot instead.
+        if (credentials() != currentCredentials) {
+            invalidateForCredentialChange(expectedGeneration)
+            return false
+        }
         val envelope = (result as? FrameCompanionPollResult.Success)?.let {
             FrameCompanionEnvelopeDecoder.decode(it.body, currentCredentials.deviceId, nowMillis(), sentRevision)
         } ?: return false
         val accepted = applyEnvelope(envelope, expectedGeneration)
         if (accepted && isCurrent(expectedGeneration)) {
             journal.clearAcks(acknowledgements)
+            synchronized(lock) {
+                if (isCurrentLocked(expectedGeneration)) acceptedCredentials = currentCredentials
+            }
         }
         return accepted
     }
@@ -223,13 +234,24 @@ class TouchCompanionController private constructor(
     private fun isCurrentLocked(expectedGeneration: Long): Boolean =
         !closed && started && enabled && generation == expectedGeneration
 
+    private fun invalidateForCredentialChange(expectedGeneration: Long) {
+        synchronized(lock) {
+            if (!isCurrentLocked(expectedGeneration)) return
+            invalidateLocked(clearRevision = true)
+            if (started && enabled) scheduleLocked(INITIAL_DELAY_MILLIS)
+        }
+    }
+
     private fun invalidateLocked(clearRevision: Boolean) {
         generation += 1
         scheduled?.cancel(false)
         scheduled = null
         // An old worker may still return, but its generation can no longer commit.
         inFlight = false
-        if (clearRevision) snapshotRevision = null
+        if (clearRevision) {
+            snapshotRevision = null
+            acceptedCredentials = null
+        }
     }
 
     companion object {
