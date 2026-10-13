@@ -192,9 +192,9 @@ class CompanionTests(unittest.TestCase):
                 while time.monotonic() < deadline:
                     with self.store.db(write=False) as db:
                         desired, _ = self.store._export_revisions(db)
-                    if desired >= 3: break
+                    if desired >= 4: break
                     time.sleep(.005)
-                self.assertEqual(desired, 3)
+                self.assertEqual(desired, 4)
                 release_replace.set()
                 worker.join(2); second_worker.join(2)
             self.assertFalse(worker.is_alive()); self.assertFalse(second_worker.is_alive()); self.assertEqual(first_error, []); self.assertEqual(second_error, [])
@@ -203,7 +203,7 @@ class CompanionTests(unittest.TestCase):
             self.assertEqual(data, {first:'hide', second:'hide'})
             with self.store.db(write=False) as db:
                 desired, published = self.store._export_revisions(db)
-            self.assertEqual((desired, published), (3, 3))
+            self.assertEqual((desired, published), (4, 4))
         finally:
             release_replace.set()
             if worker: worker.join(2)
@@ -244,6 +244,52 @@ class CompanionTests(unittest.TestCase):
             self.assertEqual(published, desired)
         finally:
             reopened.close()
+
+    def test_failed_startup_export_recovers_missing_file_and_new_device(self):
+        export = Path(self.tmp.name) / 'export' / 'preferences.json'
+        first = module.FrameStore(Path(self.tmp.name) / 'state.db', {}, ['balanced','family'], clock=lambda: self.clock, preferences_export=export)
+        first.close()
+        baseline = module.FrameStore(Path(self.tmp.name) / 'state.db', {}, ['balanced','family'], clock=lambda: self.clock, preferences_export=export)
+        try:
+            with baseline.db(write=False) as db:
+                desired, published = baseline._export_revisions(db)
+            self.assertEqual(desired, published)
+        finally:
+            baseline.close()
+        export.unlink()
+        reopened = None
+        try:
+            with patch.object(module, 'EXPORT_RETRY_INITIAL_SECONDS', .01), patch.object(module.os, 'replace', side_effect=OSError('fixture startup export failure')):
+                reopened = module.FrameStore(Path(self.tmp.name) / 'state.db', {'other': {}}, ['balanced','family'], clock=lambda: self.clock, preferences_export=export)
+                with reopened.db(write=False) as db:
+                    desired, published = reopened._export_revisions(db)
+                self.assertGreater(desired, published)
+                self.assertFalse(export.exists())
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline and not export.exists():
+                time.sleep(.01)
+            data = json.loads(export.read_text())['devices']
+            self.assertEqual(set(data), {'main', 'other'})
+            with reopened.db(write=False) as db:
+                desired, published = reopened._export_revisions(db)
+            self.assertEqual(desired, published)
+        finally:
+            if reopened: reopened.close()
+
+    def test_retry_error_after_zero_delay_returns_to_positive_backoff(self):
+        waits = []
+        class RetryCancel:
+            def wait(self, delay):
+                waits.append(delay)
+                return len(waits) >= 3
+        original_cancel = self.store.export_retry_cancel
+        self.store.export_retry_cancel = RetryCancel()
+        try:
+            with patch.object(self.store, 'export_preferences', side_effect=[True, OSError('fixture retry failure')]), patch.object(self.store, '_export_pending', return_value=True):
+                self.store._retry_exports()
+            self.assertEqual(waits, [module.EXPORT_RETRY_INITIAL_SECONDS, 0, module.EXPORT_RETRY_INITIAL_SECONDS])
+        finally:
+            self.store.export_retry_cancel = original_cancel
 
     def test_retry_handoff_starts_new_worker_after_concurrent_failure(self):
         export = Path(self.tmp.name) / 'export' / 'preferences.json'
@@ -287,9 +333,9 @@ class CompanionTests(unittest.TestCase):
                 while time.monotonic() < deadline:
                     with self.store.db(write=False) as db:
                         desired, _ = self.store._export_revisions(db)
-                    if desired == 3: break
+                    if desired == 4: break
                     time.sleep(.005)
-                self.assertEqual(desired, 3)
+                self.assertEqual(desired, 4)
                 release_pending.set()
                 worker.join(2)
                 self.assertEqual(len(second_error), 1)
