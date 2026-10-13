@@ -1,6 +1,7 @@
 package com.wyattfleming.touchframe.ui
 
 import android.app.Activity
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
@@ -80,7 +81,7 @@ class TouchSettingsReturn(private val context: Context) {
     }
 
     private fun bringTouchTaskToFront() {
-        val task = (context as? Activity)?.appTask
+        val task = (context as? Activity)?.let(::owningAppTask)
         val shouldLaunch = when (TouchSettingsReturnPlan.routeFor(task != null)) {
             TouchSettingsReturnRoute.MOVE_EXISTING_TASK -> !runCatching { requireNotNull(task).moveToFront() }.isSuccess
             TouchSettingsReturnRoute.LAUNCH_SINGLE_TOP_TASK -> true
@@ -91,6 +92,13 @@ class TouchSettingsReturn(private val context: Context) {
                 .addFlags(TouchSettingsReturnPlan.FALLBACK_LAUNCH_FLAGS),
         )
     }
+
+    private fun owningAppTask(activity: Activity): ActivityManager.AppTask? = runCatching {
+        val manager = activity.getSystemService(ActivityManager::class.java)
+        manager?.appTasks?.firstOrNull { task ->
+            TouchSettingsReturnPlan.isOwningTask(task.taskInfo.id, activity.taskId)
+        }
+    }.getOrNull()
 
     fun remove() {
         val current = button ?: return
@@ -103,6 +111,8 @@ internal enum class TouchSettingsReturnRoute { MOVE_EXISTING_TASK, LAUNCH_SINGLE
 
 internal object TouchSettingsReturnPlan {
     val FALLBACK_LAUNCH_FLAGS = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+
+    fun isOwningTask(candidateTaskId: Int, activityTaskId: Int): Boolean = candidateTaskId == activityTaskId
 
     fun routeFor(hasAppTask: Boolean): TouchSettingsReturnRoute = if (hasAppTask) {
         TouchSettingsReturnRoute.MOVE_EXISTING_TASK
