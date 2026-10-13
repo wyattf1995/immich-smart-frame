@@ -156,6 +156,7 @@ try:
         {
             "queued task paused before execution never invokes its block",
             "pause interrupts a running task",
+            "result predicate from a paused epoch stays false after resume",
         },
     )
     restored = run("restored-green", set())
