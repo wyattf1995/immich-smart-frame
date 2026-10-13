@@ -18,6 +18,7 @@ Choose an app and a verified hardware path before building or installing.
 | [FrameOS mode router](frame-mode-router.md) | Existing app and Lenovo OEM controls |
 | [Existing FrameOS touchscreen panel](frameos-touchscreen-panel.md) | Touch adaptation of `com.wyattfleming.frameos` |
 | [FrameOS Touch](frameos-touch-app.md) | New `com.wyattfleming.touchframe` app; separate release gates |
+| [FrameOS Touch design handoff](frameos-touch-design-handoff.md) | Native/Gecko boundaries and touch design constraints |
 | [Art mode](frameos-art-mode.md) | Existing app's separate artwork feed and presentation |
 | [Legacy TLS compatibility](legacy-isrg-root-tls.md) | Reviewed old-Android certificate handling |
 | [Touch Probe](../frameos/touchprobe/README.md) | Offline diagnostics, not a launcher or recovery tool |
