@@ -28,9 +28,20 @@ class TouchMediaLoadStateTest {
         )
 
         assertTrue(source.contains("TouchMediaLoadState.Decision.REPLACE_DOCUMENT_SESSION -> {\n                reopenAndLoad(url)"))
-        assertTrue(replace.indexOf("loadingCover.visibility = View.VISIBLE") < replace.indexOf("val replaced = session"))
-        assertTrue(replace.indexOf("geckoView.visibility = View.INVISIBLE") < replace.indexOf("val replaced = session"))
-        assertTrue(replace.indexOf("session = null") < replace.indexOf("current.close()"))
+        val cover = replace.indexOf("loadingCover.visibility = View.VISIBLE")
+        val hiddenView = replace.indexOf("geckoView.visibility = View.INVISIBLE")
+        val replaced = replace.indexOf("val replaced = session")
+        val clearedIdentity = replace.indexOf("session = null")
+        val closed = replace.indexOf("current.close()")
+        val opened = replace.indexOf("openSession()")
+        listOf(cover, hiddenView, replaced, clearedIdentity, closed, opened).forEach { index ->
+            assertTrue("cross-URL session marker is required", index >= 0)
+        }
+        assertTrue(cover < replaced)
+        assertTrue(hiddenView < replaced)
+        assertTrue(replaced < clearedIdentity)
+        assertTrue(clearedIdentity < closed)
+        assertTrue(closed < opened)
     }
 
     @Test
