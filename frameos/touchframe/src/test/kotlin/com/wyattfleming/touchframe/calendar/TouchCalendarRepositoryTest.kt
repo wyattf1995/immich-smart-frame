@@ -46,4 +46,18 @@ class TouchCalendarRepositoryTest {
         }
     }
 
+    @Test fun `invalidate fences a stale range before it can publish`() {
+        val started = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val config = TouchConfiguration("https://photos.example", "https://ha.example", "https://ha.example", "weather.home", null, "climate.home", listOf("calendar.one"), emptyList())
+        val transport = HomeAssistantHttpTransport { _ -> started.countDown(); release.await(); HomeAssistantHttpResponse(200, "[]") }
+        TouchCalendarRepository(config, TouchCalendarTokenProvider { "token" }, transport, ZoneId.of("UTC")).use { repository ->
+            val future = java.util.concurrent.Executors.newSingleThreadExecutor().submit<TouchCalendarLoad> { repository.load(TouchCalendarRange(LocalDate.of(2026, 10, 12), LocalDate.of(2026, 10, 19))) }
+            assertTrue(started.await(1, java.util.concurrent.TimeUnit.SECONDS))
+            repository.invalidate()
+            release.countDown()
+            assertEquals(TouchCalendarConnection.OFFLINE, future.get(1, java.util.concurrent.TimeUnit.SECONDS).connection)
+        }
+    }
+
 }
