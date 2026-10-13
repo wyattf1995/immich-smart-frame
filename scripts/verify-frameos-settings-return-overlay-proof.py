@@ -14,6 +14,7 @@ tests={
  'legacy_type': frame/'app/src/test/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsOverlayWindowTypeTest.kt',
  'lint_isolation': frame/'app/src/test/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsOverlayWindowTypeTest.kt',
  'text_resource': frame/'app/src/test/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsOverlayWindowTypeTest.kt',
+ 'api_guard_boundary': frame/'app/src/test/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsOverlayWindowTypeTest.kt',
 }
 report=frame/'app/build/test-results/testDebugUnitTest'
 classes={
@@ -21,6 +22,7 @@ classes={
  'legacy_type':'com.wyattfleming.frameos.ui.FrameExternalSettingsOverlayWindowTypeTest',
  'lint_isolation':'com.wyattfleming.frameos.ui.FrameExternalSettingsOverlayWindowTypeTest',
  'text_resource':'com.wyattfleming.frameos.ui.FrameExternalSettingsOverlayWindowTypeTest',
+ 'api_guard_boundary':'com.wyattfleming.frameos.ui.FrameExternalSettingsOverlayWindowTypeTest',
 }
 xml_names={name:'TEST-'+value+'.xml' for name,value in classes.items()}
 for path in (source,*tests.values()):
@@ -36,7 +38,7 @@ def run(name,label,failures):
     matches=list(report.rglob(xml_names[name])); assert len(matches)==1,matches
     xml=out/f'settings-return-overlay-{label}.xml'; shutil.copy2(matches[0],xml)
     root_xml=ElementTree.parse(xml).getroot(); cases=list(root_xml.iter('testcase')); failed=list(root_xml.iter('failure')); errors=list(root_xml.iter('error'))
-    expected={'lifecycle':5,'legacy_type':4,'lint_isolation':4,'text_resource':4}[name]
+    expected={'lifecycle':5,'legacy_type':5,'lint_isolation':5,'text_resource':5,'api_guard_boundary':5}[name]
     assert len(cases)==expected and len(failed)==failures and not errors,(name,len(cases),len(failed),len(errors))
     return {'negative_exit' if failures else 'restored_green_exit':result.returncode,'log':log.name,'junit_xml':xml.name,'tests':len(cases),'failures':len(failed)}
 
@@ -46,6 +48,7 @@ mutations={
  'legacy_type':('if (apiLevel >= Build.VERSION_CODES.O) applicationOverlayForAndroid8OrLater() else PHONE','if (apiLevel >= Build.VERSION_CODES.M) applicationOverlayForAndroid8OrLater() else PHONE'),
  'lint_isolation':('@RequiresApi(Build.VERSION_CODES.O)','@Suppress("unused")'),
  'text_resource':('context.getString(R.string.return_to_frameos)','"Return to FrameOS"'),
+ 'api_guard_boundary':('@SuppressLint("NewApi")','@SuppressLint("unused")'),
 }
 try:
     for name,(before,after) in mutations.items():

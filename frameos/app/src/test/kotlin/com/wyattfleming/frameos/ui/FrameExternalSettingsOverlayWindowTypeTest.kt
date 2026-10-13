@@ -33,6 +33,14 @@ class FrameExternalSettingsOverlayWindowTypeTest {
         assertEquals(0, source.split("const val APPLICATION_OVERLAY").size - 1)
     }
 
+    @Test fun `parameterized API seam is narrowly tied to the SDK_INT production caller`() {
+        val source = File("src/main/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsReturnController.kt").readText()
+
+        assertTrue(source.contains("FrameExternalSettingsOverlayWindowType.forApi(Build.VERSION.SDK_INT)"))
+        assertEquals(1, source.split("@SuppressLint(\"NewApi\")").size - 1)
+        assertTrue(source.contains("@SuppressLint(\"NewApi\")\n    fun forApi(apiLevel: Int): Int ="))
+    }
+
     @Test fun `return overlay label is a string resource`() {
         val source = File("src/main/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsReturnController.kt").readText()
         val strings = File("src/main/res/values/strings.xml").readText()
