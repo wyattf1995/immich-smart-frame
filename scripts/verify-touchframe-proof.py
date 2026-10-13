@@ -280,6 +280,22 @@ def mutate(name: str, source_name: str, before: str, after: str, failed: set[str
             raise RuntimeError(f"{name} did not restore exact source bytes")
 
 
+def mutate_activity_queue() -> dict[str, object]:
+    source = module / "src/main/kotlin/com/wyattfleming/touchframe/TouchFrameActivity.kt"
+    original = source.read_bytes()
+    before = "private val worker = TouchTaskScope.newSingleWorker()"
+    after = "private val worker = Executors.newSingleThreadExecutor()"
+    if original.decode().count(before) != 1 or after in original.decode():
+        raise RuntimeError("activity queue mutation is not uniquely patchable")
+    try:
+        source.write_text(original.decode().replace(before, after, 1))
+        return run("activity-cancel-queue-red", {"activity calendar worker exposes cancellation queue removal"})
+    finally:
+        source.write_bytes(original)
+        if source.read_bytes() != original:
+            raise RuntimeError("activity queue mutation did not restore source")
+
+
 def mutate_calendar_closed(name: str, failed: set[str]) -> dict[str, object]:
     """Remove both closed-state fences needed to reach token acquisition after close."""
     source = suites["calendar_repository"][0]
@@ -578,8 +594,25 @@ try:
             "queued task paused before execution never invokes its block",
             "pause interrupts a running task",
             "result predicate from a paused epoch stays false after resume",
+            "pause between registration and enqueue leaves no canceled wrapper",
         },
     )
+    canceled_queue_red = mutate(
+        "canceled-queue-removal-red", "scope",
+        "if (task.isCancelled && executor is ThreadPoolExecutor) executor.remove(task)",
+        "if (task.isCancelled && executor is ThreadPoolExecutor) Unit",
+        {
+            "calendar replacement burst retains only latest pending task",
+            "pause between registration and enqueue leaves no canceled wrapper",
+        },
+    )
+    enqueue_cancel_red = mutate(
+        "cancel-before-enqueue-red", "scope",
+        "executor.execute(task)\n            // Pause may cancel after registration but before execute enqueues the task.\n            discardCanceled(executor, task)",
+        "executor.execute(task)\n            // Negative proof: omit the post-enqueue cancellation check.",
+        {"pause between registration and enqueue leaves no canceled wrapper"},
+    )
+    activity_queue_red = mutate_activity_queue()
     calendar_range_end_red = mutate(
         "calendar-range-end-red", "calendar_ranges",
         "val exclusiveEnd = allDay || endZoned?.toLocalTime() == java.time.LocalTime.MIDNIGHT",
@@ -649,6 +682,9 @@ try:
         "settingsMonotonicRevisionRed": settings_revision_red,
         "provisioningCalendarCapRed": provisioning_cap_red,
         "pausedTaskEntryRed": scope_red,
+        "canceledQueueRemovalRed": canceled_queue_red,
+        "cancelBeforeEnqueueRed": enqueue_cancel_red,
+        "activityCancelQueueRed": activity_queue_red,
         "calendarExclusiveRangeEndRed": calendar_range_end_red,
         "calendarRangeParserCapRed": calendar_parser_cap_red,
         "calendarClosedRepositoryRed": calendar_closed_red,
