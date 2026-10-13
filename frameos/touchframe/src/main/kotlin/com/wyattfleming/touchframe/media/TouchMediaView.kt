@@ -10,6 +10,7 @@ import android.view.View
 import android.view.accessibility.AccessibilityManager
 import android.widget.FrameLayout
 import android.widget.TextView
+import com.wyattfleming.frameos.security.FrameUrlPolicy
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
@@ -18,7 +19,6 @@ import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.WebRequestError
 import org.mozilla.geckoview.WebResponse
-import java.net.URI
 
 /**
  * One retained Gecko content session for Photos and Art. Home is a separate
@@ -219,35 +219,6 @@ class TouchMediaView(
 
     private fun Context.dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }
-
-/** Restricts all in-session navigation to the parent-configured HTTP(S) origin. */
-internal class FrameUrlPolicy {
-    fun isSafeConfigurationUrl(value: String): Boolean {
-        val uri = parse(value) ?: return false
-        return uri.scheme?.lowercase() in setOf("http", "https") &&
-            !uri.host.isNullOrBlank() &&
-            uri.userInfo == null
-    }
-
-    fun isAllowedTopLevelNavigation(configuredUrl: String, requestedUrl: String): Boolean {
-        val configured = parse(configuredUrl) ?: return false
-        val requested = parse(requestedUrl) ?: return false
-        if (!isSafeConfigurationUrl(requestedUrl)) return false
-        return configured.scheme.equals(requested.scheme, ignoreCase = true) &&
-            configured.host.equals(requested.host, ignoreCase = true) &&
-            port(configured) == port(requested)
-    }
-
-    private fun parse(value: String): URI? = runCatching { URI(value) }.getOrNull()
-
-    private fun port(uri: URI): Int = when {
-        uri.port >= 0 -> uri.port
-        uri.scheme.equals("https", ignoreCase = true) -> 443
-        uri.scheme.equals("http", ignoreCase = true) -> 80
-        else -> -1
-    }
-}
-
 
 /** Pure load/retry decisions, kept free of Gecko and Android for focused tests. */
 internal class TouchMediaLoadState {
