@@ -168,17 +168,25 @@ class CompanionTests(unittest.TestCase):
                 self.assertTrue(release_replace.wait(2))
             return original_replace(source, destination)
         first_error = []
+        second_error = []
+        worker = None
+        second_worker = None
         def save_first():
             try:
                 self.store.feedback('main', {'assetId':first, 'preference':'hide'})
             except Exception as error:
                 first_error.append(error)
+        def save_second():
+            try:
+                self.store.feedback('main', {'assetId':second, 'preference':'hide'})
+            except Exception as error:
+                second_error.append(error)
         try:
             with patch.object(module.os, 'replace', side_effect=blocked_replace):
                 worker = threading.Thread(target=save_first)
                 worker.start()
                 self.assertTrue(at_replace.wait(2))
-                second_worker = threading.Thread(target=lambda: self.store.feedback('main', {'assetId':second, 'preference':'hide'}))
+                second_worker = threading.Thread(target=save_second)
                 second_worker.start()
                 deadline = time.monotonic() + 2
                 while time.monotonic() < deadline:
@@ -189,7 +197,7 @@ class CompanionTests(unittest.TestCase):
                 self.assertEqual(desired, 3)
                 release_replace.set()
                 worker.join(2); second_worker.join(2)
-            self.assertFalse(worker.is_alive()); self.assertFalse(second_worker.is_alive()); self.assertEqual(first_error, [])
+            self.assertFalse(worker.is_alive()); self.assertFalse(second_worker.is_alive()); self.assertEqual(first_error, []); self.assertEqual(second_error, [])
             self.assertEqual(len(calls), 2)
             data = json.loads(export.read_text())['devices']['main']['assets']
             self.assertEqual(data, {first:'hide', second:'hide'})
@@ -198,6 +206,8 @@ class CompanionTests(unittest.TestCase):
             self.assertEqual((desired, published), (3, 3))
         finally:
             release_replace.set()
+            if worker: worker.join(2)
+            if second_worker: second_worker.join(2)
             self.store.close()
 
     def test_restart_recovers_dirty_export_and_close_cancels_retry(self):
@@ -219,6 +229,84 @@ class CompanionTests(unittest.TestCase):
             self.assertEqual(published, desired)
         finally:
             reopened.close()
+
+    def test_startup_recreates_missing_export_and_includes_new_device(self):
+        export = Path(self.tmp.name) / 'export' / 'preferences.json'
+        first = module.FrameStore(Path(self.tmp.name) / 'state.db', {}, ['balanced','family'], clock=lambda: self.clock, preferences_export=export)
+        first.close()
+        export.unlink()
+        reopened = module.FrameStore(Path(self.tmp.name) / 'state.db', {'other': {}}, ['balanced','family'], clock=lambda: self.clock, preferences_export=export)
+        try:
+            data = json.loads(export.read_text())['devices']
+            self.assertEqual(set(data), {'main', 'other'})
+            with reopened.db(write=False) as db:
+                desired, published = reopened._export_revisions(db)
+            self.assertEqual(published, desired)
+        finally:
+            reopened.close()
+
+    def test_retry_handoff_starts_new_worker_after_concurrent_failure(self):
+        export = Path(self.tmp.name) / 'export' / 'preferences.json'
+        self.store = module.FrameStore(Path(self.tmp.name) / 'state.db', {}, ['balanced','family'], clock=lambda: self.clock, preferences_export=export)
+        first = '11111111-1111-4111-8111-111111111111'
+        second = '22222222-2222-4222-8222-222222222222'
+        pending_checked = threading.Event()
+        release_pending = threading.Event()
+        original_pending = self.store._export_pending
+        pending_calls = 0
+        def paused_pending():
+            nonlocal pending_calls
+            pending_calls += 1
+            result = original_pending()
+            if pending_calls == 1:
+                pending_checked.set()
+                self.assertTrue(release_pending.wait(2))
+            return result
+        original_replace = module.os.replace
+        replace_calls = 0
+        def flaky_replace(source, destination):
+            nonlocal replace_calls
+            replace_calls += 1
+            if replace_calls in (1, 3): raise OSError('fixture export failure')
+            return original_replace(source, destination)
+        second_error = []
+        def save_second():
+            try:
+                self.store.feedback('main', {'assetId':second, 'preference':'hide'})
+            except Exception as error:
+                second_error.append(error)
+        worker = None
+        try:
+            with patch.object(module, 'EXPORT_RETRY_INITIAL_SECONDS', .01), patch.object(module.os, 'replace', side_effect=flaky_replace), patch.object(self.store, '_export_pending', side_effect=paused_pending):
+                with self.assertRaises(OSError):
+                    self.store.feedback('main', {'assetId':first, 'preference':'hide'})
+                self.assertTrue(pending_checked.wait(2))
+                worker = threading.Thread(target=save_second)
+                worker.start()
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    with self.store.db(write=False) as db:
+                        desired, _ = self.store._export_revisions(db)
+                    if desired == 3: break
+                    time.sleep(.005)
+                self.assertEqual(desired, 3)
+                release_pending.set()
+                worker.join(2)
+                self.assertEqual(len(second_error), 1)
+                self.assertIsInstance(second_error[0], OSError)
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                with self.store.db(write=False) as db:
+                    desired, published = self.store._export_revisions(db)
+                if desired == published: break
+                time.sleep(.01)
+            self.assertEqual(desired, published)
+            data = json.loads(export.read_text())['devices']['main']['assets']
+            self.assertEqual(data, {first:'hide', second:'hide'})
+        finally:
+            release_pending.set()
+            if worker: worker.join(2)
+            self.store.close()
     def test_auth_invalid_unicode_and_role_token_reuse(self):
         config={'operatorUsername':'frame','operatorPassword':'p'*32,'operatorToken':'o'*48,'devices':{'main':{'token':'d'*48}}}
         auth=module.FrameAuth(config)
