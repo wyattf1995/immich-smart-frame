@@ -46,23 +46,39 @@ class TouchConfigurationTest {
 
 
     @Test
-    fun `optional Birds feed uses the same safe URL validation as Art`() {
-        val configuration = TouchConfiguration.from(
+    fun `optional Art and Birds feeds preserve HTTP and HTTPS policy and reject unsafe URLs`() {
+        val http = TouchConfiguration.from(
             photosUrl = "https://photos.example",
             homeAssistantUrl = "https://ha.example",
             weatherEntityId = "weather.home",
-            artUrl = null,
-            birdsUrl = " https://birds.example/feed ",
+            artUrl = " http://art.example/feed ",
+            birdsUrl = " http://birds.example/feed ",
         )
-        assertEquals("https://birds.example/feed", configuration?.birdsUrl)
-        assertNull(
-            TouchConfiguration.from(
-                photosUrl = "https://photos.example",
-                homeAssistantUrl = "https://ha.example",
-                weatherEntityId = "weather.home",
-                artUrl = null,
-                birdsUrl = "http://birds.example/feed",
-            ),
+        assertEquals("http://art.example/feed", http?.artUrl)
+        assertEquals("http://birds.example/feed", http?.birdsUrl)
+
+        val https = TouchConfiguration.from(
+            photosUrl = "https://photos.example",
+            homeAssistantUrl = "https://ha.example",
+            weatherEntityId = "weather.home",
+            artUrl = "https://art.example/feed",
+            birdsUrl = "https://birds.example/feed",
         )
+        assertEquals("https://art.example/feed", https?.artUrl)
+        assertEquals("https://birds.example/feed", https?.birdsUrl)
+
+        assertNull(configurationWith(artUrl = "javascript:alert(1)"))
+        assertNull(configurationWith(birdsUrl = "file:///tmp/birds"))
+        assertNull(configurationWith(artUrl = "https://user:password@art.example/feed"))
+        assertNull(configurationWith(birdsUrl = "https://birds.example/feed?token=not-configuration"))
     }
+
+    private fun configurationWith(artUrl: String? = null, birdsUrl: String? = null): TouchConfiguration? =
+        TouchConfiguration.from(
+            photosUrl = "https://photos.example",
+            homeAssistantUrl = "https://ha.example",
+            weatherEntityId = "weather.home",
+            artUrl = artUrl,
+            birdsUrl = birdsUrl,
+        )
 }
