@@ -186,44 +186,64 @@ def tap_counts(log: Path) -> dict:
     return counts
 
 
-def js_proof(path: Path, original: bytes, proof: dict) -> None:
-    before = 'if (mutation.type !== "attributes" || !["src", "value", "class", "style"].includes(mutation.attributeName)) return false;'
-    after = 'if (mutation.type !== "attributes" || !["src", "value", "class"].includes(mutation.attributeName)) return false;'
-    expected_failure = "capture ignores progress bar RAF styles but keeps Kiosk visibility mutations"
-    baseline = run("js-baseline-green", JS_COMMAND, FRAME, proof)
-    baseline_counts = tap_counts(ARTIFACTS / "js-baseline-green.log")
-    if baseline["exit"] != 0 or {key: baseline_counts[key] for key in ("tests", "pass", "fail")} != {"tests": EXPECTED_JS_TESTS, "pass": EXPECTED_JS_TESTS, "fail": 0}:
-        raise RuntimeError("JavaScript Photos baseline was not green")
+def js_mutation_proof(path: Path, original: bytes, proof: dict, *, key: str, before: str, after: str, expected_failure: str, label: str) -> None:
+    baseline_label = f"{label}-baseline-green"
+    red_label = f"{label}-red"
+    restored_label = f"{label}-restored-green"
+    baseline = run(baseline_label, JS_COMMAND, FRAME, proof)
+    baseline_counts = tap_counts(ARTIFACTS / f"{baseline_label}.log")
+    expected_green = {"tests": EXPECTED_JS_TESTS, "pass": EXPECTED_JS_TESTS, "fail": 0}
+    if baseline["exit"] != 0 or {name: baseline_counts[name] for name in ("tests", "pass", "fail")} != expected_green:
+        raise RuntimeError(f"JavaScript Photos baseline was not green for {key}")
     replace_once(path, original, before, after)
     try:
-        red = run("js-mutation-filter-stage-red", JS_COMMAND, FRAME, proof)
-        red_counts = tap_counts(ARTIFACTS / "js-mutation-filter-stage-red.log")
+        red = run(red_label, JS_COMMAND, FRAME, proof)
+        red_counts = tap_counts(ARTIFACTS / f"{red_label}.log")
+        expected_red = {"tests": EXPECTED_JS_TESTS, "pass": EXPECTED_JS_TESTS - 1, "fail": 1}
         if (
             red["exit"] == 0 or expected_failure not in red_counts["text"] or
-            {key: red_counts[key] for key in ("tests", "pass", "fail")} != {"tests": EXPECTED_JS_TESTS, "pass": EXPECTED_JS_TESTS - 1, "fail": 1}
+            {name: red_counts[name] for name in ("tests", "pass", "fail")} != expected_red
         ):
-            raise RuntimeError("capture mutation filter mutation did not fail the intended Node test")
+            raise RuntimeError(f"{key} mutation did not fail the intended Node test")
     finally:
         path.write_bytes(original)
     restored = sha256(path)
     if path.read_bytes() != original:
-        raise RuntimeError("JavaScript Photos source was not restored exactly")
-    green = run("js-mutation-filter-stage-restored-green", JS_COMMAND, FRAME, proof)
-    green_counts = tap_counts(ARTIFACTS / "js-mutation-filter-stage-restored-green.log")
-    if green["exit"] != 0 or {key: green_counts[key] for key in ("tests", "pass", "fail")} != {"tests": EXPECTED_JS_TESTS, "pass": EXPECTED_JS_TESTS, "fail": 0}:
-        raise RuntimeError("JavaScript Photos restored source was not green")
-    proof["mutations"]["js_capture_mutation_filter"] = {
+        raise RuntimeError(f"JavaScript Photos source was not restored exactly after {key}")
+    green = run(restored_label, JS_COMMAND, FRAME, proof)
+    green_counts = tap_counts(ARTIFACTS / f"{restored_label}.log")
+    if green["exit"] != 0 or {name: green_counts[name] for name in ("tests", "pass", "fail")} != expected_green:
+        raise RuntimeError(f"JavaScript Photos restored source was not green after {key}")
+    proof["mutations"][key] = {
         "source": str(path.relative_to(ROOT)),
         "original_sha256": hashlib.sha256(original).hexdigest(),
         "restored_sha256": restored,
         "expected_failure": expected_failure,
         "red_exit": red["exit"],
         "restored_exit": green["exit"],
-        "baseline_counts": {key: baseline_counts[key] for key in ("tests", "pass", "fail")},
-        "red_counts": {key: red_counts[key] for key in ("tests", "pass", "fail")},
-        "restored_counts": {key: green_counts[key] for key in ("tests", "pass", "fail")},
+        "baseline_counts": {name: baseline_counts[name] for name in ("tests", "pass", "fail")},
+        "red_counts": {name: red_counts[name] for name in ("tests", "pass", "fail")},
+        "restored_counts": {name: green_counts[name] for name in ("tests", "pass", "fail")},
     }
 
+
+def js_proof(path: Path, original: bytes, proof: dict) -> None:
+    js_mutation_proof(
+        path, original, proof,
+        key="js_204_diagnostic",
+        before='reportDiagnostic("htmx_no_content", inspected.fields);',
+        after='reportDiagnostic("htmx_error", inspected.fields);',
+        expected_failure="a no-content Kiosk response keeps capture closed until a later settled response",
+        label="js-204-diagnostic",
+    )
+    js_mutation_proof(
+        path, original, proof,
+        key="js_capture_mutation_filter",
+        before='if (mutation.type !== "attributes" || !["src", "value", "class", "style"].includes(mutation.attributeName)) return false;',
+        after='if (mutation.type !== "attributes" || !["src", "value", "class"].includes(mutation.attributeName)) return false;',
+        expected_failure="capture ignores progress bar RAF styles but keeps Kiosk visibility mutations",
+        label="js-mutation-filter",
+    )
 
 def main() -> int:
     state = FRAME / "app/src/main/kotlin/com/wyattfleming/frameos/web/FrameWebPhotosReadinessState.kt"
