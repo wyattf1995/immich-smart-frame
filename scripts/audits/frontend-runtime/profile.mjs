@@ -189,7 +189,11 @@ try {
     const baseline = await measure(page, cdp, kind, `${kind}-baseline-30s`, 30, { trace: true });
     if (kind === 'companion') {
       await context.request.post(base + '/fixture/config', { data: { preferences: 1000 } });
+      await startTrace(cdp);
       await page.reload({ waitUntil: 'domcontentloaded' }); await page.locator('#preferences li').nth(999).waitFor({ state: 'attached' });
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      result.companionInitial1000 = { observed: await page.evaluate(() => ({ ...window.__runtimeAudit, preferences: document.querySelectorAll('#preferences li').length, detailsOpen: document.querySelector('#preferences').closest('details').open })), metrics: await cdpMetrics(cdp), trace: await endTrace(cdp, 'companion-load-1000') };
+      await save('companion-load-1000.json', result.companionInitial1000);
       await measure(page, cdp, kind, 'companion-stress-1000-30s', 30, { trace: true });
     } else if (kind === 'birds') {
       await context.request.post(base + '/fixture/config', { data: { audioHz: 20, summaryCount: 500, recentCount: 500 } });
