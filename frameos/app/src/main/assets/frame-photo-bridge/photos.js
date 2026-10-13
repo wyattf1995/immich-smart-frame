@@ -16,6 +16,7 @@ let inFlightFingerprint = "";
 let rejectedFingerprint = "";
 let rejectedRetries = 0;
 let queued = false;
+let captureMutationTimer = 0;
 let retryTimer = 0;
 let desiredPlaybackPaused = null;
 let pauseSnapshotNonce = null;
@@ -302,20 +303,18 @@ function skipNoSwapKioskRequest(event) {
   }
 }
 
+function isKioskNode(node) {
+  return node instanceof HTMLElement && (node.id === "kiosk-container" || node.id === "kiosk" || typeof node.closest === "function" && node.closest("#kiosk-container") !== null);
+}
 function isCaptureMutation(mutation) {
-  if (mutation.type === "childList") return true;
-  if (mutation.type !== "attributes") return false;
-  if (mutation.attributeName === "src" || mutation.attributeName === "value") return true;
-  if (mutation.attributeName !== "class" && mutation.attributeName !== "style") return false;
-  const target = mutation.target;
-  if (target === document.documentElement || target === document.body) return true;
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.id === "kiosk-container" || target.id === "kiosk") return true;
-  return typeof target.closest === "function" && target.closest("#kiosk") !== null;
+  if (mutation.type === "childList") return isKioskNode(mutation.target) || Array.from(mutation.addedNodes).some(isKioskNode) || Array.from(mutation.removedNodes).some(isKioskNode);
+  if (mutation.type !== "attributes" || !["src", "value", "class", "style"].includes(mutation.attributeName)) return false;
+  return isKioskNode(mutation.target);
 }
 
 function scheduleCaptureMutations(mutations) {
-  if (mutations.some(isCaptureMutation)) scheduleCapture();
+  if (!mutations.some(isCaptureMutation) || captureMutationTimer) return;
+  captureMutationTimer = setTimeout(() => { captureMutationTimer = 0; scheduleCapture(); }, 50);
 }
 
 function setPollingPaused(paused) {
@@ -412,7 +411,9 @@ function initializeDomCapture() {
   new MutationObserver(() => {
     if (desiredPlaybackPaused && !document.body.classList.contains("polling-paused")) setPollingPaused(true);
   }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
-  new MutationObserver(scheduleCaptureMutations).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
+  // Body is stable across Kiosk outerHTML swaps; isCaptureMutation strictly rejects
+  // unrelated descendants while HTMX remains the primary transaction signal.
+  new MutationObserver(scheduleCaptureMutations).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
   // Only a document with no observed main#kiosk request has a DOM-ready baseline.
   // A failed or 204 request may already have left the settle set, but has no pair.
   if (!hasObservedKioskRequest && settlingKioskRequests.size === 0) kioskCaptureReady = true;

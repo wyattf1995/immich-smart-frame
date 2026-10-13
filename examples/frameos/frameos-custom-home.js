@@ -67,7 +67,7 @@
   };
   const mount = (root, options = {}) => {
     if (!root?.replaceChildren || typeof options.getHass !== "function") throw new TypeError("FrameOSCustomHome requires a root and getHass");
-    let destroyed = false, timer = null, pendingDeadline = null, draft = null, dirty = false, pending = null, feedback = "", lastSignature = null, draftBaseline = null;
+    let destroyed = false, timer = null, pendingDeadline = null, draft = null, dirty = false, pending = null, feedback = "", lastSignature = null, lastModelKey = null, draftBaseline = null;
     const navigate = (view) => { if (!destroyed && typeof options.navigate === "function") options.navigate(view); };
     const clearPending = () => { if (pendingDeadline !== null) window.clearTimeout(pendingDeadline); pendingDeadline = null; pending = null; };
     const setPending = (next) => {
@@ -83,8 +83,13 @@
     const render = (force = false) => {
       if (destroyed) return;
       const hass = options.getHass();
-      if (!hass?.states) { options.onUnavailable?.(); if (lastSignature !== "unavailable") root.innerHTML = '<section class="frameos-custom-home"><p class="fch-next-empty">Home Assistant is reconnecting…</p></section>'; lastSignature = "unavailable"; return; }
-      const now = clock(typeof options.now === "function" ? options.now() : new Date()); const climate = climateModel(hass.states[CLIMATE], hass.config?.unit_system?.temperature);
+      if (!hass?.states) { options.onUnavailable?.(); if (lastSignature !== "unavailable") root.innerHTML = '<section class="frameos-custom-home"><p class="fch-next-empty">Home Assistant is reconnecting…</p></section>'; lastSignature = "unavailable"; lastModelKey = null; return; }
+      const now = clock(typeof options.now === "function" ? options.now() : new Date());
+      // The facade is already bounded by the panel.  Compare it before formatting markup so
+      // ordinary one-second ticks only patch clock nodes; date/night remain model inputs.
+      const modelKey = JSON.stringify({ states:hass.states, forecast:hass.forecast, forecastStatus:hass.forecastStatus, connected:connected(hass), unit:hass.config?.unit_system?.temperature, date:now.date, night:now.night, pending, dirty, feedback });
+      if (!force && modelKey === lastModelKey) { updateClock(now); return; }
+      const climate = climateModel(hass.states[CLIMATE], hass.config?.unit_system?.temperature);
       syncPending(climate); const writable = isWritable({ connected: connected(hass), pending: Boolean(pending), state: climate.mode });
       if (dirty && draftBaseline !== targetKey(climate)) { dirty = false; feedback = "Climate changed elsewhere; review the current setting."; }
       if (!draft || !dirty || draft.mode !== climate.mode) { draft = climate.dual ? { mode:climate.mode, low:climate.low, high:climate.high } : { mode:climate.mode, temperature:climate.temperature }; dirty = false; draftBaseline = targetKey(climate); }
@@ -101,6 +106,7 @@
       const signature = JSON.stringify({ night:now.night, calendarDateKey:now.date, connected:connected(hass), climate, draft, dirty, pending, feedback, weather:weather?.state, weatherTemp, weatherUnit, forecast, forecastUnit, forecastStatus, family, calendars, cameras });
       if (!force && signature === lastSignature) { updateClock(now); return; }
       lastSignature = signature;
+      lastModelKey = modelKey;
       const active = root.ownerDocument?.activeElement;
       const focused = active && root.contains?.(active) ? Object.entries(active.dataset || {}).find(([key]) => ["mode", "adjust", "apply", "cancel", "nav"].includes(key)) : null;
       root.innerHTML = `<main class="frameos-custom-home ${now.night ? "night" : ""}"><header class="fch-top"><div><div class="fch-time"><span data-frameos-clock-time>${safe(now.time)}</span><small data-frameos-clock-period>${safe(now.period)}</small></div><div class="fch-date"><span data-frameos-clock-date>${safe(now.date)}</span></div></div><div class="fch-weather"><span class="fch-weather-icon">${weatherIcon(String(weather?.state || ""))}</span><span class="fch-weather-temp">${weatherTemp === null ? "—" : weatherTemp}${safe(weatherUnit)}</span><span class="fch-weather-state">${safe(weather?.state || "Weather unavailable")}</span><div class="fch-forecast">${forecastMarkup}</div></div><div class="fch-status"><strong>${cameras} camera${cameras === 1 ? "" : "s"} available</strong><span>${safe(climate.mode === "unknown" ? "Climate unavailable" : `Entryway ${climate.mode}`)}</span></div></header><section class="fch-grid"><article class="fch-card fch-next-card"><h2>Up next</h2><div class="fch-next">${family ? `<div><div class="fch-eyebrow">Family calendar</div><div class="fch-next-title">${safe(family.title)}</div><div class="fch-next-meta">${safe(eventLabel(family, typeof options.now === "function" ? options.now() : new Date()))}</div></div>` : '<div class="fch-next-empty">No upcoming family event</div>'}</div></article><article class="fch-card fch-climate-card"><h2>Entryway climate</h2><div class="fch-climate"><div class="fch-climate-reading"><span class="fch-climate-temp">${currentValue}</span><span class="fch-state">${safe(climate.mode)}</span></div><div class="fch-mode-row">${modes}</div><div class="fch-draft">${climate.mode === "off" ? "Choose Heat, Cool, or Auto to adjust" : `Set to: ${draftValue}`}</div><div class="fch-adjust-row">${adjust}</div><div class="fch-actions"><button class="fch-action apply" data-apply ${writable && dirty ? "" : "disabled"}>Apply</button><button class="fch-action" data-cancel ${writable && dirty ? "" : "disabled"}>Cancel</button></div><p class="fch-feedback ${pending ? "pending" : feedback ? "error" : ""}" aria-live="polite">${safe(pending ? "Updating climate…" : feedback)}</p></div></article><section class="fch-bottom"><article class="fch-card fch-calendar-card"><h2>Calendar</h2><div class="fch-list">${events}</div></article><article class="fch-card fch-links-card"><h2>Explore</h2><div class="fch-links"><button class="fch-link" data-nav="cameras">Cameras<small>${cameras} available now</small></button><button class="fch-link" data-nav="calendar">Calendar<small>View the family schedule</small></button></div></article></section></section></main>`;

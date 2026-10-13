@@ -83,6 +83,8 @@
         let customHomeWork = null;
         let customHomeProbe = null;
         let homeBootstrap = null;
+        let homeProjectionCache = null;
+        const HOME_CALENDAR_REVALIDATE_MILLIS = 60_000;
         let forecastOwner = null;
         const FORECAST_ENTITY = "weather.forecast_home";
         const disposeForecast = () => {
@@ -156,9 +158,11 @@
           const live = connectedHomeHass(root);
           if (!live) return null;
           // Expose data needed by this view, not HA's auth/connection object.
+          const calendarFresh = homeProjectionCache?.states === live.states && Date.now() - homeProjectionCache.checkedAt < HOME_CALENDAR_REVALIDATE_MILLIS;
+          const calendarIds = calendarFresh ? homeProjectionCache.calendarIds : Object.keys(live.states).filter((id) => id.startsWith("calendar.") && id !== "calendar.family").sort().slice(0, 3);
+          if (!calendarFresh) homeProjectionCache = { states: live.states, calendarIds, checkedAt: Date.now() };
           const ids = ["climate.entryway_entryway", "weather.forecast_home", "weather.home", "calendar.family",
-            ...Object.keys(live.states).filter((id) => id.startsWith("calendar.") && id !== "calendar.family").sort().slice(0, 3),
-            "camera.backyard_backyard_camera", "camera.dining_room_dining_room_camera",
+            ...calendarIds, "camera.backyard_backyard_camera", "camera.dining_room_dining_room_camera",
             "camera.garage_garage_camera", "camera.living_room_living_room_camera"];
           const keys = ["friendly_name", "current_temperature", "current_humidity", "temperature",
             "min_temp", "max_temp", "target_temp_step", "target_temp_low", "target_temp_high",
