@@ -88,7 +88,7 @@ class TouchFrameActivity : Activity() {
     private lateinit var home: TouchHomeView
     private lateinit var weather: WeatherContentView
     private lateinit var calendar: TouchCalendarView
-    private var calendarState = TouchCalendarState(TouchCalendarMode.AGENDA, java.time.LocalDate.now(), java.time.LocalDate.now(), TouchCalendarRange.forMode(TouchCalendarMode.AGENDA, java.time.LocalDate.now()), emptyList(), TouchCalendarConnection.OFFLINE, null)
+    private var calendarState = TouchCalendarState(TouchCalendarWeekPresentation.DEFAULT_MODE, java.time.LocalDate.now(), java.time.LocalDate.now(), TouchCalendarRange.forMode(TouchCalendarWeekPresentation.DEFAULT_MODE, java.time.LocalDate.now()), emptyList(), TouchCalendarConnection.OFFLINE, null)
     private lateinit var settingsReturn: TouchSettingsReturn
     private var media: TouchMediaView? = null
     private var cameras: TouchCameraView? = null
