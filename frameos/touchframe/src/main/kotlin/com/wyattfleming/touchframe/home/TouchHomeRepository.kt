@@ -82,6 +82,7 @@ class TouchHomeRepository(
             ?: return fallback.copy(connection = TouchConnection.SIGN_IN_REQUIRED)
         val operation = beginOperation() ?: return fallback.copy(connection = TouchConnection.OFFLINE)
         val deadline = deadlineFactory(REFRESH_TIMEOUT_MILLIS)
+        var accepted = false
         return try {
             val headers = headers(token)
             val weather = submit(operation) { getState(configuration.weatherEntityId, headers, deadline) }
@@ -104,13 +105,13 @@ class TouchHomeRepository(
                 climate = climateModel,
                 connection = TouchConnection.CONNECTED,
                 lastUpdatedEpochMillis = clock(),
-            )
+            ).also { accepted = true }
         } catch (error: AuthenticationFailure) {
             fallback.copy(connection = TouchConnection.SIGN_IN_REQUIRED)
         } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
             fallback.copy(connection = TouchConnection.OFFLINE)
         } finally {
-            finishOperation(operation)
+            finishOperation(operation, accepted)
         }
     }
 
@@ -152,6 +153,7 @@ class TouchHomeRepository(
         val token = tokenProvider()?.takeIf(String::isNotBlank) ?: return false
         val operation = beginOperation() ?: return false
         val deadline = deadlineFactory(MUTATION_TIMEOUT_MILLIS)
+        var accepted = false
         return try {
             val body = payload.put("entity_id", configuration.climateEntityId).toString()
             val response = await(submit(operation) {
@@ -165,11 +167,11 @@ class TouchHomeRepository(
                     ),
                 )
             }, deadline)
-            response.statusCode in 200..299
+            (response.statusCode in 200..299).also { accepted = it }
         } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
             false
         } finally {
-            finishOperation(operation)
+            finishOperation(operation, accepted)
         }
     }
 
@@ -201,12 +203,9 @@ class TouchHomeRepository(
         if (active != null) null else Operation().also { active = it }
     }
 
-    private fun finishOperation(operation: Operation) = synchronized(operationLock) {
+    private fun finishOperation(operation: Operation, accepted: Boolean) = synchronized(operationLock) {
         if (active === operation) active = null
-        if (!operation.completed) {
-            operation.futures.forEach { it.cancel(true) }
-        }
-        operation.completed = true
+        if (!accepted || operation.cancelled) operation.futures.forEach { it.cancel(true) }
     }
 
     private fun <T> submit(operation: Operation, task: () -> T): Future<T> {
@@ -240,7 +239,6 @@ class TouchHomeRepository(
     private class Operation {
         val futures = mutableListOf<Future<*>>()
         @Volatile var cancelled = false
-        var completed = false
     }
 
     private class AuthenticationFailure : Exception()

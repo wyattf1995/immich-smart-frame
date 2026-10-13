@@ -158,7 +158,7 @@ class TouchShellLayout(
         minimumHeight = dp(MIN_TARGET_DP)
         setPadding(dp(4), dp(5), dp(4), dp(5))
         background = rounded(palette.settings)
-        setOnClickListener(onSettings)
+        setOnClickListener { onSettings() }
         addView(label("⚙", 20f, palette.ink))
         addView(label("Settings", if (railWidthDpFor(resources.configuration.screenWidthDp) >= 96) 16f else 14f, palette.ink))
     }.also { view ->
