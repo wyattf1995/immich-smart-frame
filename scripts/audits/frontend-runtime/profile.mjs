@@ -122,6 +122,7 @@ async function measure(page, cdp, kind, label, seconds, options = {}) {
   const fixtureBefore = kind === 'birds' || kind === 'companion' ? await page.evaluate(async () => (await fetch('/fixture/config')).json()) : null;
   const workloadBefore = await page.evaluate(() => ({ preferences: document.querySelectorAll('#preferences li').length, choicesClosed: !document.querySelector('#preferences')?.closest('details')?.open, artwork: document.querySelector('.artwork')?.getAttribute('src'), species: document.querySelectorAll('#speciesGrid > *').length, audioMeterWidth: document.querySelector('#audioMeterLevel')?.style.width }));
   const before = await snapshot(cdp, `${label}-before`);
+  await sleep(250); // Drain profiler-induced observer deliveries before timing begins.
   await resetObserver(page); if (options.trace) await startTrace(cdp);
   const beforeMetrics = await cdpMetrics(cdp), start = Date.now(), actions = [];
   while (Date.now() - start < seconds * 1000) {
