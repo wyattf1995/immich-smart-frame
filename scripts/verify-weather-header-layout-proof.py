@@ -19,12 +19,12 @@ out = root / "reports" / "frameos-weather-header"
 out.mkdir(parents=True, exist_ok=True)
 source = frame / "app/src/main/kotlin/com/wyattfleming/frameos/ui/WeatherContentView.kt"
 test = frame / "app/src/test/kotlin/com/wyattfleming/frameos/ui/WeatherHeaderLayoutTest.kt"
-report_dir = frame / "app/build/test-results/testDebugUnitTest"
+report_dir = frame / "frame-shared/build/test-results/testDebugUnitTest"
 result_name = "TEST-com.wyattfleming.frameos.ui.WeatherHeaderLayoutTest.xml"
 test_class = "com.wyattfleming.frameos.ui.WeatherHeaderLayoutTest"
 command = [
     "./gradlew", "--no-daemon", "--max-workers=2", "-PframeosTarget=legacyArmv7",
-    ":app:testDebugUnitTest", "--tests", test_class,
+    ":frame-shared:testDebugUnitTest", "--tests", test_class,
 ]
 
 
