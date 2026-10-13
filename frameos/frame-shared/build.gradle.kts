@@ -58,6 +58,7 @@ android {
                 "com/wyattfleming/frameos/photos/FramePhotoBridgeCallbackResponseTest.kt",
                 "com/wyattfleming/frameos/photos/FramePhotoBridgeDiagnosticsTest.kt",
                 "com/wyattfleming/frameos/photos/FramePhotoBridgeExtensionContractTest.kt",
+                "com/wyattfleming/frameos/photos/FramePhotoBridgePreparedAttachmentContractTest.kt",
                 "com/wyattfleming/frameos/photos/FramePhotoBridgePackagingContractTest.kt",
                 "com/wyattfleming/frameos/photos/FrameSharedPlaybackMetadataTest.kt",
             )
