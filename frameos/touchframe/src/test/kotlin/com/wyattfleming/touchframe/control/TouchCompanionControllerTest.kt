@@ -10,6 +10,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.ArrayDeque
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
 import java.util.concurrent.ScheduledThreadPoolExecutor
@@ -61,6 +62,70 @@ class TouchCompanionControllerTest {
     }
 
     @Test
+    fun `stop after durable claim prevents queued command dispatch`() {
+        val scheduler = ScheduledThreadPoolExecutor(1)
+        val main = FirstInlineThenQueueExecutor()
+        val journal = RecordingJournal()
+        val commandCalls = AtomicInteger()
+        val controller = controller(
+            scheduler = scheduler,
+            journal = journal,
+            mainExecutor = main,
+            poll = { _, _, _, _ -> FrameCompanionPollResult.Success(commandEnvelope()) },
+            onCommand = { _, _ ->
+                commandCalls.incrementAndGet()
+                TouchCompanionController.CommandResult.Applied()
+            },
+        )
+        try {
+            controller.setEnabled(true)
+            controller.start()
+            assertTrue(main.queued.await(2, TimeUnit.SECONDS))
+            assertEquals(listOf("11111111-1111-1111-1111-111111111111"), journal.claimed)
+
+            controller.stop()
+            main.runQueued()
+
+            assertEquals(0, commandCalls.get())
+            assertTrue("a stopped controller must leave claim recovery to the canonical journal", journal.acknowledged.isEmpty())
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun `timed out queued callback is cancelled before a delayed main executor runs it`() {
+        val scheduler = ScheduledThreadPoolExecutor(1)
+        val main = FirstInlineThenQueueExecutor()
+        val journal = RecordingJournal()
+        val commandCalls = AtomicInteger()
+        val controller = controller(
+            scheduler = scheduler,
+            journal = journal,
+            mainExecutor = main,
+            mainCallbackTimeoutMillis = 50L,
+            poll = { _, _, _, _ -> FrameCompanionPollResult.Success(commandEnvelope()) },
+            onCommand = { _, _ ->
+                commandCalls.incrementAndGet()
+                TouchCompanionController.CommandResult.Applied()
+            },
+        )
+        try {
+            controller.setEnabled(true)
+            controller.start()
+            assertTrue(main.queued.await(2, TimeUnit.SECONDS))
+            Thread.sleep(150)
+            main.runQueued()
+
+            assertEquals(0, commandCalls.get())
+            assertEquals(listOf("11111111-1111-1111-1111-111111111111"), journal.claimed)
+            assertTrue("timed-out dispatch has no acknowledgement", journal.acknowledged.isEmpty())
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
     fun `stop makes an in-flight command stale before it can dispatch`() {
         val scheduler = ScheduledThreadPoolExecutor(1)
         val pollEntered = CountDownLatch(1)
@@ -98,14 +163,17 @@ class TouchCompanionControllerTest {
         scheduler: ScheduledThreadPoolExecutor,
         journal: RecordingJournal = RecordingJournal(),
         poll: (FrameCompanionCredentials, FrameRemoteStatus, List<FrameRemoteAck>, String?) -> FrameCompanionPollResult,
+        mainExecutor: Executor = Executor { it.run() },
+        mainCallbackTimeoutMillis: Long = 2_000L,
         onCommand: (com.wyattfleming.frameos.control.FrameRemoteCommand, Long) -> TouchCompanionController.CommandResult = { _, _ -> TouchCompanionController.CommandResult.Applied() },
     ): TouchCompanionController = TouchCompanionController.forTest(
         credentials = { FrameCompanionCredentials(requireNotNull(FrameRemoteEndpoint.from("https://companion.example")), "token", "touch-frame") },
         journal = journal,
         poll = poll,
-        mainExecutor = Executor { it.run() },
+        mainExecutor = mainExecutor,
         scheduler = scheduler,
         nowMillis = { 1_000L },
+        mainCallbackTimeoutMillis = mainCallbackTimeoutMillis,
         statusProvider = {
             FrameRemoteStatus(FrameMode.HOME, false, null, null, 0, null, false, "test")
         },
@@ -118,6 +186,28 @@ class TouchCompanionControllerTest {
           "issuedAt":1000,"expiresAt":2000,"type":"show_mode","mode":"PHOTOS"
         }]}
     """.trimIndent()
+
+    private class FirstInlineThenQueueExecutor : Executor {
+        private var calls = 0
+        private val queuedActions = ArrayDeque<Runnable>()
+        val queued = CountDownLatch(1)
+
+        override fun execute(command: Runnable) {
+            if (calls++ == 0) {
+                command.run()
+            } else {
+                synchronized(queuedActions) { queuedActions.addLast(command) }
+                queued.countDown()
+            }
+        }
+
+        fun runQueued() {
+            val next = synchronized(queuedActions) {
+                if (queuedActions.isEmpty()) null else queuedActions.removeFirst()
+            }
+            next?.run()
+        }
+    }
 
     private class RecordingJournal : TouchCompanionController.CommandJournal {
         val claimed = mutableListOf<String>()
