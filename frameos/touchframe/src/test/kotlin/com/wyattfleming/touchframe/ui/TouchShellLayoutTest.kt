@@ -34,7 +34,8 @@ class TouchShellLayoutTest {
         val source = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayout.kt").readText()
 
         assertTrue(source.contains("private val railViewport = ScrollView(context).apply {\n        isFillViewport = true\n    }"))
-        assertTrue(source.contains("railViewport.addView(rail, ScrollView.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))"))
+        assertTrue(source.contains("railViewport.addView(rail, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))"))
+        assertFalse(source.contains("ScrollView.LayoutParams"))
         assertTrue(source.contains("const val RAIL_BUTTON_HEIGHT_DP = 68"))
         assertTrue(source.contains("LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(RAIL_BUTTON_HEIGHT_DP))"))
     }

@@ -352,7 +352,7 @@ try:
     )
     rail_viewport_red = mutate(
         "rail-scroll-viewport-red", "shell",
-        "railViewport.addView(rail, ScrollView.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))",
+        "railViewport.addView(rail, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))",
         "addView(rail, LayoutParams(dp(80), LayoutParams.MATCH_PARENT, Gravity.START))",
         {"short rails attach through a fill viewport"},
     )
