@@ -24,7 +24,7 @@ xml_names={name:'TEST-'+value+'.xml' for name,value in classes.items()}
 for path in (source,*tests.values()):
     if not path.is_file() or path.is_symlink(): raise RuntimeError(f'missing regular file: {path}')
 original=source.read_bytes(); source_hash=hashlib.sha256(original).hexdigest(); test_hashes={name:hashlib.sha256(path.read_bytes()).hexdigest() for name,path in tests.items()}
-base=['./gradlew','--no-daemon','--max-workers=2','-PframeosTarget=legacyArmv7',':app:testDebugUnitTest']
+base=['./gradlew','--no-daemon','--max-workers=2','--rerun-tasks','-PframeosTarget=legacyArmv7',':app:testDebugUnitTest']
 
 def run(name,label,failures):
     if report.exists(): shutil.rmtree(report)
