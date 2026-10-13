@@ -108,6 +108,12 @@ detail_red = prove_mutation(
     "week-calendar-detail-bound-source-red",
     "boundsSelectedDayDetailsToTwelveEventsAndReportsTheVisibleRange",
 )
+default_mode_red = prove_mutation(
+    "val DEFAULT_MODE: TouchCalendarMode = TouchCalendarMode.WEEK",
+    "val DEFAULT_MODE: TouchCalendarMode = TouchCalendarMode.AGENDA",
+    "week-calendar-default-mode-source-red",
+    "startsInWeekModeForTouchCalendar",
+)
 green = run("week-calendar-restored-green", 0, set())
 assert green["exit"] == 0
 assert digest(source) == source_hash
@@ -117,7 +123,7 @@ assert digest(test) == test_hash
     "target": args.target,
     "source_sha256": source_hash,
     "unchanged_test_sha256": test_hash,
-    "negative_mutations": [preview_red, detail_red],
+    "negative_mutations": [preview_red, detail_red, default_mode_red],
     "restored_green": green,
 }, indent=2) + "\n")
 print("Week calendar overflow/detail source-only red / exact restore green verified")
