@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Runs only in an admitted NAS Android job. It builds TouchFrame, never signs or installs it.
+set -euo pipefail
+
+readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly frameos_dir="$root_dir/frameos"
+readonly work_dir="$root_dir/.nas-touchframe-android"
+readonly report_dir="$root_dir/reports/touchframe-android"
+readonly log_file="$report_dir/validation.log"
+readonly raw_log="$work_dir/validation.raw.log"
+readonly sdk_dir="$work_dir/sdk"
+readonly base_sdk_dir="${ANDROID_SDK_ROOT:?admitted Android SDK root is required}"
+readonly sdk_report="$report_dir/sdk-bootstrap.json"
+readonly manifest="$work_dir/transport-source-manifest.json"
+readonly artifact_receipt="$report_dir/artifacts.json"
+readonly report_zip="$root_dir/reports/touchframe-android-validation.zip"
+readonly touch_apk="$frameos_dir/touchframe/build/outputs/apk/release/touchframe-release-unsigned.apk"
+readonly touch_mapping="$frameos_dir/touchframe/build/outputs/mapping/release/mapping.txt"
+
+mkdir -p "$work_dir/tmp" "$work_dir/gradle-home" "$report_dir"
+export TMPDIR="$work_dir/tmp"
+export GRADLE_USER_HOME="$work_dir/gradle-home"
+export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Djava.io.tmpdir=$TMPDIR"
+
+[[ -x "$frameos_dir/gradlew" && -f "$frameos_dir/touchframe/build.gradle.kts" && -f "$root_dir/scripts/verify-touchframe-proof.py" ]] || {
+  printf 'TouchFrame Gradle project or proof harness is missing\n' >&2; exit 66;
+}
+command -v python3 >/dev/null && command -v curl >/dev/null && command -v unzip >/dev/null && command -v sha256sum >/dev/null || {
+  printf 'admitted Android image lacks python3, curl, unzip, or sha256sum\n' >&2; exit 69;
+}
+
+bootstrap_api37_sdk() {
+  local platform_url='https://dl.google.com/android/repository/platform-37.0_r02.zip'
+  local platform_sha='840b23e827f96e64aea4c89a1194aac3dc5f6bad37edb231c5c795d890330e8d'
+  local tools_url='https://dl.google.com/android/repository/build-tools_r37_linux.zip'
+  local tools_sha='01af179347cbcd9c208b7f8171f7b21f6dd1d2f85bcd15e88caa51d5d7b86060'
+  [[ -r "$base_sdk_dir/licenses/android-sdk-license" && -d "$base_sdk_dir/platforms/android-36" && -d "$base_sdk_dir/build-tools/36.0.0" ]] || {
+    printf 'admitted Android SDK lacks reviewed API36 bootstrap inputs\n' >&2; exit 69;
+  }
+  mkdir -p "$sdk_dir/platforms" "$sdk_dir/build-tools"
+  cp -a "$base_sdk_dir/licenses" "$sdk_dir/licenses"
+  cp -a "$base_sdk_dir/platforms/android-36" "$sdk_dir/platforms/android-36"
+  cp -a "$base_sdk_dir/build-tools/36.0.0" "$sdk_dir/build-tools/36.0.0"
+  cp -a "$base_sdk_dir/platform-tools" "$sdk_dir/platform-tools"
+  curl --fail --location --silent --show-error --output "$work_dir/tmp/platform.zip" "$platform_url"
+  printf '%s  %s\n' "$platform_sha" "$work_dir/tmp/platform.zip" | sha256sum --check --strict
+  curl --fail --location --silent --show-error --output "$work_dir/tmp/tools.zip" "$tools_url"
+  printf '%s  %s\n' "$tools_sha" "$work_dir/tmp/tools.zip" | sha256sum --check --strict
+  unzip -q "$work_dir/tmp/platform.zip" -d "$sdk_dir/platforms"
+  unzip -q "$work_dir/tmp/tools.zip" -d "$sdk_dir/build-tools"
+  mv "$sdk_dir/build-tools/android-37.0" "$sdk_dir/build-tools/37.0.0"
+  [[ -f "$sdk_dir/platforms/android-37.0/android.jar" && -f "$sdk_dir/build-tools/37.0.0/aapt2" ]] || {
+    printf 'pinned API37 bootstrap layout is incomplete\n' >&2; exit 69;
+  }
+  python3 - "$sdk_dir" "$sdk_report" "$platform_url" "$platform_sha" "$tools_url" "$tools_sha" <<'PY'
+import hashlib,json,sys
+from pathlib import Path
+sdk,out=map(Path,sys.argv[1:3]); urls=sys.argv[3:]
+def h(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+def props(p): return dict(x.split('=',1) for x in p.read_text().splitlines() if '=' in x)
+platform=props(sdk/'platforms/android-37.0/source.properties'); tools=props(sdk/'build-tools/37.0.0/source.properties')
+if platform.get('AndroidVersion.ApiLevel')!='37.0' or platform.get('Pkg.Revision')!='2': raise SystemExit('wrong API37 platform')
+if tools.get('Pkg.Revision')!='37.0.0': raise SystemExit('wrong build-tools')
+out.write_text(json.dumps({'schema':1,'archives':{'platform':{'url':urls[0],'sha256':urls[1]},'buildTools':{'url':urls[2],'sha256':urls[3]}},'androidJar':h(sdk/'platforms/android-37.0/android.jar'),'aapt2':h(sdk/'build-tools/37.0.0/aapt2')},indent=2,sort_keys=True)+'\n')
+PY
+}
+
+run_step() { local name="$1"; shift; printf '\n== %s ==\n' "$name" | tee -a "$raw_log"; "$@" 2>&1 | tee -a "$raw_log"; }
+bootstrap_api37_sdk
+export ANDROID_SDK_ROOT="$sdk_dir" ANDROID_HOME="$sdk_dir"
+
+python3 - "$root_dir" "$manifest" <<'PY'
+import hashlib,json,sys
+from pathlib import Path
+root,out=map(Path,sys.argv[1:]); excluded={'.git','.nas-touchframe-android','reports'}
+files={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file() and p.relative_to(root).parts[0] not in excluded}
+payload={'schema':1,'files':files}; payload['sha256']=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest(); out.write_text(json.dumps(payload,indent=2,sort_keys=True)+'\n')
+PY
+
+run_step touchframe-source-proof python3 "$root_dir/scripts/verify-touchframe-proof.py" "$root_dir"
+run_step touchframe-shared-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :frame-shared:testDebugUnitTest"
+run_step touchframe-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:testDebugUnitTest"
+run_step touchframe-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:lintRelease"
+run_step touchframe-assemble-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:assembleRelease"
+
+[[ -f "$touch_apk" && -f "$touch_mapping" ]] || { printf 'missing TouchFrame unsigned APK or mapping\n' >&2; exit 72; }
+python3 - "$root_dir" "$artifact_receipt" "$manifest" "$sdk_report" "$touch_apk" "$touch_mapping" <<'PY'
+import hashlib,json,sys
+from pathlib import Path
+root,out,manifest,sdk,*artifacts=map(Path,sys.argv[1:])
+def item(p): return {'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size,'signing':'unsigned'}
+out.write_text(json.dumps({'schema':1,'transportSourceManifest':json.loads(manifest.read_text()),'sdkBootstrap':json.loads(sdk.read_text()),'artifacts':{p.relative_to(root).as_posix():item(p) for p in artifacts}},indent=2,sort_keys=True)+'\n')
+PY
+python3 - "$raw_log" "$log_file" <<'PY'
+import re,sys
+from pathlib import Path
+source,dest=map(Path,sys.argv[1:]); text=source.read_text(errors='replace')
+dest.write_text(re.sub(r'(?i)\b(authorization|password|token|secret)\b(\s*[:=]\s*)\S+',r'\1\2[REDACTED]',text))
+PY
+python3 - "$root_dir" "$report_zip" <<'PY'
+import sys,zipfile
+from pathlib import Path
+root,out=map(Path,sys.argv[1:]); include=[root/'reports/touchframe-android',root/'frameos/touchframe/build/reports',root/'frameos/touchframe/build/test-results',root/'frameos/frame-shared/build/reports',root/'frameos/frame-shared/build/test-results']
+with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
+ for base in include:
+  if base.exists():
+   for p in sorted(base.rglob('*')):
+    if p.is_file() and p.suffix in {'.html','.json','.txt','.xml','.log'}: z.write(p,p.relative_to(root))
+PY
+printf 'TouchFrame NAS validation passed\n' | tee -a "$log_file"

@@ -36,6 +36,21 @@ class TouchHomeParserTest {
     }
 
     @Test
+    fun `calendar parser skips invalid time order and accepts offset date-time`() {
+        val events = parser.parseCalendarEvents(
+            "calendar.family",
+            """[
+              {"summary":"Invalid","start":{"dateTime":"2026-10-14T14:00:00-07:00"},"end":{"dateTime":"2026-10-14T13:00:00-07:00"}},
+              {"summary":"Offset","start":{"dateTime":"2026-10-14T13:00:00-07:00"},"end":{"dateTime":"2026-10-14T14:00:00-07:00"}}
+            ]""",
+            Instant.parse("2026-10-12T00:00:00Z"),
+            ZoneOffset.UTC,
+        )
+        assertEquals(listOf("Offset"), events.map { it.title })
+        assertEquals(Instant.parse("2026-10-14T20:00:00Z").toEpochMilli(), events.single().endEpochMillis)
+    }
+
+    @Test
     fun `calendar parser bounds malformed and excessive records`() {
         val body = buildString {
             append('[')
