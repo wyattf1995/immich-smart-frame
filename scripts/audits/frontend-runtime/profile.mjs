@@ -45,7 +45,7 @@ function instrument() {
   requestAnimationFrame(frame);
   const observe = () => new MutationObserver(records => { for (const r of records) {
     a.mutations.records++; a.mutations.added += r.addedNodes.length; a.mutations.removed += r.removedNodes.length;
-    if (r.target.id === 'activityBars' || r.target.classList?.contains('activity-bars')) a.mutations.activityAdded += r.addedNodes.length;
+    if (r.target.id === 'activityStrip' || r.target.classList?.contains('activity-bars')) a.mutations.activityAdded += r.addedNodes.length;
   }}).observe(document.documentElement, { subtree: true, childList: true });
   if (document.documentElement) observe(); else document.addEventListener('DOMContentLoaded', observe, { once: true });
 }
@@ -100,7 +100,9 @@ async function action(page, kind, iteration) {
     else if (iteration % 4 === 2) await page.locator('[data-adjust="temperature:-1"]').click();
     else if (await page.locator('[data-cancel]').isEnabled()) await page.locator('[data-cancel]').click();
   } else if (kind === 'art') {
+    const beforeSrc = await page.locator('.artwork').getAttribute('src');
     await page.locator('.art-shell').press(iteration % 5 === 4 ? 'ArrowLeft' : 'ArrowRight');
+    await page.waitForFunction(before => { const image = document.querySelector('.artwork'); return image?.complete && image.naturalWidth > 0 && image.getAttribute('src') !== before; }, beforeSrc);
   } else if (kind === 'companion') {
     const operation = iteration % 5;
     if (operation === 0) await page.locator('#frameSelect').selectOption(iteration % 2 ? 'fixture-main' : 'fixture-2');
@@ -109,7 +111,7 @@ async function action(page, kind, iteration) {
     if (operation === 3) { await page.locator('#pause').click(); }
     if (operation === 4) { await page.locator('#quietEnabled').check(); await page.locator('#settings button[type="submit"]').click(); }
   } else if (kind === 'birds') {
-    const periods = page.locator('[data-species-period]'); if (await periods.count()) await periods.nth(iteration % (await periods.count())).click();
+    const periods = page.locator('[data-species-period]'); if (await periods.count() !== 3) throw Error('Bird period controls missing'); if (await periods.count()) await periods.nth(iteration % (await periods.count())).click();
     const filters = page.locator('[data-review-filter]'); if (await filters.count()) await filters.nth(iteration % (await filters.count())).click();
     await page.mouse.wheel(0, iteration % 2 ? -500 : 500);
   }
@@ -117,6 +119,8 @@ async function action(page, kind, iteration) {
 async function measure(page, cdp, kind, label, seconds, options = {}) {
   log(`MEASURE ${label} ${seconds}s`);
   await page.bringToFront(); await page.evaluate(() => scrollTo(0, 0));
+  const fixtureBefore = kind === 'birds' || kind === 'companion' ? await page.evaluate(async () => (await fetch('/fixture/config')).json()) : null;
+  const workloadBefore = await page.evaluate(() => ({ preferences: document.querySelectorAll('#preferences li').length, choicesClosed: !document.querySelector('#preferences')?.closest('details')?.open, artwork: document.querySelector('.artwork')?.getAttribute('src'), species: document.querySelectorAll('#speciesGrid > *').length, audioMeterWidth: document.querySelector('#audioMeterLevel')?.style.width }));
   const before = await snapshot(cdp, `${label}-before`);
   await resetObserver(page); if (options.trace) await startTrace(cdp);
   const beforeMetrics = await cdpMetrics(cdp), start = Date.now(), actions = [];
@@ -133,7 +137,11 @@ async function measure(page, cdp, kind, label, seconds, options = {}) {
   const afterMetrics = await cdpMetrics(cdp);
   const trace = options.trace ? await endTrace(cdp, label) : null;
   const after = await snapshot(cdp, `${label}-after`);
-  const record = { kind, label, secondsRequested: seconds, elapsedMs, actions, observed, beforeMetrics, afterMetrics, before, after, trace,
+  const fixtureAfter = fixtureBefore ? await page.evaluate(async () => (await fetch('/fixture/config')).json()) : null;
+  const homeFixture = kind === 'home' ? await page.frames().find(f => f.url().includes('/frameos-touchscreen/home')).evaluate(() => ({ ...window.__fixture.counters, churn: window.__fixture.getStatesIdentityChurn() })) : null;
+  if (label.includes('churn') && (!homeFixture.churn || homeFixture.stateIdentityReplacements < 1)) throw Error('Home identity churn did not execute');
+  if (kind === 'birds' && fixtureAfter.audioEvents.total - fixtureBefore.audioEvents.total < seconds * (label.includes('20hz') ? 10 : 1)) throw Error('Bird audio delivery was not exercised');
+  const record = { fixtureBefore, fixtureAfter, homeFixture, workloadBefore, kind, label, secondsRequested: seconds, elapsedMs, actions, observed, beforeMetrics, afterMetrics, before, after, trace,
     longTaskCount: observed.longTasks.length, blockingMs: observed.longTasks.reduce((sum, x) => sum + Math.max(0, x.duration - 50), 0),
     heapGrowthBytes: after.metrics.heap.usedSize - before.metrics.heap.usedSize };
   result.measurements.push(record); await save(`${label}.json`, record); await save('results.partial.json', result);
@@ -163,7 +171,10 @@ try {
   await pages.home.page.locator('#custom-home:not([hidden]) [data-adjust="temperature:1"]').waitFor({ timeout: 20000 });
   await pages.art.page.locator('.artwork').waitFor();
   await pages.companion.page.locator('#preferences li').first().waitFor();
-  await pages.birds.page.locator('#speciesGrid').waitFor();
+  await pages.birds.page.locator('#speciesGrid > *').first().waitFor();
+  await pages.birds.page.waitForFunction(() => parseFloat(document.querySelector('#audioMeterLevel')?.style.width) > 0);
+  const artCollection = await context.request.get(base + '/art/collection.json');
+  if ((await artCollection.json()).artworks.length !== 200) throw Error('Art collection cardinality mismatch');
   for (const kind of ['home', 'art', 'companion', 'birds']) {
     for (let i = 0; i < 5; i++) { await action(pages[kind].page, kind, i); await sleep(300); }
     await pages[kind].page.screenshot({ path: join(output, `${kind}-smoke.png`), fullPage: false });
@@ -180,10 +191,13 @@ try {
     } else if (kind === 'birds') {
       await context.request.post(base + '/fixture/config', { data: { audioHz: 20, summaryCount: 500, recentCount: 500 } });
       await page.reload({ waitUntil: 'domcontentloaded' }); await sleep(2000);
+      await page.waitForFunction(() => parseFloat(document.querySelector('#audioMeterLevel')?.style.width) > 0);
       await measure(page, cdp, kind, 'birds-stress-20hz-30s', 30, { trace: true });
       await context.request.post(base + '/fixture/config', { data: { audioHz: 2, summaryCount: 200, recentCount: 10 } });
     } else if (kind === 'home') {
-      await page.frames().find(f => f.url().includes('/frameos-touchscreen/home'))?.evaluate(() => { if (window.__fixture) { window.__fixture.setStatesIdentityChurn(true); } });
+      const homeFrame = page.frames().find(f => f.url().includes('/frameos-touchscreen/home'));
+      if (!homeFrame) throw Error('Home fixture iframe missing');
+      await homeFrame.evaluate(() => { window.__fixture.setStatesIdentityChurn(true); if (!window.__fixture.getStatesIdentityChurn()) throw Error('Churn not enabled'); });
       await measure(page, cdp, kind, 'home-state-churn-30s', 30, { trace: true });
     } else {
       await measure(page, cdp, kind, 'art-continuous-125s', 125, { trace: false });
