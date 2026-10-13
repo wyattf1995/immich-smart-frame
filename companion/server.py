@@ -373,7 +373,12 @@ class FrameStore:
                             output.write(json.dumps(preference['asset'])+':'+json.dumps(preference['preference']))
                         output.write('}}')
                     output.write('}}')
-                os.replace(temp,self.preferences_export)
+                # Streaming does not hold the lifecycle lock. Publication and
+                # close share this short fence so a delayed exporter cannot
+                # replace the mounted snapshot after shutdown has completed.
+                with self.export_retry_lock:
+                    if self.closed: return False
+                    os.replace(temp,self.preferences_export)
                 # A crash after replace but before this transaction simply leaves
                 # the durable revision dirty; startup safely exports again.
                 try:
