@@ -50,7 +50,7 @@ class TouchMediaLoadStateTest {
 
     @Test
     fun successfulNavigationWaitsForContentfulPaintBeforeRemovingTheCover() {
-        val source = File("src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt").readText()
+        val source = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt").readText()
 
         assertTrue(source.contains("if (!success) reportFailure(session, context.getString(R.string.touch_media_load_failed, label))"))
         assertTrue(source.contains("override fun onFirstContentfulPaint(session: GeckoSession) = reportReady(session)"))
