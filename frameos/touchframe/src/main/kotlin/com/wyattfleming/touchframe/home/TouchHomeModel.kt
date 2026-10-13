@@ -1,4 +1,4 @@
-package com.wyattfleming.frameos.home
+package com.wyattfleming.touchframe.home
 
 /**
  * Caller-owned, native Home snapshot. Empty or null values are represented by

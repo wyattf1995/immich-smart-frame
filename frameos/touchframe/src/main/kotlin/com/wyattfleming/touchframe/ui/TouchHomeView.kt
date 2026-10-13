@@ -1,7 +1,9 @@
-package com.wyattfleming.frameos.ui
+package com.wyattfleming.touchframe.ui
 
 import android.content.Context
+import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.Gravity
@@ -10,10 +12,10 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import com.wyattfleming.frameos.home.TouchCalendarEvent
-import com.wyattfleming.frameos.home.TouchClimate
-import com.wyattfleming.frameos.home.TouchConnection
-import com.wyattfleming.frameos.home.TouchHomeModel
+import com.wyattfleming.touchframe.home.TouchCalendarEvent
+import com.wyattfleming.touchframe.home.TouchClimate
+import com.wyattfleming.touchframe.home.TouchConnection
+import com.wyattfleming.touchframe.home.TouchHomeModel
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -50,7 +52,7 @@ class TouchHomeView private constructor(
 
     private var model: TouchHomeModel? = null
     private var nowMillis: Long = System.currentTimeMillis()
-    private var style = TouchDashboardStyle.forHour(hourAt(nowMillis))
+    private var style = HomeStyle.forHour(hourAt(nowMillis))
     private var draftTarget: Double? = null
     private var draftDirty = false
     private var climateBusy = false
@@ -86,7 +88,7 @@ class TouchHomeView private constructor(
     /** Updates the retained clock nodes; only a day/night transition rebuilds cards. */
     fun tick(nowMillis: Long) {
         this.nowMillis = nowMillis
-        val nextStyle = TouchDashboardStyle.forHour(hourAt(nowMillis))
+        val nextStyle = HomeStyle.forHour(hourAt(nowMillis))
         if (nextStyle != style) {
             style = nextStyle
             rebuild()
@@ -320,6 +322,11 @@ class TouchHomeView private constructor(
         background = style.card(context.dp(20).toFloat())
     }
 
+    private fun View.applyMinimumTouchTarget() {
+        minimumHeight = context.dp(56)
+        minimumWidth = context.dp(56)
+    }
+
     private fun button(label: String, size: Float, enabled: Boolean = true, action: () -> Unit): TextView = TextView(context).apply {
         text = label
         gravity = Gravity.CENTER
@@ -327,7 +334,7 @@ class TouchHomeView private constructor(
         isFocusable = enabled
         isEnabled = enabled
         alpha = if (enabled) 1f else 0.45f
-        minimumTouchTarget(context)
+        applyMinimumTouchTarget()
         background = style.card(context.dp(14).toFloat())
         setPadding(context.dp(12), 0, context.dp(12), 0)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, size)
@@ -398,6 +405,43 @@ class TouchHomeView private constructor(
     )
 
     private data class Typography(val body: Float, val small: Float, val clock: Float)
+
+    private data class HomeStyle(
+        val background: Int,
+        val surface: Int,
+        val ink: Int,
+        val muted: Int,
+        val outline: Int,
+    ) {
+        fun card(radius: Float) = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(surface)
+            setStroke(1, outline)
+            cornerRadius = radius
+        }
+
+        companion object {
+            fun forHour(hour: Int): HomeStyle = if (hour in 7..18) {
+                HomeStyle(
+                    background = Color.rgb(244, 240, 230),
+                    surface = Color.rgb(255, 253, 247),
+                    ink = Color.rgb(20, 39, 65),
+                    muted = Color.rgb(88, 103, 116),
+                    outline = Color.rgb(216, 211, 199),
+                )
+            } else {
+                HomeStyle(
+                    background = Color.rgb(13, 29, 49),
+                    surface = Color.rgb(23, 45, 69),
+                    ink = Color.rgb(247, 244, 235),
+                    muted = Color.rgb(184, 197, 204),
+                    outline = Color.rgb(54, 79, 99),
+                )
+            }
+        }
+    }
+
+    private fun Context.dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private companion object {
         const val LARGE_LANDSCAPE_DP = 900f
