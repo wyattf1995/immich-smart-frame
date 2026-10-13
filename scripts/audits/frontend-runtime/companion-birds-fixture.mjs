@@ -84,7 +84,7 @@ function preferenceRows(count) {
   return Array.from({ length: count }, (_, index) => ({ assetId: `${String(index + 1).padStart(8, '0')}-1111-4111-8111-111111111111`, preference: index % 3 === 0 ? 'hide' : index % 3 === 1 ? 'less' : 'more', updated: Date.now() - index * 1_000 }));
 }
 function resetFixtureState() {
-  fixtureState = { devices: companionDevices(), preferences: preferenceRows(config.preferences), requests: {}, commandId: 0 };
+  fixtureState = { devices: companionDevices(), preferences: preferenceRows(config.preferences), requests: {}, commandId: 0, audioEvents: { total: 0, byHz: { 0: 0, 2: 0, 20: 0 } } };
 }
 function ensureFixtureState() { if (!fixtureState) resetFixtureState(); return fixtureState; }
 function countRequest(method, path) {
@@ -103,11 +103,19 @@ function startSse(req, res, audio) {
   res.write(': synthetic fixture\n\n');
   if (!audio || config.audioHz === 0) return;
   let tick = 0;
-  const emit = () => res.write(`event: audio-level\ndata: ${JSON.stringify(audioPayload(tick++))}\n\n`);
+  let timer = null;
+  const stop = () => { if (timer) { clearInterval(timer); sseTimers.delete(timer); } };
+  const emit = () => {
+    try {
+      res.write(`event: audio-level\ndata: ${JSON.stringify(audioPayload(tick++))}\n\n`);
+      const events=ensureFixtureState().audioEvents;
+      events.total += 1;
+      events.byHz[String(config.audioHz)] += 1;
+    } catch { stop(); }
+  };
   emit();
-  const timer = setInterval(emit, Math.round(1_000 / config.audioHz));
+  timer = setInterval(emit, Math.round(1_000 / config.audioHz));
   sseTimers.add(timer);
-  const stop = () => { clearInterval(timer); sseTimers.delete(timer); };
   req.once('close', stop); res.once('close', stop);
 }
 async function readPage(repoRoot, relative) {
@@ -130,7 +138,7 @@ async function configure(req, res) {
     summaryCount: clampInt(patch.summaryCount, config.summaryCount, 0, 500),
   };
   resetFixtureState();
-  return json(res, { config, requests: fixtureState.requests, metadata: fixtureMetadata });
+  return json(res, { config, requests: fixtureState.requests, audioEvents: { total: 0, configuredHz: config.audioHz, atConfiguredHz: 0, byHz: fixtureState.audioEvents.byHz }, metadata: fixtureMetadata });
 }
 
 /** Return true only when this local fixture handled the request. */
@@ -141,7 +149,10 @@ export async function handleCompanionBirds(req, res, url, repoRoot) {
   if (!localRequest(req)) { json(res, { error: 'fixture accepts localhost only' }, 403); return true; }
   countRequest(req.method || 'GET', path);
   if (path === '/fixture/config') {
-    if (req.method === 'GET') { json(res, { config, requests: ensureFixtureState().requests, metadata: fixtureMetadata }); return true; }
+    if (req.method === 'GET') {
+      const state=ensureFixtureState(); const audio=state.audioEvents;
+      json(res, { config, requests: state.requests, audioEvents: { total: audio.total, configuredHz: config.audioHz, atConfiguredHz: audio.byHz[String(config.audioHz)], byHz: audio.byHz }, metadata: fixtureMetadata }); return true;
+    }
     if (req.method !== 'POST') { json(res, { error: 'POST required' }, 405); return true; }
     await configure(req, res); return true;
   }
