@@ -63,4 +63,11 @@ class TouchCalendarRepositoryTest {
         } finally { worker.shutdownNow() }
     }
 
+    @Test fun `closed repository rejects a range before reading a token`() {
+        val config = TouchConfiguration("https://photos.example", "https://ha.example", "https://ha.example", "weather.home", null, "climate.home", listOf("calendar.one"), emptyList())
+        val repository = TouchCalendarRepository(config, TouchCalendarTokenProvider { throw AssertionError("token must not be read after close") }, HomeAssistantHttpTransport { throw AssertionError("transport must not run") }, ZoneId.of("UTC"))
+        repository.close()
+        assertEquals(TouchCalendarConnection.OFFLINE, repository.load(TouchCalendarRange(LocalDate.of(2026, 10, 12), LocalDate.of(2026, 10, 19))).connection)
+    }
+
 }
