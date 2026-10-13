@@ -77,6 +77,9 @@ import com.wyattfleming.frameos.control.FrameCompanionSettingsDecoder
 import com.wyattfleming.frameos.control.FrameCompanionResponseDecoder
 import com.wyattfleming.frameos.control.FrameCompanionEventDecoder
 import com.wyattfleming.frameos.control.FrameCompanionEventStore
+import com.wyattfleming.frameos.control.FrameCompanionEnvelope
+import com.wyattfleming.frameos.control.FrameCompanionEnvelopeDecoder
+import com.wyattfleming.frameos.control.FrameCompanionSnapshotRevision
 import com.wyattfleming.frameos.control.FramePhotosProfileUrl
 import com.wyattfleming.frameos.photos.FrameSharedPlaybackMetadata
 import com.wyattfleming.frameos.control.FrameRemoteSettings
@@ -115,6 +118,7 @@ import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 
 internal fun isNewManualPhotoStepAsset(previousAssetId: String?, observedAssetId: String): Boolean =
@@ -128,6 +132,7 @@ class MainActivity : Activity() {
     private val modeGestureBurst = ModeGestureBurst()
     private val weatherWorkerExecutor: ExecutorService = Executors.newFixedThreadPool(2)
     private val companionWorkerExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val companionReserveExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val weatherRequestExecutor: ExecutorService = Executors.newFixedThreadPool(3)
     private val authorizationExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val secureRandom = SecureRandom()
@@ -225,6 +230,8 @@ class MainActivity : Activity() {
     private var bootRecoveryConfirmed = false
     private var companionPollInFlight = false
     private var companionPollGeneration = 0L
+    private var companionSnapshotRevision: String? = null
+    private val companionReserveToken = AtomicLong(0L)
     private val pollCompanion = Runnable { pollCompanion() }
     private val refreshQuietHours = Runnable {
         if (activityResumed) applyBrightness(state.brightnessOverridePercent)
@@ -439,6 +446,7 @@ class MainActivity : Activity() {
         cancelHomeAssistantWork(stage = "activity_destroy", clearPendingAuthorizationCode = true)
         weatherWorkerExecutor.shutdownNow()
         companionWorkerExecutor.shutdownNow()
+        companionReserveExecutor.shutdownNow()
         cancelPhotoWork()
         hideOfflinePhoto()
         photoWorkerExecutor.shutdownNow()
@@ -1376,13 +1384,18 @@ class MainActivity : Activity() {
             offlineAssets = reserveStatus.offlineAssets,
             offlineBytes = reserveStatus.offlineBytes,
         )
+        val sentSnapshotRevision = FrameCompanionSnapshotRevision.forRequest(companionSnapshotRevision)
         companionWorkerExecutor.submit {
             val pendingAcks = FrameCompanionCommandStore(this).consumeAcks()
             val result = FrameCompanionClient(credentials.endpoint, credentials.token).poll(
                 credentials.deviceId,
                 status,
                 pendingAcks,
+                sentSnapshotRevision,
             )
+            val envelope = (result as? com.wyattfleming.frameos.control.FrameCompanionPollResult.Success)?.let {
+                FrameCompanionEnvelopeDecoder.decode(it.body, credentials.deviceId, System.currentTimeMillis(), sentSnapshotRevision)
+            }
             handler.post {
                 companionPollInFlight = false
                 if (
@@ -1395,27 +1408,17 @@ class MainActivity : Activity() {
                     scheduleCompanionPoll()
                     return@post
                 }
-                if (
-                    result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success &&
-                    FrameCompanionResponseDecoder.isForDevice(result.body, credentials.deviceId)
-                ) {
-                    FrameCompanionCommandStore(this).clearAcks(pendingAcks)
-                    FrameCompanionSettingsDecoder.decode(result.body)?.let(::applyCompanionSettings)
-                    applyHiddenPhotoSnapshot(result.body)
-                    maybeShowCompanionEvent(result.body)
-                    FrameCompanionCommandDecoder.decode(result.body, System.currentTimeMillis())?.let { command ->
-                        val store = FrameCompanionCommandStore(this)
-                        if (store.claim(command.id)) {
-                            store.ack(command.id, applyCompanionCommand(command))
-                        }
-                    }
-                }
+                if (envelope != null) applyCompanionEnvelope(envelope, pendingAcks)
                 scheduleCompanionPoll(if (result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success) 5_000L else 10_000L)
             }
         }
     }
 
     private fun invalidateCompanionPoll() {
+        // Retire queued reserve changes before changing the lifecycle generation. A task
+        // that already crossed reserve's guarded commit boundary completes atomically.
+        companionReserveToken.incrementAndGet()
+        companionSnapshotRevision = null
         companionPollGeneration += 1
     }
 
@@ -1432,6 +1435,45 @@ class MainActivity : Activity() {
             configuration = updated
             invalidateCompanionPoll()
             rebuildExperienceUi()
+        }
+    }
+
+    private fun applyCompanionEnvelope(envelope: FrameCompanionEnvelope, pendingAcks: List<com.wyattfleming.frameos.control.FrameRemoteAck>) {
+        FrameCompanionCommandStore(this).clearAcks(pendingAcks)
+        when (envelope) {
+            is FrameCompanionEnvelope.Unchanged -> Unit
+            is FrameCompanionEnvelope.Full -> {
+                envelope.settings?.let(::applyCompanionSettings)
+                envelope.event?.let(::maybeShowCompanionEvent)
+                envelope.command?.let { command ->
+                    val store = FrameCompanionCommandStore(this)
+                    if (store.claim(command.id)) store.ack(command.id, applyCompanionCommand(command))
+                }
+                val hiddenAssets = envelope.hiddenAssets
+                if (hiddenAssets == null) {
+                    companionSnapshotRevision = envelope.snapshotRevision
+                } else {
+                    applyHiddenPhotoSnapshot(hiddenAssets, envelope.snapshotRevision)
+                }
+            }
+        }
+    }
+
+    /** Queued reserve work is rejected after invalidation; accepted disk work is atomic. */
+    private fun applyHiddenPhotoSnapshot(ids: Set<String>, revision: String?) {
+        val token = companionReserveToken.incrementAndGet()
+        companionReserveExecutor.submit {
+            val applied = photoReserve.applyHiddenAssets(ids) { companionReserveToken.get() == token }
+            handler.post {
+                if (companionReserveToken.get() != token || !applied) return@post
+                companionSnapshotRevision = revision
+                if (currentPhotoAssetId?.lowercase(Locale.ROOT) in ids) {
+                    currentPhotoAssetId = null
+                    if (state.mode == FrameMode.PHOTOS) {
+                        if (photoFallbackPolicy.isShowing) showOfflinePhoto(manual = true) else movePhoto(true)
+                    }
+                }
+            }
         }
     }
 
@@ -1457,10 +1499,13 @@ class MainActivity : Activity() {
     }
 
     private fun maybeShowCompanionEvent(payload: String) {
+        FrameCompanionEventDecoder.decode(payload, System.currentTimeMillis())?.let(::maybeShowCompanionEvent)
+    }
+
+    private fun maybeShowCompanionEvent(event: com.wyattfleming.frameos.control.FrameCompanionEvent) {
         if (!experienceSettings.eventOverlaysEnabled || state.mode != FrameMode.PHOTOS || state.photosPaused) return
         if (experienceSettings.quietHours?.isActiveAt(LocalTime.now()) == true) return
         val now = System.currentTimeMillis()
-        val event = FrameCompanionEventDecoder.decode(payload, now) ?: return
         if (!FrameCompanionEventStore(this).claim(event.id, now)) return
         showHud(event.text)
         handler.removeCallbacks(hideHud)

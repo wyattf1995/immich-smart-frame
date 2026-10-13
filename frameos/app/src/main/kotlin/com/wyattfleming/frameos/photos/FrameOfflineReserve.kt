@@ -176,8 +176,8 @@ class FrameOfflineReserve(
 
     /** Replaces the current scoped snapshot and removes any now-hidden persisted photos. */
     @Synchronized
-    fun applyHiddenAssets(assetIds: Set<String>): Boolean {
-        if (scope == null || assetIds.size > MAX_HIDDEN_ASSETS || assetIds.any { !FRAME_ASSET_ID.matches(it) }) return false
+    fun applyHiddenAssets(assetIds: Set<String>, canCommit: () -> Boolean = { true }): Boolean {
+        if (scope == null || assetIds.size > MAX_HIDDEN_ASSETS || assetIds.any { !FRAME_ASSET_ID.matches(it) } || !canCommit()) return false
         hiddenAssets = assetIds.mapTo(linkedSetOf()) { it.lowercase() }
         removeHiddenEntries()
         writeScope()
