@@ -194,12 +194,15 @@ class TouchMediaView(
      * Later active crashes remain visible and require the explicit Retry action.
      */
     private fun reopenAndLoad(url: String) {
-        session?.let(offlinePhotos::detach)
-        session?.let { current ->
+        val replaced = session
+        replaced?.let(offlinePhotos::detach)
+        // Gecko can synchronously emit teardown callbacks. Clear the identity
+        // fence before release/close so an old session cannot re-arm recovery.
+        session = null
+        replaced?.let { current ->
             runCatching { geckoView.releaseSession() }
             runCatching { current.close() }
         }
-        session = null
         openSession()
         loadConfiguredUrl(url)
     }
