@@ -187,32 +187,32 @@ def tap_counts(log: Path) -> dict:
 
 
 def js_proof(path: Path, original: bytes, proof: dict) -> None:
-    before = 'reportDiagnostic("htmx_no_content", inspected.fields);'
-    after = 'reportDiagnostic("htmx_error", inspected.fields);'
-    expected_failure = "a no-content Kiosk response keeps capture closed until a later settled response"
+    before = 'if (mutation.type !== "attributes" || !["src", "value", "class", "style"].includes(mutation.attributeName)) return false;'
+    after = 'if (mutation.type !== "attributes" || !["src", "value", "class"].includes(mutation.attributeName)) return false;'
+    expected_failure = "capture ignores progress bar RAF styles but keeps Kiosk visibility mutations"
     baseline = run("js-baseline-green", JS_COMMAND, FRAME, proof)
     baseline_counts = tap_counts(ARTIFACTS / "js-baseline-green.log")
     if baseline["exit"] != 0 or {key: baseline_counts[key] for key in ("tests", "pass", "fail")} != {"tests": EXPECTED_JS_TESTS, "pass": EXPECTED_JS_TESTS, "fail": 0}:
         raise RuntimeError("JavaScript Photos baseline was not green")
     replace_once(path, original, before, after)
     try:
-        red = run("js-204-stage-red", JS_COMMAND, FRAME, proof)
-        red_counts = tap_counts(ARTIFACTS / "js-204-stage-red.log")
+        red = run("js-mutation-filter-stage-red", JS_COMMAND, FRAME, proof)
+        red_counts = tap_counts(ARTIFACTS / "js-mutation-filter-stage-red.log")
         if (
             red["exit"] == 0 or expected_failure not in red_counts["text"] or
             {key: red_counts[key] for key in ("tests", "pass", "fail")} != {"tests": EXPECTED_JS_TESTS, "pass": EXPECTED_JS_TESTS - 1, "fail": 1}
         ):
-            raise RuntimeError("204 diagnostic mutation did not fail the intended Node test")
+            raise RuntimeError("capture mutation filter mutation did not fail the intended Node test")
     finally:
         path.write_bytes(original)
     restored = sha256(path)
     if path.read_bytes() != original:
         raise RuntimeError("JavaScript Photos source was not restored exactly")
-    green = run("js-204-stage-restored-green", JS_COMMAND, FRAME, proof)
-    green_counts = tap_counts(ARTIFACTS / "js-204-stage-restored-green.log")
+    green = run("js-mutation-filter-stage-restored-green", JS_COMMAND, FRAME, proof)
+    green_counts = tap_counts(ARTIFACTS / "js-mutation-filter-stage-restored-green.log")
     if green["exit"] != 0 or {key: green_counts[key] for key in ("tests", "pass", "fail")} != {"tests": EXPECTED_JS_TESTS, "pass": EXPECTED_JS_TESTS, "fail": 0}:
         raise RuntimeError("JavaScript Photos restored source was not green")
-    proof["mutations"]["js_204_diagnostic"] = {
+    proof["mutations"]["js_capture_mutation_filter"] = {
         "source": str(path.relative_to(ROOT)),
         "original_sha256": hashlib.sha256(original).hexdigest(),
         "restored_sha256": restored,
