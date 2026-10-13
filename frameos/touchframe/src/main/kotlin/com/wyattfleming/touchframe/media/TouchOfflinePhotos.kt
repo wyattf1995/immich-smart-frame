@@ -47,8 +47,7 @@ internal class TouchOfflinePhotos(
     private val lifecycle = TouchOfflinePhotoLifecycle()
     @Volatile private var photosActive = false
     @Volatile private var photosPaused = false
-    @Volatile private var configuredPhotosUrl: String? = null
-    @Volatile private var configuredProfile: String? = null
+    private val attachmentIdentity = TouchOfflineAttachmentIdentity()
     @Volatile private var closed = false
     @Volatile private var fallbackGeneration = 0L
     private val attachmentGate = TouchOfflineAttachmentGate()
@@ -57,14 +56,13 @@ internal class TouchOfflinePhotos(
     private var blurredBitmap: Bitmap? = null
 
     fun attach(runtime: GeckoRuntime, target: GeckoSession, photosUrl: String, profile: String, active: Boolean) {
-        if (!closed && session === target && configuredPhotosUrl == photosUrl && configuredProfile == profile) {
+        if (!closed && attachmentIdentity.matches(target, photosUrl, profile)) {
             setActive(active)
             return
         }
         detachCurrent()
         session = target
-        configuredPhotosUrl = photosUrl
-        configuredProfile = profile
+        attachmentIdentity.replace(target, photosUrl, profile)
         lifecycle.attach(target)
         photosActive = active
         lifecycle.setActive(active)
@@ -111,8 +109,7 @@ internal class TouchOfflinePhotos(
         attachmentGate.invalidate()
         bridge.detach(target)
         session = null
-        configuredPhotosUrl = null
-        configuredProfile = null
+        attachmentIdentity.clear()
         hideFallback()
     }
 
@@ -173,8 +170,7 @@ internal class TouchOfflinePhotos(
         attachmentGate.invalidate()
         session?.let { lifecycle.detach(it); bridge.detach(it) }
         session = null
-        configuredPhotosUrl = null
-        configuredProfile = null
+        attachmentIdentity.clear()
         bridge.close()
         worker.shutdownNow()
         hideFallback()
@@ -183,8 +179,7 @@ internal class TouchOfflinePhotos(
     private fun detachCurrent() {
         session?.let { lifecycle.detach(it); bridge.detach(it) }
         session = null
-        configuredPhotosUrl = null
-        configuredProfile = null
+        attachmentIdentity.clear()
         fallbackGeneration += 1L
         attachmentGate.invalidate()
         hideFallback()
@@ -241,6 +236,28 @@ internal class TouchOfflinePhotos(
         main.post {
             if (!closed && photosActive && lifecycle.canUseFallback(session, lifecycle.currentGeneration()) && bridge.isCurrentObservation(photo)) hideFallback()
         }
+    }
+}
+
+/** Exact session/URL/profile identity that permits a no-work return to Photos. */
+internal class TouchOfflineAttachmentIdentity {
+    private var session: Any? = null
+    private var photosUrl: String? = null
+    private var profile: String? = null
+
+    fun matches(target: Any, url: String, requestedProfile: String): Boolean =
+        session === target && photosUrl == url && profile == requestedProfile
+
+    fun replace(target: Any, url: String, requestedProfile: String) {
+        session = target
+        photosUrl = url
+        profile = requestedProfile
+    }
+
+    fun clear() {
+        session = null
+        photosUrl = null
+        profile = null
     }
 }
 
