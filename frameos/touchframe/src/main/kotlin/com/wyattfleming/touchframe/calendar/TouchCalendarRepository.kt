@@ -41,15 +41,22 @@ class TouchCalendarRepository(
         return try {
             val submitted = configuration.calendarEntityIds.take(MAX_CALENDARS).map { calendarId ->
                 calendarId to executor.submit<CalendarResponse> {
-                    checkCurrent(operation)
-                    val start = range.start.atStartOfDay(zoneId).toOffsetDateTime().toString()
-                    val end = range.endExclusive.atStartOfDay(zoneId).toOffsetDateTime().toString()
-                    val url = "${configuration.homeAssistantOrigin}/api/calendars/$calendarId?start=${encode(start)}&end=${encode(end)}"
-                    val response = transport.execute(HomeAssistantHttpRequest("GET", url, headers, timeoutMillis = remaining(deadline)))
-                    when {
-                        response.statusCode in 401..403 -> CalendarResponse.AuthRequired
-                        response.statusCode in 200..299 -> CalendarResponse.Success(response.body)
-                        else -> CalendarResponse.Failed
+                    try {
+                        checkCurrent(operation)
+                        val start = range.start.atStartOfDay(zoneId).toOffsetDateTime().toString()
+                        val end = range.endExclusive.atStartOfDay(zoneId).toOffsetDateTime().toString()
+                        val url = "${configuration.homeAssistantOrigin}/api/calendars/$calendarId?start=${encode(start)}&end=${encode(end)}"
+                        val response = transport.execute(HomeAssistantHttpRequest("GET", url, headers, timeoutMillis = remaining(deadline)))
+                        when {
+                            response.statusCode in 401..403 -> CalendarResponse.AuthRequired
+                            response.statusCode in 200..299 -> CalendarResponse.Success(response.body)
+                            else -> CalendarResponse.Failed
+                        }
+                    } catch (interrupted: InterruptedException) {
+                        throw interrupted
+                    } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
+                        if (!isCurrent(operation)) throw error
+                        CalendarResponse.Failed
                     }
                 }
             }
