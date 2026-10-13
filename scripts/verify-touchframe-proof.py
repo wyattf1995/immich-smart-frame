@@ -227,7 +227,7 @@ try:
         "media-crash-retry-red", "media",
         "return if (contentProcessClosed) Decision.RETRY_REQUIRED else Decision.LOAD",
         "return Decision.LOAD",
-        {"content crash requires explicit retry and uses the most recent configured url"},
+        {"contentCrashRequiresExplicitRetryAndUsesTheMostRecentConfiguredUrl"},
     )
     offline_red = mutate(
         "offline-hidden-photos-red", "offline",
