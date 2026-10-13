@@ -7,6 +7,20 @@ import org.junit.Test
 
 class TouchProvisionContractTest {
     @Test
+    fun `weather location propagates through bounded initial provisioning`() {
+        fun parse(label: String?) = TouchProvisionContract.parse(
+            photosUrl = "https://photos.example/frame",
+            homeAssistantUrl = "https://ha.example",
+            weatherEntityId = "weather.home", artUrl = null,
+            climateEntityId = null, calendarEntityIds = null, cameraEntityIds = null,
+            weatherLocationLabel = label,
+        )
+        assertEquals("Portland, OR", parse(" Portland, OR ")?.weatherLocationLabel)
+        assertNotNull(parse(null))
+        assertNull(parse("x".repeat(257)))
+    }
+
+    @Test
     fun `valid bounded non secret inputs create an initial configuration`() {
         val configuration = TouchProvisionContract.parse(
             photosUrl = "https://photos.example/frame",

@@ -7,6 +7,18 @@ import org.junit.Test
 
 class TouchConfigurationTest {
     @Test
+    fun `weather location is optional bounded single line Unicode text`() {
+        fun location(label: String?) = TouchConfiguration.from(
+            "https://photos.example", "https://ha.example", "weather.home", null,
+            weatherLocationLabel = label,
+        )!!.weatherLocationLabel
+        assertNull(location(null))
+        assertNull(location(" \n\t "))
+        assertEquals("São Paulo · Centro", location("  São\nPaulo  ·\tCentro  "))
+        assertEquals(80, location("A".repeat(200))!!.length)
+    }
+
+    @Test
     fun `configuration canonicalizes HTTPS Home Assistant origin and supplies bounded defaults`() {
         val configuration = TouchConfiguration.from(
             photosUrl = "https://photos.example/frame",
