@@ -10,6 +10,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.text.TextPaint
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
@@ -18,6 +19,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.wyattfleming.touchframe.R
+import kotlin.math.ceil
 import kotlin.math.pow
 
 /**
@@ -193,6 +195,13 @@ internal object TouchFonts {
 }
 
 private const val SEGMENT_RADIUS_DP = 8
+private const val SEGMENT_PADDING_DP = 18
+
+/** One width for every segment: the widest label, measured in the selected bold face, plus padding. */
+internal object TouchSegmentSizing {
+    fun width(labelWidthsPx: List<Float>, horizontalPaddingPx: Int, slackPx: Int): Int =
+        ceil(labelWidthsPx.maxOrNull() ?: 0f).toInt() + 2 * horizontalPaddingPx + slackPx
+}
 
 /** Small programmatic component kit; every native destination builds controls through it. */
 internal class TouchKit(private val context: Context, val palette: TouchPalette, val scale: TouchScale) {
@@ -323,6 +332,16 @@ internal class TouchKit(private val context: Context, val palette: TouchPalette,
         background = rounded(if (enabled) palette.matRaised else 0x00000000, scale.radiusSmall,
             if (enabled) palette.stroke else palette.disabledInk, 2, dashed = !enabled)
         setPadding(dp(4), dp(4), dp(4), dp(4))
+        // Zero-width weighted segments in a wrap-content row shrink to the AVERAGE label width on
+        // API 24+, which cut "Agenda" and a selected "Month" on the wall frame (API 23 kept natural
+        // widths). Each segment starts at the widest bold label instead, so nothing truncates and the
+        // control keeps its width as the selection moves; the weight only shares out extra room when a
+        // caller stretches the control across a row (thermostat modes, the narrow calendar header).
+        val boldPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = TouchFonts.get(context, TouchFonts.Face.TEXT_BOLD)
+            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sizeSp, context.resources.displayMetrics)
+        }
+        val segmentWidth = TouchSegmentSizing.width(options.map { boldPaint.measureText(it.first) }, dp(SEGMENT_PADDING_DP), dp(2))
         options.forEachIndexed { index, (label, value) ->
             val isSelected = value == selected
             val segment = text(label, sizeSp, if (isSelected) TouchFonts.Face.TEXT_BOLD else TouchFonts.Face.TEXT_MEDIUM,
@@ -332,7 +351,7 @@ internal class TouchKit(private val context: Context, val palette: TouchPalette,
                     else -> palette.ink
                 }, maxLines = 1).apply {
                 gravity = Gravity.CENTER
-                setPadding(dp(18), 0, dp(18), 0)
+                setPadding(dp(SEGMENT_PADDING_DP), 0, dp(SEGMENT_PADDING_DP), 0)
                 minHeight = dp(scale.target - 8)
                 this.isSelected = isSelected
                 isClickable = enabled && !isSelected
@@ -346,7 +365,7 @@ internal class TouchKit(private val context: Context, val palette: TouchPalette,
                 background = if (enabled && !isSelected) pressable(base, SEGMENT_RADIUS_DP) else base
                 if (enabled && !isSelected) setOnClickListener { onSelect(value) }
             }
-            addView(segment, LinearLayout.LayoutParams(0, dp(scale.target - 8), 1f).apply {
+            addView(segment, LinearLayout.LayoutParams(segmentWidth, dp(scale.target - 8), 1f).apply {
                 if (index > 0) marginStart = dp(4)
             })
         }

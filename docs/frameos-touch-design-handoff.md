@@ -140,7 +140,8 @@ control boundary to 3:1.
 - **Type:** bundled Red Hat Display (clock, temperatures, titles) and Red Hat Text
   (everything else), SIL OFL 1.1, in `assets/fonts` with the licence. Panel class
   (1280×800) and wall class (1920×1080) differ only in `TouchScale`.
-- **Icons:** 24dp stroke VectorDrawables `ic_touch_*`, tinted at runtime.
+- **Icons:** 24dp stroke VectorDrawables `ic_touch_*`, tinted at runtime. Every segment after a moveto is written as an explicit `L`/`l`: Android 6 (API 23, the small frame) draws implicit pairs after `M`/`m` as more movetos, so a shorthand chevron rendered blank there while API 27 drew it (`TouchIconPathTest`).
+- **Segmented controls:** every segment starts at the widest label measured in the bold selected face; zero-width weighted segments in a wrap-content row shrink to the average label width on API 24+ and cut "Agenda"/"Month" on the wall frame (`TouchSegmentedWidthTest`).
 - **States:** offline is a pending-tone banner with Try again; signed out is one
   explicit call to action; loading uses skeleton shapes; a thermostat change is
   Not sent yet → Sending… → Set to N° or Couldn't set to N° (an unsent draft
