@@ -1,6 +1,7 @@
 package com.wyattfleming.touchframe.media
 
 import com.wyattfleming.frameos.security.FrameUrlPolicy
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -45,6 +46,15 @@ class TouchMediaLoadStateTest {
         state.markContentProcessClosed()
         assertEquals(TouchMediaLoadState.Decision.RETRY_REQUIRED, state.showUrl(art))
         assertTrue(state.retry()?.reopenSession == true)
+    }
+
+    @Test
+    fun successfulNavigationWaitsForContentfulPaintBeforeRemovingTheCover() {
+        val source = File("src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt").readText()
+
+        assertTrue(source.contains("if (!success) reportFailure(session, context.getString(R.string.touch_media_load_failed, label))"))
+        assertTrue(source.contains("override fun onFirstContentfulPaint(session: GeckoSession) = reportReady(session)"))
+        assertFalse(source.contains("if (success) reportReady(session)"))
     }
 
     @Test
