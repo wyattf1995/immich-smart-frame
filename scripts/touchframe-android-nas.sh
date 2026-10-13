@@ -103,10 +103,13 @@ write_source_inventory "$manifest"
 # neither a Git checkout nor a mounted identity document, so this runner records
 # the exact extracted payload without making an unverifiable commit claim.
 
+# Fail fast on release compilation/lint before the source-mutation matrix.
+# The final source-inventory comparison still verifies exact byte restoration.
+run_step touchframe-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:lintRelease"
+
 run_step touchframe-source-proof python3 "$root_dir/scripts/verify-touchframe-proof.py" "$root_dir"
 run_step touchframe-shared-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :frame-shared:testDebugUnitTest"
 run_step touchframe-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:testDebugUnitTest"
-run_step touchframe-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:lintRelease"
 run_step touchframe-assemble-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:assembleRelease"
 
 write_source_inventory "$post_manifest"
