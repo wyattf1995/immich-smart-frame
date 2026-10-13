@@ -1,10 +1,19 @@
 package com.wyattfleming.frameos.home
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
 import org.junit.Test
-import kotlin.test.assertFailsWith
 
 class TouchHomeModelTest {
+    private fun assertRejected(block: () -> Unit) {
+        try {
+            block()
+            fail("Expected IllegalArgumentException")
+        } catch (_: IllegalArgumentException) {
+            // Expected model validation failure.
+        }
+    }
+
     @Test
     fun callerOwnedSnapshotRetainsUnavailableFieldsWithoutSampleDefaults() {
         val model = TouchHomeModel(
@@ -23,13 +32,13 @@ class TouchHomeModelTest {
 
     @Test
     fun eventAndClimateRejectInvalidDataBeforeTheViewCanRenderIt() {
-        assertFailsWith<IllegalArgumentException> {
+        assertRejected {
             TouchCalendarEvent(" ", startEpochMillis = 2, endEpochMillis = null, allDay = false)
         }
-        assertFailsWith<IllegalArgumentException> {
+        assertRejected {
             TouchCalendarEvent("Dinner", startEpochMillis = 2, endEpochMillis = 1, allDay = false)
         }
-        assertFailsWith<IllegalArgumentException> {
+        assertRejected {
             TouchClimate(
                 entityId = "climate.entryway",
                 currentTemperature = null,
@@ -42,7 +51,7 @@ class TouchHomeModelTest {
                 step = 1.0,
             )
         }
-        assertFailsWith<IllegalArgumentException> {
+        assertRejected {
             TouchClimate(
                 entityId = "climate.entryway",
                 currentTemperature = null,
