@@ -5,10 +5,10 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.text.TextUtils
 import android.view.Gravity
-import android.view.View
-import android.widget.FrameLayout
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -20,26 +20,56 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /** Read-only native calendar. The activity supplies real range results and owns network lifecycle. */
-// Programmatic-only: callbacks are required and this view is never XML-inflated.
 @SuppressLint("ViewConstructor")
-class TouchCalendarView(context: Context, private val onStateRequest: (TouchCalendarMode, LocalDate, LocalDate, Boolean) -> Unit, private val onSignIn: () -> Unit) : ScrollView(context) {
+class TouchCalendarView(
+    context: Context,
+    private val onStateRequest: (TouchCalendarMode, LocalDate, LocalDate, Boolean) -> Unit,
+    private val onSignIn: () -> Unit,
+) : ScrollView(context) {
     private val body = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-    private var state = TouchCalendarState(TouchCalendarMode.AGENDA, LocalDate.now(), LocalDate.now(), TouchCalendarRange.forMode(TouchCalendarMode.AGENDA, LocalDate.now()), emptyList(), TouchCalendarConnection.OFFLINE, null)
+    private var state = TouchCalendarState(
+        TouchCalendarWeekPresentation.DEFAULT_MODE,
+        LocalDate.now(),
+        LocalDate.now(),
+        TouchCalendarRange.forMode(TouchCalendarWeekPresentation.DEFAULT_MODE, LocalDate.now()),
+        emptyList(),
+        TouchCalendarConnection.OFFLINE,
+        null,
+    )
     private var night = false
-    init { addView(body, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT)) }
-    fun render(next: TouchCalendarState) { state = next; rebuild() }
+    private var lastWideHeader: Boolean? = null
+    private var selectedDetailsPage = 0
+
+    init {
+        addView(body, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
+    }
+
+    fun render(next: TouchCalendarState) {
+        if (next.selectedDate != state.selectedDate || next.range != state.range || next.events != state.events) selectedDetailsPage = 0
+        state = next
+        rebuild()
+    }
     fun setNight(value: Boolean) { if (night != value) { night = value; rebuild() } }
+
+    override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight)
+        val wasWide = lastWideHeader ?: return
+        if (isWideHeader() != wasWide) post {
+            if (lastWideHeader != null && isWideHeader() != lastWideHeader) rebuild()
+        }
+    }
+
     private fun rebuild() {
         val ink = if (night) Color.rgb(241, 238, 230) else Color.rgb(34, 38, 42)
         val paper = if (night) Color.rgb(27, 31, 34) else Color.rgb(247, 244, 237)
         val accent = if (night) Color.rgb(153, 209, 187) else Color.rgb(21, 107, 88)
-        setBackgroundColor(paper); body.removeAllViews(); body.setPadding(dp(28), dp(22), dp(28), dp(32))
-        body.addView(text("Calendar", 36f, ink, bold = true))
-        body.addView(row(listOf("Agenda" to TouchCalendarMode.AGENDA, "Week" to TouchCalendarMode.WEEK, "Month" to TouchCalendarMode.MONTH), ink, accent) { _, mode -> request(requireNotNull(mode), state.anchor, state.selectedDate, true) })
-        body.addView(row(listOf("Previous" to null, "Today" to null, "Next" to null), ink, accent) { label, _ ->
-            when (label) { "Previous" -> request(state.mode, previousAnchor(), state.selectedDate, true); "Next" -> request(state.mode, nextAnchor(), state.selectedDate, true); else -> request(state.mode, LocalDate.now(), LocalDate.now(), true) }
-        })
-        body.addView(text(title(), 26f, ink, bold = true))
+        setBackgroundColor(paper)
+        body.removeAllViews()
+        body.setPadding(dp(28), dp(10), dp(28), dp(24))
+        val wideHeader = isWideHeader()
+        lastWideHeader = wideHeader
+        calendarHeader(ink, accent, wideHeader)
+        periodControls(ink, accent)
         if (state.loading) body.addView(text("Updating schedule…", 18f, ink))
         when (state.connection) {
             TouchCalendarConnection.SIGN_IN_REQUIRED -> body.addView(Button(context).apply {
@@ -54,31 +84,159 @@ class TouchCalendarView(context: Context, private val onStateRequest: (TouchCale
         }
         when (state.mode) {
             TouchCalendarMode.AGENDA -> agenda(state.range.start, state.range.endExclusive, ink, accent)
-            TouchCalendarMode.WEEK -> week(ink, accent)
-            TouchCalendarMode.MONTH -> month(ink, accent)
-        }
-        if (state.mode != TouchCalendarMode.AGENDA) {
-            body.addView(text("${state.selectedDate.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.getDefault()))}", 24f, ink, bold = true))
-            val selected = state.events.filter { it.occursOn(state.selectedDate, ZoneId.systemDefault()) }
-            if (selected.isEmpty()) body.addView(text("No events selected", 18f, ink)) else selected.forEach { event -> body.addView(eventRow(event, ink)) }
+            TouchCalendarMode.WEEK -> {
+                val days = weekDays()
+                week(days, ink, accent)
+                selectedWeekDetails(days, ink)
+            }
+            TouchCalendarMode.MONTH -> {
+                month(ink, accent)
+                selectedDetails(state.events.filter { it.occursOn(state.selectedDate, ZoneId.systemDefault()) }, ink)
+            }
         }
     }
-    private fun agenda(start: LocalDate, end: LocalDate, ink: Int, accent: Int) { var date = start; while (date < end) { body.addView(dayButton(date, ink, accent)); state.events.filter { it.occursOn(date, ZoneId.systemDefault()) }.forEach { body.addView(eventRow(it, ink)) }; date = date.plusDays(1) } }
-    private fun week(ink: Int, accent: Int) {
-        val strip = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        var date = state.range.start
-        repeat(7) { val current = date; strip.addView(dayCell(current, ink, accent), LinearLayout.LayoutParams(0, dp(64), 1f)); date = date.plusDays(1) }
+
+    private fun calendarHeader(ink: Int, accent: Int, wide: Boolean) {
+        val modes = listOf("Agenda" to TouchCalendarMode.AGENDA, "Week" to TouchCalendarMode.WEEK, "Month" to TouchCalendarMode.MONTH)
+        if (!wide) {
+            body.addView(text("Calendar", 32f, ink, bold = true))
+            body.addView(row(modes, ink, accent) { _, mode -> request(requireNotNull(mode), state.anchor, state.selectedDate, true) })
+            return
+        }
+        val header = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        header.addView(text("Calendar", 30f, ink, bold = true), LinearLayout.LayoutParams(0, dp(56), 1.25f))
+        modes.forEach { (label, mode) ->
+            header.addView(control(label, ink, accent, mode == state.mode) {
+                request(mode, state.anchor, state.selectedDate, true)
+            }, LinearLayout.LayoutParams(0, dp(56), 1f))
+        }
+        body.addView(header)
+    }
+
+    private fun periodControls(ink: Int, accent: Int) {
+        val controls = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        controls.addView(control("Previous", ink, accent, false) { request(state.mode, previousAnchor(), state.selectedDate, true) }, LinearLayout.LayoutParams(0, dp(56), .9f))
+        controls.addView(text(title(), 20f, ink, bold = true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(0, dp(56), 2.5f))
+        controls.addView(control("Today", ink, accent, false) { request(state.mode, LocalDate.now(), LocalDate.now(), true) }, LinearLayout.LayoutParams(0, dp(56), 1f))
+        controls.addView(control("Next", ink, accent, false) { request(state.mode, nextAnchor(), state.selectedDate, true) }, LinearLayout.LayoutParams(0, dp(56), .9f))
+        body.addView(controls)
+    }
+
+    private fun agenda(start: LocalDate, end: LocalDate, ink: Int, accent: Int) {
+        var date = start
+        while (date < end) {
+            body.addView(dayButton(date, ink, accent))
+            state.events.filter { it.occursOn(date, ZoneId.systemDefault()) }.forEach { body.addView(eventRow(it, ink)) }
+            date = date.plusDays(1)
+        }
+    }
+
+    private fun weekDays() = TouchCalendarWeekPresentation.days(state.range, state.events, ZoneId.systemDefault())
+
+    private fun week(days: List<TouchCalendarWeekPresentation.Day>, ink: Int, accent: Int) {
+        val strip = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.TOP
+        }
+        days.forEach { day ->
+            strip.addView(weekDayColumn(day, ink, accent), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                setMargins(dp(2), 0, dp(2), 0)
+            })
+        }
         body.addView(strip)
     }
+
+    private fun weekDayColumn(day: TouchCalendarWeekPresentation.Day, ink: Int, accent: Int) = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        minimumHeight = dp(280)
+        setPadding(dp(5), dp(7), dp(5), dp(7))
+        val selected = day.date == state.selectedDate
+        val today = day.date == LocalDate.now()
+        background = dayBackground(accent, selected, today)
+        isClickable = true
+        isFocusable = true
+        contentDescription = "${day.date.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.getDefault()))}, ${day.events.size} events"
+        setOnClickListener { request(state.mode, state.anchor, day.date, false) }
+        addView(weekHeader(day.date, "EEE", 20f, ink, true))
+        addView(weekHeader(day.date, "MMM d", 17f, ink, false))
+        if (day.preview.isEmpty()) {
+            addView(text("No events", 16f, ink).apply { gravity = Gravity.CENTER; setPadding(0, dp(20), 0, 0) })
+        } else {
+            day.preview.forEach { preview -> addView(weekEvent(preview, ink)) }
+            if (day.overflowCount > 0) addView(text("+${day.overflowCount} more", 17f, ink, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) })
+        }
+    }
+
+    private fun weekHeader(date: LocalDate, pattern: String, size: Float, ink: Int, bold: Boolean) = text(
+        date.format(DateTimeFormatter.ofPattern(pattern, Locale.getDefault())), size, ink, bold,
+    ).apply {
+        gravity = Gravity.CENTER
+        setPadding(0, 0, 0, 0)
+    }
+
+    private fun weekEvent(preview: TouchCalendarWeekPresentation.EventPreview, ink: Int) = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        minimumHeight = dp(70)
+        setPadding(dp(3), dp(7), dp(3), 0)
+        addView(text(preview.timeLabel, 16.5f, ink, true).apply { setPadding(0, 0, 0, 0) })
+        addView(text(preview.event.title, 18f, ink).apply {
+            minLines = 3
+            maxLines = 3
+            ellipsize = TextUtils.TruncateAt.END
+            contentDescription = "${preview.timeLabel}, ${preview.event.title}"
+            setPadding(0, 0, 0, 0)
+        })
+    }
+
+    private fun selectedWeekDetails(days: List<TouchCalendarWeekPresentation.Day>, ink: Int) {
+        val selected = days.firstOrNull { it.date == state.selectedDate }
+        selectedDetails(selected?.events.orEmpty(), ink)
+    }
+
+    private fun selectedDetails(events: List<TouchCalendarEvent>, ink: Int) {
+        body.addView(text(state.selectedDate.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.getDefault())), 24f, ink, bold = true))
+        val page = TouchCalendarWeekPresentation.detailsPage(events, selectedDetailsPage)
+        selectedDetailsPage = page.page
+        if (page.events.isEmpty()) {
+            body.addView(text("No events selected", 18f, ink))
+            return
+        }
+        body.addView(text("Events ${page.firstEventNumber}–${page.lastEventNumber} of ${page.totalEvents}", 18f, ink))
+        page.events.forEach { body.addView(eventRow(it, ink)) }
+        if (page.pageCount > 1) {
+            val controls = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+            controls.addView(control("Previous events", ink, if (night) Color.rgb(153, 209, 187) else Color.rgb(21, 107, 88), false) {
+                selectedDetailsPage = (selectedDetailsPage - 1).coerceAtLeast(0)
+                rebuild()
+            }.apply { isEnabled = page.page > 0 }, LinearLayout.LayoutParams(0, dp(56), 1f))
+            controls.addView(text("${page.page + 1} of ${page.pageCount}", 18f, ink, true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(0, dp(56), .8f))
+            controls.addView(control("Next events", ink, if (night) Color.rgb(153, 209, 187) else Color.rgb(21, 107, 88), false) {
+                selectedDetailsPage = (selectedDetailsPage + 1).coerceAtMost(page.pageCount - 1)
+                rebuild()
+            }.apply { isEnabled = page.page < page.pageCount - 1 }, LinearLayout.LayoutParams(0, dp(56), 1f))
+            body.addView(controls)
+        }
+    }
+
     private fun month(ink: Int, accent: Int) {
         val headers = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
         listOf("M", "T", "W", "T", "F", "S", "S").forEach {
             headers.addView(weekdayHeader(it, ink), LinearLayout.LayoutParams(0, dp(TouchCalendarPresentation.WEEKDAY_HEADER_MIN_HEIGHT_DP), 1f))
         }
         body.addView(headers)
-        var date = state.range.start; val weeks = TouchCalendarRenderPlan.monthWeeks(state.range)
-        repeat(weeks) { val line = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }; repeat(7) { val current = date; line.addView(dayCell(current, ink, accent), LinearLayout.LayoutParams(0, dp(64), 1f)); date = date.plusDays(1) }; body.addView(line) }
+        var date = state.range.start
+        repeat(TouchCalendarRenderPlan.monthWeeks(state.range)) {
+            val line = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+            repeat(7) {
+                val current = date
+                line.addView(dayCell(current, ink, accent), LinearLayout.LayoutParams(0, dp(64), 1f))
+                date = date.plusDays(1)
+            }
+            body.addView(line)
+        }
     }
+
     private fun dayButton(date: LocalDate, ink: Int, accent: Int) = Button(context).apply {
         text = context.getString(R.string.touch_calendar_day_summary, date.format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault())), state.events.count { it.occursOn(date, ZoneId.systemDefault()) })
         textSize = TouchCalendarPresentation.DAY_LABEL_TEXT_SP
@@ -88,6 +246,7 @@ class TouchCalendarView(context: Context, private val onStateRequest: (TouchCale
         setOnClickListener { request(state.mode, state.anchor, date, false) }
         background = background(accent, date == state.selectedDate)
     }
+
     private fun dayCell(date: LocalDate, ink: Int, accent: Int) = TextView(context).apply {
         text = if (state.events.any { it.occursOn(date, ZoneId.systemDefault()) }) context.getString(R.string.touch_calendar_day_with_events, date.dayOfMonth) else context.getString(R.string.touch_calendar_day_number, date.dayOfMonth)
         textSize = TouchCalendarPresentation.DAY_LABEL_TEXT_SP
@@ -98,22 +257,32 @@ class TouchCalendarView(context: Context, private val onStateRequest: (TouchCale
         background = background(accent, date == state.selectedDate)
         setOnClickListener { request(state.mode, state.anchor, date, false) }
     }
-    private fun eventRow(event: TouchCalendarEvent, ink: Int) = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(10), dp(12), dp(10)); addView(text(event.title, 20f, ink, true)); addView(text(if (event.allDay) "All day" else Instant.ofEpochMilli(event.startEpochMillis).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault())), 17f, ink)) }
+
+    private fun eventRow(event: TouchCalendarEvent, ink: Int) = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(12), dp(10), dp(12), dp(10))
+        addView(text(event.title, 20f, ink, true))
+        addView(text(if (event.allDay) "All day" else Instant.ofEpochMilli(event.startEpochMillis).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault())), 17f, ink))
+    }
+
     private fun row(items: List<Pair<String, TouchCalendarMode?>>, ink: Int, accent: Int, action: (String, TouchCalendarMode?) -> Unit) = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         items.forEach { (label, mode) ->
-            addView(Button(context).apply {
-                text = label
-                textSize = TouchCalendarPresentation.CONTROL_TEXT_SP
-                isAllCaps = false
-                contentDescription = TouchCalendarPresentation.contentDescriptionFor(label)
-                minHeight = dp(56)
-                setTextColor(if (mode == state.mode) selectedInk() else ink)
-                background = background(accent, mode == state.mode)
-                setOnClickListener { action(label, mode) }
-            }, LinearLayout.LayoutParams(0, dp(56), 1f))
+            addView(control(label, ink, accent, mode == state.mode) { action(label, mode) }, LinearLayout.LayoutParams(0, dp(56), 1f))
         }
     }
+
+    private fun control(label: String, ink: Int, accent: Int, selected: Boolean, action: () -> Unit) = Button(context).apply {
+        text = label
+        textSize = TouchCalendarPresentation.CONTROL_TEXT_SP
+        isAllCaps = false
+        contentDescription = TouchCalendarPresentation.contentDescriptionFor(label)
+        minHeight = dp(56)
+        setTextColor(if (selected) selectedInk() else ink)
+        background = background(accent, selected)
+        setOnClickListener { action() }
+    }
+
     private fun weekdayHeader(value: String, color: Int) = TextView(context).apply {
         text = value
         textSize = TouchCalendarPresentation.WEEKDAY_HEADER_TEXT_SP
@@ -122,13 +291,63 @@ class TouchCalendarView(context: Context, private val onStateRequest: (TouchCale
         setTextColor(color)
         setTypeface(typeface, Typeface.BOLD)
     }
-    private fun text(value: String, size: Float, color: Int, bold: Boolean = false) = TextView(context).apply { text = value; textSize = size; setTextColor(color); setPadding(0, dp(8), 0, dp(8)); if (bold) setTypeface(typeface, Typeface.BOLD) }
+
+    private fun text(value: String, size: Float, color: Int, bold: Boolean = false) = TextView(context).apply {
+        text = value
+        textSize = size
+        setTextColor(color)
+        setPadding(0, dp(8), 0, dp(8))
+        if (bold) setTypeface(typeface, Typeface.BOLD)
+    }
+
     private fun selectedInk() = if (night) Color.rgb(18, 31, 28) else Color.WHITE
-    private fun background(accent: Int, selected: Boolean) = GradientDrawable().apply { cornerRadius = dp(10).toFloat(); setColor(if (selected) accent else Color.TRANSPARENT); setStroke(dp(1), accent) }
+    private fun background(accent: Int, selected: Boolean) = GradientDrawable().apply {
+        cornerRadius = dp(10).toFloat()
+        setColor(if (selected) accent else Color.TRANSPARENT)
+        setStroke(dp(1), accent)
+    }
+    private fun dayBackground(accent: Int, selected: Boolean, today: Boolean) = GradientDrawable().apply {
+        cornerRadius = dp(10).toFloat()
+        val surface = when {
+            selected && night -> Color.rgb(42, 58, 53)
+            selected -> Color.rgb(225, 242, 234)
+            today && night -> Color.rgb(35, 46, 43)
+            today -> Color.rgb(237, 247, 242)
+            night -> Color.rgb(32, 37, 40)
+            else -> Color.rgb(255, 253, 248)
+        }
+        setColor(surface)
+        setStroke(dp(if (today || selected) 2 else 1), accent)
+    }
     private fun request(mode: TouchCalendarMode, anchor: LocalDate, selected: LocalDate, refresh: Boolean) = onStateRequest(mode, anchor, selected, refresh)
-    private fun previousAnchor() = when (state.mode) { TouchCalendarMode.AGENDA -> state.anchor.minusDays(7); TouchCalendarMode.WEEK -> state.anchor.minusWeeks(1); TouchCalendarMode.MONTH -> state.anchor.minusMonths(1) }
-    private fun nextAnchor() = when (state.mode) { TouchCalendarMode.AGENDA -> state.anchor.plusDays(7); TouchCalendarMode.WEEK -> state.anchor.plusWeeks(1); TouchCalendarMode.MONTH -> state.anchor.plusMonths(1) }
-    private fun title() = when (state.mode) { TouchCalendarMode.MONTH -> state.anchor.format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault())); else -> "${state.range.start} – ${state.range.endExclusive.minusDays(1)}" }
+    private fun previousAnchor() = when (state.mode) {
+        TouchCalendarMode.AGENDA -> state.anchor.minusDays(7)
+        TouchCalendarMode.WEEK -> state.anchor.minusWeeks(1)
+        TouchCalendarMode.MONTH -> state.anchor.minusMonths(1)
+    }
+    private fun nextAnchor() = when (state.mode) {
+        TouchCalendarMode.AGENDA -> state.anchor.plusDays(7)
+        TouchCalendarMode.WEEK -> state.anchor.plusWeeks(1)
+        TouchCalendarMode.MONTH -> state.anchor.plusMonths(1)
+    }
+    private fun title() = when (state.mode) {
+        TouchCalendarMode.MONTH -> state.anchor.format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()))
+        else -> weekRangeTitle()
+    }
+    private fun weekRangeTitle(): String {
+        val locale = Locale.getDefault()
+        val start = state.range.start
+        val end = state.range.endExclusive.minusDays(1)
+        return if (start.year == end.year) {
+            "${start.format(DateTimeFormatter.ofPattern("MMM d", locale))} – ${end.format(DateTimeFormatter.ofPattern("MMM d, yyyy", locale))}"
+        } else {
+            "${start.format(DateTimeFormatter.ofPattern("MMM d, yyyy", locale))} – ${end.format(DateTimeFormatter.ofPattern("MMM d, yyyy", locale))}"
+        }
+    }
+    private fun isWideHeader(): Boolean {
+        val available = if (width > 0) width else resources.displayMetrics.widthPixels
+        return available >= dp(900)
+    }
     private fun dp(value: Int) = (value * resources.displayMetrics.density + .5f).toInt()
 }
 

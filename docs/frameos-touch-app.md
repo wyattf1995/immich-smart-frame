@@ -22,9 +22,13 @@ not the Lenovo activity or its mode/gesture state machine.
   overlay. Failure to establish that return route keeps the user in the app.
 - Home, Calendar, climate controls, and Weather use the authenticated Home
   Assistant API. Home does not load an HA frontend in an invisible iframe.
-- Calendar has native Agenda, Week, and Month views with Today/period controls.
-  It fetches the selected bounded range directly and marks partial/offline data;
-  local date selection does not reload Google Calendar or fetch the same range.
+- Calendar opens in a native Week view with seven dated columns, event times,
+  titles, and up to three previews per day. Tap a day for its full agenda;
+  busy-day details page in groups of twelve to bound view creation. Agenda and
+  Month remain available with Today/period controls. It fetches real calendar
+  events for the selected bounded range and marks partial/offline data; local
+  date selection and detail paging do not fetch the same range again. Task lists
+  are not part of this calendar integration.
 - Reuse the existing Kiosk photo source and art feed, including paid-work
   exclusions, older-album coverage, no-repeat artwork cycle, and 120-second art
   interval. Preserve the companion and bounded offline behaviors during integration.
@@ -74,6 +78,16 @@ bounded non-secret configuration and durably commits it on a worker; it refuses
 any existing configuration. A success returns `provisioned-restart-required`.
 Provision before the first Activity launch. It never copies OAuth or companion
 credentials from another package.
+
+An optional `weather_location_label` string identifies the city or place in the
+Weather header. It is display text, not a change to the configured weather entity
+or forecast coordinates. Initial provisioning accepts up to 256 input characters;
+configuration collapses whitespace and retains at most 80, and the header displays
+up to 28 with an ellipsis. Existing frames retain their configuration when the app
+is updated. The one-time provisioning receiver deliberately does not overwrite an
+existing configuration; an authenticated configuration migration must preserve
+all other fields and OAuth state. Weather typography is approximately 20% larger
+than the original shared Weather renderer.
 
 The source integrates a 12-photo/24-MiB private offline reserve, uncropped fallback
 with a small blurred backdrop, monotonic remote settings, quiet-hours brightness,
