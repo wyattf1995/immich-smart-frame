@@ -11,6 +11,42 @@ class TouchCameraPolicyTest {
         assertEquals("/api/camera_proxy/camera.entryway", policy.snapshotUrl("camera.entryway")?.path)
         assertNull(policy.snapshotUrl("camera.other"))
     }
+    @Test fun refreshGateCoalescesRapidSelectionsToOneLatestRequest() {
+        val gate = TouchCameraRefreshGate()
+        assertTrue(gate.setActive(true, "camera.one"))
+        assertTrue(!gate.request("camera.two"))
+        assertTrue(!gate.request("camera.three"))
+        val latest = gate.next()!!
+        assertEquals("camera.three", latest.camera)
+        assertTrue(gate.isCurrent(latest))
+        assertTrue(!gate.request("camera.four"))
+        assertTrue(!gate.isCurrent(latest))
+        assertEquals("camera.four", gate.next()!!.camera)
+        assertNull(gate.next())
+    }
+
+    @Test fun closingGateInvalidatesIssuedAndPendingCameraRequests() {
+        val gate = TouchCameraRefreshGate()
+        assertTrue(gate.setActive(true, "camera.one"))
+        val issued = gate.next()!!
+        assertTrue(!gate.request("camera.two"))
+        assertTrue(gate.close())
+        assertTrue(!gate.isCurrent(issued))
+        assertNull(gate.next())
+        assertTrue(!gate.request("camera.three"))
+    }
+
+    @Test fun refreshGateCancelsBeforeADeferredRequestCanStart() {
+        val gate = TouchCameraRefreshGate()
+        assertTrue(gate.setActive(true, "camera.one"))
+        val issued = gate.next()!!
+        assertTrue(gate.isCurrent(issued))
+        assertTrue(!gate.setActive(false, "camera.one"))
+        assertTrue(!gate.isCurrent(issued))
+        assertNull(gate.next())
+        assertTrue(!gate.request("camera.two"))
+    }
+
     @Test fun samplingBoundsLargeImages() {
         listOf(7680 to 4320, 1921 to 1081).forEach { (width, height) ->
             val sample = TouchCameraPolicy.sampleSize(width, height)

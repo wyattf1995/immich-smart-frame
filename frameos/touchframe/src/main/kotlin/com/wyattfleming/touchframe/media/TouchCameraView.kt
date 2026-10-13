@@ -29,116 +29,300 @@ class TouchCameraView(
 ) : FrameLayout(context) {
     var onSignIn: (() -> Unit)? = null
     private val policy = TouchCameraPolicy(origin, cameraIds)
-    private val worker = ScheduledThreadPoolExecutor(1) { runnable -> Thread(runnable, "touch-camera").apply { isDaemon = true } }
-    private val cancellation = ScheduledThreadPoolExecutor(1) { runnable -> Thread(runnable, "touch-camera-cancel").apply { isDaemon = true } }
+    private val refreshGate = TouchCameraRefreshGate()
+    private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "touch-camera").apply { isDaemon = true }
+    }
+    private val watchdog = ScheduledThreadPoolExecutor(1) { runnable ->
+        Thread(runnable, "touch-camera-watchdog").apply { isDaemon = true }
+    }
+    /** Only UI-originated cancellation uses this executor; worker cleanup disconnects inline. */
+    private val disconnectWorker = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "touch-camera-disconnect").apply { isDaemon = true }
+    }
     private val main = Handler(Looper.getMainLooper())
-    private val image = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = "Camera snapshot"; setBackgroundColor(Color.rgb(245, 242, 233)) }
-    private val status = TextView(context).apply { setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f); gravity = Gravity.CENTER; setTextColor(Color.rgb(18, 36, 43)) }
-    private val refresh = TextView(context).apply { text = "Refresh"; gravity = Gravity.CENTER; minimumHeight = context.dp(56); isClickable = true; isFocusable = true; setOnClickListener { requestRefresh() } }
+    private val image = ImageView(context).apply {
+        scaleType = ImageView.ScaleType.FIT_CENTER
+        contentDescription = "Camera snapshot"
+        setBackgroundColor(BACKGROUND)
+    }
+    private val status = TextView(context).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        gravity = Gravity.CENTER
+        setTextColor(Color.rgb(18, 36, 43))
+    }
+    private val refresh = TextView(context).apply {
+        text = "Refresh"
+        gravity = Gravity.CENTER
+        minimumHeight = context.dp(56)
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { requestRefresh() }
+    }
+    private val signIn = TextView(context).apply {
+        text = "Sign in"
+        gravity = Gravity.CENTER
+        minimumHeight = context.dp(56)
+        isClickable = true
+        isFocusable = true
+        visibility = View.GONE
+        setOnClickListener { onSignIn?.invoke() }
+    }
     private var selected = cameraIds.first()
-    @Volatile private var active = false
-    @Volatile private var closed = false
-    @Volatile private var generation = 0L
     @Volatile private var connection: HttpURLConnection? = null
     private var periodic: java.util.concurrent.ScheduledFuture<*>? = null
-    private var signInNotified = false
 
     init {
-        val content = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(context.dp(16), context.dp(16), context.dp(16), context.dp(16)) }
+        setBackgroundColor(BACKGROUND)
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(context.dp(16), context.dp(16), context.dp(16), context.dp(16))
+            setBackgroundColor(BACKGROUND)
+        }
         val cameras = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        cameraIds.forEach { id -> cameras.addView(button(cameraLabel(id)) { selected = id; requestRefresh() }, LinearLayout.LayoutParams(0, context.dp(56), 1f)) }
+        cameraIds.forEach { id ->
+            cameras.addView(button(cameraLabel(id)) { selected = id; requestRefresh() }, LinearLayout.LayoutParams(0, context.dp(56), 1f))
+        }
         content.addView(cameras)
         content.addView(image, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
         content.addView(status, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         content.addView(refresh, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)))
+        content.addView(signIn, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)))
         addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         status.text = "Snapshot unavailable"
     }
 
     fun setActive(active: Boolean) {
-        if (closed || this.active == active) return
-        this.active = active
-        generation += 1
-        periodic?.cancel(true); periodic = null
-        cancelConnection()
-        if (active) periodic = worker.scheduleWithFixedDelay({ requestRefresh() }, 0, 5, TimeUnit.SECONDS)
-    }
-
-    fun close() {
-        if (closed) return
-        closed = true; active = false; generation += 1
-        periodic?.cancel(true); cancelConnection()
-        worker.shutdownNow(); cancellation.shutdownNow(); main.removeCallbacksAndMessages(null)
-    }
-
-    private fun requestRefresh() {
-        if (!active || closed) return
-        val requestGeneration = ++generation
-        cancelConnection()
-        val camera = selected
-        worker.execute { fetch(camera, requestGeneration) }
-    }
-
-    private fun fetch(camera: String, requestGeneration: Long) {
-        val deadline = WeatherRequestDeadline(timeoutMillis = TOTAL_TIMEOUT_MILLIS)
-        val token = tokenProvider(deadline) ?: return publish(requestGeneration, null, "Sign in required", true)
-        if (deadline.isExpired()) return publish(requestGeneration, null, "Snapshot unavailable", false)
-        val url = policy.snapshotUrl(camera) ?: return
-        var current: HttpURLConnection? = null
-        var watchdog: java.util.concurrent.ScheduledFuture<*>? = null
-        try {
-            current = LegacyIsrgRootTls.ConnectionFactory().open(url)
-            connection = current
-            watchdog = cancellation.schedule({
-                if (connection === current && requestGeneration == generation) current?.disconnect()
-            }, deadline.remainingMillis(), TimeUnit.MILLISECONDS)
-            val timeout = deadline.remainingMillis().coerceAtLeast(1).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-            current!!.requestMethod = "GET"; current!!.instanceFollowRedirects = false; current!!.useCaches = false
-            current!!.connectTimeout = timeout; current!!.readTimeout = timeout
-            current!!.setRequestProperty("Authorization", "Bearer $token")
-            val code = current!!.responseCode
-            if (code == 401 || code == 403) return publish(requestGeneration, null, "Sign in required", true)
-            if (code !in 200..299 || deadline.isExpired()) return publish(requestGeneration, null, "Snapshot unavailable", false)
-            val bytes = current!!.inputStream.use { boundedBytes(it, deadline) }
-            val bitmap = decodeSnapshot(bytes) ?: return publish(requestGeneration, null, "Snapshot unavailable", false)
-            publish(requestGeneration, bitmap, null, false)
-        } catch (_: Exception) {
-            publish(requestGeneration, null, "Snapshot unavailable", false)
-        } finally {
-            watchdog?.cancel(false)
-            current?.let(::cancelConnection)
+        if (refreshGate.setActive(active, selected)) startWorkerIfNeeded()
+        if (!active) {
+            periodic?.cancel(true)
+            periodic = null
+            disconnectFromUi()
+        } else if (periodic == null) {
+            periodic = watchdog.scheduleWithFixedDelay({ requestRefresh() }, 5, 5, TimeUnit.SECONDS)
         }
     }
 
-    private fun publish(requestGeneration: Long, bitmap: android.graphics.Bitmap?, message: String?, signIn: Boolean) = main.post {
-        if (closed || !active || requestGeneration != generation) return@post
-        if (bitmap != null) { image.setImageBitmap(bitmap); status.text = "Snapshot updated ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date())}"; signInNotified = false }
-        else if (message != null) status.text = message
-        if (signIn && !signInNotified) { signInNotified = true; onSignIn?.invoke() }
+    fun close() {
+        if (!refreshGate.close()) return
+        periodic?.cancel(true)
+        periodic = null
+        disconnectFromUi()
+        worker.shutdownNow()
+        watchdog.shutdownNow()
+        // Shutdown allows the just-queued identity-checked disconnect to run.
+        disconnectWorker.shutdown()
+        main.removeCallbacksAndMessages(null)
     }
 
-    private fun boundedBytes(input: java.io.InputStream, deadline: WeatherRequestDeadline): ByteArray {
-        val output = ByteArrayOutputStream(); val buffer = ByteArray(16 * 1024); var total = 0
-        while (true) { require(!deadline.isExpired()); val count = input.read(buffer); if (count < 0) break; total += count; require(total <= MAX_BYTES); output.write(buffer, 0, count) }
+    private fun requestRefresh() {
+        if (refreshGate.request(selected)) startWorkerIfNeeded()
+        disconnectFromUi()
+    }
+
+    private fun startWorkerIfNeeded() {
+        runCatching { worker.execute(::drainRefreshes) }
+    }
+
+    /** A single worker drains only the newest requested camera; taps cannot queue network work. */
+    private fun drainRefreshes() {
+        while (true) {
+            val request = refreshGate.next() ?: return
+            fetch(request)
+        }
+    }
+
+    private fun fetch(request: TouchCameraRefreshGate.Request) {
+        if (!refreshGate.isCurrent(request)) return
+        val deadline = WeatherRequestDeadline(timeoutMillis = TOTAL_TIMEOUT_MILLIS)
+        val token = tokenProvider(deadline)
+        // Token acquisition is caller-owned but no request may proceed after lifecycle cancellation.
+        if (!refreshGate.isCurrent(request)) return
+        if (token.isNullOrBlank()) return publish(request, null, "Sign in required", signInRequired = true)
+        if (deadline.isExpired()) return publish(request, null, "Snapshot unavailable", signInRequired = false)
+        val url = policy.snapshotUrl(request.camera) ?: return
+        var current: HttpURLConnection? = null
+        var timeout: java.util.concurrent.ScheduledFuture<*>? = null
+        try {
+            val opened = LegacyIsrgRootTls.ConnectionFactory().open(url)
+            current = opened
+            if (!refreshGate.isCurrent(request)) return
+            connection = opened
+            timeout = watchdog.schedule({
+                if (refreshGate.isCurrent(request) && connection === opened) opened.disconnect()
+            }, deadline.remainingMillis(), TimeUnit.MILLISECONDS)
+            val millis = deadline.remainingMillis().coerceAtLeast(1).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            opened.requestMethod = "GET"
+            opened.instanceFollowRedirects = false
+            opened.useCaches = false
+            opened.connectTimeout = millis
+            opened.readTimeout = millis
+            opened.setRequestProperty("Authorization", "Bearer $token")
+            if (!refreshGate.isCurrent(request)) return
+            val code = opened.responseCode
+            if (code == 401 || code == 403) return publish(request, null, "Sign in required", signInRequired = true)
+            if (code !in 200..299 || deadline.isExpired()) return publish(request, null, "Snapshot unavailable", signInRequired = false)
+            val bytes = opened.inputStream.use { boundedBytes(it, deadline, request) }
+            if (!refreshGate.isCurrent(request)) return
+            val bitmap = decodeSnapshot(bytes) ?: return publish(request, null, "Snapshot unavailable", signInRequired = false)
+            publish(request, bitmap, null, signInRequired = false)
+        } catch (_: Exception) {
+            if (refreshGate.isCurrent(request)) publish(request, null, "Snapshot unavailable", signInRequired = false)
+        } finally {
+            timeout?.cancel(false)
+            // This worker owns its request identity, so cleanup never targets a newer connection.
+            if (connection === current) connection = null
+            current?.disconnect()
+        }
+    }
+
+    private fun publish(
+        request: TouchCameraRefreshGate.Request,
+        bitmap: android.graphics.Bitmap?,
+        message: String?,
+        signInRequired: Boolean,
+    ) = main.post {
+        if (!refreshGate.isCurrent(request)) return@post
+        if (bitmap != null) {
+            image.setImageBitmap(bitmap)
+            status.text = "Snapshot updated ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date())}"
+            signIn.visibility = View.GONE
+        } else if (message != null) {
+            status.text = message
+            signIn.visibility = if (signInRequired) View.VISIBLE else View.GONE
+        }
+    }
+
+    private fun boundedBytes(
+        input: java.io.InputStream,
+        deadline: WeatherRequestDeadline,
+        request: TouchCameraRefreshGate.Request,
+    ): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(16 * 1024)
+        var total = 0
+        while (true) {
+            require(refreshGate.isCurrent(request) && !deadline.isExpired())
+            val count = input.read(buffer)
+            if (count < 0) break
+            total += count
+            require(total <= MAX_BYTES)
+            output.write(buffer, 0, count)
+        }
         return output.toByteArray()
     }
 
     private fun decodeSnapshot(bytes: ByteArray): android.graphics.Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }; BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         val sample = TouchCameraPolicy.sampleSize(bounds.outWidth, bounds.outHeight)
-        val bitmap = try { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888 }) } catch (_: OutOfMemoryError) { null }
-        if (bitmap != null && (bitmap.width > 1920 || bitmap.height > 1080)) { bitmap.recycle(); return null }
+        val bitmap = try {
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+            })
+        } catch (_: OutOfMemoryError) {
+            null
+        }
+        if (bitmap != null && (bitmap.width > 1920 || bitmap.height > 1080)) {
+            bitmap.recycle()
+            return null
+        }
         return bitmap
     }
-    private fun cancelConnection(expected: HttpURLConnection? = null) {
+
+    /** Never call disconnect on the UI thread; a rejected task after shutdown is harmless. */
+    private fun disconnectFromUi() {
         val observed = connection ?: return
-        if (expected != null && observed !== expected) return
-        cancellation.execute { observed.disconnect(); if (connection === observed) connection = null }
+        runCatching {
+            disconnectWorker.execute {
+                if (connection === observed) {
+                    observed.disconnect()
+                    if (connection === observed) connection = null
+                }
+            }
+        }
     }
-    private fun button(text: String, action: () -> Unit) = TextView(context).apply { this.text = text; gravity = Gravity.CENTER; isClickable = true; isFocusable = true; minimumHeight = context.dp(56); setOnClickListener { action() } }
+
+    private fun button(text: String, action: () -> Unit) = TextView(context).apply {
+        this.text = text
+        gravity = Gravity.CENTER
+        isClickable = true
+        isFocusable = true
+        minimumHeight = context.dp(56)
+        setOnClickListener { action() }
+    }
+
     private fun cameraLabel(id: String) = id.removePrefix("camera.").replace('_', ' ').replaceFirstChar { it.titlecase() }
     private fun Context.dp(value: Int) = (value * resources.displayMetrics.density).toInt()
-    private companion object { const val MAX_BYTES = 8 * 1024 * 1024; const val TOTAL_TIMEOUT_MILLIS = 8_000L }
+
+    private companion object {
+        val BACKGROUND = Color.rgb(245, 242, 233)
+        const val MAX_BYTES = 8 * 1024 * 1024
+        const val TOTAL_TIMEOUT_MILLIS = 8_000L
+    }
+}
+
+/** Thread-safe latest-only gate for camera refreshes, independent of Android I/O. */
+internal class TouchCameraRefreshGate {
+    data class Request(val camera: String, val generation: Long)
+
+    private var active = false
+    private var closed = false
+    private var inFlight = false
+    private var pendingCamera: String? = null
+    private var generation = 0L
+
+    @Synchronized
+    fun setActive(nextActive: Boolean, camera: String): Boolean {
+        if (closed || active == nextActive) return false
+        active = nextActive
+        generation += 1
+        if (!nextActive) {
+            pendingCamera = null
+            return false
+        }
+        pendingCamera = camera
+        return scheduleIfIdle()
+    }
+
+    @Synchronized
+    fun request(camera: String): Boolean {
+        if (closed || !active) return false
+        generation += 1
+        pendingCamera = camera
+        return scheduleIfIdle()
+    }
+
+    @Synchronized
+    fun next(): Request? {
+        if (closed || !active) {
+            inFlight = false
+            return null
+        }
+        val camera = pendingCamera ?: run {
+            inFlight = false
+            return null
+        }
+        pendingCamera = null
+        return Request(camera, generation)
+    }
+
+    @Synchronized
+    fun isCurrent(request: Request): Boolean = !closed && active && request.generation == generation
+
+    @Synchronized
+    fun close(): Boolean {
+        if (closed) return false
+        closed = true
+        active = false
+        pendingCamera = null
+        generation += 1
+        return true
+    }
+
+    @Synchronized
+    private fun scheduleIfIdle(): Boolean = if (inFlight) false else true.also { inFlight = true }
 }
 
 internal class TouchCameraPolicy(origin: String, cameraIds: List<String>) {

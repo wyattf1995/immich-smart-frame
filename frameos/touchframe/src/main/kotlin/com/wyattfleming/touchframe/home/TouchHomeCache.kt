@@ -24,9 +24,10 @@ class TouchHomeCache(private val preferences: SharedPreferences) {
 internal object TouchHomeCacheCodec {
     private const val SCHEMA = 1
     private const val MAX_BYTES = 256 * 1024
-    private const val MAX_EVENTS = 5
+    private const val MAX_EVENTS = 80
     private const val MAX_TEXT = 1_024
     private const val MAX_MODES = 8
+    private const val MAX_MODE_TEXT = 64
 
     fun fingerprint(origin: String, entityIds: Collection<String>): String {
         val canonical = origin.trim() + "\n" + entityIds.map(String::trim).sorted().joinToString("\n")
@@ -37,12 +38,12 @@ internal object TouchHomeCacheCodec {
     fun encode(model: TouchHomeModel, fingerprint: String): String? = runCatching {
         require(fingerprint.length == 64)
         require(model.weatherText.length <= MAX_TEXT && model.temperatureText.length <= MAX_TEXT)
-        require(model.events.size <= MAX_EVENTS)
+        val boundedEvents = model.events.sortedBy(TouchCalendarEvent::startEpochMillis).take(MAX_EVENTS)
         val root = JSONObject().put("schema", SCHEMA).put("fingerprint", fingerprint)
             .put("weather", model.weatherText).put("temperature", model.temperatureText)
             .put("updated", model.lastUpdatedEpochMillis ?: JSONObject.NULL)
         root.put("events", JSONArray().apply {
-            model.events.forEach { event ->
+            boundedEvents.forEach { event ->
                 require(event.title.length <= MAX_TEXT)
                 put(JSONObject().put("title", event.title).put("start", event.startEpochMillis)
                     .put("end", event.endEpochMillis ?: JSONObject.NULL).put("allDay", event.allDay))
@@ -50,7 +51,7 @@ internal object TouchHomeCacheCodec {
         })
         root.put("climate", model.climate?.let { climate ->
             require(climate.entityId.length <= MAX_TEXT && climate.unit.length <= 32 && climate.mode.length <= 64)
-            require(climate.modes.size <= MAX_MODES)
+            require(climate.modes.size <= MAX_MODES && climate.modes.all { it.length <= MAX_MODE_TEXT })
             JSONObject().put("entity", climate.entityId).put("current", climate.currentTemperature ?: JSONObject.NULL)
                 .put("target", climate.targetTemperature ?: JSONObject.NULL).put("unit", climate.unit).put("mode", climate.mode)
                 .put("modes", JSONArray(climate.modes)).put("min", climate.minTemperature).put("max", climate.maxTemperature).put("step", climate.step ?: JSONObject.NULL)
@@ -62,17 +63,27 @@ internal object TouchHomeCacheCodec {
         require(encoded != null && encoded.toByteArray(Charsets.UTF_8).size <= MAX_BYTES)
         val root = JSONObject(encoded)
         require(root.optInt("schema", -1) == SCHEMA && root.optString("fingerprint") == expectedFingerprint)
+        val weather = root.getString("weather").also { require(it.length <= MAX_TEXT) }
+        val temperature = root.getString("temperature").also { require(it.length <= MAX_TEXT) }
         val events = root.getJSONArray("events").let { values ->
             require(values.length() <= MAX_EVENTS)
             List(values.length()) { index -> values.getJSONObject(index).let { event ->
-                TouchCalendarEvent(event.getString("title"), event.getLong("start"), event.optLongOrNull("end"), event.getBoolean("allDay"))
+                val title = event.getString("title").also { require(it.length <= MAX_TEXT) }
+                TouchCalendarEvent(title, event.getLong("start"), event.optLongOrNull("end"), event.getBoolean("allDay"))
             } }
         }
         val climate = root.optJSONObject("climate")?.let { value ->
-            val modes = value.getJSONArray("modes").let { modes -> require(modes.length() <= MAX_MODES); List(modes.length()) { modes.getString(it) } }
-            TouchClimate(value.getString("entity"), value.optDoubleOrNull("current"), value.optDoubleOrNull("target"), value.getString("unit"), value.getString("mode"), modes, value.getDouble("min"), value.getDouble("max"), value.optDoubleOrNull("step"))
+            val modes = value.getJSONArray("modes").let { modes ->
+                require(modes.length() <= MAX_MODES)
+                List(modes.length()) { modes.getString(it).also { mode -> require(mode.length <= MAX_MODE_TEXT) } }
+            }
+            val entity = value.getString("entity")
+            val unit = value.getString("unit")
+            val mode = value.getString("mode")
+            require(entity.length <= MAX_TEXT && unit.length <= 32 && mode.length <= MAX_MODE_TEXT)
+            TouchClimate(entity, value.optDoubleOrNull("current"), value.optDoubleOrNull("target"), unit, mode, modes, value.getDouble("min"), value.getDouble("max"), value.optDoubleOrNull("step"))
         }
-        TouchHomeModel(root.getString("weather"), root.getString("temperature"), events, climate, TouchConnection.OFFLINE, root.optLongOrNull("updated"))
+        TouchHomeModel(weather, temperature, events, climate, TouchConnection.OFFLINE, root.optLongOrNull("updated"))
     }.getOrNull()
 
     private fun JSONObject.optDoubleOrNull(name: String): Double? = if (isNull(name)) null else getDouble(name)
