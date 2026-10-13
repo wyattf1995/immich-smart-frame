@@ -52,9 +52,10 @@ baseline = subprocess.check_output(['git','show','ba0a374:companion/server.py'],
 def restore_old_export(source):
     start = baseline.index('    def export_preferences(self):')
     end = baseline.index('    def state(self):',start)
-    left = source.index('    def export_preferences(self):')
+    old_export = baseline[start:end].replace('    def export_preferences(self):', '    def export_preferences(self, force=True):')
+    left = source.index('    def export_preferences(self, force=True):')
     right = source.index('    def state(self):',left)
-    return source[:left]+baseline[start:end]+source[right:]
+    return source[:left]+old_export+source[right:]
 prove('streaming-export','test_export_peak_memory_is_bounded_and_failure_is_atomic',restore_old_export)
 (OUT/'receipt.json').write_text(json.dumps({'status':'passed','sourceSha256':hashlib.sha256(original).hexdigest(),'testSha256':test_hash,'proofs':results},indent=2)+'\n')
 print(json.dumps({'status':'passed','proofs':len(results),'receipt':str(OUT/'receipt.json')}))

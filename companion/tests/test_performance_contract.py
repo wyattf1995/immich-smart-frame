@@ -3,6 +3,7 @@ import importlib.util
 import json
 import sqlite3
 import tempfile
+import time
 import tracemalloc
 import unittest
 from pathlib import Path
@@ -21,6 +22,7 @@ class PerformanceContract(unittest.TestCase):
         self.store = module.FrameStore(self.path, {'main': {}, 'other': {}}, ['balanced'], clock=lambda: self.now)
 
     def tearDown(self):
+        self.store.close()
         self.tmp.cleanup()
 
     def poll(self, revision=None, **kwargs):
@@ -96,11 +98,20 @@ class PerformanceContract(unittest.TestCase):
     def test_readers_do_not_acquire_writer_lock(self):
         # WAL snapshot readers must work even while another writer is in flight.
         self.store.preferences_export = Path(self.tmp.name)/'preferences.json'
-        with self.store.db() as writer:
+        with patch.object(module, 'EXPORT_RETRY_INITIAL_SECONDS', .01), self.store.db() as writer:
             writer.execute("UPDATE devices SET label='Uncommitted' WHERE id='main'")
             self.assertEqual(self.store.preferences('main'), [])
+            started = time.monotonic()
             self.store.export_preferences()
+            self.assertLess(time.monotonic() - started, .5)
         self.assertEqual(json.loads(self.store.preferences_export.read_text())['version'], 1)
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            with self.store.db(write=False) as db:
+                desired, published = self.store._export_revisions(db)
+            if desired == published: break
+            time.sleep(.01)
+        self.assertEqual(desired, published)
 
     def test_poll_never_calls_global_maintenance_and_uses_device_expiry_index(self):
         with patch.object(self.store, '_expire', side_effect=AssertionError('global poll cleanup')):
