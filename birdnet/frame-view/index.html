@@ -2474,6 +2474,21 @@
           return JSON.stringify([state.speciesPeriod, state.kpis, state.expectedInsight, state.hourly, new Date().getHours()]);
         }
 
+        // Audio streams may be frequent. Keep their status and empty-hero semantics current
+        // without rebuilding hourly analytics, species, or recent cards.
+        function renderAudioState() {
+          renderAudioHealth();
+          const status = statusFromState();
+          setStatus(status.title, status.detail, status.tone);
+          if (!latestDetection()) {
+            const heroKey = JSON.stringify(["empty", state.apiOnline, state.dataError, state.audioKnown, state.audioError, state.configuredSources.length, state.audioLevelsActive, audioFreshnessState()]);
+            if (heroKey !== state.renderKeys.hero) {
+              state.renderKeys.hero = heroKey;
+              renderHero();
+            }
+          }
+        }
+
         function renderSpecies() {
           els.speciesTitle.textContent = periodHeading();
           els.periodButtons.forEach(button => {
@@ -2851,10 +2866,10 @@
                 window.clearTimeout(audioFreshnessTimer);
                 audioFreshnessTimer = window.setTimeout(() => {
                   state.audioLevelsActive = false;
-                  renderAudioHealth();
+                  renderAudioState();
                 }, AUDIO_LEVEL_STALE_MS);
               }
-              renderAudioHealth();
+              renderAudioState();
             } catch (_error) {
               // Invalid stream events are not evidence that audio is arriving.
             }
