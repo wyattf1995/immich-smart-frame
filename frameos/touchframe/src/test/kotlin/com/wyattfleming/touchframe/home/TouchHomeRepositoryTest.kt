@@ -39,6 +39,42 @@ class TouchHomeRepositoryTest {
     }
 
     @Test
+    fun `refresh globally orders configured calendar events before the cap`() {
+        val transport = FakeTransport(calendarBodies = mapOf(
+            "calendar.family" to """[{"summary":"Later","start":{"dateTime":"2026-10-15T12:00:00Z"}}]""",
+            "calendar.work" to """[{"summary":"Sooner","start":{"dateTime":"2026-10-13T12:00:00Z"}}]""",
+        ))
+        TouchHomeRepository(config, { _ -> "token" }, transport, clock = { 1_760_000_000_000L }, zoneId = ZoneOffset.UTC).use { repository ->
+            assertEquals(listOf("Sooner", "Later"), repository.refresh(null).events.map { it.title })
+        }
+    }
+
+    @Test
+    fun `cancellation during token acquisition prevents every HTTP request`() {
+        val tokenEntered = CountDownLatch(1)
+        val releaseToken = CountDownLatch(1)
+        val transport = FakeTransport()
+        val caller = Executors.newSingleThreadExecutor()
+        try {
+            TouchHomeRepository(config, { _ ->
+                tokenEntered.countDown()
+                releaseToken.await(2, TimeUnit.SECONDS)
+                "token"
+            }, transport).use { repository ->
+                val future = caller.submit<TouchHomeModel> { repository.refresh(null) }
+                assertTrue(tokenEntered.await(2, TimeUnit.SECONDS))
+                repository.cancel()
+                releaseToken.countDown()
+                assertEquals(TouchConnection.OFFLINE, future.get(2, TimeUnit.SECONDS).connection)
+                assertTrue(transport.requests.isEmpty())
+            }
+        } finally {
+            releaseToken.countDown()
+            caller.shutdownNow()
+        }
+    }
+
+    @Test
     fun `failed refresh preserves prior cards and marks offline`() {
         val previous = TouchHomeModel("Sunny", "72°F", emptyList(), null, TouchConnection.CONNECTED, 5L)
         val transport = FakeTransport(status = 500)
@@ -109,7 +145,10 @@ class TouchHomeRepositoryTest {
         }
     }
 
-    private class FakeTransport(private val status: Int = 200) : HomeAssistantHttpTransport {
+    private class FakeTransport(
+        private val status: Int = 200,
+        private val calendarBodies: Map<String, String> = emptyMap(),
+    ) : HomeAssistantHttpTransport {
         val requests = CopyOnWriteArrayList<HomeAssistantHttpRequest>()
         override fun execute(request: HomeAssistantHttpRequest): HomeAssistantHttpResponse {
             requests += request
@@ -117,7 +156,7 @@ class TouchHomeRepositoryTest {
             return when {
                 request.url.contains("weather.home") -> HomeAssistantHttpResponse(200, """{"state":"sunny","attributes":{"temperature":72,"temperature_unit":"°F"}}""")
                 request.url.contains("climate.entryway_entryway") -> HomeAssistantHttpResponse(200, """{"state":"heat","attributes":{"current_temperature":70,"temperature":71,"temperature_unit":"°F","hvac_modes":["off","heat"],"min_temp":50,"max_temp":85,"target_temp_step":1}}""")
-                else -> HomeAssistantHttpResponse(200, "[]")
+                else -> HomeAssistantHttpResponse(200, calendarBodies.entries.firstOrNull { request.url.contains("/api/calendars/${it.key}") }?.value ?: "[]")
             }
         }
     }
