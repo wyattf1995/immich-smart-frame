@@ -46,6 +46,9 @@ internal class TouchOfflinePhotos(
     private val bridge = FramePhotoBridge(reserve, onPhotoObserved = ::onObserved)
     private val lifecycle = TouchOfflinePhotoLifecycle()
     @Volatile private var photosActive = false
+    @Volatile private var photosPaused = false
+    @Volatile private var configuredPhotosUrl: String? = null
+    @Volatile private var configuredProfile: String? = null
     @Volatile private var closed = false
     @Volatile private var fallbackGeneration = 0L
     private val attachmentGate = TouchOfflineAttachmentGate()
@@ -54,16 +57,27 @@ internal class TouchOfflinePhotos(
     private var blurredBitmap: Bitmap? = null
 
     fun attach(runtime: GeckoRuntime, target: GeckoSession, photosUrl: String, profile: String, active: Boolean) {
+        if (!closed && session === target && configuredPhotosUrl == photosUrl && configuredProfile == profile) {
+            setActive(active)
+            return
+        }
         detachCurrent()
         session = target
+        configuredPhotosUrl = photosUrl
+        configuredProfile = profile
         lifecycle.attach(target)
         photosActive = active
         lifecycle.setActive(active)
         val expectedAttachment = attachmentGate.begin()
         worker.execute {
-            if (closed || session !== target || !attachmentGate.isCurrent(expectedAttachment) ||
-                !bridge.configure(target, photosUrl, profile)
-            ) return@execute
+            val prepared = !closed && session === target && attachmentGate.isCurrent(expectedAttachment) &&
+                bridge.configure(target, photosUrl, profile)
+            if (!prepared) {
+                main.post {
+                    if (!closed && session === target && attachmentGate.isCurrent(expectedAttachment)) detach(target)
+                }
+                return@execute
+            }
             if (closed || session !== target || !attachmentGate.isCurrent(expectedAttachment)) {
                 bridge.detach(target)
                 return@execute
@@ -76,11 +90,7 @@ internal class TouchOfflinePhotos(
                 // Gecko extension creation stays on the UI thread after worker scope activation.
                 bridge.attachPrepared(runtime, target) { ready ->
                     if (closed || session !== target || !attachmentGate.isCurrent(expectedAttachment) || !ready) return@attachPrepared
-                    worker.execute {
-                        if (!closed && session === target && attachmentGate.isCurrent(expectedAttachment)) {
-                            bridge.setCaptureEnabled(photosActive, photosPaused = false)
-                        }
-                    }
+                    queueCaptureGate(target, expectedAttachment)
                 }
             }
         }
@@ -89,13 +99,7 @@ internal class TouchOfflinePhotos(
     fun setActive(active: Boolean) {
         photosActive = active && !closed && session != null
         lifecycle.setActive(photosActive)
-        val attached = session
-        val expectedAttachment = attachmentGate.current()
-        if (attached != null) worker.execute {
-            if (!closed && session === attached && attachmentGate.isCurrent(expectedAttachment)) {
-                bridge.setCaptureEnabled(photosActive, photosPaused = false)
-            }
-        }
+        session?.let { queueCaptureGate(it, attachmentGate.current()) }
         if (!photosActive) hideFallback()
     }
 
@@ -107,6 +111,8 @@ internal class TouchOfflinePhotos(
         attachmentGate.invalidate()
         bridge.detach(target)
         session = null
+        configuredPhotosUrl = null
+        configuredProfile = null
         hideFallback()
     }
 
@@ -150,7 +156,11 @@ internal class TouchOfflinePhotos(
         blurredBitmap = null
     }
 
-    fun setPaused(paused: Boolean): Boolean = bridge.setPlaybackPaused(paused)
+    fun setPaused(paused: Boolean): Boolean {
+        photosPaused = paused
+        session?.let { queueCaptureGate(it, attachmentGate.current()) }
+        return bridge.setPlaybackPaused(paused)
+    }
     fun move(forward: Boolean): Boolean = bridge.movePhoto(forward)
     fun applyHiddenAssets(assetIds: Set<String>, canCommit: () -> Boolean = { true }) =
         worker.submit<Boolean> { reserve.applyHiddenAssets(assetIds, canCommit) }
@@ -163,6 +173,8 @@ internal class TouchOfflinePhotos(
         attachmentGate.invalidate()
         session?.let { lifecycle.detach(it); bridge.detach(it) }
         session = null
+        configuredPhotosUrl = null
+        configuredProfile = null
         bridge.close()
         worker.shutdownNow()
         hideFallback()
@@ -171,21 +183,36 @@ internal class TouchOfflinePhotos(
     private fun detachCurrent() {
         session?.let { lifecycle.detach(it); bridge.detach(it) }
         session = null
+        configuredPhotosUrl = null
+        configuredProfile = null
         fallbackGeneration += 1L
         attachmentGate.invalidate()
         hideFallback()
     }
 
 
-    /** Worker-only: blur a bounded copy before ImageView center-crops the backdrop. */
+    private fun queueCaptureGate(target: GeckoSession, expectedAttachment: Long) {
+        worker.execute {
+            if (!closed && session === target && attachmentGate.isCurrent(expectedAttachment)) {
+                bridge.setCaptureEnabled(photosActive, photosPaused)
+            }
+        }
+    }
+
+    /** Worker-only: blur a bounded mutable ARGB copy before center-cropping the backdrop. */
     private fun blurBackdrop(source: Bitmap): Bitmap? = runCatching {
         val plan = TouchOfflineBlurPlan.forForeground(source.width, source.height)
-        val small = if (plan.backdropWidth == source.width && plan.backdropHeight == source.height) {
-            source.copy(source.config ?: Bitmap.Config.ARGB_8888, true)
+        val scaled = if (plan.backdropWidth == source.width && plan.backdropHeight == source.height) {
+            source
         } else {
             Bitmap.createScaledBitmap(source, plan.backdropWidth, plan.backdropHeight, true)
         }
         // Never mutate source: it remains the foreground's uncropped FIT_CENTER bitmap.
+        val small = try {
+            scaled.copy(Bitmap.Config.ARGB_8888, true) ?: return@runCatching null
+        } finally {
+            if (scaled !== source) scaled.recycle()
+        }
         val width = small.width
         val height = small.height
         val pixels = IntArray(width * height)
