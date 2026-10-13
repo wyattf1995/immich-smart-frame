@@ -1,5 +1,6 @@
 package com.wyattfleming.frameos.ui
 
+import android.view.WindowManager
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -17,7 +18,7 @@ class FrameExternalSettingsOverlayWindowTypeTest {
 
     @Test fun `uses application overlay from Android 8`() {
         assertEquals(
-            FrameExternalSettingsOverlayWindowType.APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             FrameExternalSettingsOverlayWindowType.forApi(26),
         )
     }
