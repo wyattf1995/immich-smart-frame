@@ -56,7 +56,8 @@ class TouchMediaView(
     }
 
     private var session: GeckoSession? = null
-    private var configuredUrl: String? = null
+    private val loadState = TouchMediaLoadState()
+    private val configuredUrl: String? get() = loadState.configuredUrl
     private var label: String = "Media"
     private var active = false
     private var closed = false
@@ -77,15 +78,18 @@ class TouchMediaView(
         check(!closed) { "TouchMediaView is closed" }
         require(urlPolicy.isSafeConfigurationUrl(url)) { "Media URL must be a safe configured origin" }
         this.label = label
-        if (configuredUrl == url) return
-        configuredUrl = url
-        if (contentProcessClosed) {
-            reportContentProcessClosed()
-            return
+        when (loadState.showUrl(url)) {
+            TouchMediaLoadState.Decision.ALREADY_LOADED -> return
+            TouchMediaLoadState.Decision.RETRY_REQUIRED -> {
+                reportContentProcessClosed()
+                return
+            }
+            TouchMediaLoadState.Decision.LOAD -> {
+                retryButton.visibility = View.GONE
+                onStatus?.invoke(null)
+                session?.loadUri(url)
+            }
         }
-        retryButton.visibility = View.GONE
-        onStatus?.invoke(null)
-        session?.loadUri(url)
     }
 
     /** Keeps the attached view while stopping foreground Gecko work when hidden. */
@@ -120,11 +124,11 @@ class TouchMediaView(
     }
 
     private fun retry() {
-        val url = configuredUrl ?: return
-        if (!urlPolicy.isAllowedTopLevelNavigation(url, url)) return
+        val request = loadState.retry() ?: return
+        if (!urlPolicy.isAllowedTopLevelNavigation(request.url, request.url)) return
         retryButton.visibility = View.GONE
         onStatus?.invoke(null)
-        if (contentProcessClosed) {
+        if (request.reopenSession) {
             session?.let { current ->
                 runCatching { geckoView.releaseSession() }
                 runCatching { current.close() }
@@ -133,7 +137,7 @@ class TouchMediaView(
             contentProcessClosed = false
             openSession()
         }
-        session?.loadUri(url)
+        session?.loadUri(request.url)
     }
 
     private fun openSession() {
@@ -210,6 +214,7 @@ class TouchMediaView(
     private fun reportContentProcessClosed() {
         if (closed) return
         contentProcessClosed = true
+        loadState.markContentProcessClosed()
         retryButton.visibility = View.VISIBLE
         onStatus?.invoke("Unable to load $label")
     }
@@ -242,5 +247,34 @@ internal class FrameUrlPolicy {
         uri.scheme.equals("https", ignoreCase = true) -> 443
         uri.scheme.equals("http", ignoreCase = true) -> 80
         else -> -1
+    }
+}
+
+
+/** Pure load/retry decisions, kept free of Gecko and Android for focused tests. */
+internal class TouchMediaLoadState {
+    enum class Decision { LOAD, ALREADY_LOADED, RETRY_REQUIRED }
+
+    data class RetryRequest(val url: String, val reopenSession: Boolean)
+
+    var configuredUrl: String? = null
+        private set
+    private var contentProcessClosed = false
+
+    fun showUrl(url: String): Decision {
+        if (configuredUrl == url) return if (contentProcessClosed) Decision.RETRY_REQUIRED else Decision.ALREADY_LOADED
+        configuredUrl = url
+        return if (contentProcessClosed) Decision.RETRY_REQUIRED else Decision.LOAD
+    }
+
+    fun markContentProcessClosed() {
+        contentProcessClosed = true
+    }
+
+    fun retry(): RetryRequest? {
+        val url = configuredUrl ?: return null
+        val reopen = contentProcessClosed
+        contentProcessClosed = false
+        return RetryRequest(url, reopen)
     }
 }
