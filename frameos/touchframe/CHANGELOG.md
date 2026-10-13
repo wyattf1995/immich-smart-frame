@@ -6,6 +6,9 @@ or device results do not apply automatically.
 
 ## Unreleased — initial development candidate
 
+- Calendar starts in Week with dated event columns and locally paged day details.
+  Agenda and Month remain available; Home Assistant supplies calendar events.
+
 - Separate touchscreen shell with native Home, direct mode navigation and
   an explicit route back from Android Settings.
 - Shared authentication, weather, photo and companion components through the
