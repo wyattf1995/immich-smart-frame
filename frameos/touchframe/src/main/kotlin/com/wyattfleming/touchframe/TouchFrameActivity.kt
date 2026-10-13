@@ -368,7 +368,7 @@ class TouchFrameActivity : Activity() {
         val source = calendarRepository ?: return
         if (!resumed || !networkAllowed()) return
         val range = TouchCalendarRange.forMode(mode, anchor)
-        val selectedForRange = if (selected < range.start || selected >= range.endExclusive) anchor else selected
+        val selectedForRange = TouchCalendarRenderPlan.selectedFor(range, selected, anchor)
         // A selected day inside an already-fetched range is local UI state, not another network request.
         if (!calendarState.loading && calendarState.range == range && calendarState.events.isNotEmpty()) {
             calendarState = calendarState.copy(mode = mode, anchor = anchor, selectedDate = selectedForRange)

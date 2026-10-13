@@ -54,7 +54,7 @@ class TouchCalendarView(context: Context, private val onStateRequest: (TouchCale
     private fun month(ink: Int, accent: Int) {
         val headers = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
         listOf("M","T","W","T","F","S","S").forEach { headers.addView(text(it, 16f, ink, true), LinearLayout.LayoutParams(0, dp(28), 1f)) }; body.addView(headers)
-        var date = state.range.start; val weeks = (state.range.days / 7).toInt()
+        var date = state.range.start; val weeks = TouchCalendarRenderPlan.monthWeeks(state.range)
         repeat(weeks) { val line = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }; repeat(7) { val current = date; line.addView(dayCell(current, ink, accent), LinearLayout.LayoutParams(0, dp(64), 1f)); date = date.plusDays(1) }; body.addView(line) }
     }
     private fun dayButton(date: LocalDate, ink: Int, accent: Int) = Button(context).apply { text = date.format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault())) + " · " + state.events.count { it.occursOn(date, ZoneId.systemDefault()) }; minHeight = dp(56); setTextColor(if (date == state.selectedDate) Color.WHITE else ink); setOnClickListener { request(state.mode, state.anchor, date) }; background = background(accent, date == state.selectedDate) }

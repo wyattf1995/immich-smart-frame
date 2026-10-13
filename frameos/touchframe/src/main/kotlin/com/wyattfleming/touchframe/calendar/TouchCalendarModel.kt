@@ -62,3 +62,13 @@ data class TouchCalendarState(
     val loading: Boolean = false,
     val partial: Boolean = false,
 )
+
+/** Pure display bounds so the View never draws days it did not request. */
+object TouchCalendarRenderPlan {
+    fun monthWeeks(range: TouchCalendarRange): Int {
+        require(range.days % 7L == 0L)
+        return (range.days / 7L).toInt()
+    }
+    fun selectedFor(range: TouchCalendarRange, selected: LocalDate, fallback: LocalDate): LocalDate =
+        if (selected < range.start || selected >= range.endExclusive) fallback else selected
+}
