@@ -11,6 +11,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.wyattfleming.frameos.weather.LegacyIsrgRootTls
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URI
@@ -94,7 +95,11 @@ class TouchCameraView(
         } catch (_: Exception) {
             publish(requestGeneration, null, "Snapshot unavailable", false)
         } finally {
-            deadline?.let(main::removeCallbacks); connection?.disconnect(); connection = null
+            deadline?.let(main::removeCallbacks)
+            if (connection === current) {
+                current.disconnect()
+                connection = null
+            }
         }
     }
 
@@ -133,10 +138,3 @@ internal class TouchCameraPolicy(origin: String, cameraIds: List<String>) {
     }
 }
 
-/** Standalone app transport seam; keeps the platform TLS verifier authoritative. */
-internal object LegacyIsrgRootTls {
-    class ConnectionFactory(private val opener: (URI) -> HttpURLConnection = { it.toURL().openConnection() as HttpURLConnection }) : (URI) -> HttpURLConnection {
-        override fun invoke(uri: URI) = open(uri)
-        fun open(uri: URI) = opener(uri)
-    }
-}
