@@ -29,6 +29,21 @@ class TouchShellLayoutTest {
     }
 
     @Test
+    fun `selected and Settings rail ink satisfy AA contrast in both palettes`() {
+        listOf(false, true).forEach { night ->
+            val palette = Palette.forNight(night)
+            assertTrue(
+                "selected rail ink must be at least 4.5:1 in ${if (night) "night" else "day"} mode",
+                Palette.contrastRatio(palette.selectedInk, palette.selected) >= 4.5,
+            )
+            assertTrue(
+                "Settings rail ink must be at least 4.5:1 in ${if (night) "night" else "day"} mode",
+                Palette.contrastRatio(palette.settingsInk, palette.settings) >= 4.5,
+            )
+        }
+    }
+
+    @Test
     fun `only photos and art are fullscreen destinations`() {
         assertTrue(TouchDestination.PHOTOS.isImmersiveMedia)
         assertTrue(TouchDestination.ART.isImmersiveMedia)
