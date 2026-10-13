@@ -36,7 +36,7 @@ class TouchCompanionControllerTest {
     }
 
     @Test
-    fun `persists command claim before dispatch and only acknowledges explicit result`() {
+    fun `persists command claim before dispatch and rejects unsupported commands terminally`() {
         val scheduler = ScheduledThreadPoolExecutor(1)
         val journal = RecordingJournal()
         val dispatched = CountDownLatch(1)
@@ -55,10 +55,23 @@ class TouchCompanionControllerTest {
             controller.start()
             assertTrue(dispatched.await(2, TimeUnit.SECONDS))
             assertEquals(listOf("11111111-1111-1111-1111-111111111111"), journal.claimed)
-            assertEquals(listOf(FrameRemoteAck("11111111-1111-1111-1111-111111111111", "unsupported", "not supported by this preview")), journal.acknowledged)
+            assertEquals(listOf(FrameRemoteAck("11111111-1111-1111-1111-111111111111", "rejected", "not supported by this preview")), journal.acknowledged)
         } finally {
             controller.close()
         }
+    }
+
+    @Test
+    fun `maps every explicit bridge outcome to a canonical terminal companion status`() {
+        assertEquals(
+            setOf("applied", "dispatched", "rejected", "failed"),
+            setOf(
+                TouchCompanionController.acknowledgementStatus(TouchCompanionController.CommandResult.Applied()),
+                TouchCompanionController.acknowledgementStatus(TouchCompanionController.CommandResult.Dispatched()),
+                TouchCompanionController.acknowledgementStatus(TouchCompanionController.CommandResult.Unsupported()),
+                TouchCompanionController.acknowledgementStatus(TouchCompanionController.CommandResult.Failed()),
+            ),
+        )
     }
 
     @Test
