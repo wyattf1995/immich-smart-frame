@@ -1,3 +1,4 @@
+import com.android.build.api.variant.HostTestBuilder
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.tasks.OutputDirectory
 
@@ -121,7 +122,11 @@ androidComponents {
     onVariants(selector().all()) { variant ->
         variant.sources.java?.addGeneratedSourceDirectory(syncSharedMainSources, SharedInputSync::generatedDirectory)
         variant.sources.assets?.addGeneratedSourceDirectory(syncSharedAssets, SharedInputSync::generatedDirectory)
-        variant.unitTest?.sources?.java?.addGeneratedSourceDirectory(syncSharedTestSources, SharedInputSync::generatedDirectory)
+        // AGP 9.1 hides Variant.unitTest from Kotlin; hostTests is the supported API.
+        variant.hostTests[HostTestBuilder.UNIT_TEST_TYPE]?.sources?.java?.addGeneratedSourceDirectory(
+            syncSharedTestSources,
+            SharedInputSync::generatedDirectory,
+        )
     }
 }
 
