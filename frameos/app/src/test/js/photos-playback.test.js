@@ -820,9 +820,34 @@ test("stale native completion cannot clear the current capture owner", async () 
     "a stale first completion must not admit a duplicate second capture",
   );
 
-  pending[0].reject(new Error("late rejection"));
+});
+
+test("stale native rejection cannot schedule retry work for the current capture", async () => {
+  const firstId = "33333333-3333-4333-8333-333333333333";
+  const secondId = "44444444-4444-4444-8444-444444444444";
+  const pending = [];
+  const runtime = loadScript({
+    historyValues: [`*${firstId}:first`],
+    frames: [{ images: ["data:image/jpeg;base64,first"] }],
+    sendNativeMessage(message) {
+      let resolve, reject;
+      const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+      pending.push({ message, resolve, reject });
+      return promise;
+    },
+  });
+  runtime.runMicrotasks();
+  runtime.setHistory([`*${secondId}:second`]);
+  runtime.setFrameImage(0, "data:image/jpeg;base64,second");
+  runtime.fireEvent("load");
+  runtime.runMicrotasks();
+  assert.deepEqual(runtime.nativeMessages.map(message => message.assetId), [firstId, secondId]);
+
+  pending[0].reject(new Error("stale rejection"));
   await Promise.resolve();
   runtime.runTimers();
+  runtime.fireEvent("load");
+  runtime.runMicrotasks();
   assert.deepEqual(
     runtime.nativeMessages.map(message => message.assetId),
     [firstId, secondId],
