@@ -24,11 +24,15 @@ class TouchHomeCacheCodecTest {
         assertEquals(TouchConnection.OFFLINE, cached.connection)
     }
 
-    @Test fun cacheRejectsOversizedOrTooManyEvents() {
+    @Test fun cacheRejectsOversizedTextAndRetainsBoundedSortedEventPrefix() {
         val huge = model().copy(weatherText = "x".repeat(1_025))
         assertNull(TouchHomeCacheCodec.encode(huge, fingerprint))
-        val many = model().copy(events = List(6) { TouchCalendarEvent("Event $it", it.toLong(), null, false) })
-        assertNull(TouchHomeCacheCodec.encode(many, fingerprint))
+        val many = model().copy(events = List(100) { index ->
+            TouchCalendarEvent("Event $index", (100 - index).toLong(), null, false)
+        })
+        val decoded = TouchHomeCacheCodec.decode(TouchHomeCacheCodec.encode(many, fingerprint), fingerprint)!!
+        assertEquals(80, decoded.events.size)
+        assertEquals((1L..80L).toList(), decoded.events.map { it.startEpochMillis })
         assertTrue(TouchHomeCacheCodec.fingerprint("https://home.example", listOf("b", "a")) == TouchHomeCacheCodec.fingerprint("https://home.example", listOf("a", "b")))
     }
 }
