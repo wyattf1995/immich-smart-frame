@@ -39,6 +39,9 @@ suites = {
     "settings_policy": (module / "src/main/kotlin/com/wyattfleming/touchframe/control/TouchRemoteSettingsPolicy.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/control/TouchRemoteSettingsPolicyTest.kt", "com.wyattfleming.touchframe.control.TouchRemoteSettingsPolicyTest"),
     "provisioning": (module / "src/main/kotlin/com/wyattfleming/touchframe/control/TouchProvisionContract.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/control/TouchProvisionContractTest.kt", "com.wyattfleming.touchframe.control.TouchProvisionContractTest"),
     "scope": (module / "src/main/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScope.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScopeTest.kt", "com.wyattfleming.touchframe.concurrent.TouchTaskScopeTest"),
+    "calendar_ranges": (module / "src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarModel.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarRangeParserTest.kt", "com.wyattfleming.touchframe.calendar.TouchCalendarRangeParserTest"),
+    "calendar_parser": (module / "src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarParser.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarParserBoundsTest.kt", "com.wyattfleming.touchframe.calendar.TouchCalendarParserBoundsTest"),
+    "calendar_repository": (module / "src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarRepository.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarRepositoryTest.kt", "com.wyattfleming.touchframe.calendar.TouchCalendarRepositoryTest"),
 }
 
 
@@ -353,13 +356,31 @@ try:
             "result predicate from a paused epoch stays false after resume",
         },
     )
+    calendar_range_end_red = mutate(
+        "calendar-range-end-red", "calendar_ranges",
+        "val exclusiveEnd = allDay || endZoned?.toLocalTime() == java.time.LocalTime.MIDNIGHT",
+        "val exclusiveEnd = false",
+        {"all day exclusive end does not select following day", "midnight timed end is exclusive of next day"},
+    )
+    calendar_parser_cap_red = mutate(
+        "calendar-range-cap-red", "calendar_parser",
+        "const val MAX_EVENTS_PER_CALENDAR = 200",
+        "const val MAX_EVENTS_PER_CALENDAR = 201",
+        {"parser caps each calendar before rendering"},
+    )
+    calendar_closed_red = mutate(
+        "calendar-closed-repository-red", "calendar_repository",
+        "if (closed) null else cleanupLocked(active)",
+        "if (false) null else cleanupLocked(active)",
+        {"closed repository rejects a range before reading a token"},
+    )
     restored = run("restored-green", set())
     bridge_restored = run_bridge("prepared-bridge-restored-green", set())
     unchanged_tests = {str(test.relative_to(root)): digest(test) for _, (_, test, _) in suites.items()}
     if unchanged_tests != test_hashes or digest(bridge_test) != bridge_test_hash:
         raise RuntimeError("proof changed test bytes")
     (out / "touchframe-source-proof.json").write_text(json.dumps({
-        "proof": "touchframe-native-direct-data-v2", "passed": True, "command": command,
+        "proof": "touchframe-native-direct-data-v3", "passed": True, "command": command,
         "sourceTestAnnotationCount": expected_tests, "initial": initial, "preparedBridgeInitial": bridge_initial,
         "preparedBridgeSessionGateRed": bridge_red, "edgeRed": edge_red,
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red, "mediaCrashRetryRed": media_red,
@@ -378,6 +399,9 @@ try:
         "settingsMonotonicRevisionRed": settings_revision_red,
         "provisioningCalendarCapRed": provisioning_cap_red,
         "pausedTaskEntryRed": scope_red,
+        "calendarExclusiveRangeEndRed": calendar_range_end_red,
+        "calendarRangeParserCapRed": calendar_parser_cap_red,
+        "calendarClosedRepositoryRed": calendar_closed_red,
         "restored": restored, "preparedBridgeRestored": bridge_restored,
         "preparedBridgeSourceSha256": bridge_source_hash,
         "preparedBridgeRestoredSourceSha256": digest(bridge_source),
