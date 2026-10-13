@@ -15,6 +15,15 @@ class TouchHomeCacheCodecTest {
         assertNull(TouchHomeCacheCodec.decode(encoded, TouchHomeCacheCodec.fingerprint("https://other.example", listOf("weather.home"))))
     }
 
+    @Test fun cachedSnapshotPreservesAnAbsentServerStepWithoutBecomingMutable() {
+        val cached = TouchHomeCacheCodec.decode(
+            TouchHomeCacheCodec.encode(model().copy(climate = model().climate!!.copy(step = null)), fingerprint)!!,
+            fingerprint,
+        )!!
+        assertEquals(null, cached.climate?.step)
+        assertEquals(TouchConnection.OFFLINE, cached.connection)
+    }
+
     @Test fun cacheRejectsOversizedOrTooManyEvents() {
         val huge = model().copy(weatherText = "x".repeat(1_025))
         assertNull(TouchHomeCacheCodec.encode(huge, fingerprint))
