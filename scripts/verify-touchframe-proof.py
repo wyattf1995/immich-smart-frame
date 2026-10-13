@@ -379,7 +379,10 @@ try:
         "media-active-crash-retry-red", "media",
         "} else {\n                Decision.RETRY_REQUIRED\n            }",
         "} else {\n                Decision.LOAD\n            }",
-        {"contentCrashRequiresExplicitRetryAndUsesTheMostRecentConfiguredUrl"},
+        {
+            "contentCrashRequiresExplicitRetryAndUsesTheMostRecentConfiguredUrl",
+            "hiddenContentCrashRecoversExactlyOnceWhenTheUserReturns",
+        },
     )
     camera_palette_red = mutate(
         "camera-palette-contrast-red", "camera_palette",
