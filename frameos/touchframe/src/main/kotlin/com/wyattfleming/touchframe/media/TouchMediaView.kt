@@ -135,7 +135,8 @@ class TouchMediaView(
                 reportContentProcessClosed()
                 return
             }
-            TouchMediaLoadState.Decision.RECOVER_RETAINED_SESSION -> {
+            TouchMediaLoadState.Decision.RECOVER_RETAINED_SESSION,
+            TouchMediaLoadState.Decision.REPLACE_DOCUMENT_SESSION -> {
                 reopenAndLoad(url)
             }
             TouchMediaLoadState.Decision.LOAD -> {
@@ -206,6 +207,11 @@ class TouchMediaView(
      * Later active crashes remain visible and require the explicit Retry action.
      */
     private fun reopenAndLoad(url: String) {
+        // The cover is made opaque before retiring the old document, so no
+        // callback from the retained session can expose its prior pixels.
+        loadingCover.visibility = View.VISIBLE
+        geckoView.visibility = View.INVISIBLE
+        retryButton.visibility = View.GONE
         renderDeadline.sessionReplaced()
         cancelRenderDeadlineTask()
         val replaced = session
@@ -360,7 +366,7 @@ class TouchMediaView(
 
 /** Pure load/retry decisions, kept free of Gecko and Android for focused tests. */
 internal class TouchMediaLoadState {
-    enum class Decision { LOAD, ALREADY_LOADED, RECOVER_RETAINED_SESSION, RETRY_REQUIRED }
+    enum class Decision { LOAD, ALREADY_LOADED, REPLACE_DOCUMENT_SESSION, RECOVER_RETAINED_SESSION, RETRY_REQUIRED }
 
     data class RetryRequest(val url: String, val reopenSession: Boolean)
 
@@ -381,8 +387,9 @@ internal class TouchMediaLoadState {
             }
         }
         if (configuredUrl == url) return Decision.ALREADY_LOADED
+        val hasRetainedDocument = configuredUrl != null
         configuredUrl = url
-        return Decision.LOAD
+        return if (hasRetainedDocument) Decision.REPLACE_DOCUMENT_SESSION else Decision.LOAD
     }
 
     fun markContentProcessClosed(whileHidden: Boolean = false) {
