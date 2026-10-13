@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.json.JSONObject
 
 class TouchHomeCacheCodecTest {
     private val fingerprint = TouchHomeCacheCodec.fingerprint("https://home.example", listOf("weather.home", "climate.entryway"))
@@ -22,6 +23,13 @@ class TouchHomeCacheCodecTest {
         )!!
         assertEquals(null, cached.climate?.step)
         assertEquals(TouchConnection.OFFLINE, cached.connection)
+    }
+
+    @Test fun cacheDecodeRejectsTamperedTextOutsideTheEncodeBounds() {
+        val tampered = JSONObject(TouchHomeCacheCodec.encode(model(), fingerprint)!!)
+            .put("weather", "x".repeat(1_025))
+            .toString()
+        assertNull(TouchHomeCacheCodec.decode(tampered, fingerprint))
     }
 
     @Test fun cacheRejectsOversizedTextAndRetainsBoundedSortedEventPrefix() {

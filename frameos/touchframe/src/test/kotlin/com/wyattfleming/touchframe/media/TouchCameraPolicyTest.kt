@@ -25,6 +25,17 @@ class TouchCameraPolicyTest {
         assertNull(gate.next())
     }
 
+    @Test fun closingGateInvalidatesIssuedAndPendingCameraRequests() {
+        val gate = TouchCameraRefreshGate()
+        assertTrue(gate.setActive(true, "camera.one"))
+        val issued = gate.next()!!
+        assertTrue(!gate.request("camera.two"))
+        assertTrue(gate.close())
+        assertTrue(!gate.isCurrent(issued))
+        assertNull(gate.next())
+        assertTrue(!gate.request("camera.three"))
+    }
+
     @Test fun refreshGateCancelsBeforeADeferredRequestCanStart() {
         val gate = TouchCameraRefreshGate()
         assertTrue(gate.setActive(true, "camera.one"))
