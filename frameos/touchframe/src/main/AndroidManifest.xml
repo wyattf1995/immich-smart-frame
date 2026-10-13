@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
@@ -8,6 +9,8 @@
          request notification access; Touch does not post or request notifications. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- API 33+ uses the registered OnBackInvokedCallback. Older Android ignores
+         this opt-in attribute and uses TouchFrameActivity.onBackPressed instead. -->
     <application
         android:name=".TouchFrameApplication"
         android:allowBackup="false"
@@ -18,7 +21,8 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.TouchFrame"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        tools:ignore="UnusedAttribute">
         <receiver
             android:name=".control.TouchProvisionReceiver"
             android:exported="true"
