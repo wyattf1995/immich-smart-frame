@@ -9,6 +9,101 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TouchMediaLoadStateTest {
+    private val art = "https://photos.example/art"
+    private val photos = "https://photos.example/frame"
+
+    @Test
+    fun initialEntryDoesNotArmRetainedKillRecovery() {
+        val state = TouchMediaLoadState()
+        state.showUrl(art)
+        state.visibilityChanged(true, 1)
+        assertNull(state.recoverForegroundKill(1))
+    }
+
+    @Test
+    fun delayedKillAfterWarmReturnRecoversOnceWithoutPaintRearming() {
+        val state = returnedArt()
+        assertEquals(TouchMediaLoadState.Decision.ALREADY_LOADED, state.showUrl(art))
+        assertEquals(art, state.recoverForegroundKill(1))
+        assertNull(state.recoverForegroundKill(1))
+        assertNull(state.recoverForegroundKill(2))
+        state.markContentProcessClosed()
+        assertEquals(TouchMediaLoadState.Decision.RETRY_REQUIRED, state.showUrl(art))
+    }
+
+    @Test
+    fun activeCrashAndExplicitRetryClearTheReturnTicket() {
+        val crashed = returnedArt()
+        crashed.markContentProcessClosed()
+        assertNull(crashed.recoverForegroundKill(1))
+        assertEquals(TouchMediaLoadState.Decision.RETRY_REQUIRED, crashed.showUrl(art))
+        val retried = returnedArt()
+        assertEquals(art, retried.retry()?.url)
+        assertNull(retried.recoverForegroundKill(1))
+    }
+
+    @Test
+    fun crossUrlReplacementDiscardsTheOldReturnTicket() {
+        val state = returnedArt()
+        assertEquals(TouchMediaLoadState.Decision.REPLACE_DOCUMENT_SESSION, state.showUrl(photos))
+        assertNull(state.recoverForegroundKill(1))
+        assertNull(state.recoverForegroundKill(2))
+    }
+
+    @Test
+    fun hiddenDeliveredClosureConsumesAllRecoveryBeforeReplacement() {
+        val state = returnedArt()
+        state.visibilityChanged(false, 1)
+        state.markContentProcessClosed(whileHidden = true)
+        state.visibilityChanged(true, 1)
+        assertNull(state.recoverForegroundKill(1))
+        assertEquals(TouchMediaLoadState.Decision.RECOVER_RETAINED_SESSION, state.showUrl(art))
+        assertNull(state.recoverForegroundKill(2))
+        state.markContentProcessClosed()
+        assertEquals(TouchMediaLoadState.Decision.RETRY_REQUIRED, state.showUrl(art))
+    }
+
+    @Test
+    fun hideClearsTheOldTicketAndTheNextRealReturnGetsOneChance() {
+        val state = returnedArt()
+        state.visibilityChanged(false, 1)
+        assertNull(state.recoverForegroundKill(1))
+        state.visibilityChanged(true, 1)
+        assertEquals(art, state.recoverForegroundKill(1))
+        assertNull(state.recoverForegroundKill(1))
+    }
+
+    @Test
+    fun retainedTicketCannotRecoverADifferentSessionGeneration() {
+        assertNull(returnedArt().recoverForegroundKill(2))
+        val changedWhileHidden = TouchMediaLoadState()
+        changedWhileHidden.showUrl(art)
+        changedWhileHidden.visibilityChanged(false, 1)
+        changedWhileHidden.visibilityChanged(true, 2)
+        assertNull(changedWhileHidden.recoverForegroundKill(2))
+    }
+
+    @Test
+    fun productionKillRecoveryIsIdentityFencedAndCrashRemainsManual() {
+        val source = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt").readText()
+        assertTrue(source.contains("loadState.visibilityChanged(active, sessionGeneration)"))
+        assertTrue(source.contains("override fun onKill(session: GeckoSession) = reportContentProcessKilled(session)"))
+        assertTrue(source.contains("override fun onCrash(session: GeckoSession) = reportContentProcessClosed(session)"))
+        val killed = source.substringAfter("private fun reportContentProcessKilled(source: GeckoSession)")
+            .substringBefore("private fun reportContentProcessClosed")
+        assertTrue(killed.indexOf("if (!isCurrentSession(source)) return") in 0 until killed.indexOf("loadState.recoverForegroundKill(sessionGeneration)"))
+        assertTrue(killed.contains("if (url != null) reopenAndLoad(url) else reportContentProcessClosed(source)"))
+        val ready = source.substringAfter("private fun reportReady(source: GeckoSession)").substringBefore("private fun reportFailure")
+        assertFalse(ready.contains("loadState."))
+    }
+
+    private fun returnedArt(): TouchMediaLoadState = TouchMediaLoadState().apply {
+        showUrl(art)
+        visibilityChanged(true, 1)
+        visibilityChanged(false, 1)
+        visibilityChanged(true, 1)
+    }
+
     @Test
     fun sameConfiguredUrlStaysWarmButChangedUrlReplacesItsDocumentSession() {
         val state = TouchMediaLoadState()
