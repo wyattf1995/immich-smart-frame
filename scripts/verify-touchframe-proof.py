@@ -26,6 +26,7 @@ suites = {
     "parser": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeParser.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeParserTest.kt", "com.wyattfleming.touchframe.home.TouchHomeParserTest"),
     "repository": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepository.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepositoryTest.kt", "com.wyattfleming.touchframe.home.TouchHomeRepositoryTest"),
     "media": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchMediaLoadStateTest.kt", "com.wyattfleming.touchframe.media.TouchMediaLoadStateTest"),
+    "scope": (module / "src/main/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScope.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScopeTest.kt", "com.wyattfleming.touchframe.concurrent.TouchTaskScopeTest"),
 }
 
 
@@ -43,6 +44,7 @@ def static_contract() -> dict[str, object]:
     repo = suites["repository"][0].read_text()
     parser = suites["parser"][0].read_text()
     media = suites["media"][0].read_text()
+    scope = suites["scope"][0].read_text()
     required = {
         "media-only edge gesture": "destination.isImmersiveMedia &&",
         "48dp edge target": "EDGE_WIDTH_DP = 48",
@@ -54,8 +56,9 @@ def static_contract() -> dict[str, object]:
         "cancel operation generation gate": "!acceptOperation(operation)",
         "calendar event cap": "MAX_EVENTS_PER_CALENDAR = 200",
         "same-url crash retry": "if (configuredUrl == url) return if (contentProcessClosed)",
+        "pause lifecycle gate": "if (closed || !resumed) return\n            resumed = false",
     }
-    combined = shell + repo + parser + media
+    combined = shell + repo + parser + media + scope
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -146,6 +149,15 @@ try:
         "return Decision.LOAD",
         {"content crash requires explicit retry and uses the most recent configured url"},
     )
+    scope_red = mutate(
+        "pause-lifecycle-red", "scope",
+        "if (closed || !resumed) return\n            resumed = false",
+        "if (true) return\n            resumed = false",
+        {
+            "queued task paused before execution never invokes its block",
+            "pause interrupts a running task",
+        },
+    )
     restored = run("restored-green", set())
     unchanged_tests = {str(test.relative_to(root)): digest(test) for _, (_, test, _) in suites.items()}
     if unchanged_tests != test_hashes:
@@ -154,6 +166,7 @@ try:
         "proof": "touchframe-native-direct-data-v2", "passed": True, "command": command,
         "sourceTestAnnotationCount": expected_tests, "initial": initial, "edgeRed": edge_red,
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red, "mediaCrashRetryRed": media_red,
+        "pausedTaskEntryRed": scope_red,
         "restored": restored,
         "originalSourceSha256": source_hashes,
         "restoredSourceSha256": {name: digest(source) for name, (source, _, _) in suites.items()},
