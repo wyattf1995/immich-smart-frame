@@ -148,10 +148,12 @@ class TouchHomeView private constructor(
 
     private fun header(type: Typography): View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        clockView = label(timeText(), type.clock, true)
-        dateView = label(dateText(), type.body, false)
-        addView(clockView)
-        addView(dateView)
+        val clock = label(timeText(), type.clock, true)
+        val date = label(dateText(), type.body, false)
+        clockView = clock
+        dateView = date
+        addView(clock)
+        addView(date)
     }
 
     private fun statusCard(snapshot: TouchHomeModel?, type: Typography): View = card().apply {
