@@ -70,12 +70,8 @@ import com.wyattfleming.frameos.control.FrameControlStore
 import com.wyattfleming.frameos.control.FrameCompanionClient
 import com.wyattfleming.frameos.control.FrameCompanionCredentialsStore
 import com.wyattfleming.frameos.control.FrameRemoteStatus
-import com.wyattfleming.frameos.control.FrameCompanionCommandDecoder
 import com.wyattfleming.frameos.control.FrameRemoteCommand
 import com.wyattfleming.frameos.control.FrameCompanionCommandStore
-import com.wyattfleming.frameos.control.FrameCompanionSettingsDecoder
-import com.wyattfleming.frameos.control.FrameCompanionResponseDecoder
-import com.wyattfleming.frameos.control.FrameCompanionEventDecoder
 import com.wyattfleming.frameos.control.FrameCompanionEventStore
 import com.wyattfleming.frameos.control.FrameCompanionEnvelope
 import com.wyattfleming.frameos.control.FrameCompanionEnvelopeDecoder
@@ -1477,31 +1473,6 @@ class MainActivity : Activity() {
                 }
             }
         }
-    }
-
-    private fun applyHiddenPhotoSnapshot(payload: String) {
-        val ids = runCatching {
-            val values = org.json.JSONObject(payload).optJSONArray("hiddenAssets") ?: return
-            require(values.length() <= 1_000)
-            buildSet {
-                repeat(values.length()) { index ->
-                    val id = values.getString(index)
-                    require(Regex("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$").matches(id))
-                    add(id.lowercase(Locale.ROOT))
-                }
-            }
-        }.getOrNull() ?: return
-        if (!photoReserve.applyHiddenAssets(ids)) return
-        if (currentPhotoAssetId?.lowercase(Locale.ROOT) in ids) {
-            currentPhotoAssetId = null
-            if (state.mode == FrameMode.PHOTOS) {
-                if (photoFallbackPolicy.isShowing) showOfflinePhoto(manual = true) else movePhoto(true)
-            }
-        }
-    }
-
-    private fun maybeShowCompanionEvent(payload: String) {
-        FrameCompanionEventDecoder.decode(payload, System.currentTimeMillis())?.let(::maybeShowCompanionEvent)
     }
 
     private fun maybeShowCompanionEvent(event: com.wyattfleming.frameos.control.FrameCompanionEvent) {
