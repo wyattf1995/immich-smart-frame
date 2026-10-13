@@ -375,6 +375,12 @@ try:
         "if (false) {",
         {"hiddenContentCrashRecoversExactlyOnceWhenTheUserReturns"},
     )
+    media_paint_readiness_red = mutate(
+        "media-contentful-paint-readiness-red", "media",
+        "if (!success) reportFailure(session, context.getString(R.string.touch_media_load_failed, label))",
+        "if (success) reportReady(session)\n                else reportFailure(session, context.getString(R.string.touch_media_load_failed, label))",
+        {"successfulNavigationWaitsForContentfulPaintBeforeRemovingTheCover"},
+    )
     media_active_crash_red = mutate(
         "media-active-crash-retry-red", "media",
         "} else {\n                Decision.RETRY_REQUIRED\n            }",
@@ -553,6 +559,7 @@ try:
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red,
         "climateStaleGateRed": climate_stale_red,
         "mediaHiddenReturnRecoveryRed": media_red,
+        "mediaContentfulPaintReadinessRed": media_paint_readiness_red,
         "mediaActiveCrashRetryRed": media_active_crash_red,
         "cameraPaletteContrastRed": camera_palette_red,
         "offlineHiddenPhotosRed": offline_red,

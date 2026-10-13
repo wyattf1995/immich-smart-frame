@@ -252,8 +252,9 @@ class TouchMediaView(
         }
         next.progressDelegate = object : GeckoSession.ProgressDelegate {
             override fun onPageStop(session: GeckoSession, success: Boolean) {
-                if (success) reportReady(session)
-                else reportFailure(session, context.getString(R.string.touch_media_load_failed, label))
+                if (!success) reportFailure(session, context.getString(R.string.touch_media_load_failed, label))
+                // A completed navigation can precede TextureView content. Keep
+                // the cover until Gecko reports contentful paint below.
             }
         }
         next.contentDelegate = object : GeckoSession.ContentDelegate {
