@@ -19,7 +19,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro", "../app/proguard-legacy-rules.pro")
         }
     }
 
@@ -43,4 +43,5 @@ dependencies {
     implementation(project(":frame-shared"))
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.1")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20260814")
 }
