@@ -9,10 +9,11 @@ java -version
 python3 tools/verify-source-proof.py
 python3 tools/verify-grid-proof.py
 python3 tools/verify-weather-proof.py
+python3 tools/verify-weather-source-budget-proof.py .
 python3 - <<'PY'
 import json
 from pathlib import Path
-for name in ('source-proof.json', 'grid-proof.json', 'weather-proof.json'):
+for name in ('source-proof.json', 'grid-proof.json', 'weather-proof.json', 'weather-source-budget-proof.json'):
     data = json.loads((Path('validation') / name).read_text())
     if data.get('passed') is not True or data.get('source_restored_exactly') is not True:
         raise SystemExit('proof receipt did not pass and restore source: ' + name)

@@ -1,58 +1,61 @@
 #!/usr/bin/env python3
-"""NAS-only source-negative proof for the explicit Android Settings return overlay."""
-import hashlib
-import json
+"""NAS-only red/restore-green proof for the Settings return overlay lifecycle and API23 type."""
+from __future__ import annotations
+import hashlib, json, shutil, subprocess, sys
 from pathlib import Path
-import shutil
-import subprocess
-import sys
 import xml.etree.ElementTree as ElementTree
 
-if not __debug__:
-    raise RuntimeError("optimized Python is not permitted for proof validation")
-if len(sys.argv) != 2:
-    raise SystemExit(f"usage: {Path(sys.argv[0]).name} <repository-root>")
+if not __debug__: raise RuntimeError("optimized Python is not permitted for proof validation")
+if len(sys.argv) != 2: raise SystemExit(f"usage: {Path(sys.argv[0]).name} <repository-root>")
+root=Path(sys.argv[1]).resolve(); frame=root/'frameos'; out=root/'reports'/'frameos-legacy'; out.mkdir(parents=True,exist_ok=True)
+source=frame/'app/src/main/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsReturnController.kt'
+tests={
+ 'lifecycle': frame/'app/src/test/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsReturnControllerTest.kt',
+ 'legacy_type': frame/'app/src/test/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsOverlayWindowTypeTest.kt',
+}
+report=frame/'app/build/test-results/testDebugUnitTest'
+classes={
+ 'lifecycle':'com.wyattfleming.frameos.ui.FrameExternalSettingsReturnControllerTest',
+ 'legacy_type':'com.wyattfleming.frameos.ui.FrameExternalSettingsOverlayWindowTypeTest',
+}
+xml_names={name:'TEST-'+value+'.xml' for name,value in classes.items()}
+for path in (source,*tests.values()):
+    if not path.is_file() or path.is_symlink(): raise RuntimeError(f'missing regular file: {path}')
+original=source.read_bytes(); source_hash=hashlib.sha256(original).hexdigest(); test_hashes={name:hashlib.sha256(path.read_bytes()).hexdigest() for name,path in tests.items()}
+base=['./gradlew','--no-daemon','--max-workers=2','-PframeosTarget=legacyArmv7',':app:testDebugUnitTest']
 
-root = Path(sys.argv[1]).resolve()
-frame = root / "frameos"
-source = frame / "app/src/main/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsReturnController.kt"
-test = frame / "app/src/test/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsReturnControllerTest.kt"
-out = root / "reports" / "frameos-legacy"
-out.mkdir(parents=True, exist_ok=True)
-report = frame / "app/build/test-results/testDebugUnitTest"
-xml_name = "TEST-com.wyattfleming.frameos.ui.FrameExternalSettingsReturnControllerTest.xml"
-command = ["./gradlew", "--no-daemon", "--max-workers=2", "-PframeosTarget=legacyArmv7", ":app:testDebugUnitTest", "--tests", "com.wyattfleming.frameos.ui.FrameExternalSettingsReturnControllerTest"]
-for path in (source, test):
-    if not path.is_file() or path.is_symlink(): raise RuntimeError(f"missing regular file: {path}")
-original = source.read_bytes(); source_hash = hashlib.sha256(original).hexdigest(); test_hash = hashlib.sha256(test.read_bytes()).hexdigest()
-before = "if (!adapter.canDrawOverlays()) return Outcome.OVERLAY_PERMISSION_DENIED"
-after = "if (!adapter.canDrawOverlays()) return Outcome.LAUNCHED"
-
-def run(label, failures):
+def run(name,label,failures):
     if report.exists(): shutil.rmtree(report)
-    log = out / f"{label}.log"
-    with log.open("w") as stream: result = subprocess.run(command, cwd=frame, stdout=stream, stderr=subprocess.STDOUT)
-    matches = list(report.rglob(xml_name)); assert len(matches) == 1, matches
-    xml = out / f"{label}.xml"; shutil.copy2(matches[0], xml)
-    root_xml = ElementTree.parse(xml).getroot(); cases = list(root_xml.iter("testcase"))
-    failed = [case for case in cases if case.find("failure") is not None]
-    assert len(cases) == 5 and len(failed) == failures and not list(root_xml.iter("error")), (len(cases), len(failed))
-    return result.returncode, log.name, xml.name
+    log=out/f'settings-return-overlay-{label}.log'
+    with log.open('w') as stream:
+        result=subprocess.run(base+['--tests',classes[name]],cwd=frame,stdout=stream,stderr=subprocess.STDOUT)
+    matches=list(report.rglob(xml_names[name])); assert len(matches)==1,matches
+    xml=out/f'settings-return-overlay-{label}.xml'; shutil.copy2(matches[0],xml)
+    root_xml=ElementTree.parse(xml).getroot(); cases=list(root_xml.iter('testcase')); failed=list(root_xml.iter('failure')); errors=list(root_xml.iter('error'))
+    expected={'lifecycle':5,'legacy_type':2}[name]
+    assert len(cases)==expected and len(failed)==failures and not errors,(name,len(cases),len(failed),len(errors))
+    return {'negative_exit' if failures else 'restored_green_exit':result.returncode,'log':log.name,'junit_xml':xml.name,'tests':len(cases),'failures':len(failed)}
 
+checks={}
+mutations={
+ 'lifecycle':('if (!adapter.canDrawOverlays()) return Outcome.OVERLAY_PERMISSION_DENIED','if (!adapter.canDrawOverlays()) return Outcome.LAUNCHED'),
+ 'legacy_type':('if (apiLevel >= Build.VERSION_CODES.O) APPLICATION_OVERLAY else PHONE','if (apiLevel >= Build.VERSION_CODES.M) APPLICATION_OVERLAY else PHONE'),
+}
 try:
-    text = original.decode(); assert text.count(before) == 1 and after not in text
-    source.write_text(text.replace(before, after), encoding="utf-8")
-    negative_exit, negative_log, negative_xml = run("settings-return-overlay-red", 1)
-    assert negative_exit != 0
+    for name,(before,after) in mutations.items():
+        text=original.decode(); assert text.count(before)==1 and after not in text
+        source.write_text(text.replace(before,after),encoding='utf-8')
+        negative=run(name,name+'-red',1); assert negative['negative_exit']!=0
+        checks[name]={'negative':negative}
+        source.write_bytes(original); assert source.read_bytes()==original
 finally:
-    source.write_bytes(original)
-    assert source.read_bytes() == original
-restored_exit, restored_log, restored_xml = run("settings-return-overlay-green", 0)
-assert restored_exit == 0 and hashlib.sha256(test.read_bytes()).hexdigest() == test_hash
-(out / "settings-return-overlay-source-proof.json").write_text(json.dumps({
-    "passed": True, "negative_exit": negative_exit, "negative_tests": 5, "negative_assertion_failures": 1,
-    "restored_green_exit": restored_exit, "restored_tests": 5, "restored_failures": 0,
-    "restored_source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(), "unchanged_test_sha256": test_hash,
-    "negative_log": negative_log, "negative_junit_xml": negative_xml, "restored_log": restored_log, "restored_junit_xml": restored_xml,
-}, indent=2) + "\n", encoding="utf-8")
-print("Settings return overlay red / exact restore green verified")
+    source.write_bytes(original); assert source.read_bytes()==original
+for name in mutations:
+    green=run(name,name+'-green',0); assert green['restored_green_exit']==0
+    checks[name]['restored']=green
+assert {name:hashlib.sha256(path.read_bytes()).hexdigest() for name,path in tests.items()}==test_hashes
+(out/'settings-return-overlay-source-proof.json').write_text(json.dumps({
+ 'passed':True,'checks':checks,'restored_source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),
+ 'unchanged_test_sha256':test_hashes,
+},indent=2)+'\n',encoding='utf-8')
+print('Settings return overlay lifecycle and API23 type red / exact restore green verified')
