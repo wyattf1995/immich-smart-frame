@@ -19,7 +19,7 @@ class TouchHomeParser {
         return state to text
     }
 
-    /** Missing or malformed bounds produce no controllable climate card. */
+    /** Missing or malformed bounds produce no controllable climate card; step is optional in HA. */
     fun parseClimate(expectedEntityId: String, body: String): TouchClimate? {
         val root = JSONObject(body)
         require(root.optString("entity_id") == expectedEntityId) { "Unexpected climate entity" }
@@ -30,8 +30,8 @@ class TouchHomeParser {
         val unit = attributes.optString("temperature_unit").trim().takeIf(String::isNotBlank) ?: return null
         val minimum = attributes.optNumber("min_temp") ?: return null
         val maximum = attributes.optNumber("max_temp") ?: return null
-        val step = attributes.optNumber("target_temp_step") ?: return null
-        if (minimum > maximum || step <= 0.0) return null
+        val step = attributes.optNumber("target_temp_step")
+        if (minimum > maximum || (step != null && step <= 0.0)) return null
         return TouchClimate(
             entityId = expectedEntityId,
             currentTemperature = attributes.optNumber("current_temperature"),

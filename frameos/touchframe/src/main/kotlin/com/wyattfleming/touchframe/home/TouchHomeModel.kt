@@ -36,7 +36,8 @@ data class TouchClimate(
     val modes: List<String>,
     val minTemperature: Double,
     val maxTemperature: Double,
-    val step: Double,
+    /** Server-advertised increment when present; null uses only a local UI adjustment. */
+    val step: Double?,
 ) {
     init {
         require(entityId.isNotBlank()) { "Climate entity id is required" }
@@ -45,7 +46,7 @@ data class TouchClimate(
         require(minTemperature.isFinite() && maxTemperature.isFinite() && minTemperature <= maxTemperature) {
             "Climate bounds must be finite and ordered"
         }
-        require(step.isFinite() && step > 0) { "Climate step must be positive" }
+        require(step == null || (step.isFinite() && step > 0)) { "Climate step must be positive when provided" }
         require(modes.all { it.isNotBlank() }) { "Climate modes must be nonblank" }
     }
 }

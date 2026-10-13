@@ -53,7 +53,7 @@ internal object TouchHomeCacheCodec {
             require(climate.modes.size <= MAX_MODES)
             JSONObject().put("entity", climate.entityId).put("current", climate.currentTemperature ?: JSONObject.NULL)
                 .put("target", climate.targetTemperature ?: JSONObject.NULL).put("unit", climate.unit).put("mode", climate.mode)
-                .put("modes", JSONArray(climate.modes)).put("min", climate.minTemperature).put("max", climate.maxTemperature).put("step", climate.step)
+                .put("modes", JSONArray(climate.modes)).put("min", climate.minTemperature).put("max", climate.maxTemperature).put("step", climate.step ?: JSONObject.NULL)
         } ?: JSONObject.NULL)
         root.toString().takeIf { it.toByteArray(Charsets.UTF_8).size <= MAX_BYTES }
     }.getOrNull()
@@ -70,7 +70,7 @@ internal object TouchHomeCacheCodec {
         }
         val climate = root.optJSONObject("climate")?.let { value ->
             val modes = value.getJSONArray("modes").let { modes -> require(modes.length() <= MAX_MODES); List(modes.length()) { modes.getString(it) } }
-            TouchClimate(value.getString("entity"), value.optDoubleOrNull("current"), value.optDoubleOrNull("target"), value.getString("unit"), value.getString("mode"), modes, value.getDouble("min"), value.getDouble("max"), value.getDouble("step"))
+            TouchClimate(value.getString("entity"), value.optDoubleOrNull("current"), value.optDoubleOrNull("target"), value.getString("unit"), value.getString("mode"), modes, value.getDouble("min"), value.getDouble("max"), value.optDoubleOrNull("step"))
         }
         TouchHomeModel(root.getString("weather"), root.getString("temperature"), events, climate, TouchConnection.OFFLINE, root.optLongOrNull("updated"))
     }.getOrNull()
