@@ -1,5 +1,6 @@
 package com.wyattfleming.touchframe.media
 
+import com.wyattfleming.frameos.security.FrameUrlPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
