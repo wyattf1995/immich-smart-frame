@@ -58,14 +58,18 @@ internal class TouchOfflinePhotos(
         photosActive = active
         lifecycle.setActive(active)
         worker.execute {
-            if (closed || session !== target) return@execute
-            // attach() activates the reserve scope before it configures trusted capture.
-            // A detach may race this worker task; leave that stale bridge detached.
-            bridge.attach(runtime, target, photosUrl, profile) { ready ->
-                if (closed || session !== target || !ready) return@attach
-                bridge.setCaptureEnabled(photosActive, photosPaused = false)
+            if (closed || session !== target || !bridge.configure(target, photosUrl, profile)) return@execute
+            main.post {
+                if (closed || session !== target) {
+                    bridge.detach(target)
+                    return@post
+                }
+                // Gecko extension creation stays on the UI thread after worker scope activation.
+                bridge.attachPrepared(runtime, target) { ready ->
+                    if (closed || session !== target || !ready) return@attachPrepared
+                    bridge.setCaptureEnabled(photosActive, photosPaused = false)
+                }
             }
-            if (closed || session !== target) bridge.detach(target)
         }
     }
 

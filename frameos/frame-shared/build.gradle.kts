@@ -47,6 +47,7 @@ android {
         }
         getByName("test") {
             java.setSrcDirs(listOf("src/test/kotlin", "../app/src/test/kotlin"))
+            resources.srcDir("../app/src/test/resources")
             java.include(
                 "com/wyattfleming/frameos/auth/**",
                 "com/wyattfleming/frameos/weather/**",
@@ -62,6 +63,10 @@ android {
             )
         }
     }
+}
+
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    workingDir = file("../app")
 }
 
 dependencies {

@@ -122,7 +122,10 @@ class FramePhotoBridge(
         }
     }
 
-    /** Installs the APK-bundled extension and attaches its message delegate to this Photos session. */
+    /**
+     * Legacy combined path. It deliberately retains its established behavior for FrameOS:
+     * scope preparation and extension attachment happen as one call.
+     */
     @Synchronized
     fun attach(
         runtime: GeckoRuntime,
@@ -132,6 +135,20 @@ class FramePhotoBridge(
         onReady: (Boolean) -> Unit = {},
     ): Boolean {
         if (!configure(session, photosUrl, profile)) return false
+        return attachPrepared(runtime, session, onReady)
+    }
+
+    /**
+     * UI-thread extension step for a session already prepared with [configure] on a worker.
+     * It never activates disk scope state and refuses a session/scope invalidated after preparation.
+     */
+    @Synchronized
+    fun attachPrepared(
+        runtime: GeckoRuntime,
+        session: GeckoSession,
+        onReady: (Boolean) -> Unit = {},
+    ): Boolean {
+        if (configuredSession !== session) return false
         val expectedAttachmentEpoch = attachmentEpoch.current()
         val expectedScopeKey = configuredScope?.key ?: return false
         runtime.webExtensionController.ensureBuiltIn(EXTENSION_LOCATION, EXTENSION_ID).accept({ installed ->
