@@ -45,6 +45,7 @@ def replace_once(old,new):
     return mutate
 
 prove('photo-policy-revision','test_settings_and_each_preference_mutation_invalidate',replace_once("row['preferences_revision']",'0'))
+prove('malformed-revision','test_old_clients_bad_revisions_cross_device_and_restart_receive_full_policy',replace_once("isinstance(known,str) and re.fullmatch(r'[0-9a-f]{64}',known) and hmac.compare_digest(known,revision)","isinstance(known,str) and hmac.compare_digest(known.encode(),revision.encode())"))
 prove('scoped-poll-expiry','test_poll_never_calls_global_maintenance_and_uses_device_expiry_index',replace_once('self._expire_device(db, device, now)','self._expire(db)'))
 prove('reader-concurrency','test_readers_do_not_acquire_writer_lock',replace_once("connection.execute('BEGIN IMMEDIATE' if write else 'BEGIN')","connection.execute('BEGIN IMMEDIATE')"))
 baseline = subprocess.check_output(['git','show','ba0a374:companion/server.py'],cwd=ROOT,text=True)

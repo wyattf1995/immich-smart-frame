@@ -43,6 +43,26 @@ with bounded timeouts and backoff. Commands expire after 60 seconds and are only
 accepted while the frame's heartbeat is less than 90 seconds old. Persist command
 IDs and acknowledgements; an acknowledgement is terminal and device-scoped.
 
+New clients may also send `knownSnapshotRevision`, the opaque lowercase 64-hex
+`snapshotRevision` from their last completely applied response. This revision
+covers settings, photo preferences (including clears), the delivered command,
+and the active event. Command acknowledgements and expirations participate in
+the revision; clock and heartbeat changes do not. An exact match returns the
+usual envelope plus `unchanged: true`, omitting `settings`, `hiddenAssets`,
+`commands`, and `events`. Status and acknowledgements are still processed.
+Never interpret this omission as a cleared photo policy. Clients accept an
+unchanged response only when its revision matches the one they sent, and retain
+a new revision only after applying the complete snapshot. A service restart
+invalidates revisions. Old clients, omitted revisions, and malformed revisions
+receive a complete response.
+
+Polling uses indexed device-scoped expiration; operator actions amortize global
+history cleanup to at most once per minute in each server process. History
+pruning keeps up to 1,000 terminal entries and never discards a live queued
+command to make room. Preference reads and exports use WAL read snapshots.
+The version-1 preference export streams to a temporary file before atomic
+replacement, with memory independent of total preference count.
+
 Allowed commands: `show_mode` with `mode`, `photo_next`, `photo_previous`,
 `photo_pause`, `photo_resume`, `photo_hold` with `durationSeconds` (15–3600), and
 `set_profile` with a configured profile. Use terminal `dispatched` when a key/tap was sent but its page result cannot be
@@ -88,6 +108,10 @@ Home Assistant configuration and controls are in [home-assistant/](home-assistan
 Run `python3 -m unittest discover -s companion/tests -v` from the repository root.
 Tests cover expiration across restart, bounded queues, device-scoped acknowledgements,
 credential separation, CSRF/Origin enforcement, atomic settings, and preference undo.
+`python3 companion/tests/verify_performance_proof.py` runs synthetic-data
+source-only negative proofs for snapshot invalidation, malformed revisions,
+device-only poll cleanup, WAL reader concurrency, and bounded export memory.
+It restores exact source bytes and verifies unchanged test hashes.
 Verify signed-out access is 401, a device token cannot read operator state, and an
 operator token cannot poll as a device. `/healthz` discloses only process health.
 

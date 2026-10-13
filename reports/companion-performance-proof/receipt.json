@@ -1,11 +1,20 @@
 {
   "status": "passed",
-  "sourceSha256": "87886f148224db9a7c883777e535082b21888ede959f0e3fce19f09da4c9ba78",
-  "testSha256": "dd747f7280756f8c6dd012580f1dd8201b6529d4114063ae1bd2a33577641280",
+  "sourceSha256": "29760ee17b82a99e6e1ac2a4d2acc044e4aea3a59dfc5e6a33a58300cdbc4eb6",
+  "testSha256": "b4dd7a24882ea3faac6e65eba4c5cfb6e345fdf5570e182eef13991a5e9e89ba",
   "proofs": [
     {
       "name": "photo-policy-revision",
       "test": "test_settings_and_each_preference_mutation_invalidate",
+      "greenBefore": 0,
+      "red": 1,
+      "greenAfter": 0,
+      "sourceRestored": true,
+      "testUnchanged": true
+    },
+    {
+      "name": "malformed-revision",
+      "test": "test_old_clients_bad_revisions_cross_device_and_restart_receive_full_policy",
       "greenBefore": 0,
       "red": 1,
       "greenAfter": 0,
