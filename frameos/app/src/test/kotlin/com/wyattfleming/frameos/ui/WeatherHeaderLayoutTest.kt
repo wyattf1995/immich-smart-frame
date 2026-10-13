@@ -14,11 +14,12 @@ class WeatherHeaderLayoutTest {
 
     @Test
     fun `location label has a deterministic ellipsis bound for the header`() {
+        assertEquals(28, WeatherHeaderLayout.MAX_LOCATION_CHARACTERS)
         val source = "A".repeat(WeatherHeaderLayout.MAX_LOCATION_CHARACTERS + 4)
 
         val label = requireNotNull(WeatherHeaderLayout.locationLabel(source))
 
-        assertEquals(WeatherHeaderLayout.MAX_LOCATION_CHARACTERS, label.length)
+        assertEquals(28, label.length)
         assertEquals('…', label.last())
     }
 
