@@ -1,0 +1,382 @@
+package com.wyattfleming.frameos.ui
+
+import android.content.Context
+import android.graphics.Typeface
+import android.util.AttributeSet
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import com.wyattfleming.frameos.home.TouchCalendarEvent
+import com.wyattfleming.frameos.home.TouchClimate
+import com.wyattfleming.frameos.home.TouchConnection
+import com.wyattfleming.frameos.home.TouchHomeModel
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import kotlin.math.round
+
+/**
+ * Native, scrollable Home surface. The activity supplies live data on its
+ * background refresh path; this view does not make Home Assistant or web calls.
+ */
+class TouchHomeView private constructor(
+    context: Context,
+    attrs: AttributeSet?,
+    defStyleAttr: Int,
+    private val onNavigate: (String) -> Unit,
+    private val onSignIn: () -> Unit,
+    private val onClimateMode: (String) -> Unit,
+    private val onClimateTarget: (Double) -> Unit,
+) : FrameLayout(context, attrs, defStyleAttr) {
+    constructor(context: Context) : this(context, null, 0, {}, {}, {}, {})
+
+    constructor(context: Context, attrs: AttributeSet?) : this(context, attrs, 0, {}, {}, {}, {})
+
+    constructor(context: Context, attrs: AttributeSet?, defStyleAttr: Int) :
+        this(context, attrs, defStyleAttr, {}, {}, {}, {})
+
+    constructor(
+        context: Context,
+        onNavigate: (String) -> Unit,
+        onSignIn: () -> Unit,
+        onClimateMode: (String) -> Unit,
+        onClimateTarget: (Double) -> Unit,
+    ) : this(context, null, 0, onNavigate, onSignIn, onClimateMode, onClimateTarget)
+
+    private var model: TouchHomeModel? = null
+    private var nowMillis: Long = System.currentTimeMillis()
+    private var style = TouchDashboardStyle.forHour(hourAt(nowMillis))
+    private var draftEntityId: String? = null
+    private var draftMode: String? = null
+    private var draftTarget: Double? = null
+    private var draftDirty = false
+    private var lastLargeLayout: Boolean? = null
+
+    init {
+        isFocusable = true
+        rebuild()
+    }
+
+    /** Renders the newest caller-owned snapshot without clearing an active draft. */
+    fun render(model: TouchHomeModel) {
+        val previousClimate = this.model?.climate
+        this.model = model
+        val climate = model.climate
+        if (climate?.entityId != previousClimate?.entityId) clearDraft(climate)
+        else if (!draftDirty) clearDraft(climate)
+        rebuild()
+    }
+
+    /** Updates the local clock and day/night palette without fetching data. */
+    fun tick(nowMillis: Long) {
+        this.nowMillis = nowMillis
+        val nextStyle = TouchDashboardStyle.forHour(hourAt(nowMillis))
+        if (nextStyle != style) style = nextStyle
+        rebuild()
+    }
+
+    override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight)
+        val large = isLargeLandscape()
+        if (lastLargeLayout != null && lastLargeLayout != large) rebuild()
+        lastLargeLayout = large
+    }
+
+    private fun rebuild() {
+        removeAllViews()
+        val dashboard = model
+        val type = typography()
+        setBackgroundColor(style.background)
+        val scroll = ScrollView(context).apply {
+            isFillViewport = true
+            clipToPadding = false
+        }
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(context.dp(24), context.dp(20), context.dp(24), context.dp(28))
+        }
+        content.addView(header(type))
+        content.addView(statusCard(dashboard, type), LinearLayout.LayoutParams(
+            LayoutParams.MATCH_PARENT,
+            LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = context.dp(14) })
+        val body = LinearLayout(context).apply {
+            orientation = if (isLargeLandscape()) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        }
+        val first = overviewColumn(dashboard, type)
+        val second = actionColumn(dashboard, type)
+        if (isLargeLandscape()) {
+            body.addView(first, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1.16f).apply {
+                marginEnd = context.dp(16)
+            })
+            body.addView(second, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 0.84f))
+        } else {
+            body.addView(first)
+            body.addView(second, LinearLayout.LayoutParams(
+                LayoutParams.MATCH_PARENT,
+                LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = context.dp(16) })
+        }
+        content.addView(body, LinearLayout.LayoutParams(
+            LayoutParams.MATCH_PARENT,
+            LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = context.dp(16) })
+        scroll.addView(content, ScrollView.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        addView(scroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    }
+
+    private fun header(type: Typography): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(label(timeText(), type.clock, true))
+        addView(label(dateText(), type.body, false))
+    }
+
+    private fun statusCard(snapshot: TouchHomeModel?, type: Typography): View = card().apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(context.dp(18), context.dp(16), context.dp(18), context.dp(16))
+        addView(label(connectionText(snapshot?.connection), type.small, true))
+        snapshot?.lastUpdatedEpochMillis?.let { updated ->
+            addView(label("Updated ${timeAt(updated)}", type.small, false))
+        }
+        if (snapshot?.connection == TouchConnection.SIGN_IN_REQUIRED) {
+            addView(button("Sign in", type.body) { onSignIn() }, LinearLayout.LayoutParams(
+                LayoutParams.WRAP_CONTENT,
+                context.dp(56),
+            ).apply { topMargin = context.dp(12) })
+        }
+    }
+
+    private fun overviewColumn(snapshot: TouchHomeModel?, type: Typography): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(weatherCard(snapshot, type))
+        addView(eventsCard(snapshot?.events.orEmpty(), type), LinearLayout.LayoutParams(
+            LayoutParams.MATCH_PARENT,
+            LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = context.dp(16) })
+        addView(climateCard(snapshot?.climate, type), LinearLayout.LayoutParams(
+            LayoutParams.MATCH_PARENT,
+            LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = context.dp(16) })
+    }
+
+    private fun actionColumn(snapshot: TouchHomeModel?, type: Typography): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(exploreCard(type))
+        if (snapshot?.connection == TouchConnection.SIGN_IN_REQUIRED) {
+            addView(signInCard(type), LinearLayout.LayoutParams(
+                LayoutParams.MATCH_PARENT,
+                LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = context.dp(16) })
+        }
+    }
+
+    private fun weatherCard(snapshot: TouchHomeModel?, type: Typography): View = card().apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(context.dp(18), context.dp(16), context.dp(18), context.dp(16))
+        addView(label("Weather", type.small, true))
+        val weather = snapshot?.weatherText?.takeIf { it.isNotBlank() } ?: "Weather unavailable"
+        val temperature = snapshot?.temperatureText?.takeIf { it.isNotBlank() } ?: "Temperature unavailable"
+        addView(label(weather, type.body, true))
+        addView(label(temperature, type.small, false))
+    }
+
+    private fun eventsCard(events: List<TouchCalendarEvent>, type: Typography): View = card().apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(context.dp(18), context.dp(16), context.dp(18), context.dp(16))
+        addView(label("Up next", type.small, true))
+        if (events.isEmpty()) {
+            addView(label("No upcoming events", type.body, false))
+        } else {
+            events.take(MAX_EVENTS).forEachIndexed { index, event ->
+                if (index > 0) addView(divider())
+                addView(label(event.title, type.body, true))
+                addView(label(eventTime(event), type.small, false))
+            }
+        }
+    }
+
+    private fun climateCard(climate: TouchClimate?, type: Typography): View = card().apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(context.dp(18), context.dp(16), context.dp(18), context.dp(16))
+        addView(label("Climate", type.small, true))
+        if (climate == null) {
+            addView(label("Climate unavailable", type.body, false))
+            return@apply
+        }
+        val target = draftTarget ?: climate.targetTemperature
+        addView(label(
+            climate.currentTemperature?.let { "Current ${formatTemperature(it, climate.unit)}" } ?: "Current temperature unavailable",
+            type.body,
+            true,
+        ))
+        addView(label(
+            target?.let { "Set to ${formatTemperature(it, climate.unit)}" } ?: "Target temperature unavailable",
+            type.small,
+            false,
+        ))
+        val modes = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+        climate.modes.distinct().forEach { candidate ->
+            modes.addView(button(candidate.replaceFirstChar { it.titlecase(Locale.getDefault()) }, type.small) {
+                draftMode = candidate
+                draftDirty = true
+                rebuild()
+            }, LinearLayout.LayoutParams(0, context.dp(56), 1f).apply {
+                marginEnd = context.dp(8)
+            })
+        }
+        addView(modes, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+            topMargin = context.dp(12)
+        })
+        val adjust = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+        adjust.addView(button("−", type.body) { changeTarget(climate, -1) }, LinearLayout.LayoutParams(0, context.dp(56), 1f).apply {
+            marginEnd = context.dp(8)
+        })
+        adjust.addView(button("+", type.body) { changeTarget(climate, 1) }, LinearLayout.LayoutParams(0, context.dp(56), 1f))
+        addView(adjust, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+            topMargin = context.dp(8)
+        })
+        val apply = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+        apply.addView(button("Apply", type.small) {
+            val selectedMode = draftMode
+            val selectedTarget = draftTarget
+            if (selectedMode != null && selectedMode != climate.mode) onClimateMode(selectedMode)
+            if (selectedTarget != null && selectedTarget != climate.targetTemperature) onClimateTarget(selectedTarget)
+            clearDraft(climate)
+            rebuild()
+        }, LinearLayout.LayoutParams(0, context.dp(56), 1f).apply { marginEnd = context.dp(8) })
+        apply.addView(button("Cancel", type.small) {
+            clearDraft(climate)
+            rebuild()
+        }, LinearLayout.LayoutParams(0, context.dp(56), 1f))
+        addView(apply, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+            topMargin = context.dp(8)
+        })
+    }
+
+    private fun exploreCard(type: Typography): View = card().apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(context.dp(18), context.dp(16), context.dp(18), context.dp(16))
+        addView(label("Explore", type.small, true))
+        KNOWN_ROUTES.forEach { route ->
+            addView(button(route.replaceFirstChar { it.titlecase(Locale.getDefault()) }, type.body) {
+                onNavigate(route)
+            }, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)).apply {
+                topMargin = context.dp(8)
+            })
+        }
+    }
+
+    private fun signInCard(type: Typography): View = card().apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(context.dp(18), context.dp(16), context.dp(18), context.dp(16))
+        addView(label("Home Assistant sign-in required", type.body, true))
+        addView(button("Sign in", type.body) { onSignIn() }, LinearLayout.LayoutParams(
+            LayoutParams.WRAP_CONTENT,
+            context.dp(56),
+        ).apply { topMargin = context.dp(12) })
+    }
+
+    private fun changeTarget(climate: TouchClimate, direction: Int) {
+        val initial = draftTarget ?: climate.targetTemperature ?: climate.currentTemperature ?: return
+        val next = round(((initial + direction * climate.step).coerceIn(climate.minTemperature, climate.maxTemperature)) / climate.step) * climate.step
+        draftTarget = next.coerceIn(climate.minTemperature, climate.maxTemperature)
+        draftDirty = true
+        rebuild()
+    }
+
+    private fun clearDraft(climate: TouchClimate?) {
+        draftEntityId = climate?.entityId
+        draftMode = climate?.mode
+        draftTarget = climate?.targetTemperature
+        draftDirty = false
+    }
+
+    private fun card(): LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        background = style.card(context.dp(20).toFloat())
+    }
+
+    private fun button(label: String, size: Float, action: () -> Unit): TextView = TextView(context).apply {
+        text = label
+        gravity = Gravity.CENTER
+        isClickable = true
+        isFocusable = true
+        minimumTouchTarget(context)
+        background = style.card(context.dp(14).toFloat())
+        setPadding(context.dp(12), 0, context.dp(12), 0)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, size)
+        typeface = Typeface.create("sans", Typeface.BOLD)
+        setTextColor(style.ink)
+        setOnClickListener { action() }
+    }
+
+    private fun label(text: String, size: Float, strong: Boolean): TextView = TextView(context).apply {
+        this.text = text
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, size)
+        typeface = Typeface.create("sans", if (strong) Typeface.BOLD else Typeface.NORMAL)
+        setTextColor(if (strong) style.ink else style.muted)
+        includeFontPadding = false
+        setPadding(0, context.dp(3), 0, context.dp(3))
+    }
+
+    private fun divider(): View = View(context).apply {
+        setBackgroundColor(style.outline)
+    }
+
+    private fun isLargeLandscape(): Boolean {
+        val density = resources.displayMetrics.density
+        val widthDp = if (width > 0) width / density else resources.configuration.screenWidthDp.toFloat()
+        return widthDp >= LARGE_LANDSCAPE_DP && (height == 0 || width >= height)
+    }
+
+    private fun typography(): Typography = if (isLargeLandscape()) {
+        Typography(body = 24f, small = 20f, clock = 108f)
+    } else {
+        Typography(body = 18f, small = 16f, clock = 72f)
+    }
+
+    private fun timeText(): String = timeAt(nowMillis)
+
+    private fun dateText(): String = Instant.ofEpochMilli(nowMillis)
+        .atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.getDefault()))
+
+    private fun timeAt(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis)
+        .atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()))
+
+    private fun hourAt(epochMillis: Long): Int = Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).hour
+
+    private fun eventTime(event: TouchCalendarEvent): String = if (event.allDay) {
+        "All day"
+    } else {
+        timeAt(event.startEpochMillis)
+    }
+
+    private fun connectionText(connection: TouchConnection?): String = when (connection) {
+        TouchConnection.CONNECTED -> "Connected"
+        TouchConnection.REFRESHING -> "Refreshing in background"
+        TouchConnection.OFFLINE -> "Offline — showing available data"
+        TouchConnection.SIGN_IN_REQUIRED -> "Sign in required"
+        null -> "Home data unavailable"
+    }
+
+    private fun formatTemperature(value: Double, unit: String): String = "%s%s".format(
+        Locale.getDefault(),
+        if (value % 1.0 == 0.0) value.toInt() else "%.1f".format(Locale.getDefault(), value),
+        unit,
+    )
+
+    private data class Typography(val body: Float, val small: Float, val clock: Float)
+
+    private companion object {
+        const val LARGE_LANDSCAPE_DP = 900f
+        const val MAX_EVENTS = 5
+        val KNOWN_ROUTES = listOf("photos", "art", "weather", "cameras", "calendar")
+    }
+}
