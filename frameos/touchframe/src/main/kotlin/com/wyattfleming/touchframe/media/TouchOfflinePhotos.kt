@@ -16,6 +16,7 @@ import org.mozilla.geckoview.GeckoSession
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Device-private offline fallback for the actual configured Photos session only.
@@ -47,7 +48,7 @@ internal class TouchOfflinePhotos(
     @Volatile private var photosActive = false
     @Volatile private var closed = false
     @Volatile private var fallbackGeneration = 0L
-    @Volatile private var attachmentGeneration = 0L
+    private val attachmentGate = TouchOfflineAttachmentGate()
     @Volatile private var session: GeckoSession? = null
     private var bitmap: Bitmap? = null
     private var blurredBitmap: Bitmap? = null
@@ -58,23 +59,23 @@ internal class TouchOfflinePhotos(
         lifecycle.attach(target)
         photosActive = active
         lifecycle.setActive(active)
-        val expectedAttachment = ++attachmentGeneration
+        val expectedAttachment = attachmentGate.begin()
         worker.execute {
-            if (closed || session !== target || attachmentGeneration != expectedAttachment ||
+            if (closed || session !== target || !attachmentGate.isCurrent(expectedAttachment) ||
                 !bridge.configure(target, photosUrl, profile)
             ) return@execute
-            if (closed || session !== target || attachmentGeneration != expectedAttachment) {
+            if (closed || session !== target || !attachmentGate.isCurrent(expectedAttachment)) {
                 bridge.detach(target)
                 return@execute
             }
             main.post {
-                if (closed || session !== target || attachmentGeneration != expectedAttachment) {
+                if (closed || session !== target || !attachmentGate.isCurrent(expectedAttachment)) {
                     bridge.detach(target)
                     return@post
                 }
                 // Gecko extension creation stays on the UI thread after worker scope activation.
                 bridge.attachPrepared(runtime, target) { ready ->
-                    if (closed || session !== target || attachmentGeneration != expectedAttachment || !ready) return@attachPrepared
+                    if (closed || session !== target || !attachmentGate.isCurrent(expectedAttachment) || !ready) return@attachPrepared
                     bridge.setCaptureEnabled(photosActive, photosPaused = false)
                 }
             }
@@ -93,7 +94,7 @@ internal class TouchOfflinePhotos(
         photosActive = false
         lifecycle.detach(target)
         fallbackGeneration += 1L
-        attachmentGeneration += 1L
+        attachmentGate.invalidate()
         bridge.detach(target)
         session = null
         hideFallback()
@@ -149,7 +150,7 @@ internal class TouchOfflinePhotos(
         closed = true
         photosActive = false
         fallbackGeneration += 1L
-        attachmentGeneration += 1L
+        attachmentGate.invalidate()
         session?.let { lifecycle.detach(it); bridge.detach(it) }
         session = null
         bridge.close()
@@ -161,7 +162,7 @@ internal class TouchOfflinePhotos(
         session?.let { lifecycle.detach(it); bridge.detach(it) }
         session = null
         fallbackGeneration += 1L
-        attachmentGeneration += 1L
+        attachmentGate.invalidate()
         hideFallback()
     }
 
@@ -204,6 +205,15 @@ internal class TouchOfflinePhotos(
             if (!closed && photosActive && lifecycle.canUseFallback(session, lifecycle.currentGeneration()) && bridge.isCurrentObservation(photo)) hideFallback()
         }
     }
+}
+
+/** Atomic session-generation fence shared by the UI and reserve worker. */
+internal class TouchOfflineAttachmentGate {
+    private val generation = AtomicLong(0L)
+
+    fun begin(): Long = generation.incrementAndGet()
+    fun invalidate(): Long = generation.incrementAndGet()
+    fun isCurrent(expected: Long): Boolean = generation.get() == expected
 }
 
 /** Pure lifecycle fence: only the current, visible Photos attachment may use fallback data. */
