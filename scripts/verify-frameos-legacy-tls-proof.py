@@ -43,7 +43,7 @@ def run(label: str, failures: int, names: set[str]) -> dict:
     cases = list(ET.parse(xml).getroot().iter("testcase"))
     failed = {case.get("name") for case in cases if case.find("failure") is not None}
     errors = [error for case in cases for error in case.findall("error")]
-    assert len(cases) == 8, len(cases)
+    assert len(cases) == 9, len(cases)
     assert len(failed) == failures, failed
     assert failed == names, failed
     skipped = [item for case in cases for item in case.findall("skipped")]
@@ -68,7 +68,7 @@ def mutation(label: str, before: str, after: str, failed_names: set[str]) -> Non
         source.write_text(text.replace(before, after), encoding="utf-8")
         result = run(label + "-source-red", len(failed_names), failed_names)
         assert result["exit"] != 0
-        proofs.append({"label": label, "negative_assertion_failures": len(failed_names), "negative_tests": 8, **result})
+        proofs.append({"label": label, "negative_assertion_failures": len(failed_names), "negative_tests": 9, **result})
     finally:
         source.write_bytes(original)
         assert digest(source) == source_hash
@@ -110,6 +110,6 @@ assert digest(test) == test_hash
     "source_sha256": source_hash,
     "unchanged_test_sha256": test_hash,
     "negative_proofs": proofs,
-    "restored_green": {"tests": 8, "failures": 0, **green},
+    "restored_green": {"tests": 9, "failures": 0, **green},
 }, indent=2) + "\n")
 print("legacy TLS source-only red / exact restore green verified")

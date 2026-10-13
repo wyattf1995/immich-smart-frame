@@ -50,10 +50,18 @@ def run(label: str, expected_failures: int, expected_failed_cases: set[str]) -> 
     assert failed == expected_failed_cases, failed
     assert len(failed) == expected_failures, failed
     assert not errors and not skipped, (errors, skipped)
+    for case in cases:
+        failure = case.find("failure")
+        if failure is not None:
+            assert failure.get("type") in {
+                "java.lang.AssertionError", "org.junit.ComparisonFailure",
+            }, failure.attrib
     return {
         "exit": result.returncode,
         "log": log.name,
+        "log_sha256": digest(log),
         "junit_xml": xml.name,
+        "junit_xml_sha256": digest(xml),
         "tests": len(cases),
         "failures": len(failed),
         "errors": 0,
@@ -66,11 +74,18 @@ original = source.read_bytes()
 source_hash = digest(source)
 test_hash = digest(test)
 needle = 'private const val ISRG_ROOT_X1_PEM = """-----BEGIN CERTIFICATE-----'
-replacement = 'private const val ISRG_ROOT_X1_PEM = """\\n-----BEGIN CERTIFICATE-----'
-assert original.decode().count(needle) == 1
-assert replacement not in original.decode()
+replacement = needle.replace('"""-----BEGIN', '"""' + chr(10) + '-----BEGIN')
+assert replacement == 'private const val ISRG_ROOT_X1_PEM = """' + chr(10) + '-----BEGIN CERTIFICATE-----'
+assert replacement.count(chr(10)) == 1
+assert r'\n' not in replacement
+original_text = original.decode()
+assert original_text.count(needle) == 1
+assert replacement not in original_text
+mutated_text = original_text.replace(needle, replacement)
+assert mutated_text.count(replacement) == 1
+assert r'\n-----BEGIN CERTIFICATE-----' not in mutated_text
 try:
-    source.write_text(original.decode().replace(needle, replacement), encoding="utf-8")
+    source.write_text(mutated_text, encoding="utf-8")
     red = run(
         "api23-pem-leading-newline-source-red",
         1,
