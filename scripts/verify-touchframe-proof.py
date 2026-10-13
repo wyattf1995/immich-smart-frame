@@ -241,6 +241,12 @@ try:
         "fun captureEnabled(): Boolean = active",
         {"pause suppresses trusted capture while preserving visible Photos state"},
     )
+    hidden_cached_red = mutate(
+        "offline-hidden-cached-red", "offline",
+        "displayedAssetId != null && hiddenAssetIds.any { it.equals(displayedAssetId, ignoreCase = true) }",
+        "false",
+        {"hidden policy removes a cached matching photo but keeps unrelated fallback"},
+    )
     scope_red = mutate(
         "pause-lifecycle-red", "scope",
         "if (closed || !resumed) return\n            resumed = false",
@@ -266,6 +272,7 @@ try:
         "offlineAttachmentGenerationRed": attachment_gate_red,
         "offlineExactScopeRed": attachment_scope_red,
         "offlinePausedCaptureRed": paused_capture_red,
+        "offlineHiddenCachedRed": hidden_cached_red,
         "pausedTaskEntryRed": scope_red,
         "restored": restored, "preparedBridgeRestored": bridge_restored,
         "preparedBridgeSourceSha256": bridge_source_hash,
