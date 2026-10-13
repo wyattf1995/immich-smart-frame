@@ -33,6 +33,7 @@ suites = {
     "offline": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoLifecycleTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoLifecycleTest"),
     "blur": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflineBlurPlanTest.kt", "com.wyattfleming.touchframe.media.TouchOfflineBlurPlanTest"),
     "offline_store": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStore.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStoreScopeGateTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoStoreScopeGateTest"),
+    "hidden_commit": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStore.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoCommitContractTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoCommitContractTest"),
     "scope": (module / "src/main/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScope.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScopeTest.kt", "com.wyattfleming.touchframe.concurrent.TouchTaskScopeTest"),
 }
 
@@ -54,6 +55,7 @@ def static_contract() -> dict[str, object]:
     offline = suites["offline"][0].read_text()
     blur = suites["blur"][0].read_text()
     offline_store = suites["offline_store"][0].read_text()
+    hidden_commit = suites["hidden_commit"][0].read_text()
     scope = suites["scope"][0].read_text()
     required = {
         "media-only edge gesture": "destination.isImmersiveMedia &&",
@@ -71,8 +73,9 @@ def static_contract() -> dict[str, object]:
         "bounded blurred backdrop": "const val MAX_BACKDROP_EDGE = 128",
         "uncropped foreground mapping": "TouchOfflineBlurPlan.forForeground",
         "offline scope generation": "class TouchOfflineStoreScopeGate",
+        "hidden commit cancellation gate": "!task.isCancelled && !Thread.currentThread().isInterrupted",
     }
-    combined = shell + repo + parser + media + offline + blur + offline_store + scope
+    combined = shell + repo + parser + media + offline + blur + offline_store + hidden_commit + scope
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -256,6 +259,12 @@ try:
         "return generation.incrementAndGet()",
         {"same requested scope retains its generation for pre-view policy work"},
     )
+    hidden_commit_red = mutate(
+        "offline-hidden-commit-cancel-red", "hidden_commit",
+        "!task.isCancelled && !Thread.currentThread().isInterrupted",
+        "true",
+        {"canceled hidden policy operation is checked at the reserve commit boundary"},
+    )
     scope_red = mutate(
         "pause-lifecycle-red", "scope",
         "if (closed || !resumed) return\n            resumed = false",
@@ -283,6 +292,7 @@ try:
         "offlinePausedCaptureRed": paused_capture_red,
         "offlineHiddenCachedRed": hidden_cached_red,
         "offlineStoreSameScopeRed": offline_store_red,
+        "offlineHiddenCommitCancelRed": hidden_commit_red,
         "pausedTaskEntryRed": scope_red,
         "restored": restored, "preparedBridgeRestored": bridge_restored,
         "preparedBridgeSourceSha256": bridge_source_hash,
