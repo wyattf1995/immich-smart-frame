@@ -96,7 +96,8 @@ class TouchSettingsReturn(private val context: Context) {
     private fun owningAppTask(activity: Activity): ActivityManager.AppTask? = runCatching {
         val manager = activity.getSystemService(ActivityManager::class.java)
         manager?.appTasks?.firstOrNull { task ->
-            TouchSettingsReturnPlan.isOwningTask(task.taskInfo.id, activity.taskId)
+            val taskId = task.taskInfo?.id
+            taskId != null && TouchSettingsReturnPlan.isOwningTask(taskId, activity.taskId)
         }
     }.getOrNull()
 
