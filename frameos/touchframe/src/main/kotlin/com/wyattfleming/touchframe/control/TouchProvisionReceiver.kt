@@ -36,25 +36,30 @@ class TouchProvisionReceiver : BroadcastReceiver() {
                 try {
                     when (TouchConfigurationStore(context).writeInitialDurably(configuration)) {
                         TouchConfigurationStore.InitialWriteResult.WRITTEN ->
-                            result(TouchProvisionContract.RESULT_OK, "provisioned-restart-required")
+                            pending.result(TouchProvisionContract.RESULT_OK, "provisioned-restart-required")
                         TouchConfigurationStore.InitialWriteResult.ALREADY_PRESENT ->
-                            result(TouchProvisionContract.RESULT_INVALID, "already-provisioned")
+                            pending.result(TouchProvisionContract.RESULT_INVALID, "already-provisioned")
                         TouchConfigurationStore.InitialWriteResult.FAILED ->
-                            result(TouchProvisionContract.RESULT_FAILED, "provisioning-failed")
+                            pending.result(TouchProvisionContract.RESULT_FAILED, "provisioning-failed")
                     }
                 } catch (_: RuntimeException) {
-                    result(TouchProvisionContract.RESULT_FAILED, "provisioning-failed")
+                    pending.result(TouchProvisionContract.RESULT_FAILED, "provisioning-failed")
                 } finally {
                     pending.finish()
                 }
             }
         } catch (_: RuntimeException) {
-            result(TouchProvisionContract.RESULT_FAILED, "provisioning-failed")
+            pending.result(TouchProvisionContract.RESULT_FAILED, "provisioning-failed")
             pending.finish()
         }
     }
 
     private fun result(code: Int, text: String) {
+        setResultCode(code)
+        setResultData(text)
+    }
+
+    private fun PendingResult.result(code: Int, text: String) {
         setResultCode(code)
         setResultData(text)
     }
@@ -66,8 +71,8 @@ class TouchProvisionReceiver : BroadcastReceiver() {
             30L,
             TimeUnit.SECONDS,
             ArrayBlockingQueue(4),
-            ThreadFactory { runnable -> Thread(runnable, "touchframe-provision") },
+            ThreadFactory { runnable -> Thread(runnable, "touchframe-provision").apply { isDaemon = true } },
             ThreadPoolExecutor.AbortPolicy(),
-        )
+        ).apply { allowCoreThreadTimeOut(true) }
     }
 }
