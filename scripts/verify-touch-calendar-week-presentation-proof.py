@@ -83,14 +83,14 @@ def prove_mutation(
     needle: str,
     replacement: str,
     label: str,
-    failed_case: str,
+    failed_cases: set[str],
 ) -> dict:
     assert source_text.count(needle) == 1 and replacement not in source_text
     try:
         source.write_text(source_text.replace(needle, replacement), encoding="utf-8")
-        red = run(label, 1, {failed_case})
+        red = run(label, len(failed_cases), failed_cases)
         assert red["exit"] != 0
-        return {"negative_assertion_failures": 1, **red}
+        return {"negative_assertion_failures": len(failed_cases), **red}
     finally:
         source.write_bytes(original)
         assert digest(source) == source_hash
@@ -100,19 +100,22 @@ preview_red = prove_mutation(
     "const val PREVIEW_PER_DAY = 3",
     "const val PREVIEW_PER_DAY = 4",
     "week-calendar-overflow-source-red",
-    "groupsSevenDaysWithAllDayFirstAndBoundedPreview",
+    {"groupsSevenDaysWithAllDayFirstAndBoundedPreview"},
 )
 detail_red = prove_mutation(
     "const val DETAILS_PER_PAGE = 12",
     "const val DETAILS_PER_PAGE = 13",
     "week-calendar-detail-bound-source-red",
-    "boundsSelectedDayDetailsToTwelveEventsAndReportsTheVisibleRange",
+    {
+        "boundsSelectedDayDetailsToTwelveEventsAndReportsTheVisibleRange",
+        "selectedDayDetailPagesKeepEveryEventReachable",
+    },
 )
 default_mode_red = prove_mutation(
     "val DEFAULT_MODE: TouchCalendarMode = TouchCalendarMode.WEEK",
     "val DEFAULT_MODE: TouchCalendarMode = TouchCalendarMode.AGENDA",
     "week-calendar-default-mode-source-red",
-    "startsInWeekModeForTouchCalendar",
+    {"startsInWeekModeForTouchCalendar"},
 )
 green = run("week-calendar-restored-green", 0, set())
 assert green["exit"] == 0
