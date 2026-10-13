@@ -42,8 +42,16 @@ class TouchCompanionController private constructor(
     private val onHiddenAssets: (Set<String>, Long, () -> Boolean) -> Boolean,
 ) : AutoCloseable {
     sealed interface CommandResult {
+        /** The callback synchronously completed the requested local state change. */
         data class Applied(val message: String? = null) : CommandResult
+        /** The Touch bridge accepted ownership but completion must be observed separately. */
+        data class Dispatched(val message: String? = null) : CommandResult
+        /** The request is unsupported by this Touch build and is terminally rejected. */
         data class Unsupported(val message: String? = null) : CommandResult
+        /** The callback attempted the request and knows it failed. */
+        data class Failed(val message: String? = null) : CommandResult
+        /** The command expired while waiting for main-thread dispatch. */
+        data class Expired(val message: String? = null) : CommandResult
     }
 
     interface CommandJournal {
@@ -171,11 +179,15 @@ class TouchCompanionController private constructor(
     /** Claim is durable before main-thread dispatch; acknowledgement reflects the callback result only. */
     private fun dispatchCommand(command: FrameRemoteCommand, expectedGeneration: Long) {
         if (!journal.claim(command.id) || !isCurrent(expectedGeneration)) return
-        when (val outcome = onMain(expectedGeneration) { onCommand(command, expectedGeneration) }) {
-            is CommandResult.Applied -> journal.acknowledge(command.id, "applied", outcome.message)
-            is CommandResult.Unsupported -> journal.acknowledge(command.id, "unsupported", outcome.message)
-            null -> Unit // Stale/lifecycle-invalid callbacks are deliberately not auto-acknowledged.
-        }
+        onMain(expectedGeneration) {
+            if (nowMillis() > command.expiresAtMillis) {
+                CommandResult.Expired("expired before main-thread dispatch")
+            } else {
+                onCommand(command, expectedGeneration)
+            }
+        }?.let { outcome ->
+            journal.acknowledge(command.id, acknowledgementStatus(outcome), outcome.message)
+        } // Stale/lifecycle-invalid callbacks are deliberately not auto-acknowledged.
     }
 
     /** The worker waits only for a bounded UI callback; neither networking nor decode runs on main. */
@@ -202,7 +214,11 @@ class TouchCompanionController private constructor(
         }
     }
 
-    private fun isCurrent(expectedGeneration: Long): Boolean = synchronized(lock) { isCurrentLocked(expectedGeneration) }
+    /**
+     * Read-only lifecycle fence for callbacks that were handed [token]. Parent code may use it
+     * immediately before a deferred settings/status commit; it must not retain tokens elsewhere.
+     */
+    fun isCurrent(token: Long): Boolean = synchronized(lock) { isCurrentLocked(token) }
 
     private fun isCurrentLocked(expectedGeneration: Long): Boolean =
         !closed && started && enabled && generation == expectedGeneration
@@ -226,7 +242,7 @@ class TouchCompanionController private constructor(
             onHiddenAssets: (Set<String>, Long, () -> Boolean) -> Boolean,
         ): TouchCompanionController = TouchCompanionController(
             credentials = { FrameCompanionCredentialsStore(context).read() },
-            journal = AndroidCommandJournal(FrameCompanionCommandStore(context)),
+            journal = AndroidCommandJournal(context),
             poll = { credentials, status, acknowledgements, revision ->
                 FrameCompanionClient(credentials.endpoint, credentials.token).poll(
                     credentials.deviceId, status, acknowledgements, revision,
@@ -242,6 +258,15 @@ class TouchCompanionController private constructor(
             onEvent = onEvent,
             onHiddenAssets = onHiddenAssets,
         )
+
+        /** Maps every explicit bridge outcome to the companion's accepted terminal vocabulary. */
+        internal fun acknowledgementStatus(outcome: CommandResult): String = when (outcome) {
+            is CommandResult.Applied -> "applied"
+            is CommandResult.Dispatched -> "dispatched"
+            is CommandResult.Unsupported -> "rejected"
+            is CommandResult.Failed -> "failed"
+            is CommandResult.Expired -> "expired"
+        }
 
         internal fun forTest(
             credentials: () -> FrameCompanionCredentials?,
@@ -264,7 +289,12 @@ class TouchCompanionController private constructor(
         private const val MAIN_CALLBACK_TIMEOUT_MILLIS = 2_000L
     }
 
-    private class AndroidCommandJournal(private val store: FrameCompanionCommandStore) : CommandJournal {
+    private class AndroidCommandJournal(context: Context) : CommandJournal {
+        private val applicationContext = context.applicationContext
+        // Creation stays main-thread cheap; preferences are loaded only by the poll worker.
+        private val store by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+            FrameCompanionCommandStore(applicationContext)
+        }
         override fun pendingAcks(): List<FrameRemoteAck> = store.consumeAcks()
         override fun clearAcks(acks: List<FrameRemoteAck>) = store.clearAcks(acks)
         override fun claim(id: String): Boolean = store.claim(id)

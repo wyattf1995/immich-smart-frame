@@ -16,6 +16,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 class TouchCompanionControllerTest {
     @Test
@@ -36,7 +37,7 @@ class TouchCompanionControllerTest {
     }
 
     @Test
-    fun `persists command claim before dispatch and only acknowledges explicit result`() {
+    fun `persists command claim before dispatch and rejects unsupported commands terminally`() {
         val scheduler = ScheduledThreadPoolExecutor(1)
         val journal = RecordingJournal()
         val dispatched = CountDownLatch(1)
@@ -54,8 +55,59 @@ class TouchCompanionControllerTest {
             controller.setEnabled(true)
             controller.start()
             assertTrue(dispatched.await(2, TimeUnit.SECONDS))
+            assertTrue(journal.acknowledgement.await(2, TimeUnit.SECONDS))
             assertEquals(listOf("11111111-1111-1111-1111-111111111111"), journal.claimed)
-            assertEquals(listOf(FrameRemoteAck("11111111-1111-1111-1111-111111111111", "unsupported", "not supported by this preview")), journal.acknowledged)
+            assertEquals(listOf(FrameRemoteAck("11111111-1111-1111-1111-111111111111", "rejected", "not supported by this preview")), journal.acknowledged)
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun `maps every explicit bridge outcome to a canonical terminal companion status`() {
+        assertEquals(
+            setOf("applied", "dispatched", "rejected", "failed", "expired"),
+            setOf(
+                TouchCompanionController.acknowledgementStatus(TouchCompanionController.CommandResult.Applied()),
+                TouchCompanionController.acknowledgementStatus(TouchCompanionController.CommandResult.Dispatched()),
+                TouchCompanionController.acknowledgementStatus(TouchCompanionController.CommandResult.Unsupported()),
+                TouchCompanionController.acknowledgementStatus(TouchCompanionController.CommandResult.Failed()),
+                TouchCompanionController.acknowledgementStatus(TouchCompanionController.CommandResult.Expired()),
+            ),
+        )
+    }
+
+    @Test
+    fun `command that expires while queued is terminally expired without dispatch`() {
+        val scheduler = ScheduledThreadPoolExecutor(1)
+        val main = FirstInlineThenQueueExecutor()
+        val now = AtomicLong(1_000L)
+        val journal = RecordingJournal()
+        val commandCalls = AtomicInteger()
+        val controller = controller(
+            scheduler = scheduler,
+            journal = journal,
+            mainExecutor = main,
+            nowMillis = now::get,
+            poll = { _, _, _, _ -> FrameCompanionPollResult.Success(commandEnvelope(expiresAt = 1_000L)) },
+            onCommand = { _, _ ->
+                commandCalls.incrementAndGet()
+                TouchCompanionController.CommandResult.Applied()
+            },
+        )
+        try {
+            controller.setEnabled(true)
+            controller.start()
+            assertTrue(main.queued.await(2, TimeUnit.SECONDS))
+            now.set(1_001L)
+            main.runQueued()
+            assertTrue(journal.acknowledgement.await(2, TimeUnit.SECONDS))
+
+            assertEquals(0, commandCalls.get())
+            assertEquals(
+                listOf(FrameRemoteAck("11111111-1111-1111-1111-111111111111", "expired", "expired before main-thread dispatch")),
+                journal.acknowledged,
+            )
         } finally {
             controller.close()
         }
@@ -165,6 +217,7 @@ class TouchCompanionControllerTest {
         poll: (FrameCompanionCredentials, FrameRemoteStatus, List<FrameRemoteAck>, String?) -> FrameCompanionPollResult,
         mainExecutor: Executor = Executor { it.run() },
         mainCallbackTimeoutMillis: Long = 2_000L,
+        nowMillis: () -> Long = { 1_000L },
         onCommand: (com.wyattfleming.frameos.control.FrameRemoteCommand, Long) -> TouchCompanionController.CommandResult = { _, _ -> TouchCompanionController.CommandResult.Applied() },
     ): TouchCompanionController = TouchCompanionController.forTest(
         credentials = { FrameCompanionCredentials(requireNotNull(FrameRemoteEndpoint.from("https://companion.example")), "token", "touch-frame") },
@@ -172,7 +225,7 @@ class TouchCompanionControllerTest {
         poll = poll,
         mainExecutor = mainExecutor,
         scheduler = scheduler,
-        nowMillis = { 1_000L },
+        nowMillis = nowMillis,
         mainCallbackTimeoutMillis = mainCallbackTimeoutMillis,
         statusProvider = {
             FrameRemoteStatus(FrameMode.HOME, false, null, null, 0, null, false, "test")
@@ -180,10 +233,10 @@ class TouchCompanionControllerTest {
         onCommand = onCommand,
     )
 
-    private fun commandEnvelope() = """
+    private fun commandEnvelope(expiresAt: Long = 2_000L) = """
         {"schema":1,"deviceId":"touch-frame","commands":[{
           "id":"11111111-1111-1111-1111-111111111111",
-          "issuedAt":1000,"expiresAt":2000,"type":"show_mode","mode":"PHOTOS"
+          "issuedAt":1000,"expiresAt":$expiresAt,"type":"show_mode","mode":"PHOTOS"
         }]}
     """.trimIndent()
 
@@ -212,12 +265,14 @@ class TouchCompanionControllerTest {
     private class RecordingJournal : TouchCompanionController.CommandJournal {
         val claimed = mutableListOf<String>()
         val acknowledged = mutableListOf<FrameRemoteAck>()
+        val acknowledgement = CountDownLatch(1)
 
         override fun pendingAcks(): List<FrameRemoteAck> = emptyList()
         override fun clearAcks(acks: List<FrameRemoteAck>) = Unit
         override fun claim(id: String): Boolean = (id !in claimed).also { if (it) claimed += id }
         override fun acknowledge(id: String, status: String, message: String?) {
             acknowledged += FrameRemoteAck(id, status, message)
+            acknowledgement.countDown()
         }
     }
 }
