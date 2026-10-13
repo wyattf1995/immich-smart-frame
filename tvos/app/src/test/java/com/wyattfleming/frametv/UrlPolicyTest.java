@@ -8,7 +8,7 @@ import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 public class UrlPolicyTest {
-    private static final String LOCAL = "http://192.168.86.20:8123/dashboard";
+    private static final String LOCAL = "http://10.23.42.10:8123/dashboard";
     private static final String HTTPS = "https://dashboard.example.com/home";
 
     @Test
@@ -62,7 +62,7 @@ public class UrlPolicyTest {
         assertTrue(UrlPolicy.navigationAllowed(HTTPS, "https://dashboard.example.com/other"));
         assertTrue(UrlPolicy.navigationAllowed("https://dashboard.example.com:443/start",
                 "https://dashboard.example.com/other"));
-        assertTrue(UrlPolicy.navigationAllowed(LOCAL, "http://192.168.86.20:8123/music"));
+        assertTrue(UrlPolicy.navigationAllowed(LOCAL, "http://10.23.42.10:8123/music"));
     }
 
     @Test
