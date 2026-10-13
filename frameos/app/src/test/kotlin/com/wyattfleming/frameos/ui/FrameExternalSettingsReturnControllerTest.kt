@@ -38,13 +38,26 @@ class FrameExternalSettingsReturnControllerTest {
         assertEquals(1, adapter.removed)
     }
 
-    private class FakeAdapter(private val permission: Boolean, private val settingsLaunch: Boolean) : FrameExternalSettingsReturnController.Adapter {
+    @Test fun `failed return launch keeps the overlay available for retry`() {
+        val adapter = FakeAdapter(permission = true, settingsLaunch = true, frameLaunch = false)
+        val controller = FrameExternalSettingsReturnController(adapter)
+        controller.openSettings()
+        adapter.returnClick?.invoke()
+        assertEquals(1, adapter.frameLaunches)
+        assertEquals(0, adapter.removed)
+        adapter.frameLaunch = true
+        adapter.returnClick?.invoke()
+        assertEquals(2, adapter.frameLaunches)
+        assertEquals(1, adapter.removed)
+    }
+
+    private class FakeAdapter(private val permission: Boolean, private val settingsLaunch: Boolean, var frameLaunch: Boolean = true) : FrameExternalSettingsReturnController.Adapter {
         var shown = 0; var removed = 0; var settingsLaunches = 0; var frameLaunches = 0
         var returnClick: (() -> Unit)? = null
         override fun canDrawOverlays() = permission
         override fun showReturn(onReturn: () -> Unit): Boolean { shown++; returnClick = onReturn; return true }
         override fun removeReturn() { removed++ }
         override fun launchAndroidSettings(): Boolean { settingsLaunches++; return settingsLaunch }
-        override fun launchFrame(): Boolean { frameLaunches++; return true }
+        override fun launchFrame(): Boolean { frameLaunches++; return frameLaunch }
     }
 }
