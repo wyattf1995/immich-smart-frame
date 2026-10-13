@@ -83,21 +83,55 @@ final class WeatherSource {
         String homeAddress = new TvPreferences(context).url(Feature.HOME);
         if (preferences.homeAssistantPreferred() && WeatherCachePolicy.isUsable(homeAddress,
                 preferences.homeAssistantSource(), preferences.homeAssistantFetchedAt(), now)) {
-            try {
-                showForecast(parseForecast(preferences.homeAssistantJson()), location == null ? "Home" : location.label,
-                        preferences.homeAssistantFetchedAt(), true, "Home Assistant");
-                return;
-            } catch (JSONException ignored) { /* Use the public forecast when HA has no usable snapshot. */ }
+            parseCachedForecast(preferences.homeAssistantJson(), location == null ? "Home" : location.label,
+                    preferences.homeAssistantFetchedAt(), "Home Assistant", null, () -> loadPublicForecast(location));
+            return;
         }
+        loadPublicForecast(location);
+    }
+
+    private void loadPublicForecast(WeatherLocation location) {
         if (location == null) { showUnconfigured(); return; }
-        boolean usable = WeatherCachePolicy.isUsable(location.sourceKey(), preferences.cachedSource(), preferences.fetchedAt(), now);
-        if (usable) {
-            try { showForecast(parseForecast(preferences.cachedJson()), location.label, preferences.fetchedAt(), true, "Open-Meteo"); }
-            catch (JSONException ignored) { usable = false; }
-        } else {
+        long now = System.currentTimeMillis();
+        String sourceKey = location.sourceKey();
+        boolean usable = WeatherCachePolicy.isUsable(sourceKey, preferences.cachedSource(), preferences.fetchedAt(), now);
+        if (!usable) {
             listener.onStatus(location.label, "Loading hourly and daily weather…", "Open-Meteo");
+            if (!loading) fetch(location);
+            return;
         }
-        if (!loading && (!usable || WeatherCachePolicy.shouldRefresh(preferences.fetchedAt(), now))) fetch(location);
+        parseCachedForecast(preferences.cachedJson(), location.label, preferences.fetchedAt(), "Open-Meteo", sourceKey, () -> {
+            listener.onStatus(location.label, "Loading hourly and daily weather…", "Open-Meteo");
+            fetch(location);
+        }, () -> {
+            if (WeatherCachePolicy.shouldRefresh(preferences.fetchedAt(), System.currentTimeMillis())) fetch(location);
+        });
+    }
+
+    /** Parses cached JSON on the weather worker, never on the UI handler. */
+    private void parseCachedForecast(String payload, String label, long fetchedAt, String provider, String sourceKey,
+            Runnable malformed, Runnable... afterSuccess) {
+        if (loading) return;
+        loading = true;
+        final long request = ++requestNumber;
+        executor.execute(() -> {
+            WeatherForecast parsed = null;
+            try { parsed = parseForecast(payload); } catch (JSONException ignored) { }
+            final WeatherForecast forecast = parsed;
+            main.post(() -> {
+                WeatherLocation currentLocation = preferences.location();
+                if (!currentRequest(request, sourceKey, currentLocation)) return;
+                loading = false;
+                if (forecast == null) { malformed.run(); return; }
+                showForecast(forecast, label, fetchedAt, true, provider);
+                if (afterSuccess.length == 1) afterSuccess[0].run();
+            });
+        });
+    }
+
+    private boolean currentRequest(long request, String sourceKey, WeatherLocation currentLocation) {
+        return !closed && resumed && request == requestNumber && (sourceKey == null
+                || currentLocation != null && sourceKey.equals(currentLocation.sourceKey()));
     }
 
     private void fetch(WeatherLocation location) {
@@ -105,24 +139,20 @@ final class WeatherSource {
         final long request = ++requestNumber;
         final String sourceKey = location.sourceKey();
         executor.execute(() -> {
-            String payload = null;
-            Exception failure = null;
-            try { payload = requestForecast(location); }
-            catch (Exception error) { failure = error; }
-            final String response = payload;
-            final Exception result = failure;
+            String response = null;
+            WeatherForecast parsed = null;
+            try {
+                response = requestForecast(location);
+                parsed = parseForecast(response);
+                preferences.saveForecast(sourceKey, response, System.currentTimeMillis());
+            } catch (Exception ignored) { }
+            final WeatherForecast forecast = parsed;
             main.post(() -> {
-                WeatherLocation currentLocation = preferences.location();
-                if (closed || !resumed || request != requestNumber || currentLocation == null
-                        || !sourceKey.equals(currentLocation.sourceKey())) return;
+                if (!currentRequest(request, sourceKey, preferences.location())) return;
                 loading = false;
-                if (response != null) {
-                    try {
-                        WeatherForecast forecast = parseForecast(response);
-                        preferences.saveForecast(sourceKey, response, System.currentTimeMillis());
-                        showForecast(forecast, location.label, System.currentTimeMillis(), false, "Open-Meteo");
-                        return;
-                    } catch (JSONException malformed) { resultError(location, "Forecast data needs a retry"); return; }
+                if (forecast != null) {
+                    showForecast(forecast, location.label, System.currentTimeMillis(), false, "Open-Meteo");
+                    return;
                 }
                 if (!WeatherCachePolicy.isUsable(location.sourceKey(), preferences.cachedSource(), preferences.fetchedAt(), System.currentTimeMillis()))
                     resultError(location, "Weather is temporarily unavailable");
