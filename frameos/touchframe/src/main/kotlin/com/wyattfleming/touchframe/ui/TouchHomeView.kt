@@ -519,7 +519,7 @@ internal class TouchHomeLayoutTransition {
 
     fun markRendered(value: Boolean) {
         rendered = value
-        requested = null
+        if (requested == value) requested = null
     }
 
     fun request(next: Boolean): Boolean {
