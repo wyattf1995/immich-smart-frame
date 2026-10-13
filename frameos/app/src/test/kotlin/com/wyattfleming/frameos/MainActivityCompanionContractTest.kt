@@ -20,6 +20,11 @@ class MainActivityCompanionContractTest {
         assertTrue(source.contains("companionSnapshotRevision = null"))
     }
 
+    @Test fun `companion poll reads published reserve status on its worker`() {
+        assertTrue(source.contains("val reserveStatus = photoReserve.publishedStatus()"))
+        assertFalse(source.contains("photoReserve.status()"))
+    }
+
     @Test fun `pause keeps the visible Gecko surface active and controls the slideshow separately`() {
         assertTrue(source.contains("webSurface?.setContentActive(activityResumed)"))
         assertTrue(source.contains("webSurface?.setPhotosPaused(next.photosPaused)"))
