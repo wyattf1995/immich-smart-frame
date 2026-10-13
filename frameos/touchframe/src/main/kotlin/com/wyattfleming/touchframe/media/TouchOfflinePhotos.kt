@@ -161,9 +161,19 @@ internal class TouchOfflinePhotos(
     fun applyHiddenAssets(assetIds: Set<String>, canCommit: () -> Boolean = { true }) =
         store.applyHiddenAssets(assetIds, canCommit)
 
-    fun hideFallbackIfHidden(assetIds: Set<String>) {
-        main.post {
-            if (TouchOfflineHiddenAssetPolicy.hides(displayedAssetId, assetIds)) hideFallback()
+    /** Main-thread callers receive a committed dismissal before this method returns. */
+    fun hideFallbackIfHidden(assetIds: Set<String>): Boolean {
+        val dismiss = {
+            if (TouchOfflineHiddenAssetPolicy.hides(displayedAssetId, assetIds)) {
+                hideFallback()
+                true
+            } else {
+                false
+            }
+        }
+        return if (Looper.myLooper() === Looper.getMainLooper()) dismiss() else {
+            main.post { dismiss() }
+            false
         }
     }
 

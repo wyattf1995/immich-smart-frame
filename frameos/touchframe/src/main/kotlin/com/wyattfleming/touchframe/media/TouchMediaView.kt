@@ -103,7 +103,7 @@ class TouchMediaView(
     fun activateOfflinePhotosScope(validatedPhotosUrl: String, profile: String): Future<Boolean> =
         offlineStore.activateScope(validatedPhotosUrl, profile)
 
-    fun hideOfflinePhotoIfHidden(assetIds: Set<String>) = offlinePhotos.hideFallbackIfHidden(assetIds)
+    fun hideOfflinePhotoIfHidden(assetIds: Set<String>): Boolean = offlinePhotos.hideFallbackIfHidden(assetIds)
 
     val offlineVisible: Boolean get() = offlinePhotos.isOfflineVisible()
 
