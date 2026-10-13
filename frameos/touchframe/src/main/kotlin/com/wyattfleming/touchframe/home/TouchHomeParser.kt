@@ -58,8 +58,8 @@ class TouchHomeParser {
                 val event = input.optJSONObject(index) ?: continue
                 val start = parseCalendarTime(event.optJSONObject("start"), zoneId) ?: continue
                 val end = parseCalendarTime(event.optJSONObject("end"), zoneId)
-                val effectiveEnd = end ?: start.first
-                if (effectiveEnd.isBefore(now)) continue
+                val effectiveEnd = end?.first ?: start.first
+                if (effectiveEnd.isBefore(start.first) || effectiveEnd.isBefore(now)) continue
                 val title = event.optString("summary").trim().takeIf(String::isNotBlank) ?: continue
                 add(TouchCalendarEvent(title, start.first.toEpochMilli(), end?.first?.toEpochMilli(), start.second))
             }
