@@ -500,7 +500,11 @@ class TouchHomeView private constructor(
                         fontFeatureSettings = "tnum"
                         contentDescription = if (draft.dirty) "New setpoint $big, not sent yet" else "Setpoint $big"
                     })
-                    addView(setpointState(kit, climate, connection, shown), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(8) })
+                    // Two lines are always reserved so the stepper and modes never move between states.
+                    addView(FrameLayout(context).apply {
+                        minimumHeight = kit.dp((scale.caption * 1.35f + scale.label * 1.5f + 6).toInt())
+                        addView(setpointState(kit, climate, connection, shown), FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER_HORIZONTAL or Gravity.TOP))
+                    }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = kit.dp(8) })
                 }, LinearLayout.LayoutParams(0, WRAP, 1f))
                 addView(stepButton(kit, R.drawable.ic_touch_plus, "Raise setpoint", canMutate) { step(climate, 1) })
             }

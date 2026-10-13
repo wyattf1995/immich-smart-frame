@@ -544,7 +544,7 @@ class TouchFrameActivity : Activity() {
                 pending.consume()
                 closeAuthorization()
             })
-        }, android.widget.LinearLayout.LayoutParams(-1, kit.dp(88)))
+        }, android.widget.LinearLayout.LayoutParams(-1, kit.dp(kit.scale.target + 24)))
         container.addView(surface, android.widget.LinearLayout.LayoutParams(-1, 0, 1f))
         authorization = surface
         authorizationContainer = container

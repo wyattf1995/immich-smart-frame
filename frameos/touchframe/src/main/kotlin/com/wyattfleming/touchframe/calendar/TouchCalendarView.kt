@@ -96,7 +96,7 @@ class TouchCalendarView(
             TouchCalendarMode.WEEK -> {
                 val days = TouchCalendarWeekPresentation.days(state.range, state.events, ZoneId.systemDefault())
                 week(kit, days, skeleton)
-                if (!skeleton) selectedDetails(kit, days.firstOrNull { it.date == state.selectedDate }?.events.orEmpty(), wideHeader)
+                if (skeleton) detailSkeleton(kit) else selectedDetails(kit, days.firstOrNull { it.date == state.selectedDate }?.events.orEmpty(), wideHeader)
             }
             TouchCalendarMode.MONTH -> month(kit, skeleton)
         }
@@ -255,12 +255,12 @@ class TouchCalendarView(
 
     private fun selectedDetails(kit: TouchKit, events: List<TouchCalendarEvent>, wide: Boolean) {
         val p = kit.palette
-        // Only whole rows: two columns of four on the 1280 panel (three with a banner), the verified 12 elsewhere.
+        // Only whole rows: two columns of four on the 1280 panel (two with a banner), the verified 12 elsewhere.
         val banner = state.connection == TouchCalendarConnection.OFFLINE || state.partial
         val pageSize = when {
             !wide -> TouchCalendarWeekPresentation.DETAILS_PER_PAGE
             kit.scale == TouchScale.WALL -> TouchCalendarWeekPresentation.DETAILS_PER_PAGE
-            banner -> 6
+            banner -> 4
             else -> 8
         }
         val page = TouchCalendarWeekPresentation.detailsPage(events, selectedDetailsPage, pageSize)
@@ -304,6 +304,18 @@ class TouchCalendarView(
             }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = kit.dp(6) })
         } else {
             rows.forEach { body.addView(it) }
+        }
+    }
+
+    /** Loading placeholders shaped like the selected-day rows, so the lower half is never blank. */
+    private fun detailSkeleton(kit: TouchKit) {
+        listOf(260, 420, 340).forEachIndexed { index, width ->
+            body.addView(View(context).apply {
+                background = kit.rounded(kit.palette.line, 8)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, LinearLayout.LayoutParams(kit.dp(width), kit.dp((kit.scale.body * 0.9f).toInt())).apply {
+                topMargin = kit.dp(if (index == 0) 26 else 18)
+            })
         }
     }
 
