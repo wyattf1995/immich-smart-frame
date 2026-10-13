@@ -7,10 +7,29 @@ object FrameCompanionEventPolicy {
         id !in recent && (lastShownAt == null || (now >= lastShownAt && now - lastShownAt >= 900_000L))
 }
 
-class FrameCompanionEventStore(context: Context) {
+class FrameCompanionEventStore private constructor(private val persistence: Persistence) {
+    data class State(val recent: List<String> = emptyList(), val lastShownAt: Long? = null)
+
+    interface Persistence {
+        fun read(): State
+        fun write(state: State): Boolean
+    }
+
     enum class ClaimResult { CLAIMED, ALREADY_HANDLED, PERSISTENCE_FAILED }
 
-    private val preferences = context.applicationContext.getSharedPreferences("frameos_companion_events", Context.MODE_PRIVATE)
+    constructor(context: Context) : this(object : Persistence {
+        private val preferences = context.applicationContext.getSharedPreferences("frameos_companion_events", Context.MODE_PRIVATE)
+
+        override fun read(): State = State(
+            recent = preferences.getString("recent", "").orEmpty().split(',').filter { it.isNotBlank() },
+            lastShownAt = preferences.getLong("last", 0L).takeIf { preferences.contains("last") },
+        )
+
+        override fun write(state: State): Boolean = preferences.edit()
+            .putString("recent", state.recent.takeLast(MAX_RECENT).joinToString(","))
+            .putLong("last", requireNotNull(state.lastShownAt))
+            .commit()
+    })
 
     /**
      * Distinguishes an intentionally suppressed duplicate/rate-limited event from a failed
@@ -18,13 +37,19 @@ class FrameCompanionEventStore(context: Context) {
      * outcome, but must retry [ClaimResult.PERSISTENCE_FAILED].
      */
     @Synchronized fun claimResult(id: String, nowMillis: Long): ClaimResult {
-        val recent = preferences.getString("recent", "").orEmpty().split(',').filter { it.isNotBlank() }
-        val last = preferences.getLong("last", 0L).takeIf { preferences.contains("last") }
-        if (!FrameCompanionEventPolicy.mayShow(id, recent, last, nowMillis)) return ClaimResult.ALREADY_HANDLED
-        return if (preferences.edit().putString("recent", (recent + id).takeLast(128).joinToString(","))
-                .putLong("last", nowMillis).commit()) ClaimResult.CLAIMED else ClaimResult.PERSISTENCE_FAILED
+        val state = persistence.read()
+        if (!FrameCompanionEventPolicy.mayShow(id, state.recent, state.lastShownAt, nowMillis)) {
+            return ClaimResult.ALREADY_HANDLED
+        }
+        val next = State((state.recent + id).takeLast(MAX_RECENT), nowMillis)
+        return if (persistence.write(next)) ClaimResult.CLAIMED else ClaimResult.PERSISTENCE_FAILED
     }
 
     /** Preserves legacy behavior: only a newly persisted claim returns true. */
     @Synchronized fun claim(id: String, nowMillis: Long): Boolean = claimResult(id, nowMillis) == ClaimResult.CLAIMED
+
+    companion object {
+        private const val MAX_RECENT = 128
+        internal fun forTest(persistence: Persistence): FrameCompanionEventStore = FrameCompanionEventStore(persistence)
+    }
 }
