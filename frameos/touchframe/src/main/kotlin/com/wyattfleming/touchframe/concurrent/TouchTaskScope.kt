@@ -4,6 +4,9 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Future
 import java.util.concurrent.FutureTask
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /**
  * Activity-owned lifecycle gate for bounded worker submissions.
@@ -13,6 +16,17 @@ import java.util.concurrent.RejectedExecutionException
  * cannot retroactively stop a block which already began its own operation.
  */
 class TouchTaskScope : AutoCloseable {
+    companion object {
+        /** Keep the concrete queue accessible so cancellation can remove pending work. */
+        fun newSingleWorker(): ThreadPoolExecutor = ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, LinkedBlockingQueue(),
+        )
+
+        private fun discardCanceled(executor: Executor, task: FutureTask<Unit>) {
+            if (task.isCancelled && executor is ThreadPoolExecutor) executor.remove(task)
+        }
+    }
+
     private val lock = Any()
     private val tasks = LinkedHashSet<ScopedTask>()
     private var resumed = false
@@ -40,12 +54,14 @@ class TouchTaskScope : AutoCloseable {
         synchronized(lock) {
             if (closed || !resumed) return null
             val submissionEpoch = epoch
-            task = ScopedTask(submissionEpoch, block)
+            task = ScopedTask(executor, submissionEpoch, block)
             tasks += task
         }
         // Registration stays atomic with pause; execution must not hold the lifecycle lock.
         try {
             executor.execute(task)
+            // Pause may cancel after registration but before execute enqueues the task.
+            discardCanceled(executor, task)
         } catch (_: RejectedExecutionException) {
             synchronized(lock) { tasks.remove(task) }
             task.cancel(false)
@@ -72,6 +88,7 @@ class TouchTaskScope : AutoCloseable {
     }
 
     private inner class ScopedTask(
+        private val executor: Executor,
         private val submissionEpoch: Long,
         private val block: (isCurrent: () -> Boolean) -> Unit,
     ) : FutureTask<Unit>({
@@ -90,6 +107,9 @@ class TouchTaskScope : AutoCloseable {
         }
 
         override fun done() {
+            // Calendar replaces its pending range by canceling the previous Future.
+            // Removing the canceled wrapper bounds that producer to its latest range.
+            discardCanceled(executor, this)
             synchronized(lock) { tasks.remove(this) }
         }
     }

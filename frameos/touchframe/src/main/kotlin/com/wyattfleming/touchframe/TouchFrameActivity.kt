@@ -48,7 +48,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** Touch navigation and native Home own this activity; the Lenovo activity is never hosted. */
 class TouchFrameActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
-    private val worker = Executors.newSingleThreadExecutor()
+    private val worker = TouchTaskScope.newSingleWorker()
     private val authorizationWorker = Executors.newSingleThreadExecutor()
     private val tokenLock = Any()
     private val tasks = TouchTaskScope()
