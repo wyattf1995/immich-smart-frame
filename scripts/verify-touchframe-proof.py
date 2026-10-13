@@ -254,31 +254,31 @@ try:
     attachment_scope_red = mutate(
         "offline-exact-scope-red", "offline",
         "session === target && photosUrl == url && profile == requestedProfile",
-        "session === target",
+        "session === target && true",
         {"same session and exact scope retain the offline attachment"},
     )
     paused_capture_red = mutate(
         "offline-paused-capture-red", "offline",
         "fun captureEnabled(): Boolean = active && !paused",
-        "fun captureEnabled(): Boolean = active",
+        "fun captureEnabled(): Boolean = active || false",
         {"pause suppresses trusted capture while preserving visible Photos state"},
     )
     hidden_cached_red = mutate(
         "offline-hidden-cached-red", "offline",
         "displayedAssetId != null && hiddenAssetIds.any { it.equals(displayedAssetId, ignoreCase = true) }",
-        "false",
+        "displayedAssetId != null && false",
         {"hidden policy removes a cached matching photo but keeps unrelated fallback"},
     )
     offline_store_red = mutate(
         "offline-store-same-scope-red", "offline_store",
         "if (requestedScope == scope) return generation.get()",
-        "return generation.incrementAndGet()",
+        "if (requestedScope == scope) return generation.incrementAndGet()",
         {"same requested scope retains its generation for pre-view policy work"},
     )
     hidden_commit_red = mutate(
         "offline-hidden-commit-cancel-red", "hidden_commit",
         "!task.isCancelled && !Thread.currentThread().isInterrupted",
-        "true",
+        "task.isCancelled || !Thread.currentThread().isInterrupted",
         {"canceled hidden policy operation is checked at the reserve commit boundary"},
     )
     credential_red = mutate(
@@ -302,16 +302,17 @@ try:
     timeout_cancel_red = mutate(
         "companion-delayed-main-cancel-red", "companion",
         "task.cancel(false)",
-        "Unit",
+        "if (false) task.cancel(false)",
         {"timed out queued callback is cancelled before a delayed main executor runs it"},
     )
     destination_order_red = mutate(
         "destination-permanent-home-red", "destination_order",
-        "add(TouchDestination.HOME)",
-        "add(TouchDestination.ART)",
+        "fun normalize(remoteOrder: List<TouchDestination>): List<TouchDestination> = buildList {\n        add(TouchDestination.HOME)",
+        "fun normalize(remoteOrder: List<TouchDestination>): List<TouchDestination> = buildList {\n        add(TouchDestination.ART)",
         {
             "remote order anchors Home and removes repeated modes",
             "Home tiles preserve the rail's configured non Home order",
+            "Birds is visible only when its local feed is configured",
         },
     )
     birds_visibility_red = mutate(
@@ -323,7 +324,7 @@ try:
     settings_revision_red = mutate(
         "settings-monotonic-revision-red", "settings_policy",
         "incomingRevision >= 0 && incomingRevision > currentRevision",
-        "incomingRevision >= 0",
+        "incomingRevision >= 0 && true",
         {
             "repeated and stale settings cannot revert current preferences",
             "revision comparison is safe at Long limit",
