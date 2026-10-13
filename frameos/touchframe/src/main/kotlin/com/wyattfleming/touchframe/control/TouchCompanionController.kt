@@ -43,16 +43,17 @@ class TouchCompanionController private constructor(
     private val onHiddenAssets: (Set<String>, Long, () -> Boolean) -> Boolean,
 ) : AutoCloseable {
     sealed interface CommandResult {
+        val message: String?
         /** The callback synchronously completed the requested local state change. */
-        data class Applied(val message: String? = null) : CommandResult
+        data class Applied(override val message: String? = null) : CommandResult
         /** The Touch bridge accepted ownership but completion must be observed separately. */
-        data class Dispatched(val message: String? = null) : CommandResult
+        data class Dispatched(override val message: String? = null) : CommandResult
         /** The request is unsupported by this Touch build and is terminally rejected. */
-        data class Unsupported(val message: String? = null) : CommandResult
+        data class Unsupported(override val message: String? = null) : CommandResult
         /** The callback attempted the request and knows it failed. */
-        data class Failed(val message: String? = null) : CommandResult
+        data class Failed(override val message: String? = null) : CommandResult
         /** The command expired while waiting for main-thread dispatch. */
-        data class Expired(val message: String? = null) : CommandResult
+        data class Expired(override val message: String? = null) : CommandResult
     }
 
     interface CommandJournal {

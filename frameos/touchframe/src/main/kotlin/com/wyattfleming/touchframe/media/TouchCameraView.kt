@@ -184,15 +184,17 @@ class TouchCameraView(
         bitmap: android.graphics.Bitmap?,
         message: String?,
         signInRequired: Boolean,
-    ) = main.post {
-        if (!refreshGate.isCurrent(request)) return@post
-        if (bitmap != null) {
-            image.setImageBitmap(bitmap)
-            status.text = "Snapshot updated ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date())}"
-            signIn.visibility = View.GONE
-        } else if (message != null) {
-            status.text = message
-            signIn.visibility = if (signInRequired) View.VISIBLE else View.GONE
+    ) {
+        main.post {
+            if (!refreshGate.isCurrent(request)) return@post
+            if (bitmap != null) {
+                image.setImageBitmap(bitmap)
+                status.text = "Snapshot updated ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date())}"
+                signIn.visibility = View.GONE
+            } else if (message != null) {
+                status.text = message
+                signIn.visibility = if (signInRequired) View.VISIBLE else View.GONE
+            }
         }
     }
 
@@ -338,4 +340,3 @@ internal class TouchCameraPolicy(origin: String, cameraIds: List<String>) {
         fun sampleSize(width: Int, height: Int): Int { var sample = 1; while ((width + sample - 1) / sample > 1920 || (height + sample - 1) / sample > 1080) sample *= 2; return sample }
     }
 }
-

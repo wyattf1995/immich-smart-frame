@@ -164,7 +164,7 @@ class TouchHomeView private constructor(
                 LayoutParams.WRAP_CONTENT,
             ).apply { topMargin = context.dp(16) })
         }
-        scroll.addView(content, ScrollView.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        scroll.addView(content, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         addView(scroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         scroll.post { scroll.scrollTo(0, scrollPosition.coerceAtLeast(0)) }
     }
@@ -304,9 +304,9 @@ class TouchHomeView private constructor(
         })
     }
 
-    private fun twoColumnGrid(
-        values: List<String>,
-        factory: (String) -> View,
+    private fun <T> twoColumnGrid(
+        values: List<T>,
+        factory: (T) -> View,
     ): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         values.chunked(2).forEachIndexed { rowIndex, row ->

@@ -33,7 +33,7 @@ internal class TouchOfflinePhotos(
         visibility = View.GONE
         setBackgroundColor(Color.BLACK)
         addView(backdrop, FrameLayout.LayoutParams(-1, -1))
-        addView(foreground, FrameLayout.LayoutParams(-1, -1))
+        addView(this@TouchOfflinePhotos.foreground, FrameLayout.LayoutParams(-1, -1))
     }
 
     private val main = Handler(Looper.getMainLooper())
