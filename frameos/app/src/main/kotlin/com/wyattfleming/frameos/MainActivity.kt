@@ -1206,8 +1206,8 @@ class MainActivity : Activity() {
             .setTitle("Your frame")
             .setMessage("Home brings together your calendar, weather and home controls.\n\nPhotos and Art fill the screen. Swipe inward from the left edge to open the menu, then tap Home to return here.")
             .setPositiveButton("Done", null)
-            .setNeutralButton("Wi-Fi settings") { _, _ ->
-                runCatching { startActivity(Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)) }
+            .setNeutralButton("Android settings") { _, _ ->
+                runCatching { startActivity(Intent(android.provider.Settings.ACTION_SETTINGS)) }
             }
             .show()
     }
