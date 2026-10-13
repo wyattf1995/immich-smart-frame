@@ -46,4 +46,16 @@ class TouchOfflinePhotoLifecycleTest {
         gate.invalidate()
         assertFalse(gate.isCurrent(replacement))
     }
+
+    @Test fun `same session and exact scope retain the offline attachment`() {
+        val identity = TouchOfflineAttachmentIdentity()
+        val session = Any()
+        identity.replace(session, "https://photos.example/kiosk", "family")
+
+        assertTrue(identity.matches(session, "https://photos.example/kiosk", "family"))
+        assertFalse(identity.matches(session, "https://photos.example/kiosk", "guest"))
+        assertFalse(identity.matches(Any(), "https://photos.example/kiosk", "family"))
+        identity.clear()
+        assertFalse(identity.matches(session, "https://photos.example/kiosk", "family"))
+    }
 }
