@@ -87,6 +87,7 @@ def static_contract() -> dict[str, object]:
         "main callback timeout cancellation": "task.cancel(false)",
         "dispatch-time command expiry": "if (nowMillis() > command.expiresAtMillis)",
         "permanent Home ordering anchor": "add(TouchDestination.HOME)",
+        "Birds requires local configuration": "it != TouchDestination.BIRDS || birdsConfigured",
         "strict monotonic settings revision": "incomingRevision >= 0 && incomingRevision > currentRevision",
         "provisioning collection cap": "private const val MAX_CALENDARS = 4",
     }
@@ -313,6 +314,12 @@ try:
             "Home tiles preserve the rail's configured non Home order",
         },
     )
+    birds_visibility_red = mutate(
+        "birds-local-configuration-red", "destination_order",
+        "it != TouchDestination.BIRDS || birdsConfigured",
+        "true",
+        {"Birds is visible only when its local feed is configured"},
+    )
     settings_revision_red = mutate(
         "settings-monotonic-revision-red", "settings_policy",
         "incomingRevision >= 0 && incomingRevision > currentRevision",
@@ -359,6 +366,7 @@ try:
         "credentialRereadRed": credential_red, "eventWorkerRed": event_worker_red,
         "dispatchExpiryRed": expiry_red, "delayedMainCancellationRed": timeout_cancel_red,
         "destinationPermanentHomeRed": destination_order_red,
+        "birdsLocalConfigurationRed": birds_visibility_red,
         "settingsMonotonicRevisionRed": settings_revision_red,
         "provisioningCalendarCapRed": provisioning_cap_red,
         "pausedTaskEntryRed": scope_red,
