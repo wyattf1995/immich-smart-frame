@@ -262,7 +262,7 @@ class TouchFrameActivity : Activity() {
         val previous = model
         val shouldReadCache = !cacheLoaded
         tasks.submit(worker) { isCurrent ->
-            val cached = if (shouldReadCache) homeCache.read(config.homeAssistantOrigin, cacheEntities(config)) else null
+            val cached = if (shouldReadCache) runCatching { homeCache.read(config.homeAssistantOrigin, cacheEntities(config)) }.getOrNull() else null
             if (!isCurrent()) return@submit
             if (cached != null) main.post {
                 if (!isCurrent()) return@post
@@ -273,7 +273,7 @@ class TouchFrameActivity : Activity() {
             val fallback = cached ?: previous
             val next = runCatching { source.refresh(fallback) }.getOrElse { fallback.copy(connection = TouchConnection.OFFLINE) }
             if (!isCurrent()) return@submit
-            if (next.connection == TouchConnection.CONNECTED) homeCache.write(config.homeAssistantOrigin, cacheEntities(config), next)
+            if (next.connection == TouchConnection.CONNECTED) runCatching { homeCache.write(config.homeAssistantOrigin, cacheEntities(config), next) }
             main.post {
                 if (!isCurrent()) return@post
                 cacheLoaded = true

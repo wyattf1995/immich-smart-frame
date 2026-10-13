@@ -108,6 +108,18 @@ class TouchConfigurationStore(context: Context) {
         )
     }
 
+    fun write(value: TouchConfiguration) {
+        preferences.edit()
+            .putString(KEY_PHOTOS_URL, value.photosUrl)
+            .putString(KEY_HOME_ASSISTANT_URL, value.homeAssistantUrl)
+            .putString(KEY_WEATHER_ENTITY_ID, value.weatherEntityId)
+            .putString(KEY_ART_URL, value.artUrl)
+            .putString(KEY_CLIMATE_ENTITY_ID, value.climateEntityId)
+            .putStringSet(KEY_CALENDAR_ENTITY_IDS, value.calendarEntityIds.toSet())
+            .putStringSet(KEY_CAMERA_ENTITY_IDS, value.cameraEntityIds.toSet())
+            .apply()
+    }
+
     private companion object {
         const val PREFERENCES_NAME = "frameos_configuration"
         const val KEY_PHOTOS_URL = "photos_url"
