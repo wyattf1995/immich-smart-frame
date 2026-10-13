@@ -12,6 +12,10 @@ readonly sdk_dir="$work_dir/sdk"
 readonly base_sdk_dir="${ANDROID_SDK_ROOT:?admitted Android SDK root is required}"
 readonly sdk_report="$report_dir/sdk-bootstrap.json"
 readonly manifest="$work_dir/transport-source-manifest.json"
+readonly post_manifest="$work_dir/transport-source-manifest-after.json"
+readonly transport_identity="/run/agent-source-identity.json"
+readonly captured_transport_identity="$report_dir/transport-source-identity.json"
+readonly junit_summary="$report_dir/junit-summary.json"
 readonly artifact_receipt="$report_dir/artifacts.json"
 readonly report_zip="$root_dir/reports/touchframe-android-validation.zip"
 readonly touch_apk="$frameos_dir/touchframe/build/outputs/apk/release/touchframe-release-unsigned.apk"
@@ -25,9 +29,21 @@ export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Djava.io.tmpdir=$TMPDIR"
 [[ -x "$frameos_dir/gradlew" && -f "$frameos_dir/touchframe/build.gradle.kts" && -f "$root_dir/scripts/verify-touchframe-proof.py" ]] || {
   printf 'TouchFrame Gradle project or proof harness is missing\n' >&2; exit 66;
 }
-command -v python3 >/dev/null && command -v curl >/dev/null && command -v unzip >/dev/null && command -v sha256sum >/dev/null || {
-  printf 'admitted Android image lacks python3, curl, unzip, or sha256sum\n' >&2; exit 69;
+command -v python3 >/dev/null && command -v curl >/dev/null && command -v unzip >/dev/null && command -v sha256sum >/dev/null && command -v git >/dev/null || {
+  printf 'admitted Android image lacks python3, curl, unzip, sha256sum, or git\n' >&2; exit 69;
 }
+[[ -f "$transport_identity" && ! -L "$transport_identity" ]] || {
+  printf 'admitted transport source identity is missing or not a regular file\n' >&2; exit 65;
+}
+python3 - "$transport_identity" "$captured_transport_identity" <<'PY'
+import json,sys
+from pathlib import Path
+source,destination=map(Path,sys.argv[1:])
+value=json.loads(source.read_text())
+if not isinstance(value,dict) or not value:
+    raise SystemExit('transport source identity must be a nonempty JSON object')
+destination.write_bytes(source.read_bytes())
+PY
 
 bootstrap_api37_sdk() {
   local platform_url='https://dl.google.com/android/repository/platform-37.0_r02.zip'
@@ -69,13 +85,27 @@ run_step() { local name="$1"; shift; printf '\n== %s ==\n' "$name" | tee -a "$ra
 bootstrap_api37_sdk
 export ANDROID_SDK_ROOT="$sdk_dir" ANDROID_HOME="$sdk_dir"
 
-python3 - "$root_dir" "$manifest" <<'PY'
-import hashlib,json,sys
+write_source_inventory() {
+  local destination="$1"
+  python3 - "$root_dir" "$destination" <<'PY'
+import hashlib,json,subprocess,sys
 from pathlib import Path
-root,out=map(Path,sys.argv[1:]); excluded={'.git','.nas-touchframe-android','reports'}
-files={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file() and p.relative_to(root).parts[0] not in excluded}
-payload={'schema':1,'files':files}; payload['sha256']=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest(); out.write_text(json.dumps(payload,indent=2,sort_keys=True)+'\n')
+root,out=map(Path,sys.argv[1:])
+tracked=subprocess.check_output(['git','-C',str(root),'ls-files','-z'])
+files={}
+for name in tracked.decode().split('\0'):
+    if not name:
+        continue
+    path=root/name
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit(f'tracked source is not a regular file: {name}')
+    files[name]=hashlib.sha256(path.read_bytes()).hexdigest()
+payload={'schema':1,'files':files}
+payload['sha256']=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+out.write_text(json.dumps(payload,indent=2,sort_keys=True)+'\n')
 PY
+}
+write_source_inventory "$manifest"
 
 run_step touchframe-source-proof python3 "$root_dir/scripts/verify-touchframe-proof.py" "$root_dir"
 run_step touchframe-shared-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :frame-shared:testDebugUnitTest"
@@ -83,13 +113,38 @@ run_step touchframe-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --
 run_step touchframe-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:lintRelease"
 run_step touchframe-assemble-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:assembleRelease"
 
+write_source_inventory "$post_manifest"
+cmp -- "$manifest" "$post_manifest" || { printf 'tracked source inventory changed during TouchFrame validation\n' >&2; exit 73; }
+python3 - "$frameos_dir" "$junit_summary" <<'PY'
+import json,sys
+from pathlib import Path
+import xml.etree.ElementTree as ET
+frame,out=map(Path,sys.argv[1:])
+roots=[frame/'frame-shared/build/test-results/testDebugUnitTest',frame/'touchframe/build/test-results/testDebugUnitTest']
+files=[]; totals={'tests':0,'failures':0,'errors':0,'skipped':0}
+for base in roots:
+    if not base.is_dir():
+        raise SystemExit(f'missing JUnit results directory: {base}')
+    for xml in sorted(base.rglob('TEST-*.xml')):
+        node=ET.parse(xml).getroot()
+        item={key:int(node.get(key,'0')) for key in totals}
+        item['path']=xml.relative_to(frame).as_posix()
+        files.append(item)
+        for key in totals:
+            totals[key]+=item[key]
+if not files or totals['failures'] or totals['errors'] or totals['skipped']:
+    raise SystemExit(f'unexpected JUnit summary: files={len(files)} totals={totals}')
+out.write_text(json.dumps({'schema':1,'files':files,'totals':totals},indent=2,sort_keys=True)+'\n')
+PY
+
 [[ -f "$touch_apk" && -f "$touch_mapping" ]] || { printf 'missing TouchFrame unsigned APK or mapping\n' >&2; exit 72; }
-python3 - "$root_dir" "$artifact_receipt" "$manifest" "$sdk_report" "$touch_apk" "$touch_mapping" <<'PY'
+python3 - "$root_dir" "$artifact_receipt" "$manifest" "$post_manifest" "$captured_transport_identity" "$sdk_report" "$junit_summary" "$touch_apk" "$touch_mapping" <<'PY'
 import hashlib,json,sys
 from pathlib import Path
-root,out,manifest,sdk,*artifacts=map(Path,sys.argv[1:])
+root,out,manifest,post_manifest,identity,sdk,junit,*artifacts=map(Path,sys.argv[1:])
 def item(p): return {'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size,'signing':'unsigned'}
-out.write_text(json.dumps({'schema':1,'transportSourceManifest':json.loads(manifest.read_text()),'sdkBootstrap':json.loads(sdk.read_text()),'artifacts':{p.relative_to(root).as_posix():item(p) for p in artifacts}},indent=2,sort_keys=True)+'\n')
+artifact_items={p.relative_to(root).as_posix():item(p) for p in artifacts}
+out.write_text(json.dumps({'schema':1,'transportSourceManifest':json.loads(manifest.read_text()),'postValidationSourceManifest':json.loads(post_manifest.read_text()),'transportSourceIdentity':json.loads(identity.read_text()),'transportSourceIdentitySha256':hashlib.sha256(identity.read_bytes()).hexdigest(),'sdkBootstrap':json.loads(sdk.read_text()),'junitSummary':json.loads(junit.read_text()),'artifactSummary':{'count':len(artifact_items),'totalBytes':sum(item['bytes'] for item in artifact_items.values())},'artifacts':artifact_items},indent=2,sort_keys=True)+'\n')
 PY
 python3 - "$raw_log" "$log_file" <<'PY'
 import re,sys
