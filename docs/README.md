@@ -38,6 +38,7 @@ Choose an app and a verified hardware path before building or installing.
 - [Troubleshooting](troubleshooting.md), [cache operations](cache-operations.md)
 - [Resilience](resilience-operations.md), [upgrade and rollback](upgrade-rollback.md)
 - [Variety observer](frame-variety-observer.md)
+- [Touch source validation — October 13, 2026](frameos-touch-validation-20261013.md)
 - [Contributing and public-file boundaries](../CONTRIBUTING.md)
 - [Security](../SECURITY.md), [image provenance](images/README.md)
 
