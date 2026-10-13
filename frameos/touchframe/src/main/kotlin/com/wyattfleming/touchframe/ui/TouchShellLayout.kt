@@ -45,9 +45,7 @@ class TouchShellLayout(
     private var destinations: List<TouchDestination> = TouchDestinationOrder.defaults
     private var night = false
     private var menuVisible = false
-    private var edgeDownX = 0f
-    private var edgeDownY = 0f
-    private var trackingEdge = false
+    private val edgeStream = TouchShellEdgeStream()
 
     init {
         addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -95,32 +93,23 @@ class TouchShellLayout(
         applyChrome()
     }
 
-    override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
-        if (!destination.isImmersiveMedia || menuVisible) return false
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                edgeDownX = event.x
-                edgeDownY = event.y
-                trackingEdge = edgeDownX <= dp(EDGE_WIDTH_DP)
-            }
-            MotionEvent.ACTION_MOVE -> if (trackingEdge && TouchShellGesture.shouldReveal(
-                    destination,
-                    edgeDownX,
-                    edgeDownY,
-                    event.x,
-                    event.y,
-                    dp(EDGE_WIDTH_DP),
-                    dp(HORIZONTAL_THRESHOLD_DP),
-                    dp(VERTICAL_TOLERANCE_DP),
-                )
-            ) {
-                trackingEdge = false
-                showMenu()
-                return true
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> trackingEdge = false
-        }
-        return false
+    /**
+     * Claims qualifying media-edge streams at DOWN, before child hit testing. Retry/loading covers
+     * can be non-clickable, so waiting for interception leaves their later MOVE events unobserved.
+     */
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        val result = edgeStream.onEvent(
+            action = event.actionMasked,
+            x = event.x,
+            y = event.y,
+            destination = destination,
+            menuVisible = menuVisible,
+            edgeWidth = dp(EDGE_WIDTH_DP),
+            horizontalThreshold = dp(HORIZONTAL_THRESHOLD_DP),
+            verticalTolerance = dp(VERTICAL_TOLERANCE_DP),
+        )
+        if (result.reveal) showMenu()
+        return result.ownsStream || super.dispatchTouchEvent(event)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -250,6 +239,53 @@ internal object TouchShellGesture {
         downX in 0f..edgeWidth.toFloat() &&
         upX - downX >= horizontalThreshold &&
         abs(upY - downY) <= verticalTolerance
+}
+
+/** Stateful ownership policy for an edge stream claimed before any child accepts DOWN. */
+internal class TouchShellEdgeStream {
+    private var active = false
+    private var revealed = false
+    private var downX = 0f
+    private var downY = 0f
+
+    data class Result(val ownsStream: Boolean, val reveal: Boolean)
+
+    fun onEvent(
+        action: Int,
+        x: Float,
+        y: Float,
+        destination: TouchDestination,
+        menuVisible: Boolean,
+        edgeWidth: Int,
+        horizontalThreshold: Int = TouchShellLayout.HORIZONTAL_THRESHOLD_DP,
+        verticalTolerance: Int = TouchShellLayout.VERTICAL_TOLERANCE_DP,
+    ): Result = when (action) {
+        MotionEvent.ACTION_DOWN -> {
+            active = destination.isImmersiveMedia && !menuVisible && x in 0f..edgeWidth.toFloat()
+            revealed = false
+            downX = x
+            downY = y
+            Result(active, false)
+        }
+        MotionEvent.ACTION_MOVE -> {
+            if (!active) {
+                Result(false, false)
+            } else {
+                val revealNow = !revealed && TouchShellGesture.shouldReveal(
+                    destination, downX, downY, x, y, edgeWidth, horizontalThreshold, verticalTolerance,
+                )
+                revealed = revealed || revealNow
+                Result(true, revealNow)
+            }
+        }
+        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+            val ownsStream = active
+            active = false
+            revealed = false
+            Result(ownsStream, false)
+        }
+        else -> Result(active, false)
+    }
 }
 
 internal data class Palette(
