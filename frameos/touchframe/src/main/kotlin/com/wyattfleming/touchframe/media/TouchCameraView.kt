@@ -144,24 +144,25 @@ class TouchCameraView(
         var current: HttpURLConnection? = null
         var timeout: java.util.concurrent.ScheduledFuture<*>? = null
         try {
-            current = LegacyIsrgRootTls.ConnectionFactory().open(url)
+            val opened = LegacyIsrgRootTls.ConnectionFactory().open(url)
+            current = opened
             if (!refreshGate.isCurrent(request)) return
-            connection = current
+            connection = opened
             timeout = watchdog.schedule({
-                if (refreshGate.isCurrent(request) && connection === current) current.disconnect()
+                if (refreshGate.isCurrent(request) && connection === opened) opened.disconnect()
             }, deadline.remainingMillis(), TimeUnit.MILLISECONDS)
             val millis = deadline.remainingMillis().coerceAtLeast(1).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-            current.requestMethod = "GET"
-            current.instanceFollowRedirects = false
-            current.useCaches = false
-            current.connectTimeout = millis
-            current.readTimeout = millis
-            current.setRequestProperty("Authorization", "Bearer $token")
+            opened.requestMethod = "GET"
+            opened.instanceFollowRedirects = false
+            opened.useCaches = false
+            opened.connectTimeout = millis
+            opened.readTimeout = millis
+            opened.setRequestProperty("Authorization", "Bearer $token")
             if (!refreshGate.isCurrent(request)) return
-            val code = current.responseCode
+            val code = opened.responseCode
             if (code == 401 || code == 403) return publish(request, null, "Sign in required", signInRequired = true)
             if (code !in 200..299 || deadline.isExpired()) return publish(request, null, "Snapshot unavailable", signInRequired = false)
-            val bytes = current.inputStream.use { boundedBytes(it, deadline, request) }
+            val bytes = opened.inputStream.use { boundedBytes(it, deadline, request) }
             if (!refreshGate.isCurrent(request)) return
             val bitmap = decodeSnapshot(bytes) ?: return publish(request, null, "Snapshot unavailable", signInRequired = false)
             publish(request, bitmap, null, signInRequired = false)
