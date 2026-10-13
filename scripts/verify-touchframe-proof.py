@@ -27,6 +27,7 @@ bridge_result_dir = frame / "frame-shared" / "build" / "test-results" / "testDeb
 bridge_class = "com.wyattfleming.frameos.photos.FramePhotoBridgePreparedAttachmentContractTest"
 suites = {
     "shell": (module / "src/main/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayout.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayoutTest.kt", "com.wyattfleming.touchframe.ui.TouchShellLayoutTest"),
+    "home_layout": (module / "src/main/kotlin/com/wyattfleming/touchframe/ui/TouchHomeView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/ui/TouchHomeLayoutTest.kt", "com.wyattfleming.touchframe.ui.TouchHomeLayoutTest"),
     "settings_return": (module / "src/main/kotlin/com/wyattfleming/touchframe/ui/TouchSettingsReturn.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/ui/TouchSettingsReturnPlanTest.kt", "com.wyattfleming.touchframe.ui.TouchSettingsReturnPlanTest"),
     "parser": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeParser.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeParserTest.kt", "com.wyattfleming.touchframe.home.TouchHomeParserTest"),
     "repository": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepository.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepositoryTest.kt", "com.wyattfleming.touchframe.home.TouchHomeRepositoryTest"),
@@ -60,6 +61,8 @@ def require_file(path: Path) -> None:
 
 def static_contract() -> dict[str, object]:
     shell = suites["shell"][0].read_text()
+    home_layout = suites["home_layout"][0].read_text()
+    activity = module / "src/main/kotlin/com/wyattfleming/touchframe/TouchFrameActivity.kt"
     settings_return = suites["settings_return"][0].read_text()
     repo = suites["repository"][0].read_text()
     parser = suites["parser"][0].read_text()
@@ -80,6 +83,9 @@ def static_contract() -> dict[str, object]:
     required = {
         "media-only edge gesture": "destination.isImmersiveMedia &&",
         "48dp edge target": "EDGE_WIDTH_DP = 48",
+        "Home configuration relayout": "home.refreshLayoutForConfiguration(newConfig)",
+        "Home measured-content configuration width": "fun contentWidthDp(screenWidthDp: Float, railWidthDp: Float): Float =",
+        "Home transition scheduler": "fun needsTransition(previous: Boolean?, next: Boolean): Boolean = previous != next",
         "56dp horizontal threshold": "HORIZONTAL_THRESHOLD_DP = 56",
         "32dp vertical tolerance": "VERTICAL_TOLERANCE_DP = 32",
         "AA Settings and selected rail ink": "private const val ACCESSIBLE_RAIL_INK = -15722718",
@@ -114,7 +120,7 @@ def static_contract() -> dict[str, object]:
         "calendar weekday header allowance": "WEEKDAY_HEADER_MIN_HEIGHT_DP = 48",
         "Birds URL validation": "if (birds != null && !urlPolicy.isSafeConfigurationUrl(birds)) return null",
     }
-    combined = shell + settings_return + repo + parser + media + camera_palette + offline + blur + offline_store + hidden_commit + companion + destination_order + settings_policy + provisioning + scope + calendar_repository + calendar_presentation + configuration
+    combined = shell + home_layout + activity.read_text() + settings_return + repo + parser + media + camera_palette + offline + blur + offline_store + hidden_commit + companion + destination_order + settings_policy + provisioning + scope + calendar_repository + calendar_presentation + configuration
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -335,6 +341,15 @@ try:
         "true &&\n        downX in 0f..edgeWidth.toFloat()",
         {"only media destinations accept a qualified left edge reveal"},
     )
+    home_first_measure_red = mutate(
+        "home-layout-transition-red", "home_layout",
+        "if (!TouchHomeLayout.needsTransition(rendered, next)) {",
+        "if (rendered != null || !TouchHomeLayout.needsTransition(rendered, next)) {",
+        {
+            "layout transition emits initial and changed classes exactly once",
+            "stale render does not discard a pending display layout transition",
+        },
+    )
     shell_contrast_red = mutate(
         "shell-contrast-red", "shell",
         "private const val ACCESSIBLE_RAIL_INK = -15722718",
@@ -554,6 +569,7 @@ try:
         "packagingRestored": packaging_restored, "packagingUnchangedSha256": packaging_hashes,
         "sourceTestAnnotationCount": expected_tests, "initial": initial, "preparedBridgeInitial": bridge_initial,
         "preparedBridgeSessionGateRed": bridge_red, "edgeRed": edge_red,
+        "homeLayoutTransitionRed": home_first_measure_red,
         "shellContrastRed": shell_contrast_red,
         "settingsReturnOverlayRed": settings_return_red,
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red,

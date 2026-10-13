@@ -248,6 +248,7 @@ class TouchFrameActivity : Activity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         shell.select(destination)
+        home.refreshLayoutForConfiguration(newConfig)
     }
 
     private fun releaseData() {

@@ -1,6 +1,7 @@
 package com.wyattfleming.touchframe.ui
 
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -62,7 +63,8 @@ class TouchHomeView private constructor(
     private var dateView: TextView? = null
     private var scrollView: ScrollView? = null
     private var scrollPosition = 0
-    private var lastLargeLayout: Boolean? = null
+    private val layoutTransition = TouchHomeLayoutTransition()
+    private var layoutRebuildPosted = false
 
     init {
         isFocusable = true
@@ -111,17 +113,34 @@ class TouchHomeView private constructor(
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
-        val large = isLargeLandscape()
-        if (lastLargeLayout != null && lastLargeLayout != large) rebuild()
-        lastLargeLayout = large
+        requestLayoutClass(isLargeLandscape())
     }
 
-    private fun rebuild() {
+    /** Defers a consumed Activity configuration change until the content has a layout pass. */
+    fun refreshLayoutForConfiguration(configuration: Configuration) {
+        val contentWidthDp = TouchHomeLayout.contentWidthDp(
+            configuration.screenWidthDp.toFloat(),
+            TouchShellLayout.railWidthDpFor(configuration.screenWidthDp).toFloat(),
+        )
+        requestLayoutClass(TouchHomeLayout.isLargeLandscape(contentWidthDp, configuration.screenHeightDp.toFloat()))
+        requestLayout()
+    }
+
+    private fun requestLayoutClass(large: Boolean) {
+        if (!layoutTransition.request(large) || layoutRebuildPosted) return
+        layoutRebuildPosted = true
+        post {
+            layoutRebuildPosted = false
+            layoutTransition.consume()?.let(::rebuild)
+        }
+    }
+
+    private fun rebuild(large: Boolean = isLargeLandscape()) {
+        layoutTransition.markRendered(large)
         scrollPosition = scrollView?.scrollY ?: scrollPosition
         removeAllViews()
         val dashboard = model
-        val type = typography()
-        val large = isLargeLandscape()
+        val type = typography(large)
         setBackgroundColor(style.background)
         val scroll = ScrollView(context).apply {
             isFillViewport = true
@@ -396,10 +415,11 @@ class TouchHomeView private constructor(
     private fun isLargeLandscape(): Boolean {
         val density = resources.displayMetrics.density
         val widthDp = if (width > 0) width / density else resources.configuration.screenWidthDp.toFloat()
-        return widthDp >= LARGE_LANDSCAPE_DP && (height == 0 || width >= height)
+        val heightDp = if (height > 0) height / density else resources.configuration.screenHeightDp.toFloat()
+        return TouchHomeLayout.isLargeLandscape(widthDp, heightDp)
     }
 
-    private fun typography(): Typography = if (isLargeLandscape()) {
+    private fun typography(large: Boolean): Typography = if (large) {
         Typography(body = 24f, small = 20f, clock = 108f)
     } else {
         Typography(body = 18f, small = 16f, clock = 72f)
@@ -477,7 +497,46 @@ class TouchHomeView private constructor(
     private fun Context.dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private companion object {
-        const val LARGE_LANDSCAPE_DP = 900f
         const val MAX_EVENTS = 5
+    }
+}
+
+internal object TouchHomeLayout {
+    const val LARGE_LANDSCAPE_DP = 900f
+
+    fun contentWidthDp(screenWidthDp: Float, railWidthDp: Float): Float =
+        (screenWidthDp - railWidthDp).coerceAtLeast(0f)
+
+    fun isLargeLandscape(widthDp: Float, heightDp: Float): Boolean =
+        widthDp >= LARGE_LANDSCAPE_DP && (heightDp <= 0f || widthDp >= heightDp)
+
+    fun needsTransition(previous: Boolean?, next: Boolean): Boolean = previous != next
+}
+
+internal class TouchHomeLayoutTransition {
+    private var rendered: Boolean? = null
+    private var requested: Boolean? = null
+
+    fun markRendered(value: Boolean) {
+        rendered = value
+        if (requested == value) requested = null
+    }
+
+    fun request(next: Boolean): Boolean {
+        if (!TouchHomeLayout.needsTransition(rendered, next)) {
+            requested = null
+            return false
+        }
+        if (requested == next) return false
+        requested = next
+        return true
+    }
+
+    fun consume(): Boolean? {
+        val next = requested ?: return null
+        requested = null
+        if (!TouchHomeLayout.needsTransition(rendered, next)) return null
+        rendered = next
+        return next
     }
 }
