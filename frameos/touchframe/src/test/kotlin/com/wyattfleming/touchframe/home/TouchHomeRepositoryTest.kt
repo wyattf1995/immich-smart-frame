@@ -28,7 +28,7 @@ class TouchHomeRepositoryTest {
     @Test
     fun `refresh makes only configured state and calendar requests`() {
         val transport = FakeTransport()
-        TouchHomeRepository(config, { "token" }, transport, clock = { 100L }, zoneId = ZoneOffset.UTC).use { repository ->
+        TouchHomeRepository(config, { _ -> "token" }, transport, clock = { 100L }, zoneId = ZoneOffset.UTC).use { repository ->
             val model = repository.refresh(null)
             assertEquals(TouchConnection.CONNECTED, model.connection)
             assertEquals(4, transport.requests.size)
@@ -42,7 +42,7 @@ class TouchHomeRepositoryTest {
     fun `failed refresh preserves prior cards and marks offline`() {
         val previous = TouchHomeModel("Sunny", "72°F", emptyList(), null, TouchConnection.CONNECTED, 5L)
         val transport = FakeTransport(status = 500)
-        TouchHomeRepository(config, { "token" }, transport).use { repository ->
+        TouchHomeRepository(config, { _ -> "token" }, transport).use { repository ->
             val model = repository.refresh(previous)
             assertEquals("Sunny", model.weatherText)
             assertEquals(5L, model.lastUpdatedEpochMillis)
@@ -55,7 +55,7 @@ class TouchHomeRepositoryTest {
         val previous = TouchHomeModel("Sunny", "72°F", emptyList(), null, TouchConnection.CONNECTED, 5L)
         val transport = FakeTransport()
         val expired = { _: Long -> WeatherRequestDeadline(startNanos = 0L, timeoutMillis = 1L, clockNanos = { 1_000_000L }) }
-        TouchHomeRepository(config, { "token" }, transport, deadlineFactory = expired).use { repository ->
+        TouchHomeRepository(config, { _ -> "token" }, transport, deadlineFactory = expired).use { repository ->
             val result = repository.refresh(previous)
             assertEquals(TouchConnection.OFFLINE, result.connection)
             assertEquals("Sunny", result.weatherText)
@@ -69,7 +69,7 @@ class TouchHomeRepositoryTest {
         val previous = TouchHomeModel("Sunny", "72°F", emptyList(), null, TouchConnection.CONNECTED, 5L)
         val caller = Executors.newSingleThreadExecutor()
         try {
-            TouchHomeRepository(config, { "token" }, transport).use { repository ->
+            TouchHomeRepository(config, { _ -> "token" }, transport).use { repository ->
                 val future = caller.submit<TouchHomeModel> { repository.refresh(previous) }
                 assertTrue(transport.started.await(2, TimeUnit.SECONDS))
                 repository.cancel()
@@ -86,7 +86,7 @@ class TouchHomeRepositoryTest {
     @Test
     fun `authentication failure preserves prior cards and requests sign in`() {
         val previous = TouchHomeModel("Sunny", "72°F", emptyList(), null, TouchConnection.CONNECTED, 5L)
-        TouchHomeRepository(config, { "token" }, FakeTransport(status = 401)).use { repository ->
+        TouchHomeRepository(config, { _ -> "token" }, FakeTransport(status = 401)).use { repository ->
             assertEquals(TouchConnection.SIGN_IN_REQUIRED, repository.refresh(previous).connection)
         }
     }
