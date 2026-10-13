@@ -34,6 +34,7 @@ class TouchShellLayout(
     }
     private val rail = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private var destination = TouchDestination.HOME
+    private var destinations: List<TouchDestination> = TouchDestinationOrder.defaults
     private var night = false
     private var menuVisible = false
     private var edgeDownX = 0f
@@ -51,6 +52,20 @@ class TouchShellLayout(
         destination = next
         menuVisible = !next.isImmersiveMedia
         applyChrome()
+    }
+
+    /** Applies already-supported remote modes in their requested order; Home remains first. */
+    fun setDestinations(remoteOrder: List<TouchDestination>) {
+        val normalized = TouchDestinationOrder.normalize(remoteOrder)
+        if (destinations == normalized) return
+        destinations = normalized
+        val selected = TouchDestinationOrder.selectedOrHome(destination, destinations)
+        if (selected != destination) {
+            select(selected)
+            onNavigate(selected)
+        } else {
+            applyChrome()
+        }
     }
 
     fun showMenu() {
@@ -119,7 +134,7 @@ class TouchShellLayout(
 
     private fun rebuildRail(palette: Palette) {
         rail.removeAllViews()
-        TouchDestination.entries.forEach { item -> rail.addView(destinationButton(item, palette)) }
+        destinations.forEach { item -> rail.addView(destinationButton(item, palette)) }
         rail.addView(Space(context), LinearLayout.LayoutParams(0, 0, 1f))
         rail.addView(settingsButton(palette))
     }

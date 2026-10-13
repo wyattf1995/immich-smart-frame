@@ -51,6 +51,7 @@ class TouchHomeView private constructor(
     ) : this(context, null, 0, onNavigate, onSignIn, onClimateMode, onClimateTarget)
 
     private var model: TouchHomeModel? = null
+    private var destinations: List<TouchDestination> = TouchDestinationOrder.defaults
     private var nowMillis: Long = System.currentTimeMillis()
     private var style = HomeStyle.forHour(hourAt(nowMillis))
     private var draftTarget: Double? = null
@@ -65,6 +66,14 @@ class TouchHomeView private constructor(
 
     init {
         isFocusable = true
+        rebuild()
+    }
+
+    /** Applies already-supported remote modes in their requested order; Home remains first. */
+    fun setDestinations(remoteOrder: List<TouchDestination>) {
+        val normalized = TouchDestinationOrder.normalize(remoteOrder)
+        if (destinations == normalized) return
+        destinations = normalized
         rebuild()
     }
 
@@ -149,10 +158,12 @@ class TouchHomeView private constructor(
             LayoutParams.MATCH_PARENT,
             LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = context.dp(12) })
-        content.addView(exploreTiles(type), LinearLayout.LayoutParams(
-            LayoutParams.MATCH_PARENT,
-            LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = context.dp(16) })
+        if (destinations.any { it != TouchDestination.HOME }) {
+            content.addView(exploreTiles(type), LinearLayout.LayoutParams(
+                LayoutParams.MATCH_PARENT,
+                LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = context.dp(16) })
+        }
         scroll.addView(content, ScrollView.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         addView(scroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         scroll.post { scroll.scrollTo(0, scrollPosition.coerceAtLeast(0)) }
@@ -286,8 +297,8 @@ class TouchHomeView private constructor(
         orientation = LinearLayout.VERTICAL
         setPadding(context.dp(18), context.dp(14), context.dp(18), context.dp(14))
         addView(label("Explore", type.small, true))
-        addView(twoColumnGrid(KNOWN_ROUTES) { route ->
-            button(route.replaceFirstChar { it.titlecase(Locale.getDefault()) }, type.small) { onNavigate(route) }
+        addView(twoColumnGrid(TouchDestinationOrder.explore(destinations)) { destination ->
+            button(destination.label, type.small) { onNavigate(destination.name.lowercase(Locale.ROOT)) }
         }, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
             topMargin = context.dp(8)
         })
@@ -468,6 +479,5 @@ class TouchHomeView private constructor(
     private companion object {
         const val LARGE_LANDSCAPE_DP = 900f
         const val MAX_EVENTS = 5
-        val KNOWN_ROUTES = listOf("photos", "art", "weather", "cameras", "calendar")
     }
 }
