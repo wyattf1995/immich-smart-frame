@@ -435,8 +435,15 @@ try:
     )
     camera_label_red = mutate(
         "camera-label-prefix-red", "camera_label",
-        "return tokens.take(repeatedPrefixLength) + tokens.drop(repeatedPrefixLength * 2)",
-        "return tokens",
+        """    private fun collapseImmediatelyRepeatedLeadingTokens(tokens: List<String>): List<String> {
+        val repeatedPrefixLength = (1..tokens.size / 2).firstOrNull { prefixLength ->
+            tokens.take(prefixLength) == tokens.drop(prefixLength).take(prefixLength)
+        } ?: return tokens
+        return tokens.take(repeatedPrefixLength) + tokens.drop(repeatedPrefixLength * 2)
+    }""",
+        """    private fun collapseImmediatelyRepeatedLeadingTokens(tokens: List<String>): List<String> {
+        return tokens
+    }""",
         {"cameraLabelsCollapseOnlyImmediatelyRepeatedLeadingTokens"},
     )
     offline_red = mutate(
