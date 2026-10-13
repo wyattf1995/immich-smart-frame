@@ -38,6 +38,9 @@ finally:
 for name in checks:
     green=run(name+'-green',0); assert green['restored_green_exit']==0
     result[name]['restored']=green
-assert hashlib.sha256(test.read_bytes()).hexdigest()==test_hash
-(validation/'weather-source-budget-proof.json').write_text(json.dumps({'passed':True,'checks':result,'restored_source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'unchanged_test_sha256':test_hash},indent=2)+'\n',encoding='utf-8')
+source_restored_exactly = source.read_bytes() == original
+test_unchanged = hashlib.sha256(test.read_bytes()).hexdigest() == test_hash
+assert source_restored_exactly
+assert test_unchanged
+(validation/'weather-source-budget-proof.json').write_text(json.dumps({'passed':True,'checks':result,'source_restored_exactly':source_restored_exactly,'restored_source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'unchanged_test_sha256':test_hash,'test_unchanged':test_unchanged},indent=2)+'\n',encoding='utf-8')
 print('Weather source budget and worker decode red / exact restore green verified')
