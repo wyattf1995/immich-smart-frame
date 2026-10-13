@@ -14,6 +14,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.wyattfleming.frameos.weather.LegacyIsrgRootTls
+import com.wyattfleming.touchframe.R
 import com.wyattfleming.frameos.weather.WeatherRequestDeadline
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
@@ -46,7 +47,7 @@ class TouchCameraView(
     private val main = Handler(Looper.getMainLooper())
     private val image = ImageView(context).apply {
         scaleType = ImageView.ScaleType.FIT_CENTER
-        contentDescription = "Camera snapshot"
+        contentDescription = context.getString(R.string.touch_camera_snapshot_description)
         setBackgroundColor(BACKGROUND)
     }
     private val status = TextView(context).apply {
@@ -55,7 +56,7 @@ class TouchCameraView(
         setTextColor(Color.rgb(18, 36, 43))
     }
     private val refresh = TextView(context).apply {
-        text = "Refresh"
+        text = context.getString(R.string.touch_camera_refresh)
         gravity = Gravity.CENTER
         minimumHeight = context.dp(56)
         isClickable = true
@@ -63,7 +64,7 @@ class TouchCameraView(
         setOnClickListener { requestRefresh() }
     }
     private val signIn = TextView(context).apply {
-        text = "Sign in"
+        text = context.getString(R.string.touch_camera_sign_in)
         gravity = Gravity.CENTER
         minimumHeight = context.dp(56)
         isClickable = true
@@ -92,7 +93,7 @@ class TouchCameraView(
         content.addView(refresh, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)))
         content.addView(signIn, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)))
         addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        status.text = "Snapshot unavailable"
+        status.text = context.getString(R.string.touch_camera_unavailable)
     }
 
     fun setActive(active: Boolean) {
@@ -141,8 +142,8 @@ class TouchCameraView(
         val token = tokenProvider(deadline)
         // Token acquisition is caller-owned but no request may proceed after lifecycle cancellation.
         if (!refreshGate.isCurrent(request)) return
-        if (token.isNullOrBlank()) return publish(request, null, "Sign in required", signInRequired = true)
-        if (deadline.isExpired()) return publish(request, null, "Snapshot unavailable", signInRequired = false)
+        if (token.isNullOrBlank()) return publish(request, null, context.getString(R.string.touch_camera_sign_in_required), signInRequired = true)
+        if (deadline.isExpired()) return publish(request, null, context.getString(R.string.touch_camera_unavailable), signInRequired = false)
         val url = policy.snapshotUrl(request.camera) ?: return
         var current: HttpURLConnection? = null
         var timeout: java.util.concurrent.ScheduledFuture<*>? = null
@@ -163,14 +164,14 @@ class TouchCameraView(
             opened.setRequestProperty("Authorization", "Bearer $token")
             if (!refreshGate.isCurrent(request)) return
             val code = opened.responseCode
-            if (code == 401 || code == 403) return publish(request, null, "Sign in required", signInRequired = true)
-            if (code !in 200..299 || deadline.isExpired()) return publish(request, null, "Snapshot unavailable", signInRequired = false)
+            if (code == 401 || code == 403) return publish(request, null, context.getString(R.string.touch_camera_sign_in_required), signInRequired = true)
+            if (code !in 200..299 || deadline.isExpired()) return publish(request, null, context.getString(R.string.touch_camera_unavailable), signInRequired = false)
             val bytes = opened.inputStream.use { boundedBytes(it, deadline, request) }
             if (!refreshGate.isCurrent(request)) return
-            val bitmap = decodeSnapshot(bytes) ?: return publish(request, null, "Snapshot unavailable", signInRequired = false)
+            val bitmap = decodeSnapshot(bytes) ?: return publish(request, null, context.getString(R.string.touch_camera_unavailable), signInRequired = false)
             publish(request, bitmap, null, signInRequired = false)
         } catch (_: Exception) {
-            if (refreshGate.isCurrent(request)) publish(request, null, "Snapshot unavailable", signInRequired = false)
+            if (refreshGate.isCurrent(request)) publish(request, null, context.getString(R.string.touch_camera_unavailable), signInRequired = false)
         } finally {
             timeout?.cancel(false)
             // This worker owns its request identity, so cleanup never targets a newer connection.
@@ -189,7 +190,7 @@ class TouchCameraView(
             if (!refreshGate.isCurrent(request)) return@post
             if (bitmap != null) {
                 image.setImageBitmap(bitmap)
-                status.text = "Snapshot updated ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date())}"
+                status.text = context.getString(R.string.touch_camera_updated, java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date()))
                 signIn.visibility = View.GONE
             } else if (message != null) {
                 status.text = message

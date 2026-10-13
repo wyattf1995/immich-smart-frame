@@ -11,6 +11,7 @@ import android.view.accessibility.AccessibilityManager
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.wyattfleming.frameos.security.FrameUrlPolicy
+import com.wyattfleming.touchframe.R
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
@@ -44,7 +45,7 @@ class TouchMediaView(
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
     }
     private val retryButton = TextView(context).apply {
-        text = "Retry"
+        text = context.getString(R.string.touch_media_retry)
         gravity = Gravity.CENTER
         isClickable = true
         isFocusable = true
@@ -202,7 +203,7 @@ class TouchMediaView(
                 val allowed = configuredUrl?.let { configured ->
                     urlPolicy.isAllowedTopLevelNavigation(configured, request.uri)
                 } == true
-                if (!allowed) reportFailure("This media link is unavailable")
+                if (!allowed) reportFailure(context.getString(R.string.touch_media_link_unavailable))
                 return GeckoResult.fromValue(if (allowed) AllowOrDeny.ALLOW else AllowOrDeny.DENY)
             }
 
@@ -214,14 +215,14 @@ class TouchMediaView(
                 uri: String?,
                 error: WebRequestError,
             ): GeckoResult<String>? {
-                reportFailure("Unable to load $label")
+                reportFailure(context.getString(R.string.touch_media_load_failed, label))
                 return null
             }
         }
         next.progressDelegate = object : GeckoSession.ProgressDelegate {
             override fun onPageStop(session: GeckoSession, success: Boolean) {
                 if (success) reportReady()
-                else reportFailure("Unable to load $label")
+                else reportFailure(context.getString(R.string.touch_media_load_failed, label))
             }
         }
         next.contentDelegate = object : GeckoSession.ContentDelegate {
@@ -229,7 +230,7 @@ class TouchMediaView(
 
             // Do not hand downloads or unknown content to an external activity.
             override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
-                reportFailure("Downloads are unavailable")
+                reportFailure(context.getString(R.string.touch_media_downloads_unavailable))
             }
 
             override fun onCrash(session: GeckoSession) = reportContentProcessClosed()
@@ -262,7 +263,7 @@ class TouchMediaView(
         loadState.markContentProcessClosed()
         retryButton.visibility = View.VISIBLE
         if (photosProfile != null) offlinePhotos.showFallback()
-        onStatus?.invoke("Unable to load $label")
+        onStatus?.invoke(context.getString(R.string.touch_media_load_failed, label))
     }
 
     private fun Context.dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

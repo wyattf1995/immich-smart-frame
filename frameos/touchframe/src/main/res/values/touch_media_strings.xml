@@ -1,0 +1,21 @@
+<resources>
+    <string name="touch_cancel_sign_in">Cancel sign-in</string>
+    <string name="touch_return_to_app">Return to FrameOS Touch</string>
+
+    <string name="touch_calendar_sign_in">Sign in to Home Assistant</string>
+    <string name="touch_calendar_day_summary">%1$s · %2$d</string>
+    <string name="touch_calendar_day_with_events">%1$d •</string>
+    <string name="touch_calendar_day_number">%1$d</string>
+
+    <string name="touch_camera_snapshot_description">Camera snapshot</string>
+    <string name="touch_camera_refresh">Refresh</string>
+    <string name="touch_camera_sign_in">Sign in</string>
+    <string name="touch_camera_unavailable">Snapshot unavailable</string>
+    <string name="touch_camera_sign_in_required">Sign in required</string>
+    <string name="touch_camera_updated">Snapshot updated %1$s</string>
+
+    <string name="touch_media_retry">Retry</string>
+    <string name="touch_media_link_unavailable">This media link is unavailable</string>
+    <string name="touch_media_load_failed">Unable to load %1$s</string>
+    <string name="touch_media_downloads_unavailable">Downloads are unavailable</string>
+</resources>
