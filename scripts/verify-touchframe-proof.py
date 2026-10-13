@@ -343,9 +343,12 @@ try:
     )
     home_first_measure_red = mutate(
         "home-layout-transition-red", "home_layout",
-        "fun needsTransition(previous: Boolean?, next: Boolean): Boolean = previous != next",
-        "fun needsTransition(previous: Boolean?, next: Boolean): Boolean = previous != null && previous != next",
-        {"layout transition emits initial and changed classes exactly once"},
+        "if (!TouchHomeLayout.needsTransition(rendered, next)) {",
+        "if (rendered != null || !TouchHomeLayout.needsTransition(rendered, next)) {",
+        {
+            "layout transition emits initial and changed classes exactly once",
+            "stale render does not discard a pending display layout transition",
+        },
     )
     shell_contrast_red = mutate(
         "shell-contrast-red", "shell",
