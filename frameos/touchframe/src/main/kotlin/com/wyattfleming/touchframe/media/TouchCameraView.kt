@@ -3,7 +3,10 @@ package com.wyattfleming.touchframe.media
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.BitmapFactory
-import android.graphics.Color
+import android.content.res.ColorStateList
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
+import android.text.TextUtils
 import android.os.Handler
 import android.os.Looper
 import android.util.TypedValue
@@ -45,15 +48,18 @@ class TouchCameraView(
         Thread(runnable, "touch-camera-disconnect").apply { isDaemon = true }
     }
     private val main = Handler(Looper.getMainLooper())
+    private var night = false
+    private lateinit var content: LinearLayout
+    private lateinit var cameras: LinearLayout
+    private val cameraButtons = linkedMapOf<String, TextView>()
     private val image = ImageView(context).apply {
         scaleType = ImageView.ScaleType.FIT_CENTER
         contentDescription = context.getString(R.string.touch_camera_snapshot_description)
-        setBackgroundColor(BACKGROUND)
     }
     private val status = TextView(context).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
         gravity = Gravity.CENTER
-        setTextColor(Color.rgb(18, 36, 43))
+        includeFontPadding = false
     }
     private val refresh = TextView(context).apply {
         text = context.getString(R.string.touch_camera_refresh)
@@ -77,15 +83,15 @@ class TouchCameraView(
     private var periodic: java.util.concurrent.ScheduledFuture<*>? = null
 
     init {
-        setBackgroundColor(BACKGROUND)
-        val content = LinearLayout(context).apply {
+        content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(context.dp(16), context.dp(16), context.dp(16), context.dp(16))
-            setBackgroundColor(BACKGROUND)
         }
-        val cameras = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+        cameras = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
         cameraIds.forEach { id ->
-            cameras.addView(button(cameraLabel(id)) { selected = id; requestRefresh() }, LinearLayout.LayoutParams(0, context.dp(56), 1f))
+            val button = button(cameraLabel(id)) { selectCamera(id) }
+            cameraButtons[id] = button
+            cameras.addView(button, LinearLayout.LayoutParams(0, context.dp(56), 1f))
         }
         content.addView(cameras)
         content.addView(image, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
@@ -94,6 +100,14 @@ class TouchCameraView(
         content.addView(signIn, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)))
         addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         status.text = context.getString(R.string.touch_camera_unavailable)
+        applyPalette()
+    }
+
+    /** Called by the activity clock so camera controls match the shell's day/night palette. */
+    fun setNight(value: Boolean) {
+        if (night == value) return
+        night = value
+        applyPalette()
     }
 
     fun setActive(active: Boolean) {
@@ -250,20 +264,62 @@ class TouchCameraView(
         }
     }
 
+    private fun selectCamera(camera: String) {
+        selected = camera
+        applyPalette()
+        requestRefresh()
+    }
+
     private fun button(text: String, action: () -> Unit) = TextView(context).apply {
         this.text = text
         gravity = Gravity.CENTER
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+        includeFontPadding = false
+        maxLines = 2
+        ellipsize = TextUtils.TruncateAt.END
         isClickable = true
         isFocusable = true
         minimumHeight = context.dp(56)
         setOnClickListener { action() }
     }
 
+    private fun applyPalette() {
+        val palette = TouchCameraPalette.forNight(night)
+        setBackgroundColor(palette.surface)
+        content.setBackgroundColor(palette.surface)
+        cameras.setBackgroundColor(palette.surface)
+        image.setBackgroundColor(palette.panel)
+        status.setTextColor(palette.ink)
+        cameraButtons.forEach { (id, button) ->
+            button.isSelected = id == selected
+            styleControl(button, palette, selected = button.isSelected, action = false)
+        }
+        styleControl(refresh, palette, selected = true, action = true)
+        styleControl(signIn, palette, selected = true, action = true)
+    }
+
+    private fun styleControl(view: TextView, palette: TouchCameraPalette, selected: Boolean, action: Boolean) {
+        view.setTextColor(ColorStateList(
+            arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
+            intArrayOf(palette.disabledInk, if (selected || action) palette.accentInk else palette.ink),
+        ))
+        view.background = StateListDrawable().apply {
+            addState(intArrayOf(-android.R.attr.state_enabled), rounded(palette.disabledSurface))
+            addState(intArrayOf(), rounded(if (selected || action) palette.accent else palette.panel))
+        }
+        view.setPadding(context.dp(12), 0, context.dp(12), 0)
+    }
+
+    private fun rounded(color: Int) = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = context.dp(12).toFloat()
+        setColor(color)
+    }
+
     private fun cameraLabel(id: String) = id.removePrefix("camera.").replace('_', ' ').replaceFirstChar { it.titlecase() }
     private fun Context.dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     private companion object {
-        val BACKGROUND = Color.rgb(245, 242, 233)
         const val MAX_BYTES = 8 * 1024 * 1024
         const val TOTAL_TIMEOUT_MILLIS = 8_000L
     }
@@ -339,5 +395,46 @@ internal class TouchCameraPolicy(origin: String, cameraIds: List<String>) {
         private val CAMERA = Regex("camera\\.[a-z0-9_]+")
         fun validCamera(value: String) = CAMERA.matches(value)
         fun sampleSize(width: Int, height: Int): Int { var sample = 1; while ((width + sample - 1) / sample > 1920 || (height + sample - 1) / sample > 1080) sample *= 2; return sample }
+    }
+}
+
+/** Explicit API23-safe colors keep Camera controls readable on either shell palette. */
+internal data class TouchCameraPalette(
+    val surface: Int,
+    val panel: Int,
+    val ink: Int,
+    val accent: Int,
+    val accentInk: Int,
+    val disabledSurface: Int,
+    val disabledInk: Int,
+) {
+    companion object {
+        fun contrastRatio(foreground: Int, background: Int): Double {
+            fun channel(value: Int): Double {
+                val normalized = value / 255.0
+                return if (normalized <= 0.04045) normalized / 12.92 else Math.pow((normalized + 0.055) / 1.055, 2.4)
+            }
+            fun luminance(color: Int): Double =
+                0.2126 * channel((color shr 16) and 0xff) +
+                    0.7152 * channel((color shr 8) and 0xff) +
+                    0.0722 * channel(color and 0xff)
+            val first = luminance(foreground)
+            val second = luminance(background)
+            return (maxOf(first, second) + 0.05) / (minOf(first, second) + 0.05)
+        }
+
+        fun forNight(night: Boolean): TouchCameraPalette = if (night) {
+            TouchCameraPalette(
+                surface = 0xFF101722.toInt(), panel = 0xFF172536.toInt(), ink = 0xFFF1EDE4.toInt(),
+                accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),
+                disabledSurface = 0xFF27313C.toInt(), disabledInk = 0xFFA9B2B8.toInt(),
+            )
+        } else {
+            TouchCameraPalette(
+                surface = 0xFFF1EDE4.toInt(), panel = 0xFFE3E6DF.toInt(), ink = 0xFF182630.toInt(),
+                accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),
+                disabledSurface = 0xFFD7D5CE.toInt(), disabledInk = 0xFF48555B.toInt(),
+            )
+        }
     }
 }
