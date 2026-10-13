@@ -68,6 +68,7 @@ def static_contract() -> dict[str, object]:
     settings_policy = suites["settings_policy"][0].read_text()
     provisioning = suites["provisioning"][0].read_text()
     scope = suites["scope"][0].read_text()
+    calendar_repository = suites["calendar_repository"][0].read_text()
     required = {
         "media-only edge gesture": "destination.isImmersiveMedia &&",
         "48dp edge target": "EDGE_WIDTH_DP = 48",
@@ -93,8 +94,9 @@ def static_contract() -> dict[str, object]:
         "Birds requires local configuration": "it != TouchDestination.BIRDS || birdsConfigured",
         "strict monotonic settings revision": "incomingRevision >= 0 && incomingRevision > currentRevision",
         "provisioning collection cap": "private const val MAX_CALENDARS = 4",
+        "Calendar socket cleanup ownership": "invalidated.futures.toList()",
     }
-    combined = shell + repo + parser + media + offline + blur + offline_store + hidden_commit + companion + destination_order + settings_policy + provisioning + scope
+    combined = shell + repo + parser + media + offline + blur + offline_store + hidden_commit + companion + destination_order + settings_policy + provisioning + scope + calendar_repository
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -392,6 +394,12 @@ try:
         "if (false) null else cleanupLocked(active)",
         {"closed repository rejects a range before reading a token"},
     )
+    calendar_stale_socket_red = mutate(
+        "calendar-stale-socket-cleanup-red", "calendar_repository",
+        "invalidated.futures.toList()",
+        "invalidated.futures.toList().also { invalidated.futures.clear() }",
+        {"invalidate retains stale request handles until serialized cleanup"},
+    )
     restored = run("restored-green", set())
     bridge_restored = run_bridge("prepared-bridge-restored-green", set())
     unchanged_tests = {str(test.relative_to(root)): digest(test) for _, (_, test, _) in suites.items()}
@@ -422,6 +430,7 @@ try:
         "calendarExclusiveRangeEndRed": calendar_range_end_red,
         "calendarRangeParserCapRed": calendar_parser_cap_red,
         "calendarClosedRepositoryRed": calendar_closed_red,
+        "calendarStaleSocketCleanupRed": calendar_stale_socket_red,
         "restored": restored, "preparedBridgeRestored": bridge_restored,
         "preparedBridgeSourceSha256": bridge_source_hash,
         "preparedBridgeRestoredSourceSha256": digest(bridge_source),
