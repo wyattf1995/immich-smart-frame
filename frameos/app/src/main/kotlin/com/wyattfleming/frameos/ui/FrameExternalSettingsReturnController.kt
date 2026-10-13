@@ -8,7 +8,9 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import androidx.annotation.RequiresApi
 import com.wyattfleming.frameos.MainActivity
+import com.wyattfleming.frameos.R
 
 /** A return affordance that exists only during an explicit external Settings visit. */
 class FrameExternalSettingsReturnController(private val adapter: Adapter) {
@@ -59,7 +61,7 @@ class AndroidFrameExternalSettingsReturnAdapter(private val context: Context) : 
         if (returnView != null) return true
         val density = context.resources.displayMetrics.density
         val button = Button(context).apply {
-            text = "Return to FrameOS"
+            text = context.getString(R.string.return_to_frameos)
             contentDescription = text
             minHeight = (48 * density).toInt()
             minWidth = (160 * density).toInt()
@@ -109,7 +111,7 @@ internal object FrameExternalSettingsOverlayWindowType {
         if (apiLevel >= Build.VERSION_CODES.O) applicationOverlayForAndroid8OrLater() else PHONE
 
     /** The Android 8 overlay value is never evaluated on Android 6 or 7. */
-    @android.annotation.TargetApi(Build.VERSION_CODES.O)
+    @RequiresApi(Build.VERSION_CODES.O)
     private fun applicationOverlayForAndroid8OrLater(): Int =
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
 }
