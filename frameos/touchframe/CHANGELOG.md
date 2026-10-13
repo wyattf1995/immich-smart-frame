@@ -16,7 +16,8 @@ or device results do not apply automatically.
 - Fullscreen Photos/Art, bounded offline storage, calendar, camera snapshots
   and optional Birds source paths.
 
-These are source features pending their own build and physical acceptance.
-No public Touch release is established by this entry. See the
+Earlier candidates have been built and QA-installed, with scoped physical
+checks recorded in the Touch guide. Full acceptance of the current combined
+source remains separate. No public Touch release is established by this entry. See the
 [Touch guide](../../docs/frameos-touch-app.md) for current gates and
 [release policy](../../docs/releasing.md) for artifact and evidence requirements.
