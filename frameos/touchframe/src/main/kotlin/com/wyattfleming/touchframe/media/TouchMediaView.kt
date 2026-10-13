@@ -19,6 +19,7 @@ import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.WebRequestError
 import org.mozilla.geckoview.WebResponse
+import java.util.concurrent.Future
 
 /**
  * One retained Gecko content session for Photos and Art. Home is a separate
@@ -56,6 +57,8 @@ class TouchMediaView(
     }
 
     private var session: GeckoSession? = null
+    private val offlinePhotos = TouchOfflinePhotos(context)
+    private var photosProfile: String? = null
     private val loadState = TouchMediaLoadState()
     private val configuredUrl: String? get() = loadState.configuredUrl
     private var label: String = "Media"
@@ -65,6 +68,7 @@ class TouchMediaView(
     init {
         setBackgroundColor(Color.BLACK)
         addView(geckoView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(offlinePhotos.view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(retryButton, LayoutParams(LayoutParams.WRAP_CONTENT, context.dp(56), Gravity.CENTER))
         openSession()
     }
@@ -73,7 +77,30 @@ class TouchMediaView(
      * Loads a configured Photos/Art URL once. Returning to the same URL only
      * restores visibility; a changed, validated URL is the sole reload path.
      */
+    fun showPhotos(url: String, profile: String) {
+        photosProfile = profile
+        showUrl(url, "Photos")
+        session?.let { offlinePhotos.attach(runtime, it, url, profile, active) }
+    }
+
+    fun showArt(url: String) {
+        photosProfile = null
+        session?.let(offlinePhotos::detach)
+        showUrl(url, "Art")
+    }
+
+    fun setPhotosPaused(paused: Boolean): Boolean = photosProfile != null && offlinePhotos.setPaused(paused)
+
+    fun movePhoto(forward: Boolean): Boolean = photosProfile != null && offlinePhotos.move(forward)
+
+    fun applyHiddenPhotos(assetIds: Set<String>, canCommit: () -> Boolean = { true }): Future<Boolean>? =
+        if (photosProfile == null) null else offlinePhotos.applyHiddenAssets(assetIds, canCommit)
+
     fun showUrl(url: String, label: String) {
+        if (label != "Photos") {
+            photosProfile = null
+            session?.let(offlinePhotos::detach)
+        }
         check(!closed) { "TouchMediaView is closed" }
         require(urlPolicy.isSafeConfigurationUrl(url)) { "Media URL must be a safe configured origin" }
         this.label = label
@@ -104,6 +131,7 @@ class TouchMediaView(
             current.setFocused(active)
             current.setActive(active)
         }
+        offlinePhotos.setActive(active && photosProfile != null)
     }
 
     /** Idempotent lifecycle teardown; it cancels the session's pending network work. */
@@ -111,6 +139,7 @@ class TouchMediaView(
         if (closed) return
         closed = true
         retryButton.visibility = View.GONE
+        offlinePhotos.close()
         onStatus?.invoke(null)
         session?.let { current ->
             runCatching { current.setFocused(false) }
@@ -127,8 +156,10 @@ class TouchMediaView(
         if (!urlPolicy.isAllowedTopLevelNavigation(url, url)) return
         val request = loadState.retry() ?: return
         retryButton.visibility = View.GONE
+        offlinePhotos.hideFallback()
         onStatus?.invoke(null)
         if (request.reopenSession) {
+            session?.let(offlinePhotos::detach)
             session?.let { current ->
                 runCatching { geckoView.releaseSession() }
                 runCatching { current.close() }
@@ -196,6 +227,7 @@ class TouchMediaView(
         next.setFocused(active)
         geckoView.setSession(next)
         session = next
+        photosProfile?.let { profile -> configuredUrl?.let { url -> offlinePhotos.attach(runtime, next, url, profile, active) } }
     }
 
     private fun reportReady() {
@@ -207,6 +239,7 @@ class TouchMediaView(
     private fun reportFailure(message: String) {
         if (closed) return
         retryButton.visibility = View.VISIBLE
+        if (photosProfile != null) offlinePhotos.showFallback()
         onStatus?.invoke(message)
     }
 
@@ -214,6 +247,7 @@ class TouchMediaView(
         if (closed) return
         loadState.markContentProcessClosed()
         retryButton.visibility = View.VISIBLE
+        if (photosProfile != null) offlinePhotos.showFallback()
         onStatus?.invoke("Unable to load $label")
     }
 
