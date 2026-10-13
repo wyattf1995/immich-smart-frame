@@ -7,6 +7,6 @@ assert.match(html,/transform-origin: left center/,'meter scales from left');
 assert.doesNotMatch(html,/transition: width/,'meter does not animate layout width');
 assert.match(html,/renderKeys: \{ hero: "", species: "", recent: "", ambient: "" \}/,'ambient content has a change key');
 assert.match(html,/if \(ambientKey !== state\.renderKeys\.ambient\)/,'analytics render only changes when its key changes');
-assert.match(audio,/renderAudioHealth\(\);/,'audio events update only level and freshness');
+assert.match(audio,/renderAudioState\(\);/,'audio events use the narrow state helper');
 assert.doesNotMatch(audio,/\brender\(\);/,'audio events do not request broad rendering');
 console.log('PASS: audio events bypass unchanged analytics and width animation');
