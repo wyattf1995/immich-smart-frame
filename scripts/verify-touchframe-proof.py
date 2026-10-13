@@ -129,6 +129,11 @@ bridge_command = [
     "./gradlew", "--no-daemon", "--max-workers=2", ":frame-shared:testDebugUnitTest",
     "--tests", bridge_class,
 ]
+repository_climate_case = "failed refresh makes previously confirmed climate read-only"
+repository_case_command = [
+    "./gradlew", "--no-daemon", "--max-workers=2", ":touchframe:testDebugUnitTest",
+    "--tests", f"{suites['repository'][2]}.{repository_climate_case}",
+]
 
 
 def missing_results(log: Path, exit_code: int, detail: str) -> RuntimeError:
@@ -158,6 +163,29 @@ def run(label: str, expected_failures: set[str]) -> dict[str, object]:
     if (result.returncode == 0) != (not expected_failures):
         raise RuntimeError(f"unexpected Gradle exit {result.returncode} for {label}")
     return {"exit": result.returncode, "tests": len(cases), "failures": len(failed), "errors": len(errors), "skipped": len(skipped), "failedCases": sorted(failed), "log": log.name}
+
+
+def run_repository_case(label: str, expected_failures: set[str]) -> dict[str, object]:
+    if result_dir.exists():
+        shutil.rmtree(result_dir)
+    log = out / f"{label}.log"
+    with log.open("w", encoding="utf-8") as stream:
+        result = subprocess.run(repository_case_command, cwd=frame, stdout=stream, stderr=subprocess.STDOUT)
+    klass = suites["repository"][2]
+    xmls = list(result_dir.rglob(f"TEST-{klass}.xml"))
+    if len(xmls) != 1:
+        raise missing_results(log, result.returncode, f"expected one repository JUnit XML, found {xmls}")
+    cases = list(ET.parse(xmls[0]).getroot().iter("testcase"))
+    selected = [case for case in cases if case.get("name") == repository_climate_case]
+    if len(selected) != 1:
+        raise RuntimeError(f"expected exact targeted repository case once, found {[case.get('name') for case in cases]}")
+    case = selected[0]
+    failed = {case.get("name") or ""} if case.find("failure") is not None else set()
+    if case.find("error") is not None or case.find("skipped") is not None or failed != expected_failures:
+        raise RuntimeError(f"unexpected {label}: failed={failed}")
+    if (result.returncode == 0) != (not expected_failures):
+        raise RuntimeError(f"unexpected Gradle exit {result.returncode} for {label}")
+    return {"exit": result.returncode, "tests": 1, "failures": len(failed), "errors": 0, "skipped": 0, "failedCases": sorted(failed), "log": log.name}
 
 
 def run_bridge(label: str, expected_failures: set[str], klass: str = bridge_class) -> dict[str, object]:
@@ -190,6 +218,20 @@ def mutate_bridge(name: str, before: str, after: str, failed: set[str], original
     finally:
         bridge_source.write_bytes(original)
         if digest(bridge_source) != hashlib.sha256(original).hexdigest():
+            raise RuntimeError(f"{name} did not restore exact source bytes")
+
+
+def mutate_repository_case(name: str, before: str, after: str, failed: set[str]) -> dict[str, object]:
+    source = suites["repository"][0]
+    text = source_bytes["repository"].decode()
+    if text.count(before) != 1 or after in text:
+        raise RuntimeError(f"{name} mutation marker is not uniquely patchable")
+    try:
+        source.write_text(text.replace(before, after, 1))
+        return run_repository_case(name, failed)
+    finally:
+        source.write_bytes(source_bytes["repository"])
+        if digest(source) != source_hashes["repository"]:
             raise RuntimeError(f"{name} did not restore exact source bytes")
 
 
@@ -256,6 +298,16 @@ try:
         "active = null\n            operation.cancelled = true",
         "active = operation\n            operation.cancelled = false",
         {"cancellation during token acquisition prevents every HTTP request"},
+    )
+    climate_stale_red = mutate_repository_case(
+        "climate-stale-gate-red",
+        """private fun markClimateStale(connection: TouchConnection) = synchronized(operationLock) {
+        lastConfirmedClimate = null
+        climateConnection = connection
+    }""",
+        """private fun markClimateStale(connection: TouchConnection) = synchronized(operationLock) {
+        }""",
+        {repository_climate_case},
     )
     media_red = mutate(
         "media-crash-retry-red", "media",
@@ -411,7 +463,8 @@ try:
         "packagingRestored": packaging_restored, "packagingUnchangedSha256": packaging_hashes,
         "sourceTestAnnotationCount": expected_tests, "initial": initial, "preparedBridgeInitial": bridge_initial,
         "preparedBridgeSessionGateRed": bridge_red, "edgeRed": edge_red,
-        "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red, "mediaCrashRetryRed": media_red,
+        "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red,
+        "climateStaleGateRed": climate_stale_red, "mediaCrashRetryRed": media_red,
         "offlineHiddenPhotosRed": offline_red,
         "offlineBackdropBoundRed": blur_red,
         "offlineAttachmentGenerationRed": attachment_gate_red,

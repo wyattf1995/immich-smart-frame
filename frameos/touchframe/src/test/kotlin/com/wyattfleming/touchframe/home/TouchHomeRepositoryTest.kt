@@ -131,12 +131,17 @@ class TouchHomeRepositoryTest {
 
     @Test
     fun `failed refresh makes previously confirmed climate read-only`() {
+        // This case asserts the authorization gate, not concurrent request completion.
+        // A single test-owned executor plus a barrier drains any cancelled GET before
+        // the request-count snapshot; production keeps its bounded two-worker executor.
+        val requestExecutor = Executors.newSingleThreadExecutor()
         val healthy = FakeTransport()
-        TouchHomeRepository(config, { _ -> "token" }, healthy).use { repository ->
+        TouchHomeRepository(config, { _ -> "token" }, healthy, requestExecutor = requestExecutor).use { repository ->
             val connected = repository.refresh(null)
             assertEquals(TouchConnection.CONNECTED, connected.connection)
             healthy.status = 500
             assertEquals(TouchConnection.OFFLINE, repository.refresh(connected).connection)
+            requestExecutor.submit {}.get(2, TimeUnit.SECONDS)
             val requestCountAfterFailedRefresh = healthy.requests.size
             assertTrue(!repository.changeClimateTarget(73.0))
             assertEquals(requestCountAfterFailedRefresh, healthy.requests.size)
