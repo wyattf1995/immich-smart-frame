@@ -44,6 +44,12 @@ class TouchMediaView(
         setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
     }
+    // Keep Gecko drawing under this opaque surface until its first contentful
+    // paint. API 27 otherwise exposes a transient white TextureView after a
+    // content-process restart.
+    private val loadingCover = View(context).apply {
+        setBackgroundColor(Color.BLACK)
+    }
     private val retryButton = TextView(context).apply {
         text = context.getString(R.string.touch_media_retry)
         gravity = Gravity.CENTER
@@ -73,6 +79,7 @@ class TouchMediaView(
     init {
         setBackgroundColor(Color.BLACK)
         addView(geckoView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(loadingCover, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(offlinePhotos.view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(retryButton, LayoutParams(LayoutParams.WRAP_CONTENT, context.dp(56), Gravity.CENTER))
         openSession()
@@ -200,6 +207,7 @@ class TouchMediaView(
     private fun loadConfiguredUrl(url: String) {
         retryButton.visibility = View.GONE
         geckoView.visibility = View.VISIBLE
+        loadingCover.visibility = View.VISIBLE
         onStatus?.invoke(null)
         session?.loadUri(url)
     }
@@ -268,6 +276,7 @@ class TouchMediaView(
     private fun reportReady(source: GeckoSession) {
         if (!isCurrentSession(source)) return
         geckoView.visibility = View.VISIBLE
+        loadingCover.visibility = View.GONE
         retryButton.visibility = View.GONE
         onStatus?.invoke(null)
     }
@@ -277,6 +286,7 @@ class TouchMediaView(
         // Gecko's failed document surface is white on this API level. Keep the
         // shell's intentional black media background visible behind Retry.
         geckoView.visibility = View.INVISIBLE
+        loadingCover.visibility = View.VISIBLE
         retryButton.visibility = View.VISIBLE
         if (photosProfile != null) offlinePhotos.showFallback()
         onStatus?.invoke(message)
@@ -286,6 +296,7 @@ class TouchMediaView(
         if (source == null || !isCurrentSession(source)) return
         loadState.markContentProcessClosed(whileHidden = !active)
         geckoView.visibility = View.INVISIBLE
+        loadingCover.visibility = View.VISIBLE
         retryButton.visibility = View.VISIBLE
         if (photosProfile != null) offlinePhotos.showFallback()
         onStatus?.invoke(context.getString(R.string.touch_media_load_failed, label))
