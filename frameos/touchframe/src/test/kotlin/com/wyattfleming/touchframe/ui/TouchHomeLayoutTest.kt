@@ -21,6 +21,16 @@ class TouchHomeLayoutTest {
     }
 
     @Test
+    fun `stale render does not discard a pending display layout transition`() {
+        val transition = TouchHomeLayoutTransition()
+        transition.markRendered(true)
+
+        assertTrue(transition.request(false))
+        transition.markRendered(true)
+        assertEquals(false, transition.consume())
+    }
+
+    @Test
     fun `configuration and measured Home content use the same compact boundary`() {
         val configurationContentWidth = TouchHomeLayout.contentWidthDp(920f, 80f)
         val measuredContentWidth = 840f
