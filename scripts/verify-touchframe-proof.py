@@ -308,7 +308,10 @@ try:
         "destination-permanent-home-red", "destination_order",
         "add(TouchDestination.HOME)",
         "add(TouchDestination.ART)",
-        {"remote order anchors Home and removes repeated modes"},
+        {
+            "remote order anchors Home and removes repeated modes",
+            "Home tiles preserve the rail's configured non Home order",
+        },
     )
     settings_revision_red = mutate(
         "settings-monotonic-revision-red", "settings_policy",
