@@ -58,6 +58,10 @@ python3 "$root/scripts/verify-frameos-touchscreen-cache-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-embedded-oauth-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-oauth-https-redirect-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-embedded-oauth-integration-proof.py" "$root"
+python3 "$root/scripts/verify-frameos-companion-settings-envelope-proof.py" "$root"
+python3 "$root/scripts/verify-frameos-companion-reserve-status-proof.py" "$root"
+python3 "$root/scripts/verify-frameos-system-settings-proof.py" "$root"
+python3 "$root/scripts/verify-frameos-settings-return-overlay-proof.py" "$root"
 mkdir -p "$root/reports/frameos-legacy"
 "$root/frameos/gradlew" -p "$root/frameos" --no-daemon --max-workers=2 \
   :app:lintRelease :app:dependencies --configuration releaseRuntimeClasspath \
