@@ -12,6 +12,7 @@ import android.widget.LinearLayout
 import android.widget.Space
 import android.widget.TextView
 import kotlin.math.abs
+import kotlin.math.pow
 
 /**
  * Owns only persistent shell chrome. The caller owns each destination's content and lifecycle.
@@ -186,8 +187,8 @@ class TouchShellLayout(
         setPadding(dp(4), dp(5), dp(4), dp(5))
         background = rounded(palette.settings)
         setOnClickListener { onSettings() }
-        addView(label("⚙", 20f, palette.ink))
-        addView(label("Settings", if (railWidthDpFor(resources.configuration.screenWidthDp) >= 96) 16f else 14f, palette.ink))
+        addView(label("⚙", 20f, palette.settingsInk))
+        addView(label("Settings", if (railWidthDpFor(resources.configuration.screenWidthDp) >= 96) 16f else 14f, palette.settingsInk))
     }.also { view ->
         view.layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(68)).apply {
             setMargins(dp(6), dp(6), dp(6), dp(8))
@@ -236,7 +237,7 @@ internal object TouchShellGesture {
         abs(upY - downY) <= verticalTolerance
 }
 
-private data class Palette(
+internal data class Palette(
     val background: Int,
     val rail: Int,
     val ink: Int,
@@ -244,12 +245,38 @@ private data class Palette(
     val selected: Int,
     val selectedInk: Int,
     val settings: Int,
+    val settingsInk: Int,
 ) {
-    companion object {
+    internal companion object {
+        // #101722 provides AA contrast on both the teal selected state and gold Settings state.
+        private const val ACCESSIBLE_RAIL_INK = -15722718
+
         fun forNight(night: Boolean): Palette = if (night) {
-            Palette(0xFF101722.toInt(), 0xFF172536.toInt(), 0xFFF1EDE4.toInt(), 0xFFA9B2B8.toInt(), 0xFF4F9F9A.toInt(), 0xFF101722.toInt(), 0xFFD8C390.toInt())
+            Palette(
+                0xFF101722.toInt(), 0xFF172536.toInt(), 0xFFF1EDE4.toInt(), 0xFFA9B2B8.toInt(),
+                0xFF4F9F9A.toInt(), ACCESSIBLE_RAIL_INK, 0xFFD8C390.toInt(), ACCESSIBLE_RAIL_INK,
+            )
         } else {
-            Palette(0xFFF1EDE4.toInt(), 0xFFE3E6DF.toInt(), 0xFF182630.toInt(), 0xFF56646A.toInt(), 0xFF4F9F9A.toInt(), Color.WHITE, 0xFFD8C390.toInt())
+            Palette(
+                0xFFF1EDE4.toInt(), 0xFFE3E6DF.toInt(), 0xFF182630.toInt(), 0xFF56646A.toInt(),
+                0xFF4F9F9A.toInt(), ACCESSIBLE_RAIL_INK, 0xFFD8C390.toInt(), ACCESSIBLE_RAIL_INK,
+            )
+        }
+
+        /** Returns the WCAG contrast ratio for opaque sRGB colors. */
+        fun contrastRatio(foreground: Int, background: Int): Double {
+            fun luminance(color: Int): Double {
+                fun linear(channel: Int): Double {
+                    val value = channel / 255.0
+                    return if (value <= 0.04045) value / 12.92 else ((value + 0.055) / 1.055).pow(2.4)
+                }
+                return 0.2126 * linear((color ushr 16) and 0xFF) +
+                    0.7152 * linear((color ushr 8) and 0xFF) +
+                    0.0722 * linear(color and 0xFF)
+            }
+            val first = luminance(foreground)
+            val second = luminance(background)
+            return (maxOf(first, second) + 0.05) / (minOf(first, second) + 0.05)
         }
     }
 }
