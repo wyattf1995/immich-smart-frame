@@ -14,6 +14,8 @@ not the Lenovo activity or its mode/gesture state machine.
   full Android Settings. Layouts target 1920×1080 and 1280×800 frames; actual
   readability and reachability still require device acceptance. Home remains
   reachable when companion settings reorder or disable other destinations.
+- A configured Birds feed appears in Home and the rail. It shares the retained
+  web surface, keeps navigation visible, and is absent when no feed is configured.
 - Photos and Art fill the screen. Artwork stays uncropped with blurred margins.
   An inward swipe in the left 48dp opens the menu; its scrim dismisses the menu.
 - Android Settings opens directly and gets an explicit Return to FrameOS Touch
@@ -48,7 +50,8 @@ round trips completed; observed Home upper bounds were 17.474–18.482 seconds a
 Photos 9.141–10.955 seconds. Every warm Home return missed the 15-second target.
 Those observations motivate this architecture; they do not prove a network reload.
 
-The new application is initially a source candidate. Required gates are NAS
+The new application is initially a source candidate. Required gates are guarded
+NAS or Windows Linux-worker
 compilation/lint/JVM tests, source-only negative/restored-green proofs, exact APK
 and source identity, and large-frame UI acceptance. Test responsive layouts,
 one-tap navigation, cached/offline states, Settings return, real touch edge menu,
@@ -77,8 +80,8 @@ never run old and new pollers with the same device identity at once. Events use
 durable at-most-once claims; a lifecycle interruption after a claim may suppress
 that event rather than showing it twice. Photos pause/hold is session state.
 
-Camera mode currently provides authenticated snapshots, not live video. Birds,
-boot recovery, companion provisioning/takeover and physical UI acceptance remain
+Camera mode currently provides authenticated snapshots, not live video. Birds
+runtime verification, boot recovery, companion provisioning/takeover and physical UI acceptance remain
 open parity gates before replacing the old app. API37 local-network permission
 handling is source-only until a compatible runtime test is available.
 
