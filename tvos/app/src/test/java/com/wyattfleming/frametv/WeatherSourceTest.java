@@ -1,6 +1,7 @@
 package com.wyattfleming.frametv;
 
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 import org.json.JSONException;
 import org.junit.Test;
