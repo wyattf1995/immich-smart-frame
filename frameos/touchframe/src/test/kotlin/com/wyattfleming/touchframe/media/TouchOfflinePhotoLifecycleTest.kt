@@ -75,4 +75,11 @@ class TouchOfflinePhotoLifecycleTest {
         gate.setActive(false)
         assertFalse(gate.captureEnabled())
     }
+
+    @Test fun `hidden policy removes a cached matching photo but keeps unrelated fallback`() {
+        val asset = "9f7f6123-aaaa-4bbb-8ccc-1234567890ab"
+        assertTrue(TouchOfflineHiddenAssetPolicy.hides(asset, setOf(asset.uppercase())))
+        assertFalse(TouchOfflineHiddenAssetPolicy.hides(asset, setOf("0f7f6123-aaaa-4bbb-8ccc-1234567890ab")))
+        assertFalse(TouchOfflineHiddenAssetPolicy.hides(null, setOf(asset)))
+    }
 }
