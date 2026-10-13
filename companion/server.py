@@ -24,6 +24,10 @@ IDENTIFIER = re.compile(r'^[a-zA-Z0-9_-]{1,48}$')
 ASSET_ID = re.compile(r'^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$')
 CLOCK = re.compile(r'^(?:[01][0-9]|2[0-3]):[0-5][0-9]$')
 MAX_BODY = 32 * 1024
+EXPORT_STATE = 'preferences'
+EXPORT_RETRY_INITIAL_SECONDS = 1.0
+EXPORT_RETRY_MAX_SECONDS = 60.0
+EXPORT_RETRY_SHUTDOWN_SECONDS = 2.0
 
 class FrameError(Exception):
     def __init__(self, message, status=400):
@@ -74,6 +78,10 @@ class FrameStore:
         self.clock = clock or (lambda: int(time.time() * 1000))
         self.preferences_export = Path(preferences_export) if preferences_export else None
         self.export_lock = threading.Lock()
+        self.export_retry_lock = threading.Lock()
+        self.export_retry_cancel = threading.Event()
+        self.export_retry_thread = None
+        self.closed = False
         self.maintenance_lock = threading.Lock()
         self.last_maintenance = None
         self.snapshot_epoch = secrets.token_hex(16)
@@ -88,19 +96,27 @@ class FrameStore:
             CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, device TEXT NOT NULL, payload TEXT NOT NULL, issued INTEGER NOT NULL, expires INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS device_events ON events(device, issued);
             CREATE TABLE IF NOT EXISTS preferences (device TEXT NOT NULL, asset TEXT NOT NULL, preference TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY(device, asset));
+            CREATE TABLE IF NOT EXISTS export_state (name TEXT PRIMARY KEY, desired_revision INTEGER NOT NULL, published_revision INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS queued_device_expiry ON commands(device,expires) WHERE status='queued';
             CREATE INDEX IF NOT EXISTS queued_expiry ON commands(expires) WHERE status='queued';
             CREATE INDEX IF NOT EXISTS terminal_history ON commands(issued DESC,id DESC) WHERE status!='queued';
             ''')
             if 'preferences_revision' not in {column['name'] for column in db.execute('PRAGMA table_info(devices)')}:
                 db.execute('ALTER TABLE devices ADD COLUMN preferences_revision INTEGER NOT NULL DEFAULT 0')
+            # A new or migrated database needs one initial export even when it
+            # has no preferences yet. Published stays zero until os.replace.
+            db.execute('INSERT OR IGNORE INTO export_state(name,desired_revision,published_revision) VALUES(?,?,?)', (EXPORT_STATE, 1, 0))
             for device, conf in devices.items():
                 if not IDENTIFIER.fullmatch(device): raise FrameError('Invalid device identifier')
                 defaults = json.loads(json.dumps(DEFAULTS))
                 if defaults['profile'] not in profiles: defaults['profile'] = profiles[0]
                 initial = settings_patch(defaults, conf.get('settings', {}), profiles)
                 db.execute('INSERT OR IGNORE INTO devices(id,label,settings) VALUES(?,?,?)', (device, str(conf.get('label', device))[:80], json.dumps(initial)))
-        self.export_preferences()
+        if self.preferences_export:
+            try:
+                self.export_preferences(force=False)
+            except (OSError, sqlite3.Error):
+                self._schedule_export_retry()
 
     @contextmanager
     def db(self, write=True):
@@ -122,6 +138,42 @@ class FrameStore:
         row = db.execute('SELECT id,label,settings,revision,status,seen,preferences_revision FROM devices WHERE id=?', (device,)).fetchone()
         if row is None: raise FrameError('Unknown frame', 404)
         return row
+
+    def _export_revisions(self, db):
+        row = db.execute('SELECT desired_revision,published_revision FROM export_state WHERE name=?', (EXPORT_STATE,)).fetchone()
+        if row is None: raise RuntimeError('Missing preference export state')
+        return row['desired_revision'], row['published_revision']
+
+    def _export_pending(self):
+        if not self.preferences_export: return False
+        with self.db(write=False) as db:
+            desired, published = self._export_revisions(db)
+        return desired > published
+
+    def _schedule_export_retry(self):
+        if not self.preferences_export: return
+        with self.export_retry_lock:
+            if self.closed or (self.export_retry_thread and self.export_retry_thread.is_alive()): return
+            self.export_retry_thread = threading.Thread(target=self._retry_exports, name='frame-preferences-export', daemon=True)
+            self.export_retry_thread.start()
+
+    def _retry_exports(self):
+        delay = EXPORT_RETRY_INITIAL_SECONDS
+        while not self.export_retry_cancel.wait(delay):
+            try:
+                self.export_preferences(force=False)
+            except (OSError, sqlite3.Error):
+                delay = min(EXPORT_RETRY_MAX_SECONDS, delay * 2)
+                continue
+            if not self._export_pending(): return
+            delay = 0
+
+    def close(self):
+        with self.export_retry_lock:
+            self.closed = True
+            self.export_retry_cancel.set()
+            worker = self.export_retry_thread
+        if worker and worker is not threading.current_thread(): worker.join(EXPORT_RETRY_SHUTDOWN_SECONDS)
 
     def _expire(self, db):
         db.execute("UPDATE commands SET status='expired' WHERE status='queued' AND expires <= ?", (self.clock(),))
@@ -252,11 +304,17 @@ class FrameStore:
                 if db.execute('SELECT COUNT(*) FROM preferences WHERE device=?',(device,)).fetchone()[0]>=1000 and db.execute('SELECT 1 FROM preferences WHERE device=? AND asset=?',(device,payload['assetId'])).fetchone() is None: raise FrameError('Preference limit reached; clear old choices first',409)
                 db.execute('INSERT INTO preferences VALUES(?,?,?,?) ON CONFLICT(device,asset) DO UPDATE SET preference=excluded.preference,updated=excluded.updated',(device,payload['assetId'],payload['preference'],self.clock()))
             db.execute('UPDATE devices SET preferences_revision=preferences_revision+1 WHERE id=?',(device,))
-        self.export_preferences()
+            if self.preferences_export:
+                db.execute('UPDATE export_state SET desired_revision=desired_revision+1 WHERE name=?', (EXPORT_STATE,))
+        try:
+            self.export_preferences(force=False)
+        except (OSError, sqlite3.Error):
+            self._schedule_export_retry()
+            raise
         return {'saved':True,'assetId':payload['assetId'],'preference':payload['preference']}
 
-    def export_preferences(self):
-        if not self.preferences_export: return
+    def export_preferences(self, force=True):
+        if not self.preferences_export: return False
         with self.export_lock:
             self.preferences_export.parent.mkdir(parents=True,exist_ok=True)
             temp=self.preferences_export.with_suffix('.tmp')
@@ -264,6 +322,8 @@ class FrameStore:
                 # Stream one SQLite snapshot: memory is independent of fleet size,
                 # and readers never see a partly-written version-1 export.
                 with self.db(write=False) as db, temp.open('w',encoding='utf-8') as output:
+                    desired, published = self._export_revisions(db)
+                    if not force and published >= desired: return False
                     os.chmod(temp,0o640)
                     output.write('{"version":1,"updatedAt":'+str(self.clock())+',"devices":{')
                     first_device = True
@@ -279,6 +339,18 @@ class FrameStore:
                         output.write('}}')
                     output.write('}}')
                 os.replace(temp,self.preferences_export)
+                # A crash after replace but before this transaction simply leaves
+                # the durable revision dirty; startup safely exports again.
+                try:
+                    with self.db() as db:
+                        db.execute('UPDATE export_state SET published_revision=MAX(published_revision,?) WHERE name=?', (desired, EXPORT_STATE))
+                except sqlite3.OperationalError:
+                    # A direct maintenance export may run while a caller owns a
+                    # write transaction. The file is already atomically current;
+                    # leave the durable marker dirty so a later exporter repeats
+                    # it. Request-driven exports instead surface 503 and retry.
+                    if not force: raise
+                return True
             finally:
                 temp.unlink(missing_ok=True)
 
@@ -415,6 +487,8 @@ def main():
     print('Frame companion ready',flush=True)
     try:server.serve_forever()
     except KeyboardInterrupt:pass
-    finally:server.server_close()
+    finally:
+        server.server_close()
+        store.close()
 
 if __name__=='__main__':main()
