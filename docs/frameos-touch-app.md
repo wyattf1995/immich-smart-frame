@@ -22,6 +22,9 @@ not the Lenovo activity or its mode/gesture state machine.
   overlay. Failure to establish that return route keeps the user in the app.
 - Home, Calendar, climate controls, and Weather use the authenticated Home
   Assistant API. Home does not load an HA frontend in an invisible iframe.
+- Calendar has native Agenda, Week, and Month views with Today/period controls.
+  It fetches the selected bounded range directly and marks partial/offline data;
+  local date selection does not reload Google Calendar or fetch the same range.
 - Reuse the existing Kiosk photo source and art feed, including paid-work
   exclusions, older-album coverage, no-repeat artwork cycle, and 120-second art
   interval. Preserve the companion and bounded offline behaviors during integration.
