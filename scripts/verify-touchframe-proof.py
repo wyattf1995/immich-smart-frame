@@ -27,6 +27,7 @@ suites = {
     "repository": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepository.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepositoryTest.kt", "com.wyattfleming.touchframe.home.TouchHomeRepositoryTest"),
     "media": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchMediaLoadStateTest.kt", "com.wyattfleming.touchframe.media.TouchMediaLoadStateTest"),
     "offline": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoLifecycleTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoLifecycleTest"),
+    "blur": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflineBlurPlanTest.kt", "com.wyattfleming.touchframe.media.TouchOfflineBlurPlanTest"),
     "scope": (module / "src/main/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScope.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScopeTest.kt", "com.wyattfleming.touchframe.concurrent.TouchTaskScopeTest"),
 }
 
@@ -46,6 +47,7 @@ def static_contract() -> dict[str, object]:
     parser = suites["parser"][0].read_text()
     media = suites["media"][0].read_text()
     offline = suites["offline"][0].read_text()
+    blur = suites["blur"][0].read_text()
     scope = suites["scope"][0].read_text()
     required = {
         "media-only edge gesture": "destination.isImmersiveMedia &&",
@@ -60,8 +62,10 @@ def static_contract() -> dict[str, object]:
         "same-url crash retry": "if (configuredUrl == url) return if (contentProcessClosed)",
         "pause lifecycle gate": "if (closed || !resumed) return\n            resumed = false",
         "Photos-active fallback gate": "active = value && attachment != null",
+        "bounded blurred backdrop": "const val MAX_BACKDROP_EDGE = 128",
+        "uncropped foreground mapping": "TouchOfflineBlurPlan.forForeground",
     }
-    combined = shell + repo + parser + media + offline + scope
+    combined = shell + repo + parser + media + offline + blur + scope
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -158,6 +162,12 @@ try:
         "active = attachment != null",
         {"hidden Photos never exposes a reserve bitmap"},
     )
+    blur_red = mutate(
+        "offline-backdrop-bound-red", "blur",
+        "const val MAX_BACKDROP_EDGE = 128",
+        "const val MAX_BACKDROP_EDGE = 129",
+        {"backdrop is bounded while foreground remains original size"},
+    )
     scope_red = mutate(
         "pause-lifecycle-red", "scope",
         "if (closed || !resumed) return\n            resumed = false",
@@ -177,6 +187,7 @@ try:
         "sourceTestAnnotationCount": expected_tests, "initial": initial, "edgeRed": edge_red,
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red, "mediaCrashRetryRed": media_red,
         "offlineHiddenPhotosRed": offline_red,
+        "offlineBackdropBoundRed": blur_red,
         "pausedTaskEntryRed": scope_red,
         "restored": restored,
         "originalSourceSha256": source_hashes,
