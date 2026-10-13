@@ -9,6 +9,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.Space
 import android.widget.TextView
 import kotlin.math.abs
@@ -36,6 +37,9 @@ class TouchShellLayout(
         isClickable = true
         setOnClickListener { hideMenu() }
     }
+    private val railViewport = ScrollView(context).apply {
+        isFillViewport = true
+    }
     private val rail = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private var destination = TouchDestination.HOME
     private var destinations: List<TouchDestination> = TouchDestinationOrder.defaults
@@ -48,7 +52,8 @@ class TouchShellLayout(
     init {
         addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(scrim, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        addView(rail, LayoutParams(dp(80), LayoutParams.MATCH_PARENT, Gravity.START))
+        addView(railViewport, LayoutParams(dp(80), LayoutParams.MATCH_PARENT, Gravity.START))
+        railViewport.addView(rail, ScrollView.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         select(TouchDestination.HOME)
     }
 
@@ -132,12 +137,12 @@ class TouchShellLayout(
     private fun applyChrome() {
         val palette = Palette.forNight(night)
         setBackgroundColor(palette.background)
-        rail.setBackgroundColor(palette.rail)
+        railViewport.setBackgroundColor(palette.rail)
         rebuildRail(palette)
 
         val railWidth = dp(railWidthDpFor(resources.configuration.screenWidthDp))
-        rail.layoutParams = (rail.layoutParams as LayoutParams).apply { width = railWidth }
-        rail.visibility = if (menuVisible) View.VISIBLE else View.GONE
+        railViewport.layoutParams = (railViewport.layoutParams as LayoutParams).apply { width = railWidth }
+        railViewport.visibility = if (menuVisible) View.VISIBLE else View.GONE
         scrim.visibility = if (destination.isImmersiveMedia && menuVisible) View.VISIBLE else View.GONE
         content.layoutParams = (content.layoutParams as LayoutParams).apply {
             leftMargin = if (destination.isImmersiveMedia) 0 else railWidth
@@ -171,8 +176,8 @@ class TouchShellLayout(
             addView(label(item.label, if (railWidthDpFor(resources.configuration.screenWidthDp) >= 96) 16f else 14f,
                 if (selected) palette.selectedInk else palette.ink))
         }.also { view ->
-            view.layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(68)).apply {
-                setMargins(dp(6), dp(6), dp(6), 0)
+            view.layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(RAIL_BUTTON_HEIGHT_DP)).apply {
+                setMargins(dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP), dp(RAIL_BUTTON_TOP_MARGIN_DP), dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP), 0)
             }
         }
     }
@@ -190,8 +195,13 @@ class TouchShellLayout(
         addView(label("⚙", 20f, palette.settingsInk))
         addView(label("Settings", if (railWidthDpFor(resources.configuration.screenWidthDp) >= 96) 16f else 14f, palette.settingsInk))
     }.also { view ->
-        view.layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(68)).apply {
-            setMargins(dp(6), dp(6), dp(6), dp(8))
+        view.layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(RAIL_BUTTON_HEIGHT_DP)).apply {
+            setMargins(
+                dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP),
+                dp(RAIL_BUTTON_TOP_MARGIN_DP),
+                dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP),
+                dp(SETTINGS_BOTTOM_MARGIN_DP),
+            )
         }
     }
 
@@ -216,8 +226,13 @@ class TouchShellLayout(
         const val HORIZONTAL_THRESHOLD_DP = 56
         const val VERTICAL_TOLERANCE_DP = 32
         const val MIN_TARGET_DP = 56
+        const val RAIL_BUTTON_HEIGHT_DP = 68
+        private const val RAIL_BUTTON_HORIZONTAL_MARGIN_DP = 6
+        const val RAIL_BUTTON_TOP_MARGIN_DP = 6
+        const val SETTINGS_BOTTOM_MARGIN_DP = 8
 
         fun railWidthDpFor(screenWidthDp: Int): Int = if (screenWidthDp >= 1400) 96 else 80
+
     }
 }
 
