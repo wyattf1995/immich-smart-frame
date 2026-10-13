@@ -27,11 +27,18 @@ class TouchCalendarRepository(
     private val executor: ExecutorService = Executors.newFixedThreadPool(MAX_WORKERS) { Thread(it, "touchframe-calendar").apply { isDaemon = true } },
 ) : AutoCloseable {
     private val lock = Any()
+    private val loadLock = Any()
     private var active: Operation? = null
     private var closed = false
     private val cancellable = transport as? CancellableHomeAssistantHttpTransport
 
-    fun load(range: TouchCalendarRange): TouchCalendarLoad {
+    // Callers may supersede a request, but transport-wide cleanup must finish before the next load starts.
+    fun load(range: TouchCalendarRange): TouchCalendarLoad = synchronized(loadLock) {
+        if (Thread.currentThread().isInterrupted) TouchCalendarLoad(emptyList(), TouchCalendarConnection.OFFLINE)
+        else loadSerialized(range)
+    }
+
+    private fun loadSerialized(range: TouchCalendarRange): TouchCalendarLoad {
         require(range.days in 1..TouchCalendarRange.MAX_RANGE_DAYS)
         if (synchronized(lock) { closed }) return TouchCalendarLoad(emptyList(), TouchCalendarConnection.OFFLINE)
         val operation = beginOperation() ?: return TouchCalendarLoad(emptyList(), TouchCalendarConnection.OFFLINE)
@@ -56,7 +63,7 @@ class TouchCalendarRepository(
             }.distinctBy { listOf(it.title, it.startEpochMillis, it.endEpochMillis, it.allDay) }
                 .sortedBy(TouchCalendarEvent::startEpochMillis).take(MAX_EVENTS)
             if (!isCurrent(operation)) TouchCalendarLoad(emptyList(), TouchCalendarConnection.OFFLINE)
-            else TouchCalendarLoad(events, if (failures == responses.size) TouchCalendarConnection.OFFLINE else TouchCalendarConnection.CONNECTED, now(), partial = failures > 0).also { accepted = true }
+            else TouchCalendarLoad(events, if (responses.isNotEmpty() && failures == responses.size) TouchCalendarConnection.OFFLINE else TouchCalendarConnection.CONNECTED, now(), partial = failures > 0).also { accepted = true }
         } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
             TouchCalendarLoad(emptyList(), TouchCalendarConnection.OFFLINE)
         } finally { finishOperation(operation, accepted) }
@@ -92,7 +99,7 @@ class TouchCalendarRepository(
         }; cleanup(cleanup)
     }
     private fun cancelOperation(): List<Future<*>> = synchronized(lock) { val current = active; active = null; cleanupLocked(current) }
-    private fun cleanupLocked(operation: Operation?): List<Future<*>> = operation?.let { it.cancelled = true; it.futures.toList().also { unused -> operation.futures.clear() } }.orEmpty()
+    private fun cleanupLocked(operation: Operation?): List<Future<*>> = operation?.let { it.cancelled = true; it.futures.toList().also { operation.futures.clear() } }.orEmpty()
     private fun cleanup(futures: List<Future<*>>) { futures.forEach { it.cancel(true) }; if (futures.isNotEmpty()) cancellable?.cancelInFlight() }
     private fun isCurrent(operation: Operation) = synchronized(lock) { active === operation && !operation.cancelled }
     private fun checkCurrent(operation: Operation) { check(isCurrent(operation)) { "Calendar request cancelled" } }

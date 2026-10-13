@@ -22,7 +22,10 @@ class TouchCalendarParser {
                 if (effectiveEnd.isBefore(start.instant)) continue
                 val title = item.optString("summary").trim().takeIf { !it.isNullOrBlank() }?.take(TouchCalendarEvent.MAX_TITLE_LENGTH) ?: continue
                 // HA's end is exclusive for all-day entries. Instant overlap includes events crossing this range.
-                if (effectiveEnd < range.start.atStartOfDay(zoneId).toInstant() || start.instant >= range.endExclusive.atStartOfDay(zoneId).toInstant()) continue
+                val rangeStart = range.start.atStartOfDay(zoneId).toInstant()
+                val rangeEnd = range.endExclusive.atStartOfDay(zoneId).toInstant()
+                val endsBeforeRange = if (effectiveEnd == start.instant) effectiveEnd < rangeStart else effectiveEnd <= rangeStart
+                if (endsBeforeRange || start.instant >= rangeEnd) continue
                 add(TouchCalendarEvent(title, start.instant.toEpochMilli(), end?.instant?.toEpochMilli(), start.allDay, calendarId))
             }
         }.sortedBy(TouchCalendarEvent::startEpochMillis)
