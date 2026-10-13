@@ -230,6 +230,40 @@ class CompanionTests(unittest.TestCase):
         finally:
             reopened.close()
 
+    def test_close_fences_export_blocked_before_publication(self):
+        export = Path(self.tmp.name) / 'export' / 'preferences.json'
+        self.store = module.FrameStore(Path(self.tmp.name) / 'state.db', {}, ['balanced','family'], clock=lambda: self.clock, preferences_export=export)
+        before = export.read_bytes()
+        with self.store.db() as db:
+            db.execute('UPDATE export_state SET desired_revision=desired_revision+1')
+        blocked = threading.Event()
+        release = threading.Event()
+        released_in_time = []
+        original_chmod = module.os.chmod
+        def blocked_chmod(*args):
+            blocked.set()
+            released_in_time.append(release.wait(3))
+            return original_chmod(*args)
+        worker = None
+        try:
+            with patch.object(module, 'EXPORT_RETRY_INITIAL_SECONDS', .01), patch.object(module, 'EXPORT_RETRY_SHUTDOWN_SECONDS', .01), patch.object(module.os, 'chmod', side_effect=blocked_chmod):
+                self.store._schedule_export_retry()
+                worker = self.store.export_retry_thread
+                self.assertTrue(blocked.wait(2))
+                self.store.close()
+                self.assertTrue(worker.is_alive(), 'fixture must remain blocked after bounded close')
+                release.set()
+                worker.join(2)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(released_in_time, [True])
+            self.assertEqual(export.read_bytes(), before)
+            self.assertTrue(self.store._export_pending())
+            self.assertFalse(export.with_suffix('.tmp').exists())
+        finally:
+            release.set()
+            if worker: worker.join(3)
+            self.store.close()
+
     def test_startup_recreates_missing_export_and_includes_new_device(self):
         export = Path(self.tmp.name) / 'export' / 'preferences.json'
         first = module.FrameStore(Path(self.tmp.name) / 'state.db', {}, ['balanced','family'], clock=lambda: self.clock, preferences_export=export)
