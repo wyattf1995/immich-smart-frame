@@ -5,9 +5,11 @@ import com.wyattfleming.frameos.photos.FrameOfflineReserve
 import com.wyattfleming.frameos.photos.FramePhotoBridge
 import org.mozilla.geckoview.GeckoSession
 import java.io.File
+import java.util.concurrent.Callable
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.FutureTask
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicLong
 
@@ -35,12 +37,25 @@ class TouchOfflinePhotoStore(
         }
     }
 
+    /**
+     * Cancelling the returned future prevents queued work and re-checks cancellation at
+     * the reserve commit boundary. A transaction already past that atomic boundary may finish.
+     */
     fun applyHiddenAssets(assetIds: Set<String>, canCommit: () -> Boolean = { true }): Future<Boolean> {
         val expected = scopeGate.current()
-        return submit {
+        if (closed) return completedFalse()
+        lateinit var task: FutureTask<Boolean>
+        task = FutureTask(Callable {
             !closed && scopeGate.isCurrent(expected) && reserve.applyHiddenAssets(assetIds) {
-                !closed && scopeGate.isCurrent(expected) && canCommit()
+                !task.isCancelled && !Thread.currentThread().isInterrupted &&
+                    !closed && scopeGate.isCurrent(expected) && canCommit()
             }
+        })
+        return try {
+            worker.execute(task)
+            task
+        } catch (_: RejectedExecutionException) {
+            completedFalse()
         }
     }
 
@@ -71,6 +86,12 @@ class TouchOfflinePhotoStore(
         true
     } catch (_: RejectedExecutionException) {
         false
+    }
+
+    private fun completedFalse(): Future<Boolean> {
+        val task = FutureTask(Callable { false })
+        task.run()
+        return task
     }
 
     private fun <T> submit(action: () -> T): Future<T> = try {
