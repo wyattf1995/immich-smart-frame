@@ -114,7 +114,10 @@ class FrameStore:
                 db.execute('INSERT OR IGNORE INTO devices(id,label,settings) VALUES(?,?,?)', (device, str(conf.get('label', device))[:80], json.dumps(initial)))
         if self.preferences_export:
             try:
-                self.export_preferences(force=False)
+                # Startup deliberately refreshes the file even when a durable
+                # marker says it is current: the mount can be replaced or a new
+                # configured device can have been inserted since the last run.
+                self.export_preferences(force=True)
             except (OSError, sqlite3.Error):
                 self._schedule_export_retry()
 
@@ -150,6 +153,22 @@ class FrameStore:
             desired, published = self._export_revisions(db)
         return desired > published
 
+    def _mark_export_published(self, desired):
+        # Do not make an already-complete atomic export wait behind an unrelated
+        # SQLite writer. Leaving the marker dirty is safe: the retry path or a
+        # later startup republishes the same snapshot.
+        connection = sqlite3.connect(self.path, timeout=0)
+        try:
+            connection.execute('PRAGMA busy_timeout=0')
+            connection.execute('BEGIN IMMEDIATE')
+            connection.execute('UPDATE export_state SET published_revision=MAX(published_revision,?) WHERE name=?', (desired, EXPORT_STATE))
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     def _schedule_export_retry(self):
         if not self.preferences_export: return
         with self.export_retry_lock:
@@ -162,11 +181,20 @@ class FrameStore:
         while not self.export_retry_cancel.wait(delay):
             try:
                 self.export_preferences(force=False)
+                # Keep the final pending check and worker deregistration under
+                # the scheduler lock. A concurrent failed feedback either makes
+                # this worker continue or observes it gone and starts another.
+                with self.export_retry_lock:
+                    if self.closed:
+                        self.export_retry_thread = None
+                        return
+                    if self._export_pending():
+                        delay = 0
+                        continue
+                    self.export_retry_thread = None
+                    return
             except (OSError, sqlite3.Error):
                 delay = min(EXPORT_RETRY_MAX_SECONDS, delay * 2)
-                continue
-            if not self._export_pending(): return
-            delay = 0
 
     def close(self):
         with self.export_retry_lock:
@@ -342,13 +370,12 @@ class FrameStore:
                 # A crash after replace but before this transaction simply leaves
                 # the durable revision dirty; startup safely exports again.
                 try:
-                    with self.db() as db:
-                        db.execute('UPDATE export_state SET published_revision=MAX(published_revision,?) WHERE name=?', (desired, EXPORT_STATE))
+                    self._mark_export_published(desired)
                 except sqlite3.OperationalError:
-                    # A direct maintenance export may run while a caller owns a
-                    # write transaction. The file is already atomically current;
-                    # leave the durable marker dirty so a later exporter repeats
-                    # it. Request-driven exports instead surface 503 and retry.
+                    # The file is already atomically current. Keep publication
+                    # unacknowledged and arrange a later marker recovery rather
+                    # than blocking behind an unrelated SQLite writer.
+                    self._schedule_export_retry()
                     if not force: raise
                 return True
             finally:
