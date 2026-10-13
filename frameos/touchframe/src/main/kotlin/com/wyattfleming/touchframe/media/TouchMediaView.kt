@@ -23,8 +23,10 @@ import org.mozilla.geckoview.WebResponse
 import java.util.concurrent.Future
 
 /**
- * One retained Gecko content session for Photos and Art. Home is a separate
- * opaque native panel, so hiding it never detaches or destroys this view.
+ * One attached Gecko content session remains warm while the configured URL is
+ * unchanged. A configured cross-URL transition replaces that session, giving
+ * readiness callbacks a new document identity. Home is a separate
+ * opaque native panel, so hiding this view does not detach the current session.
  */
 @SuppressLint("ViewConstructor")
 class TouchMediaView(
@@ -90,8 +92,8 @@ class TouchMediaView(
     }
 
     /**
-     * Loads a configured Photos/Art URL once. Returning to the same URL only
-     * restores visibility; a changed, validated URL is the sole reload path.
+     * Returning to the same configured Photos/Art URL only restores visibility.
+     * A changed validated URL replaces the document session before reloading.
      */
     fun showPhotos(url: String, profile: String) {
         photosProfile = profile
@@ -202,9 +204,9 @@ class TouchMediaView(
     }
 
     /**
-     * A content process killed while this retained surface was hidden has no
-     * usable session to restore. Recreate it once on the next user return.
-     * Later active crashes remain visible and require the explicit Retry action.
+     * Recreates the document session for a configured cross-URL transition or
+     * one hidden-process recovery. Later active crashes remain visible and
+     * require the explicit Retry action.
      */
     private fun reopenAndLoad(url: String) {
         // The cover is made opaque before retiring the old document, so no
