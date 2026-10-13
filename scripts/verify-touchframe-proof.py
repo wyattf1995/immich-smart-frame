@@ -35,6 +35,8 @@ suites = {
     "offline_store": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStore.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStoreScopeGateTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoStoreScopeGateTest"),
     "hidden_commit": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStore.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoCommitContractTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoCommitContractTest"),
     "companion": (module / "src/main/kotlin/com/wyattfleming/touchframe/control/TouchCompanionController.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/control/TouchCompanionControllerTest.kt", "com.wyattfleming.touchframe.control.TouchCompanionControllerTest"),
+    "destination_order": (module / "src/main/kotlin/com/wyattfleming/touchframe/ui/TouchDestination.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/ui/TouchDestinationOrderTest.kt", "com.wyattfleming.touchframe.ui.TouchDestinationOrderTest"),
+    "settings_policy": (module / "src/main/kotlin/com/wyattfleming/touchframe/control/TouchRemoteSettingsPolicy.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/control/TouchRemoteSettingsPolicyTest.kt", "com.wyattfleming.touchframe.control.TouchRemoteSettingsPolicyTest"),
     "scope": (module / "src/main/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScope.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScopeTest.kt", "com.wyattfleming.touchframe.concurrent.TouchTaskScopeTest"),
 }
 
@@ -58,6 +60,8 @@ def static_contract() -> dict[str, object]:
     offline_store = suites["offline_store"][0].read_text()
     hidden_commit = suites["hidden_commit"][0].read_text()
     companion = suites["companion"][0].read_text()
+    destination_order = suites["destination_order"][0].read_text()
+    settings_policy = suites["settings_policy"][0].read_text()
     scope = suites["scope"][0].read_text()
     required = {
         "media-only edge gesture": "destination.isImmersiveMedia &&",
@@ -80,8 +84,10 @@ def static_contract() -> dict[str, object]:
         "worker event acceptance": "onEvent(it, expectedGeneration) { isCurrent(expectedGeneration) }",
         "main callback timeout cancellation": "task.cancel(false)",
         "dispatch-time command expiry": "if (nowMillis() > command.expiresAtMillis)",
+        "permanent Home ordering anchor": "add(TouchDestination.HOME)",
+        "strict monotonic settings revision": "incomingRevision >= 0 && incomingRevision > currentRevision",
     }
-    combined = shell + repo + parser + media + offline + blur + offline_store + hidden_commit + companion + scope
+    combined = shell + repo + parser + media + offline + blur + offline_store + hidden_commit + companion + destination_order + settings_policy + scope
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -295,6 +301,21 @@ try:
         "Unit",
         {"timed out queued callback is cancelled before a delayed main executor runs it"},
     )
+    destination_order_red = mutate(
+        "destination-permanent-home-red", "destination_order",
+        "add(TouchDestination.HOME)",
+        "add(TouchDestination.ART)",
+        {"remote order anchors Home and removes repeated modes"},
+    )
+    settings_revision_red = mutate(
+        "settings-monotonic-revision-red", "settings_policy",
+        "incomingRevision >= 0 && incomingRevision > currentRevision",
+        "incomingRevision >= 0",
+        {
+            "repeated and stale settings cannot revert current preferences",
+            "revision comparison is safe at Long limit",
+        },
+    )
     scope_red = mutate(
         "pause-lifecycle-red", "scope",
         "if (closed || !resumed) return\n            resumed = false",
@@ -325,6 +346,8 @@ try:
         "offlineHiddenCommitCancelRed": hidden_commit_red,
         "credentialRereadRed": credential_red, "eventWorkerRed": event_worker_red,
         "dispatchExpiryRed": expiry_red, "delayedMainCancellationRed": timeout_cancel_red,
+        "destinationPermanentHomeRed": destination_order_red,
+        "settingsMonotonicRevisionRed": settings_revision_red,
         "pausedTaskEntryRed": scope_red,
         "restored": restored, "preparedBridgeRestored": bridge_restored,
         "preparedBridgeSourceSha256": bridge_source_hash,
