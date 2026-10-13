@@ -103,6 +103,7 @@ def static_contract() -> dict[str, object]:
         "hidden crash has one return recovery": "if (hiddenReturnRecoveryAvailable) {",
         "bounded foreground media render deadline": "armRenderDeadline(renderDeadline.beginLoading(load, active))",
         "media deadline session fence": "token.load.sessionGeneration == sessionGeneration",
+        "cross URL media session replacement": "TouchMediaLoadState.Decision.REPLACE_DOCUMENT_SESSION -> {",
         "Camera palette accessible accent": "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
         "Camera label prefix collapse": "return tokens.take(repeatedPrefixLength) + tokens.drop(repeatedPrefixLength * 2)",
         "pause lifecycle gate": "if (closed || !resumed) return\n            resumed = false",
@@ -406,6 +407,20 @@ try:
         "if (success) reportReady(session)\n                else reportFailure(session, context.getString(R.string.touch_media_load_failed, label))",
         {"successfulNavigationWaitsForContentfulPaintBeforeRemovingTheCover"},
     )
+    media_cross_url_session_red = mutate(
+        "media-cross-url-session-red", "media",
+        """            TouchMediaLoadState.Decision.RECOVER_RETAINED_SESSION,
+            TouchMediaLoadState.Decision.REPLACE_DOCUMENT_SESSION -> {
+                reopenAndLoad(url)
+            }""",
+        """            TouchMediaLoadState.Decision.RECOVER_RETAINED_SESSION -> {
+                reopenAndLoad(url)
+            }
+            TouchMediaLoadState.Decision.REPLACE_DOCUMENT_SESSION -> {
+                loadConfiguredUrl(url)
+            }""",
+        {"crossUrlProductionPathCoversThenRetiresThePreviousSession"},
+    )
     media_active_crash_red = mutate(
         "media-active-crash-retry-red", "media",
         "} else {\n                Decision.RETRY_REQUIRED\n            }",
@@ -612,6 +627,7 @@ try:
         "climateStaleGateRed": climate_stale_red,
         "mediaHiddenReturnRecoveryRed": media_red,
         "mediaContentfulPaintReadinessRed": media_paint_readiness_red,
+        "mediaCrossUrlSessionRed": media_cross_url_session_red,
         "mediaActiveCrashRetryRed": media_active_crash_red,
         "mediaForegroundRenderDeadlineRed": media_render_deadline_red,
         "mediaRenderDeadlineCloseRed": media_deadline_close_red,

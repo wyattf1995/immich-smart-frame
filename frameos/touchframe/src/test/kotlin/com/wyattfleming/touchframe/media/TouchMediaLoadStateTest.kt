@@ -10,12 +10,38 @@ import org.junit.Test
 
 class TouchMediaLoadStateTest {
     @Test
-    fun sameConfiguredUrlDoesNotRequestAnotherLoadButChangedUrlDoes() {
+    fun sameConfiguredUrlStaysWarmButChangedUrlReplacesItsDocumentSession() {
         val state = TouchMediaLoadState()
 
         assertEquals(TouchMediaLoadState.Decision.LOAD, state.showUrl("https://photos.example/frame"))
         assertEquals(TouchMediaLoadState.Decision.ALREADY_LOADED, state.showUrl("https://photos.example/frame"))
-        assertEquals(TouchMediaLoadState.Decision.LOAD, state.showUrl("https://photos.example/art"))
+        assertEquals(TouchMediaLoadState.Decision.REPLACE_DOCUMENT_SESSION, state.showUrl("https://photos.example/art"))
+        assertEquals(TouchMediaLoadState.Decision.ALREADY_LOADED, state.showUrl("https://photos.example/art"))
+    }
+
+    @Test
+    fun crossUrlProductionPathCoversThenRetiresThePreviousSession() {
+        val source = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt").readText()
+        val replace = source.substring(
+            source.indexOf("private fun reopenAndLoad(url: String)"),
+            source.indexOf("private fun loadConfiguredUrl", startIndex = source.indexOf("private fun reopenAndLoad(url: String)")),
+        )
+
+        assertTrue(source.contains("TouchMediaLoadState.Decision.REPLACE_DOCUMENT_SESSION -> {\n                reopenAndLoad(url)"))
+        val cover = replace.indexOf("loadingCover.visibility = View.VISIBLE")
+        val hiddenView = replace.indexOf("geckoView.visibility = View.INVISIBLE")
+        val replaced = replace.indexOf("val replaced = session")
+        val clearedIdentity = replace.indexOf("session = null")
+        val closed = replace.indexOf("current.close()")
+        val opened = replace.indexOf("openSession()")
+        listOf(cover, hiddenView, replaced, clearedIdentity, closed, opened).forEach { index ->
+            assertTrue("cross-URL session marker is required", index >= 0)
+        }
+        assertTrue(cover < replaced)
+        assertTrue(hiddenView < replaced)
+        assertTrue(replaced < clearedIdentity)
+        assertTrue(clearedIdentity < closed)
+        assertTrue(closed < opened)
     }
 
     @Test
