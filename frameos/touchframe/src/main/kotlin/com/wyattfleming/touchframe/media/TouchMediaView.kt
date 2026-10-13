@@ -44,6 +44,12 @@ class TouchMediaView(
         setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
     }
+    // Keep Gecko drawing under this opaque surface until its first contentful
+    // paint. API 27 otherwise exposes a transient white TextureView after a
+    // content-process restart.
+    private val loadingCover = View(context).apply {
+        setBackgroundColor(Color.BLACK)
+    }
     private val retryButton = TextView(context).apply {
         text = context.getString(R.string.touch_media_retry)
         gravity = Gravity.CENTER
@@ -73,6 +79,7 @@ class TouchMediaView(
     init {
         setBackgroundColor(Color.BLACK)
         addView(geckoView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(loadingCover, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(offlinePhotos.view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(retryButton, LayoutParams(LayoutParams.WRAP_CONTENT, context.dp(56), Gravity.CENTER))
         openSession()
@@ -124,10 +131,11 @@ class TouchMediaView(
                 reportContentProcessClosed()
                 return
             }
+            TouchMediaLoadState.Decision.RECOVER_RETAINED_SESSION -> {
+                reopenAndLoad(url)
+            }
             TouchMediaLoadState.Decision.LOAD -> {
-                retryButton.visibility = View.GONE
-                onStatus?.invoke(null)
-                session?.loadUri(url)
+                loadConfiguredUrl(url)
             }
         }
     }
@@ -174,15 +182,37 @@ class TouchMediaView(
         offlinePhotos.hideFallback()
         onStatus?.invoke(null)
         if (request.reopenSession) {
-            session?.let(offlinePhotos::detach)
-            session?.let { current ->
-                runCatching { geckoView.releaseSession() }
-                runCatching { current.close() }
-            }
-            session = null
-            openSession()
+            reopenAndLoad(request.url)
+        } else {
+            loadConfiguredUrl(request.url)
         }
-        session?.loadUri(request.url)
+    }
+
+    /**
+     * A content process killed while this retained surface was hidden has no
+     * usable session to restore. Recreate it once on the next user return.
+     * Later active crashes remain visible and require the explicit Retry action.
+     */
+    private fun reopenAndLoad(url: String) {
+        val replaced = session
+        replaced?.let(offlinePhotos::detach)
+        // Gecko can synchronously emit teardown callbacks. Clear the identity
+        // fence before release/close so an old session cannot re-arm recovery.
+        session = null
+        replaced?.let { current ->
+            runCatching { geckoView.releaseSession() }
+            runCatching { current.close() }
+        }
+        openSession()
+        loadConfiguredUrl(url)
+    }
+
+    private fun loadConfiguredUrl(url: String) {
+        retryButton.visibility = View.GONE
+        geckoView.visibility = View.VISIBLE
+        loadingCover.visibility = View.VISIBLE
+        onStatus?.invoke(null)
+        session?.loadUri(url)
     }
 
     private fun openSession() {
@@ -200,10 +230,11 @@ class TouchMediaView(
                 session: GeckoSession,
                 request: GeckoSession.NavigationDelegate.LoadRequest,
             ): GeckoResult<AllowOrDeny> {
+                if (!isCurrentSession(session)) return GeckoResult.fromValue(AllowOrDeny.DENY)
                 val allowed = configuredUrl?.let { configured ->
                     urlPolicy.isAllowedTopLevelNavigation(configured, request.uri)
                 } == true
-                if (!allowed) reportFailure(context.getString(R.string.touch_media_link_unavailable))
+                if (!allowed) reportFailure(session, context.getString(R.string.touch_media_link_unavailable))
                 return GeckoResult.fromValue(if (allowed) AllowOrDeny.ALLOW else AllowOrDeny.DENY)
             }
 
@@ -215,84 +246,107 @@ class TouchMediaView(
                 uri: String?,
                 error: WebRequestError,
             ): GeckoResult<String>? {
-                reportFailure(context.getString(R.string.touch_media_load_failed, label))
+                reportFailure(session, context.getString(R.string.touch_media_load_failed, label))
                 return null
             }
         }
         next.progressDelegate = object : GeckoSession.ProgressDelegate {
             override fun onPageStop(session: GeckoSession, success: Boolean) {
-                if (success) reportReady()
-                else reportFailure(context.getString(R.string.touch_media_load_failed, label))
+                if (success) reportReady(session)
+                else reportFailure(session, context.getString(R.string.touch_media_load_failed, label))
             }
         }
         next.contentDelegate = object : GeckoSession.ContentDelegate {
-            override fun onFirstContentfulPaint(session: GeckoSession) = reportReady()
+            override fun onFirstContentfulPaint(session: GeckoSession) = reportReady(session)
 
             // Do not hand downloads or unknown content to an external activity.
             override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
-                reportFailure(context.getString(R.string.touch_media_downloads_unavailable))
+                reportFailure(session, context.getString(R.string.touch_media_downloads_unavailable))
             }
 
-            override fun onCrash(session: GeckoSession) = reportContentProcessClosed()
+            override fun onCrash(session: GeckoSession) = reportContentProcessClosed(session)
 
-            override fun onKill(session: GeckoSession) = reportContentProcessClosed()
+            override fun onKill(session: GeckoSession) = reportContentProcessClosed(session)
         }
         next.open(runtime)
         next.setActive(active)
         next.setFocused(active)
-        geckoView.setSession(next)
         session = next
+        geckoView.setSession(next)
         photosProfile?.let { profile -> configuredUrl?.let { url -> offlinePhotos.attach(runtime, next, url, profile, active) } }
     }
 
-    private fun reportReady() {
-        if (closed) return
+    private fun reportReady(source: GeckoSession) {
+        if (!isCurrentSession(source)) return
+        geckoView.visibility = View.VISIBLE
+        loadingCover.visibility = View.GONE
         retryButton.visibility = View.GONE
         onStatus?.invoke(null)
     }
 
-    private fun reportFailure(message: String) {
-        if (closed) return
+    private fun reportFailure(source: GeckoSession, message: String) {
+        if (!isCurrentSession(source)) return
+        // Gecko's failed document surface is white on this API level. Keep the
+        // shell's intentional black media background visible behind Retry.
+        geckoView.visibility = View.INVISIBLE
+        loadingCover.visibility = View.VISIBLE
         retryButton.visibility = View.VISIBLE
         if (photosProfile != null) offlinePhotos.showFallback()
         onStatus?.invoke(message)
     }
 
-    private fun reportContentProcessClosed() {
-        if (closed) return
-        loadState.markContentProcessClosed()
+    private fun reportContentProcessClosed(source: GeckoSession? = session) {
+        if (source == null || !isCurrentSession(source)) return
+        loadState.markContentProcessClosed(whileHidden = !active)
+        geckoView.visibility = View.INVISIBLE
+        loadingCover.visibility = View.VISIBLE
         retryButton.visibility = View.VISIBLE
         if (photosProfile != null) offlinePhotos.showFallback()
         onStatus?.invoke(context.getString(R.string.touch_media_load_failed, label))
     }
+
+    private fun isCurrentSession(candidate: GeckoSession): Boolean = !closed && session === candidate
 
     private fun Context.dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }
 
 /** Pure load/retry decisions, kept free of Gecko and Android for focused tests. */
 internal class TouchMediaLoadState {
-    enum class Decision { LOAD, ALREADY_LOADED, RETRY_REQUIRED }
+    enum class Decision { LOAD, ALREADY_LOADED, RECOVER_RETAINED_SESSION, RETRY_REQUIRED }
 
     data class RetryRequest(val url: String, val reopenSession: Boolean)
 
     var configuredUrl: String? = null
         private set
     private var contentProcessClosed = false
+    private var hiddenReturnRecoveryAvailable = false
 
     fun showUrl(url: String): Decision {
-        if (configuredUrl == url) return if (contentProcessClosed) Decision.RETRY_REQUIRED else Decision.ALREADY_LOADED
+        if (contentProcessClosed) {
+            configuredUrl = url
+            return if (hiddenReturnRecoveryAvailable) {
+                contentProcessClosed = false
+                hiddenReturnRecoveryAvailable = false
+                Decision.RECOVER_RETAINED_SESSION
+            } else {
+                Decision.RETRY_REQUIRED
+            }
+        }
+        if (configuredUrl == url) return Decision.ALREADY_LOADED
         configuredUrl = url
-        return if (contentProcessClosed) Decision.RETRY_REQUIRED else Decision.LOAD
+        return Decision.LOAD
     }
 
-    fun markContentProcessClosed() {
+    fun markContentProcessClosed(whileHidden: Boolean = false) {
         contentProcessClosed = true
+        hiddenReturnRecoveryAvailable = whileHidden
     }
 
     fun retry(): RetryRequest? {
         val url = configuredUrl ?: return null
         val reopen = contentProcessClosed
         contentProcessClosed = false
+        hiddenReturnRecoveryAvailable = false
         return RetryRequest(url, reopen)
     }
 }
