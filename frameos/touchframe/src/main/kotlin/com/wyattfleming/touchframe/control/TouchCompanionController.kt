@@ -32,6 +32,7 @@ class TouchCompanionController private constructor(
     private val poll: (FrameCompanionCredentials, FrameRemoteStatus, List<FrameRemoteAck>, String?) -> FrameCompanionPollResult,
     private val mainExecutor: Executor,
     private val scheduler: ScheduledExecutorService,
+    private val mainCallbackTimeoutMillis: Long,
     private val nowMillis: () -> Long,
     private val statusProvider: () -> FrameRemoteStatus?,
     private val onCommand: (FrameRemoteCommand, Long) -> CommandResult,
@@ -183,8 +184,11 @@ class TouchCompanionController private constructor(
         val task = FutureTask<T?> { if (isCurrent(expectedGeneration)) callback() else null }
         return try {
             mainExecutor.execute(task)
-            task.get(MAIN_CALLBACK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            task.get(mainCallbackTimeoutMillis, TimeUnit.MILLISECONDS)
         } catch (_: Exception) {
+            // A queued Handler task otherwise survives this timeout and can mutate UI after
+            // the worker has rejected the snapshot. FutureTask refuses to run once cancelled.
+            task.cancel(false)
             null
         }
     }
@@ -230,6 +234,7 @@ class TouchCompanionController private constructor(
             },
             mainExecutor = Executor { action -> Handler(Looper.getMainLooper()).post(action) },
             scheduler = ScheduledThreadPoolExecutor(1) { action -> Thread(action, "touch-companion").apply { isDaemon = true } },
+            mainCallbackTimeoutMillis = MAIN_CALLBACK_TIMEOUT_MILLIS,
             nowMillis = System::currentTimeMillis,
             statusProvider = statusProvider,
             onCommand = onCommand,
@@ -245,12 +250,13 @@ class TouchCompanionController private constructor(
             mainExecutor: Executor,
             scheduler: ScheduledExecutorService,
             nowMillis: () -> Long,
+            mainCallbackTimeoutMillis: Long = MAIN_CALLBACK_TIMEOUT_MILLIS,
             statusProvider: () -> FrameRemoteStatus?,
             onCommand: (FrameRemoteCommand, Long) -> CommandResult,
             onSettings: (FrameRemoteSettings, Long) -> Boolean = { _, _ -> true },
             onEvent: (com.wyattfleming.frameos.control.FrameCompanionEvent, Long) -> Boolean = { _, _ -> true },
             onHiddenAssets: (Set<String>, Long, () -> Boolean) -> Boolean = { _, _, _ -> true },
-        ) = TouchCompanionController(credentials, journal, poll, mainExecutor, scheduler, nowMillis, statusProvider, onCommand, onSettings, onEvent, onHiddenAssets)
+        ) = TouchCompanionController(credentials, journal, poll, mainExecutor, scheduler, mainCallbackTimeoutMillis, nowMillis, statusProvider, onCommand, onSettings, onEvent, onHiddenAssets)
 
         private const val INITIAL_DELAY_MILLIS = 0L
         private const val SUCCESS_DELAY_MILLIS = 5_000L
