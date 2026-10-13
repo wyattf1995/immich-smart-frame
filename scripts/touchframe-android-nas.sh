@@ -19,7 +19,11 @@ readonly report_zip="$root_dir/reports/touchframe-android-validation.zip"
 readonly touch_apk="$frameos_dir/touchframe/build/outputs/apk/release/touchframe-release-unsigned.apk"
 readonly touch_mapping="$frameos_dir/touchframe/build/outputs/mapping/release/mapping.txt"
 
-mkdir -p "$work_dir/tmp" "$work_dir/gradle-home" "$report_dir"
+# The Android runtime filesystem is read-only outside this admitted workspace.
+# Both Android preference aliases must resolve to the same writable directory.
+export ANDROID_SDK_HOME="$work_dir/android-preferences"
+export ANDROID_USER_HOME="$ANDROID_SDK_HOME/.android"
+mkdir -p "$work_dir/tmp" "$work_dir/gradle-home" "$report_dir" "$ANDROID_USER_HOME"
 export TMPDIR="$work_dir/tmp"
 export GRADLE_USER_HOME="$work_dir/gradle-home"
 export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Djava.io.tmpdir=$TMPDIR"
@@ -74,17 +78,20 @@ export ANDROID_SDK_ROOT="$sdk_dir" ANDROID_HOME="$sdk_dir"
 write_source_inventory() {
   local destination="$1"
   python3 - "$root_dir" "$destination" <<'PY'
-import hashlib,json,sys
+import hashlib,json,os,sys
 from pathlib import Path
 root,out=map(Path,sys.argv[1:])
 files={}
-excluded={'.git','.gradle','.nas-touchframe-android','reports'}
-for path in sorted(root.rglob('*')):
-    relative=path.relative_to(root)
-    if relative.parts and (relative.parts[0] in excluded or 'build' in relative.parts):
-        continue
-    if path.is_file():
-        files[relative.as_posix()]=hashlib.sha256(path.read_bytes()).hexdigest()
+excluded={'.git','.gradle','.kotlin','.nas-touchframe-android','reports','build'}
+for directory, folders, names in os.walk(root):
+    folders[:]=[name for name in folders if name not in excluded]
+    for name in names:
+        path=Path(directory)/name
+        if path.is_symlink() or not path.is_file():
+            raise SystemExit('non-regular source member')
+        files[path.relative_to(root).as_posix()]=hashlib.sha256(path.read_bytes()).hexdigest()
+if not files:
+    raise SystemExit('empty source manifest')
 payload={'schema':1,'files':files}
 payload['sha256']=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 out.write_text(json.dumps(payload,indent=2,sort_keys=True)+'\n')
