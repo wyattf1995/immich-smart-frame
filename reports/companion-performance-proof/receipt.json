@@ -1,0 +1,43 @@
+{
+  "status": "passed",
+  "sourceSha256": "87886f148224db9a7c883777e535082b21888ede959f0e3fce19f09da4c9ba78",
+  "testSha256": "dd747f7280756f8c6dd012580f1dd8201b6529d4114063ae1bd2a33577641280",
+  "proofs": [
+    {
+      "name": "photo-policy-revision",
+      "test": "test_settings_and_each_preference_mutation_invalidate",
+      "greenBefore": 0,
+      "red": 1,
+      "greenAfter": 0,
+      "sourceRestored": true,
+      "testUnchanged": true
+    },
+    {
+      "name": "scoped-poll-expiry",
+      "test": "test_poll_never_calls_global_maintenance_and_uses_device_expiry_index",
+      "greenBefore": 0,
+      "red": 1,
+      "greenAfter": 0,
+      "sourceRestored": true,
+      "testUnchanged": true
+    },
+    {
+      "name": "reader-concurrency",
+      "test": "test_readers_do_not_acquire_writer_lock",
+      "greenBefore": 0,
+      "red": 1,
+      "greenAfter": 0,
+      "sourceRestored": true,
+      "testUnchanged": true
+    },
+    {
+      "name": "streaming-export",
+      "test": "test_export_peak_memory_is_bounded_and_failure_is_atomic",
+      "greenBefore": 0,
+      "red": 1,
+      "greenAfter": 0,
+      "sourceRestored": true,
+      "testUnchanged": true
+    }
+  ]
+}
