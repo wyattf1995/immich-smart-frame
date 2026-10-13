@@ -11,7 +11,7 @@ FrameOS Touch has two deliberate rendering boundaries:
 | Surface | Implementation | Design consequence |
 | --- | --- | --- |
 | Home, Weather, Calendar, Cameras, navigation rail, and Settings return | Native Android Views | These are the primary touch controls. Keep them immediate, readable, and usable with last-known data while a bounded refresh runs. |
-| Photos and Art | A retained Gecko surface | These are immersive media experiences. They must not inherit the native rail permanently, and must preserve their separate media/session behavior. |
+| Photos, Art, and optional Birds | A retained Gecko surface | Photos and Art are immersive and reveal navigation by edge gesture. Birds keeps the rail visible and appears only when configured. Preserve each destination's media/session behavior. |
 
 Do not redesign the old Lenovo-oriented FrameOS activity through this work. It
 is a separate product with its own release and interaction model. The Touch app
@@ -33,7 +33,7 @@ navigation wait for the network.
 | Cameras | [`TouchCameraView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchCameraView.kt) | Authenticated snapshots are the current product surface; do not imply live video controls. |
 | Rail and immersive menu | [`TouchShellLayout`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayout.kt) and [`TouchDestination`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchDestination.kt) | Native destinations retain the rail. Photos and Art use the full viewport; a deliberate edge gesture reveals their menu. |
 | Settings return | [`TouchSettingsReturn`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchSettingsReturn.kt) | Android Settings is an intentional escape hatch with a return path; do not hide it behind a new custom settings screen. |
-| Photos and Art media | [`TouchMediaView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt) and [`TouchOfflinePhotos`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt) | Photos has a scoped offline reserve. Art never reads that reserve and must show art-specific unavailable state rather than family-photo fallback. |
+| Photos, Art, and optional Birds media | [`TouchMediaView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt) and [`TouchOfflinePhotos`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt) | Photos has a scoped offline reserve. Art and Birds never read that reserve; Art must show art-specific unavailable state rather than family-photo fallback. |
 
 Home Assistant supplies authenticated data and service calls; it is not the
 frontend for the native Home, Weather, or Calendar screens. The browser surface
