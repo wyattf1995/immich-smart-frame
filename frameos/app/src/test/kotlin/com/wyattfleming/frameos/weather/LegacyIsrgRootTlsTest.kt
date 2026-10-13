@@ -2,6 +2,7 @@ package com.wyattfleming.frameos.weather
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.net.HttpURLConnection
@@ -114,6 +115,14 @@ class LegacyIsrgRootTlsTest {
 
         assertSame(defaultFactory, HttpsURLConnection.getDefaultSSLSocketFactory())
         assertSame(defaultVerifier, HttpsURLConnection.getDefaultHostnameVerifier())
+    }
+
+    @Test
+    fun `embedded PEM has no parser-hostile leading or trailing whitespace`() {
+        val pem = LegacyIsrgRootTls.rootPem()
+
+        assertTrue(pem.startsWith("-----BEGIN CERTIFICATE-----"))
+        assertTrue(pem.endsWith("-----END CERTIFICATE-----"))
     }
 
     @Test
