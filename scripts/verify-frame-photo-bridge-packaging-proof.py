@@ -81,10 +81,10 @@ def main() -> int:
         raise RuntimeError("existing proof directory requires review")
     REPORT.mkdir(parents=True)
     original = MANIFEST.read_bytes()
-    before = b'"version": "1.0.7"'
-    after = b'"version": "1.0.6"'
-    if original.count(before) != 1:
-        raise RuntimeError("expected exactly one version mutation target")
+    before = b'"version": "1.0.8"'
+    after = b'"version": "1.0.7"'
+    if original.count(before) != 1 or after in original:
+        raise RuntimeError("expected exactly one current-version mutation target and no stale replacement")
     receipt = {
         "proof": "frame-photo-bridge-packaging-v1", "status": "started", "runs": {},
         "manifest_original_sha256": hashlib.sha256(original).hexdigest(),
