@@ -23,24 +23,23 @@ class TouchOfflinePhotoStore(
     },
 ) : AutoCloseable {
     internal val reserve = FrameOfflineReserve(File(context.filesDir, "touchframe-offline-photos"))
-    private val scopeGeneration = AtomicLong(0L)
-    @Volatile private var requestedScope: TouchOfflineStoreScope? = null
+    private val scopeGate = TouchOfflineStoreScopeGate()
     @Volatile private var closed = false
 
     fun activateScope(validatedPhotosUrl: String, profile: String): Future<Boolean> {
         val requested = TouchOfflineStoreScope(validatedPhotosUrl, profile)
         val expected = beginScope(requested)
         return submit {
-            !closed && scopeGeneration.get() == expected && reserve.activateScope(validatedPhotosUrl, profile) &&
-                !closed && scopeGeneration.get() == expected
+            !closed && scopeGate.isCurrent(expected) && reserve.activateScope(validatedPhotosUrl, profile) &&
+                !closed && scopeGate.isCurrent(expected)
         }
     }
 
     fun applyHiddenAssets(assetIds: Set<String>, canCommit: () -> Boolean = { true }): Future<Boolean> {
-        val expected = scopeGeneration.get()
+        val expected = scopeGate.current()
         return submit {
-            !closed && scopeGeneration.get() == expected && reserve.applyHiddenAssets(assetIds) {
-                !closed && scopeGeneration.get() == expected && canCommit()
+            !closed && scopeGate.isCurrent(expected) && reserve.applyHiddenAssets(assetIds) {
+                !closed && scopeGate.isCurrent(expected) && canCommit()
             }
         }
     }
@@ -57,16 +56,14 @@ class TouchOfflinePhotoStore(
     ): Future<Boolean> {
         val expected = beginScope(TouchOfflineStoreScope(validatedPhotosUrl, profile))
         return submit {
-            !closed && isCurrent() && scopeGeneration.get() == expected &&
+            !closed && isCurrent() && scopeGate.isCurrent(expected) &&
                 bridge.configure(session, validatedPhotosUrl, profile) &&
-                !closed && isCurrent() && scopeGeneration.get() == expected
+                !closed && isCurrent() && scopeGate.isCurrent(expected)
         }
     }
 
     private fun beginScope(scope: TouchOfflineStoreScope): Long {
-        if (requestedScope == scope) return scopeGeneration.get()
-        requestedScope = scope
-        return scopeGeneration.incrementAndGet()
+        return scopeGate.begin(scope)
     }
 
     internal fun execute(action: () -> Unit): Boolean = try {
@@ -85,10 +82,29 @@ class TouchOfflinePhotoStore(
     override fun close() {
         if (closed) return
         closed = true
-        requestedScope = null
-        scopeGeneration.incrementAndGet()
+        scopeGate.clear()
         worker.shutdownNow()
     }
 }
 
 internal data class TouchOfflineStoreScope(val url: String, val profile: String)
+
+/** Serializes scope replacement decisions before reserve worker tasks run. */
+internal class TouchOfflineStoreScopeGate {
+    private val generation = AtomicLong(0L)
+    private var requestedScope: TouchOfflineStoreScope? = null
+
+    @Synchronized fun begin(scope: TouchOfflineStoreScope): Long {
+        if (requestedScope == scope) return generation.get()
+        requestedScope = scope
+        return generation.incrementAndGet()
+    }
+
+    fun current(): Long = generation.get()
+    fun isCurrent(expected: Long): Boolean = generation.get() == expected
+
+    @Synchronized fun clear() {
+        requestedScope = null
+        generation.incrementAndGet()
+    }
+}
