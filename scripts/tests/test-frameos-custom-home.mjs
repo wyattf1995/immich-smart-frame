@@ -225,7 +225,8 @@ const weatherHass={connected:true,config:{unit_system:{temperature:'°F'}},state
  'weather.parents_weather':{state:'sunny',attributes:{temperature:99,temperature_unit:'°F'}}
 },callService(){throw new Error('weather render cannot write');}};
 weatherHass.forecast={days:[{datetime:'2026-10-12T12:00:00',condition:'rainy',temperature:17,templow:12,precipitation_probability:60}],temperatureUnit:'°C'};weatherHass.forecastStatus='ready';
-const weatherHandle=api.mount(weatherRoot,{getHass:()=>weatherHass});
+// Keep the fixed forecast fixture on its own day regardless of the host date or timezone.
+const weatherHandle=api.mount(weatherRoot,{getHass:()=>weatherHass,now:()=>new Date(2026,9,12,9)});
 assert.match(weatherRoot.innerHTML,/fch-weather-temp">17°C</,'installed household forecast and its own unit win');
 assert.match(weatherRoot.innerHTML,/fch-weather-state">rainy</);
 assert.match(weatherRoot.innerHTML,/fch-forecast-day[^>]*><b>Today<\/b>/,'ready forecast exposes a compact dated forecast row');
