@@ -79,17 +79,18 @@ class TouchCameraView(
         val token = tokenProvider() ?: return publish(requestGeneration, null, "Sign in required", true)
         val url = policy.snapshotUrl(camera) ?: return
         var deadline: Runnable? = null
+        var current: HttpURLConnection? = null
         try {
-            val current = LegacyIsrgRootTls.ConnectionFactory().open(url)
+            current = LegacyIsrgRootTls.ConnectionFactory().open(url)
             connection = current
-            deadline = Runnable { current.disconnect() }.also { main.postDelayed(it, TOTAL_TIMEOUT_MILLIS) }
-            current.requestMethod = "GET"; current.instanceFollowRedirects = false; current.useCaches = false
-            current.connectTimeout = TOTAL_TIMEOUT_MILLIS.toInt(); current.readTimeout = TOTAL_TIMEOUT_MILLIS.toInt()
-            current.setRequestProperty("Authorization", "Bearer $token")
-            val code = current.responseCode
+            deadline = Runnable { current?.disconnect() }.also { main.postDelayed(it, TOTAL_TIMEOUT_MILLIS) }
+            current!!.requestMethod = "GET"; current!!.instanceFollowRedirects = false; current!!.useCaches = false
+            current!!.connectTimeout = TOTAL_TIMEOUT_MILLIS.toInt(); current!!.readTimeout = TOTAL_TIMEOUT_MILLIS.toInt()
+            current!!.setRequestProperty("Authorization", "Bearer $token")
+            val code = current!!.responseCode
             if (code == 401 || code == 403) return publish(requestGeneration, null, "Sign in required", true)
             if (code !in 200..299) return publish(requestGeneration, null, "Snapshot unavailable", false)
-            val bytes = current.inputStream.use { boundedBytes(it) }
+            val bytes = current!!.inputStream.use { boundedBytes(it) }
             val bitmap = decodeSnapshot(bytes) ?: return publish(requestGeneration, null, "Snapshot unavailable", false)
             publish(requestGeneration, bitmap, null, false)
         } catch (_: Exception) {
@@ -97,7 +98,7 @@ class TouchCameraView(
         } finally {
             deadline?.let(main::removeCallbacks)
             if (connection === current) {
-                current.disconnect()
+                current?.disconnect()
                 connection = null
             }
         }
