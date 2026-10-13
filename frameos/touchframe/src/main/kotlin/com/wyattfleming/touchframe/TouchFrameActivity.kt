@@ -586,6 +586,8 @@ class TouchFrameActivity : Activity() {
         }
         if (TouchIdleReturnPolicy.shouldReturnToPhotos(destination, authorization != null, configuration != null, networkAllowed(),
                 SystemClock.elapsedRealtime() - lastInteractionMillis, experience.idleReturnSeconds)) {
+            // After an idle return, Calendar opens on today rather than whatever week was browsed last.
+            java.time.LocalDate.now().let { today -> calendarState = calendarState.copy(anchor = today, selectedDate = today) }
             lastInteractionMillis = SystemClock.elapsedRealtime()
             navigate(TouchDestination.PHOTOS)
         }

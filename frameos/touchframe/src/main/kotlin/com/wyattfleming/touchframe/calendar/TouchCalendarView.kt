@@ -60,7 +60,15 @@ class TouchCalendarView(
 
     /** Called every second by the activity clock: rebuild at midnight and when one of today's events starts or ends. */
     fun tick(nowMillis: Long) {
-        if (LocalDate.now() != renderedDay || todayKey(nowMillis) != renderedTodayKey) rebuild()
+        val previousDay = renderedDay
+        val today = LocalDate.now()
+        if (previousDay != null && today != previousDay && state.selectedDate == previousDay) {
+            // The frame was showing "today" when the date changed: follow it rather than grey it.
+            renderedDay = today
+            request(state.mode, today, today, true)
+            return
+        }
+        if (today != renderedDay || todayKey(nowMillis) != renderedTodayKey) rebuild()
     }
 
     private fun todayKey(nowMillis: Long) = state.events.filter { it.occursOn(LocalDate.now(), ZoneId.systemDefault()) }
@@ -252,13 +260,19 @@ class TouchCalendarView(
                 addView(View(context).apply { background = kit.rounded(p.line, 8) },
                     LinearLayout.LayoutParams(if (index == 0) MATCH else kit.dp(70), kit.dp(18)).apply { topMargin = kit.dp(14) })
             }
-            day.preview.isEmpty() -> addView(kit.text("Free", if (wall) 21f else 19f, color = if (past) p.pastInk else p.inkMuted), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(12) })
+            day.preview.isEmpty() -> addView(kit.text("Free", if (wall) 21f else 19f, color = when {
+                today -> p.todayMutedInk
+                past -> p.pastInk
+                else -> p.inkMuted
+            }), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(12) })
             else -> {
                 // Today shows what is still ahead: finished events become a count, the current one reads "Now".
                 val column = if (today) TouchCalendarWeekPresentation.todayColumn(day, System.currentTimeMillis(), ZoneId.systemDefault())
                     else TouchCalendarWeekPresentation.TodayColumn(0, day.preview, day.overflowCount)
-                if (column.earlierCount > 0) addView(kit.text("${column.earlierCount} earlier", if (wall) 20f else 18f, TouchFonts.Face.TEXT_MEDIUM, p.pastInk),
+                if (column.earlierCount > 0) addView(kit.text("${column.earlierCount} earlier", if (wall) 20f else 18f, TouchFonts.Face.TEXT_MEDIUM, p.todayMutedInk),
                     LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(10) })
+                if (column.earlierCount > 0 && column.preview.isEmpty()) addView(kit.text("Nothing else today", if (wall) 21f else 19f,
+                    color = p.todayMutedInk), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(8) })
                 column.preview.forEach { preview -> addView(weekEvent(kit, preview, wall, past), LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = kit.dp(10) }) }
                 if (column.overflowCount > 0) {
                     addView(View(context), LinearLayout.LayoutParams(0, 0, 1f))
@@ -505,11 +519,16 @@ class TouchCalendarView(
                         skeleton -> addView(View(context).apply { background = kit.rounded(p.line, 8) }, LinearLayout.LayoutParams(kit.dp(320), kit.dp(20)).apply { topMargin = kit.dp(6) })
                         events.isEmpty() -> addView(kit.text("Free", kit.scale.body, color = if (past) p.pastInk else p.inkMuted))
                         else -> events.forEach { event ->
+                            val timing = if (today) TouchCalendarWeekPresentation.timing(event, System.currentTimeMillis()) else null
+                            val ended = past || timing == TouchCalendarWeekPresentation.EventTiming.ENDED
+                            val ink = if (ended) p.pastInk else p.ink
                             addView(LinearLayout(context).apply {
                                 orientation = LinearLayout.HORIZONTAL
-                                addView(kit.text(timeLabel(event), kit.scale.body, if (past) TouchFonts.Face.TEXT_MEDIUM else TouchFonts.Face.TEXT_BOLD, dayInk).apply { fontFeatureSettings = "tnum" },
+                                val now = timing == TouchCalendarWeekPresentation.EventTiming.NOW
+                                addView(kit.text(if (now) "Now" else timeLabel(event), kit.scale.body, if (ended) TouchFonts.Face.TEXT_MEDIUM else TouchFonts.Face.TEXT_BOLD,
+                                    if (now) p.accentInk else ink).apply { fontFeatureSettings = "tnum" },
                                     LinearLayout.LayoutParams(kit.dp((kit.scale.body * 5.6f).toInt()), WRAP))
-                                addView(kit.text(event.title, kit.scale.body, color = dayInk), LinearLayout.LayoutParams(0, WRAP, 1f))
+                                addView(kit.text(event.title, kit.scale.body, color = ink), LinearLayout.LayoutParams(0, WRAP, 1f))
                             }, LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = kit.dp(8) })
                         }
                     }

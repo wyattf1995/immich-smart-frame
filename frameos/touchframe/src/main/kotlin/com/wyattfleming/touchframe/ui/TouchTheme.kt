@@ -50,6 +50,8 @@ internal data class TouchPalette(
     val accentInk: Int,
     /** Today's calendar cell: a tint by day, the dim selection fill by night, always with an accent outline. */
     val todayFill: Int,
+    /** Secondary text inside today's tinted cell or column ("2 earlier", "Free"); ≥ 4.5:1 on [todayFill]. */
+    val todayMutedInk: Int,
     /**
      * Past calendar days stay present but read as inactive (text ≥ 4.5:1): a greyed panel by day,
      * an outlined box on the black wall by night, always with lighter type than upcoming days.
@@ -78,7 +80,7 @@ internal data class TouchPalette(
             mouldingLine = 0xFF4A554F.toInt(), railSelected = 0xFFF6F4EF.toInt(), railSelectedInk = 0xFF101722.toInt(),
             railSelectedStroke = 0xFFF6F4EF.toInt(),
             accent = 0xFF2E5E50.toInt(), onAccent = 0xFFFFFFFF.toInt(), accentStroke = 0xFF2E5E50.toInt(),
-            accentSoft = 0xFFDCE6E0.toInt(), accentInk = 0xFF24493F.toInt(), todayFill = 0xFFDCE6E0.toInt(),
+            accentSoft = 0xFFDCE6E0.toInt(), accentInk = 0xFF24493F.toInt(), todayFill = 0xFFDCE6E0.toInt(), todayMutedInk = 0xFF4F5752.toInt(),
             pastFill = 0xFFD6D3CB.toInt(), pastLine = 0xFFC6C1B6.toInt(), pastInk = 0xFF545B57.toInt(),
             pending = 0xFFF2E3C4.toInt(), pendingInk = 0xFF6B4500.toInt(), alert = 0xFFF4DCD6.toInt(), alertInk = 0xFF8E2A1C.toInt(),
             disabledInk = 0xFF5A625D.toInt(), notice = 0xFF27302C.toInt(), noticeInk = 0xFFF6F4EF.toInt(),
@@ -93,7 +95,7 @@ internal data class TouchPalette(
             mouldingLine = 0xFF2A251C.toInt(), railSelected = 0xFF2A2318.toInt(), railSelectedInk = 0xFFB39668.toInt(),
             railSelectedStroke = 0xFFB39668.toInt(),
             accent = 0xFF3A2F1E.toInt(), onAccent = 0xFFC9AA74.toInt(), accentStroke = 0xFFB39668.toInt(),
-            accentSoft = 0xFF231D14.toInt(), accentInk = 0xFFC9AA74.toInt(), todayFill = 0xFF3A2F1E.toInt(),
+            accentSoft = 0xFF231D14.toInt(), accentInk = 0xFFC9AA74.toInt(), todayFill = 0xFF3A2F1E.toInt(), todayMutedInk = 0xFFB39668.toInt(),
             pastFill = 0xFF000000.toInt(), pastLine = 0xFF3A3226.toInt(), pastInk = 0xFF8A785A.toInt(),
             pending = 0xFF2B2210.toInt(), pendingInk = 0xFFD1A453.toInt(), alert = 0xFF2E1611.toInt(), alertInk = 0xFFD98C78.toInt(),
             disabledInk = 0xFF8E7A58.toInt(), notice = 0xFF17140F.toInt(), noticeInk = 0xFFB39668.toInt(),
