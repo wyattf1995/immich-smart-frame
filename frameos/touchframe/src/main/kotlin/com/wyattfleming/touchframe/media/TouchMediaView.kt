@@ -123,8 +123,9 @@ class TouchMediaView(
     }
 
     private fun retry() {
+        val url = configuredUrl ?: return
+        if (!urlPolicy.isAllowedTopLevelNavigation(url, url)) return
         val request = loadState.retry() ?: return
-        if (!urlPolicy.isAllowedTopLevelNavigation(request.url, request.url)) return
         retryButton.visibility = View.GONE
         onStatus?.invoke(null)
         if (request.reopenSession) {
