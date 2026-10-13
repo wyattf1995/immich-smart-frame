@@ -249,6 +249,34 @@ def mutate(name: str, source_name: str, before: str, after: str, failed: set[str
             raise RuntimeError(f"{name} did not restore exact source bytes")
 
 
+def mutate_calendar_closed(name: str, failed: set[str]) -> dict[str, object]:
+    """Remove both closed-state fences needed to reach token acquisition after close."""
+    source = suites["calendar_repository"][0]
+    text = source_bytes["calendar_repository"].decode()
+    replacements = (
+        (
+            "if (synchronized(lock) { closed }) return TouchCalendarLoad(emptyList(), TouchCalendarConnection.OFFLINE)",
+            "if (false) return TouchCalendarLoad(emptyList(), TouchCalendarConnection.OFFLINE)",
+        ),
+        (
+            "if (closed) null else cleanupLocked(active) to Operation().also { active = it }",
+            "if (false) null else cleanupLocked(active) to Operation().also { active = it }",
+        ),
+    )
+    mutated = text
+    for before, after in replacements:
+        if mutated.count(before) != 1 or after in mutated:
+            raise RuntimeError(f"{name} mutation marker is not uniquely patchable: {before}")
+        mutated = mutated.replace(before, after, 1)
+    try:
+        source.write_text(mutated)
+        return run(name, failed)
+    finally:
+        source.write_bytes(source_bytes["calendar_repository"])
+        if digest(source) != source_hashes["calendar_repository"]:
+            raise RuntimeError(f"{name} did not restore exact source bytes")
+
+
 bridge_source_bytes = bridge_source.read_bytes()
 bridge_source_hash = hashlib.sha256(bridge_source_bytes).hexdigest()
 bridge_test_hash = digest(bridge_test)
@@ -440,10 +468,8 @@ try:
         "const val MAX_EVENTS_PER_CALENDAR = 201",
         {"parser caps each calendar before rendering"},
     )
-    calendar_closed_red = mutate(
-        "calendar-closed-repository-red", "calendar_repository",
-        "if (closed) null else cleanupLocked(active)",
-        "if (false) null else cleanupLocked(active)",
+    calendar_closed_red = mutate_calendar_closed(
+        "calendar-closed-repository-red",
         {"closed repository rejects a range before reading a token"},
     )
     calendar_stale_socket_red = mutate(
