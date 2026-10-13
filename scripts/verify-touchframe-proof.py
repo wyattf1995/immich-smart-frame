@@ -158,13 +158,13 @@ def run(label: str, expected_failures: set[str]) -> dict[str, object]:
     return {"exit": result.returncode, "tests": len(cases), "failures": len(failed), "errors": len(errors), "skipped": len(skipped), "failedCases": sorted(failed), "log": log.name}
 
 
-def run_bridge(label: str, expected_failures: set[str]) -> dict[str, object]:
+def run_bridge(label: str, expected_failures: set[str], klass: str = bridge_class) -> dict[str, object]:
     if bridge_result_dir.exists():
         shutil.rmtree(bridge_result_dir)
     log = out / f"{label}.log"
     with log.open("w", encoding="utf-8") as stream:
-        result = subprocess.run(bridge_command, cwd=frame, stdout=stream, stderr=subprocess.STDOUT)
-    xmls = list(bridge_result_dir.rglob(f"TEST-{bridge_class}.xml"))
+        result = subprocess.run([*bridge_command[:-1], klass], cwd=frame, stdout=stream, stderr=subprocess.STDOUT)
+    xmls = list(bridge_result_dir.rglob(f"TEST-{klass}.xml"))
     if len(xmls) != 1:
         raise missing_results(log, result.returncode, f"expected one prepared-bridge JUnit XML, found {xmls}")
     cases = list(ET.parse(xmls[0]).getroot().iter("testcase"))
@@ -209,7 +209,25 @@ bridge_source_bytes = bridge_source.read_bytes()
 bridge_source_hash = hashlib.sha256(bridge_source_bytes).hexdigest()
 bridge_test_hash = digest(bridge_test)
 
+packaging_manifest = frame / "app/src/main/assets/frame-photo-bridge/manifest.json"
+packaging_test = frame / "app/src/test/kotlin/com/wyattfleming/frameos/photos/FramePhotoBridgePackagingContractTest.kt"
+packaging_ledger = frame / "app/src/test/resources/frame-photo-bridge/packaging-ledger.properties"
+packaging_files = [packaging_test, packaging_ledger, *sorted(packaging_manifest.parent.rglob("*"))]
+packaging_hashes = {str(path.relative_to(root)): digest(path) for path in packaging_files if path.is_file()}
+packaging_bytes = packaging_manifest.read_bytes()
+packaging_class = "com.wyattfleming.frameos.photos.FramePhotoBridgePackagingContractTest"
+
 try:
+    packaging_initial = run_bridge("packaging-initial-green", set(), packaging_class)
+    try:
+        original = packaging_bytes.decode()
+        assert original.count('"version": "1.0.8"') == 1
+        packaging_manifest.write_text(original.replace('"version": "1.0.8"', '"version": "1.0.7"'))
+        packaging_red = run_bridge("packaging-version-red", {"built in extension version identifies its complete packaged asset set"}, packaging_class)
+    finally:
+        packaging_manifest.write_bytes(packaging_bytes)
+    packaging_restored = run_bridge("packaging-restored-green", set(), packaging_class)
+    assert all(digest(root / name) == sha for name, sha in packaging_hashes.items())
     initial = run("initial-green", set())
     bridge_initial = run_bridge("prepared-bridge-initial-green", set())
     bridge_red = mutate_bridge(
@@ -381,6 +399,8 @@ try:
         raise RuntimeError("proof changed test bytes")
     (out / "touchframe-source-proof.json").write_text(json.dumps({
         "proof": "touchframe-native-direct-data-v3", "passed": True, "command": command,
+        "packagingInitial": packaging_initial, "packagingVersionRed": packaging_red,
+        "packagingRestored": packaging_restored, "packagingUnchangedSha256": packaging_hashes,
         "sourceTestAnnotationCount": expected_tests, "initial": initial, "preparedBridgeInitial": bridge_initial,
         "preparedBridgeSessionGateRed": bridge_red, "edgeRed": edge_red,
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red, "mediaCrashRetryRed": media_red,
@@ -411,6 +431,7 @@ try:
         "unchangedTestSha256": test_hashes, "staticContract": static,
     }, indent=2, sort_keys=True) + "\n")
 finally:
+    packaging_manifest.write_bytes(packaging_bytes)
     for name, (source, _, _) in suites.items():
         source.write_bytes(source_bytes[name])
     if "bridge_source_bytes" in globals():
