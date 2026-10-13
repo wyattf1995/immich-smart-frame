@@ -61,7 +61,6 @@ class TouchMediaView(
     private var label: String = "Media"
     private var active = false
     private var closed = false
-    private var contentProcessClosed = false
 
     init {
         setBackgroundColor(Color.BLACK)
@@ -134,7 +133,6 @@ class TouchMediaView(
                 runCatching { current.close() }
             }
             session = null
-            contentProcessClosed = false
             openSession()
         }
         session?.loadUri(request.url)
@@ -213,7 +211,6 @@ class TouchMediaView(
 
     private fun reportContentProcessClosed() {
         if (closed) return
-        contentProcessClosed = true
         loadState.markContentProcessClosed()
         retryButton.visibility = View.VISIBLE
         onStatus?.invoke("Unable to load $label")
