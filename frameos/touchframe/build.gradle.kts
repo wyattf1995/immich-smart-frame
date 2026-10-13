@@ -42,6 +42,9 @@ android {
 // Source contract fixtures resolve paths from the FrameOS Gradle root.
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     workingDir = rootProject.projectDir
+    // The media readiness test reads this source contract at runtime; declare it
+    // so test up-to-date/cache decisions cover the non-classpath input too.
+    inputs.file(rootProject.layout.projectDirectory.file("touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt"))
 }
 
 dependencies {
