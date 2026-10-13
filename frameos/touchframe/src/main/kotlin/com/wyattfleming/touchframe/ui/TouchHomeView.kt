@@ -63,7 +63,8 @@ class TouchHomeView private constructor(
     private var dateView: TextView? = null
     private var scrollView: ScrollView? = null
     private var scrollPosition = 0
-    private var lastLargeLayout: Boolean? = null
+    private val layoutTransition = TouchHomeLayoutTransition()
+    private var layoutRebuildPosted = false
 
     init {
         isFocusable = true
@@ -112,18 +113,30 @@ class TouchHomeView private constructor(
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
-        val large = isLargeLandscape()
-        if (TouchHomeLayout.needsRebuild(lastLargeLayout, large)) rebuild(large)
+        requestLayoutClass(isLargeLandscape())
     }
 
-    /** Rebuilds once when a consumed Activity configuration changes the layout class. */
+    /** Defers a consumed Activity configuration change until the content has a layout pass. */
     fun refreshLayoutForConfiguration(configuration: Configuration) {
-        val large = TouchHomeLayout.isLargeLandscape(configuration.screenWidthDp, configuration.screenHeightDp)
-        if (TouchHomeLayout.needsRebuild(lastLargeLayout, large)) rebuild(large)
+        val contentWidthDp = TouchHomeLayout.contentWidthDp(
+            configuration.screenWidthDp.toFloat(),
+            TouchShellLayout.railWidthDpFor(configuration.screenWidthDp).toFloat(),
+        )
+        requestLayoutClass(TouchHomeLayout.isLargeLandscape(contentWidthDp, configuration.screenHeightDp.toFloat()))
+        requestLayout()
+    }
+
+    private fun requestLayoutClass(large: Boolean) {
+        if (!layoutTransition.request(large) || layoutRebuildPosted) return
+        layoutRebuildPosted = true
+        post {
+            layoutRebuildPosted = false
+            layoutTransition.consume()?.let(::rebuild)
+        }
     }
 
     private fun rebuild(large: Boolean = isLargeLandscape()) {
-        lastLargeLayout = large
+        layoutTransition.markRendered(large)
         scrollPosition = scrollView?.scrollY ?: scrollPosition
         removeAllViews()
         val dashboard = model
@@ -491,8 +504,39 @@ class TouchHomeView private constructor(
 internal object TouchHomeLayout {
     const val LARGE_LANDSCAPE_DP = 900f
 
+    fun contentWidthDp(screenWidthDp: Float, railWidthDp: Float): Float =
+        (screenWidthDp - railWidthDp).coerceAtLeast(0f)
+
     fun isLargeLandscape(widthDp: Float, heightDp: Float): Boolean =
         widthDp >= LARGE_LANDSCAPE_DP && (heightDp <= 0f || widthDp >= heightDp)
 
-    fun needsRebuild(previous: Boolean?, next: Boolean): Boolean = previous != next
+    fun needsTransition(previous: Boolean?, next: Boolean): Boolean = previous != next
+}
+
+internal class TouchHomeLayoutTransition {
+    private var rendered: Boolean? = null
+    private var requested: Boolean? = null
+
+    fun markRendered(value: Boolean) {
+        rendered = value
+        requested = null
+    }
+
+    fun request(next: Boolean): Boolean {
+        if (!TouchHomeLayout.needsTransition(rendered, next)) {
+            requested = null
+            return false
+        }
+        if (requested == next) return false
+        requested = next
+        return true
+    }
+
+    fun consume(): Boolean? {
+        val next = requested ?: return null
+        requested = null
+        if (!TouchHomeLayout.needsTransition(rendered, next)) return null
+        rendered = next
+        return next
+    }
 }
