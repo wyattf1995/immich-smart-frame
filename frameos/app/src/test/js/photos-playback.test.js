@@ -137,6 +137,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false, d
     body, events, next, previous, navigation, port, timers, observers, listeners, classes, nativeMessages, diagnosticMessages, progress, kiosk,
     runMicrotasks() { while (microtasks.length) microtasks.shift()(); },
     pendingMicrotasks() { return microtasks.length; },
+    runTimers() { while (timers.length) timers.shift().callback(); },
     setFrameVisible(index, visible) { frameList[index].visible = visible; },
     frameAnimations(index) { return frameList[index].animations; },
     frame(index) { return frameList[index]; },
@@ -605,6 +606,8 @@ test("capture ignores progress bar RAF styles but keeps Kiosk visibility mutatio
   runtime.mutate([{ type: "attributes", attributeName: "style", target: runtime.progress }]);
   assert.equal(runtime.pendingMicrotasks(), 0);
   runtime.mutate([{ type: "attributes", attributeName: "style", target: runtime.frame(0) }]);
+  assert.equal(runtime.timers.length, 1, "Kiosk mutation schedules the bounded debounce");
+  runtime.runTimers();
   assert.equal(runtime.pendingMicrotasks(), 1);
 });
 
