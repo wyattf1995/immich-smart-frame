@@ -67,4 +67,41 @@ class TouchDestinationOrderTest {
             ),
         )
     }
+
+
+    @Test
+    fun `Birds is visible only when its local feed is configured`() {
+        assertEquals(
+            listOf(
+                TouchDestination.HOME,
+                TouchDestination.PHOTOS,
+                TouchDestination.ART,
+                TouchDestination.BIRDS,
+                TouchDestination.WEATHER,
+                TouchDestination.CALENDAR,
+                TouchDestination.CAMERAS,
+            ),
+            TouchDestinationOrder.defaults(birdsConfigured = true),
+        )
+        assertEquals(
+            listOf(TouchDestination.HOME, TouchDestination.PHOTOS, TouchDestination.CAMERAS),
+            TouchDestinationOrder.available(
+                listOf(TouchDestination.BIRDS, TouchDestination.PHOTOS, TouchDestination.CAMERAS),
+                birdsConfigured = false,
+            ),
+        )
+        assertEquals(
+            listOf(TouchDestination.HOME, TouchDestination.BIRDS, TouchDestination.PHOTOS),
+            TouchDestinationOrder.available(
+                listOf(TouchDestination.BIRDS, TouchDestination.PHOTOS),
+                birdsConfigured = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `Birds uses retained web media without making the rail immersive`() {
+        assertEquals(true, TouchDestination.BIRDS.usesWebMedia)
+        assertEquals(false, TouchDestination.BIRDS.isImmersiveMedia)
+    }
 }

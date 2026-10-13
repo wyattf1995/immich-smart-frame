@@ -245,12 +245,12 @@ class TouchFrameActivity : Activity() {
     }
 
     private fun navigate(next: TouchDestination) {
-        if (next.isImmersiveMedia) {
-            val url = if (next == TouchDestination.PHOTOS) configuration?.photosUrl else configuration?.artUrl
-            if (url == null) { message("${next.label} is not configured"); return }
+        if (next.usesWebMedia && webMediaUrl(next) == null) {
+            message("${next.label} is not configured")
+            return
         }
         if (next == TouchDestination.CAMERAS && configuration == null) { message("Cameras are not configured"); return }
-        if ((next.isImmersiveMedia || next == TouchDestination.CAMERAS) && !networkAllowed()) {
+        if ((next.usesWebMedia || next == TouchDestination.CAMERAS) && !networkAllowed()) {
             requestLocalNetwork()
             return
         }
@@ -261,21 +261,20 @@ class TouchFrameActivity : Activity() {
         calendar.visibility = if (next == TouchDestination.CALENDAR) View.VISIBLE else View.GONE
         cameras?.visibility = if (next == TouchDestination.CAMERAS) View.VISIBLE else View.GONE
         cameras?.setActive(resumed && networkAllowed() && next == TouchDestination.CAMERAS)
-        media?.setVisibleActive(resumed && networkAllowed() && next.isImmersiveMedia)
+        media?.setVisibleActive(resumed && networkAllowed() && next.usesWebMedia)
         main.removeCallbacks(refresh)
         when (next) {
             TouchDestination.HOME -> refreshHome()
             TouchDestination.CALENDAR -> { renderCalendar(); refreshHome() }
             TouchDestination.WEATHER -> refreshWeather()
-            TouchDestination.PHOTOS, TouchDestination.ART -> {
-                val url = if (next == TouchDestination.PHOTOS) configuration?.photosUrl else configuration?.artUrl
-                if (url == null) { message("${next.label} is not configured"); return }
+            TouchDestination.PHOTOS, TouchDestination.ART, TouchDestination.BIRDS -> {
+                val url = webMediaUrl(next) ?: run { message("${next.label} is not configured"); return }
                 if (!networkAllowed()) { requestLocalNetwork(); return }
                 val surface = media ?: TouchMediaView(this, runtime, photoStore = photoStore).also {
                     media = it
                     it.onStatus = { status ->
                         lastMediaError = status
-                        if (destination.isImmersiveMedia && status != null) message(status)
+                        if (destination.usesWebMedia && status != null) message(status)
                     }
                     it.onPhotoObserved = { photo ->
                         currentAssetId = photo.assetId
@@ -288,7 +287,8 @@ class TouchFrameActivity : Activity() {
                 if (next == TouchDestination.PHOTOS) {
                     surface.showPhotos(url, photoProfile(requireNotNull(configuration)))
                     surface.setPhotosPaused(photosPaused)
-                } else surface.showArt(url)
+                } else if (next == TouchDestination.ART) surface.showArt(url)
+                else surface.showUrl(url, "Birds")
                 surface.setVisibleActive(resumed)
             }
             TouchDestination.CAMERAS -> {
@@ -307,6 +307,13 @@ class TouchFrameActivity : Activity() {
                 view.setActive(resumed)
             }
         }
+    }
+
+    private fun webMediaUrl(destination: TouchDestination): String? = when (destination) {
+        TouchDestination.PHOTOS -> configuration?.photosUrl
+        TouchDestination.ART -> configuration?.artUrl
+        TouchDestination.BIRDS -> configuration?.birdsUrl
+        else -> null
     }
 
     private fun refreshHome() {
@@ -577,10 +584,15 @@ class TouchFrameActivity : Activity() {
     }
 
     private fun applyDestinationOrder() {
-        if (experience.settingsRevision < 0) return
-        val destinations = experience.orderedEnabledModes.mapNotNull { mode ->
-            TouchDestination.entries.firstOrNull { it.name == mode.name }
+        val birdsConfigured = !configuration?.birdsUrl.isNullOrBlank()
+        val requested = if (experience.settingsRevision >= 0) {
+            experience.orderedEnabledModes.mapNotNull { mode ->
+                TouchDestination.entries.firstOrNull { it.name == mode.name }
+            }
+        } else {
+            TouchDestinationOrder.defaults(birdsConfigured)
         }
+        val destinations = TouchDestinationOrder.available(requested, birdsConfigured)
         home.setDestinations(destinations)
         shell.setDestinations(destinations)
     }

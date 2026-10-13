@@ -13,6 +13,7 @@ class TouchProvisionContractTest {
             homeAssistantUrl = "https://ha.example:8443/dashboard",
             weatherEntityId = "weather.home",
             artUrl = "https://art.example/feed",
+            birdsUrl = "https://birds.example/feed",
             climateEntityId = "climate.entryway",
             calendarEntityIds = listOf("calendar.family", "calendar.work"),
             cameraEntityIds = listOf("camera.backyard"),
@@ -22,6 +23,7 @@ class TouchProvisionContractTest {
         assertEquals("https://ha.example:8443", configuration?.homeAssistantOrigin)
         assertEquals(listOf("calendar.family", "calendar.work"), configuration?.calendarEntityIds)
         assertEquals(listOf("camera.backyard"), configuration?.cameraEntityIds)
+        assertEquals("https://birds.example/feed", configuration?.birdsUrl)
     }
 
     @Test

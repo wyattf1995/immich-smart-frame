@@ -43,4 +43,26 @@ class TouchConfigurationTest {
         assertEquals(listOf("camera.one", "camera.two"), configuration.cameraEntityIds)
         assertTrue(configuration.calendarEntityIds.all { it.startsWith("calendar.") })
     }
+
+
+    @Test
+    fun `optional Birds feed uses the same safe URL validation as Art`() {
+        val configuration = TouchConfiguration.from(
+            photosUrl = "https://photos.example",
+            homeAssistantUrl = "https://ha.example",
+            weatherEntityId = "weather.home",
+            artUrl = null,
+            birdsUrl = " https://birds.example/feed ",
+        )
+        assertEquals("https://birds.example/feed", configuration?.birdsUrl)
+        assertNull(
+            TouchConfiguration.from(
+                photosUrl = "https://photos.example",
+                homeAssistantUrl = "https://ha.example",
+                weatherEntityId = "weather.home",
+                artUrl = null,
+                birdsUrl = "http://birds.example/feed",
+            ),
+        )
+    }
 }
