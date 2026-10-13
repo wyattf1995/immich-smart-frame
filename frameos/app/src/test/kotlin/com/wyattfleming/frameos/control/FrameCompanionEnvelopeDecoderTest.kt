@@ -26,4 +26,13 @@ class FrameCompanionEnvelopeDecoderTest {
         assertEquals(emptySet<String>(), (full as FrameCompanionEnvelope.Full).hiddenAssets)
         assertFalse(full.snapshotRevision != null)
     }
+    @Test fun `rejects a present malformed settings payload rather than retaining its revision`() {
+        val payload = """{"schema":1,"deviceId":"living-frame","snapshotRevision":"$revision","commands":[],"hiddenAssets":[],"settings":{"modeOrder":["weather"]}}"""
+        assertNull(FrameCompanionEnvelopeDecoder.decode(payload, "living-frame", 1000, null))
+    }
+
+    @Test fun `retains compatibility for a full response that omits settings`() {
+        assertTrue(FrameCompanionEnvelopeDecoder.decode("""{"schema":1,"deviceId":"living-frame","commands":[],"hiddenAssets":[]}""", "living-frame", 1000, null) is FrameCompanionEnvelope.Full)
+    }
+
 }
