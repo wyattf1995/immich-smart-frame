@@ -120,6 +120,28 @@ class TouchConfigurationStore(context: Context) {
             .apply()
     }
 
+    /**
+     * Synchronously commits the first valid configuration. Call only from a worker: `commit()`
+     * is deliberately used so a successful provisioning result survives process death.
+     */
+    fun writeInitialDurably(configuration: TouchConfiguration): InitialWriteResult = synchronized(preferences) {
+        if (hasInitialConfiguration()) return InitialWriteResult.ALREADY_PRESENT
+        val committed = preferences.edit()
+            .putString(KEY_PHOTOS_URL, configuration.photosUrl)
+            .putString(KEY_HOME_ASSISTANT_URL, configuration.homeAssistantUrl)
+            .putString(KEY_WEATHER_ENTITY_ID, configuration.weatherEntityId)
+            .putString(KEY_ART_URL, configuration.artUrl)
+            .putString(KEY_CLIMATE_ENTITY_ID, configuration.climateEntityId)
+            .putStringSet(KEY_CALENDAR_ENTITY_IDS, configuration.calendarEntityIds.toSet())
+            .putStringSet(KEY_CAMERA_ENTITY_IDS, configuration.cameraEntityIds.toSet())
+            .commit()
+        if (committed) InitialWriteResult.WRITTEN else InitialWriteResult.FAILED
+    }
+
+    private fun hasInitialConfiguration(): Boolean = INITIAL_KEYS.any(preferences::contains)
+
+    enum class InitialWriteResult { WRITTEN, ALREADY_PRESENT, FAILED }
+
     private companion object {
         const val PREFERENCES_NAME = "frameos_configuration"
         const val KEY_PHOTOS_URL = "photos_url"
@@ -129,5 +151,14 @@ class TouchConfigurationStore(context: Context) {
         const val KEY_CLIMATE_ENTITY_ID = "climate_entity_id"
         const val KEY_CALENDAR_ENTITY_IDS = "calendar_entity_ids"
         const val KEY_CAMERA_ENTITY_IDS = "camera_entity_ids"
+        val INITIAL_KEYS = setOf(
+            KEY_PHOTOS_URL,
+            KEY_HOME_ASSISTANT_URL,
+            KEY_WEATHER_ENTITY_ID,
+            KEY_ART_URL,
+            KEY_CLIMATE_ENTITY_ID,
+            KEY_CALENDAR_ENTITY_IDS,
+            KEY_CAMERA_ENTITY_IDS,
+        )
     }
 }
