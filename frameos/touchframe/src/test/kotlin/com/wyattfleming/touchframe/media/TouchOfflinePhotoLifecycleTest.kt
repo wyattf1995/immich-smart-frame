@@ -1,5 +1,6 @@
 package com.wyattfleming.touchframe.media
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -40,6 +41,7 @@ class TouchOfflinePhotoLifecycleTest {
         val replacement = gate.begin()
 
         assertFalse(gate.isCurrent(first))
+        assertEquals(replacement, gate.current())
         assertTrue(gate.isCurrent(replacement))
         gate.invalidate()
         assertFalse(gate.isCurrent(replacement))
