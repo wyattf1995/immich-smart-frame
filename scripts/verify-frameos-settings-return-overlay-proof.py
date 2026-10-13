@@ -32,7 +32,7 @@ def run(name,label,failures):
     matches=list(report.rglob(xml_names[name])); assert len(matches)==1,matches
     xml=out/f'settings-return-overlay-{label}.xml'; shutil.copy2(matches[0],xml)
     root_xml=ElementTree.parse(xml).getroot(); cases=list(root_xml.iter('testcase')); failed=list(root_xml.iter('failure')); errors=list(root_xml.iter('error'))
-    expected={'lifecycle':5,'legacy_type':2}[name]
+    expected={'lifecycle':5,'legacy_type':3}[name]
     assert len(cases)==expected and len(failed)==failures and not errors,(name,len(cases),len(failed),len(errors))
     return {'negative_exit' if failures else 'restored_green_exit':result.returncode,'log':log.name,'junit_xml':xml.name,'tests':len(cases),'failures':len(failed)}
 
