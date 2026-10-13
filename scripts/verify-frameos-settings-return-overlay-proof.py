@@ -36,7 +36,7 @@ def run(label, failures):
     xml = out / f"{label}.xml"; shutil.copy2(matches[0], xml)
     root_xml = ElementTree.parse(xml).getroot(); cases = list(root_xml.iter("testcase"))
     failed = [case for case in cases if case.find("failure") is not None]
-    assert len(cases) == 4 and len(failed) == failures and not list(root_xml.iter("error")), (len(cases), len(failed))
+    assert len(cases) == 5 and len(failed) == failures and not list(root_xml.iter("error")), (len(cases), len(failed))
     return result.returncode, log.name, xml.name
 
 try:
@@ -50,8 +50,8 @@ finally:
 restored_exit, restored_log, restored_xml = run("settings-return-overlay-green", 0)
 assert restored_exit == 0 and hashlib.sha256(test.read_bytes()).hexdigest() == test_hash
 (out / "settings-return-overlay-source-proof.json").write_text(json.dumps({
-    "passed": True, "negative_exit": negative_exit, "negative_tests": 4, "negative_assertion_failures": 1,
-    "restored_green_exit": restored_exit, "restored_tests": 4, "restored_failures": 0,
+    "passed": True, "negative_exit": negative_exit, "negative_tests": 5, "negative_assertion_failures": 1,
+    "restored_green_exit": restored_exit, "restored_tests": 5, "restored_failures": 0,
     "restored_source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(), "unchanged_test_sha256": test_hash,
     "negative_log": negative_log, "negative_junit_xml": negative_xml, "restored_log": restored_log, "restored_junit_xml": restored_xml,
 }, indent=2) + "\n", encoding="utf-8")
