@@ -1,5 +1,6 @@
 package com.wyattfleming.touchframe.ui
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -17,6 +18,8 @@ import kotlin.math.abs
  * Media destinations keep the content frame edge-to-edge until a deliberate left-edge gesture
  * reveals this navigation menu.
  */
+// Constructed by TouchFrameActivity with callbacks; never inflated from XML.
+@SuppressLint("ViewConstructor")
 class TouchShellLayout(
     context: Context,
     private val onNavigate: (TouchDestination) -> Unit,

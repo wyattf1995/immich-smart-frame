@@ -1,5 +1,6 @@
 package com.wyattfleming.touchframe.media
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -21,6 +22,8 @@ import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 /** Snapshot-only camera surface; it never claims to show live video. */
+// Constructed by TouchFrameActivity with callbacks; never inflated from XML.
+@SuppressLint("ViewConstructor")
 class TouchCameraView(
     context: Context,
     origin: String,

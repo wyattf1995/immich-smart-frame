@@ -39,6 +39,11 @@ android {
     }
 }
 
+// Source contract fixtures resolve paths from the FrameOS Gradle root.
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    workingDir = rootProject.projectDir
+}
+
 dependencies {
     compileOnly("androidx.annotation:annotation:1.11.0")
     implementation(project(":frame-shared"))
