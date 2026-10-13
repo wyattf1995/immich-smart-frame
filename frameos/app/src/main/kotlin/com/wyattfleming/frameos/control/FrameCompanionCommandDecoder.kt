@@ -4,8 +4,9 @@ import com.wyattfleming.frameos.navigation.FrameMode
 import org.json.JSONObject
 
 object FrameCompanionCommandDecoder {
-    fun decode(payload: String, nowMillis: Long): FrameRemoteCommand? = runCatching {
-        val root = JSONObject(payload)
+    fun decode(payload: String, nowMillis: Long): FrameRemoteCommand? = runCatching { decode(JSONObject(payload), nowMillis) }.getOrNull()
+
+    internal fun decode(root: JSONObject, nowMillis: Long): FrameRemoteCommand? = runCatching {
         val json = root.optJSONArray("commands")?.takeIf { it.length() == 1 }?.getJSONObject(0) ?: root
         val id = json.getString("id")
         require(FrameRemoteControlPolicy.acceptsCommandId(id))

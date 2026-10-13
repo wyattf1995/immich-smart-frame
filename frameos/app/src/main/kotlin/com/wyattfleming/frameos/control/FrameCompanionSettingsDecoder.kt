@@ -18,8 +18,9 @@ data class FrameRemoteSettings(
 
 /** Decodes the optional settings half of a companion response without accepting arbitrary UI data. */
 object FrameCompanionSettingsDecoder {
-    fun decode(payload: String): FrameRemoteSettings? = runCatching {
-        val root = JSONObject(payload)
+    fun decode(payload: String): FrameRemoteSettings? = runCatching { decode(JSONObject(payload)) }.getOrNull()
+
+    internal fun decode(root: JSONObject): FrameRemoteSettings? = runCatching {
         val settings = root.optJSONObject("settings") ?: return null
         val revision = root.optLong("settingsRevision", settings.optLong("settingsRevision", -1L))
         require(revision >= 0L)
