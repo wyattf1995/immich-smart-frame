@@ -42,6 +42,7 @@ suites = {
     "calendar_ranges": (module / "src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarModel.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarRangeParserTest.kt", "com.wyattfleming.touchframe.calendar.TouchCalendarRangeParserTest"),
     "calendar_parser": (module / "src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarParser.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarParserBoundsTest.kt", "com.wyattfleming.touchframe.calendar.TouchCalendarParserBoundsTest"),
     "calendar_repository": (module / "src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarRepository.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarRepositoryTest.kt", "com.wyattfleming.touchframe.calendar.TouchCalendarRepositoryTest"),
+    "calendar_presentation": (module / "src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarPresentationTest.kt", "com.wyattfleming.touchframe.calendar.TouchCalendarPresentationTest"),
     "configuration": (module / "src/main/kotlin/com/wyattfleming/touchframe/data/TouchConfiguration.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/data/TouchConfigurationTest.kt", "com.wyattfleming.touchframe.data.TouchConfigurationTest"),
 }
 
@@ -70,6 +71,7 @@ def static_contract() -> dict[str, object]:
     provisioning = suites["provisioning"][0].read_text()
     scope = suites["scope"][0].read_text()
     calendar_repository = suites["calendar_repository"][0].read_text()
+    calendar_presentation = suites["calendar_presentation"][0].read_text()
     configuration = suites["configuration"][0].read_text()
     required = {
         "media-only edge gesture": "destination.isImmersiveMedia &&",
@@ -98,9 +100,11 @@ def static_contract() -> dict[str, object]:
         "strict monotonic settings revision": "incomingRevision >= 0 && incomingRevision > currentRevision",
         "provisioning collection cap": "private const val MAX_CALENDARS = 4",
         "Calendar socket cleanup ownership": "invalidated.futures.toList()",
+        "calendar control text scale": "const val CONTROL_TEXT_SP = 22f",
+        "calendar weekday header allowance": "WEEKDAY_HEADER_MIN_HEIGHT_DP = 48",
         "Birds URL validation": "if (birds != null && !urlPolicy.isSafeConfigurationUrl(birds)) return null",
     }
-    combined = shell + repo + parser + media + offline + blur + offline_store + hidden_commit + companion + destination_order + settings_policy + provisioning + scope + calendar_repository + configuration
+    combined = shell + repo + parser + media + offline + blur + offline_store + hidden_commit + companion + destination_order + settings_policy + provisioning + scope + calendar_repository + calendar_presentation + configuration
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -494,6 +498,12 @@ try:
         "invalidated.futures.toList().also { invalidated.futures.clear() }",
         {"invalidate retains stale request handles until serialized cleanup"},
     )
+    calendar_presentation_red = mutate(
+        "calendar-presentation-legibility-red", "calendar_presentation",
+        "const val CONTROL_TEXT_SP = 22f",
+        "const val CONTROL_TEXT_SP = 14f",
+        {"calendar controls retain readable text and unclipped weekday space"},
+    )
     restored = run("restored-green", set())
     bridge_restored = run_bridge("prepared-bridge-restored-green", set())
     unchanged_tests = {str(test.relative_to(root)): digest(test) for _, (_, test, _) in suites.items()}
@@ -528,6 +538,7 @@ try:
         "calendarRangeParserCapRed": calendar_parser_cap_red,
         "calendarClosedRepositoryRed": calendar_closed_red,
         "calendarStaleSocketCleanupRed": calendar_stale_socket_red,
+        "calendarPresentationLegibilityRed": calendar_presentation_red,
         "restored": restored, "preparedBridgeRestored": bridge_restored,
         "preparedBridgeSourceSha256": bridge_source_hash,
         "preparedBridgeRestoredSourceSha256": digest(bridge_source),
