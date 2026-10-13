@@ -162,9 +162,8 @@ internal class TouchOfflinePhotos(
         store.applyHiddenAssets(assetIds, canCommit)
 
     fun hideFallbackIfHidden(assetIds: Set<String>) {
-        val normalized = assetIds.mapTo(hashSetOf()) { it.lowercase() }
         main.post {
-            if (displayedAssetId?.lowercase() in normalized) hideFallback()
+            if (TouchOfflineHiddenAssetPolicy.hides(displayedAssetId, assetIds)) hideFallback()
         }
     }
 
@@ -245,6 +244,12 @@ internal class TouchOfflinePhotos(
             onPhotoObservedCallback(photo)
         }
     }
+}
+
+/** Normalizes server-hidden asset IDs before retaining a cached fallback on screen. */
+internal object TouchOfflineHiddenAssetPolicy {
+    fun hides(displayedAssetId: String?, hiddenAssetIds: Set<String>): Boolean =
+        displayedAssetId != null && hiddenAssetIds.any { it.equals(displayedAssetId, ignoreCase = true) }
 }
 
 /** Thread-safe active/paused state used at every trusted capture gate. */
