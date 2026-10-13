@@ -61,6 +61,26 @@ object TouchCalendarWeekPresentation {
     }
 
     /** [pageSize] lets a short screen show only whole rows; it never exceeds [DETAILS_PER_PAGE]. */
+    /** Today's Week column: finished events collapse into a count, an event under way reads "Now". */
+    data class TodayColumn(val earlierCount: Int, val preview: List<EventPreview>, val overflowCount: Int)
+
+    enum class EventTiming { ENDED, NOW, UPCOMING }
+
+    fun timing(event: TouchCalendarEvent, nowMillis: Long): EventTiming = when {
+        event.allDay -> EventTiming.UPCOMING
+        (event.endEpochMillis ?: event.startEpochMillis) <= nowMillis -> EventTiming.ENDED
+        event.startEpochMillis <= nowMillis -> EventTiming.NOW
+        else -> EventTiming.UPCOMING
+    }
+
+    fun todayColumn(day: Day, nowMillis: Long, zoneId: ZoneId, locale: Locale = Locale.getDefault()): TodayColumn {
+        val remaining = day.events.filter { timing(it, nowMillis) != EventTiming.ENDED }
+        val preview = remaining.take(PREVIEW_PER_DAY).map { event ->
+            if (timing(event, nowMillis) == EventTiming.NOW) EventPreview(event, "Now", true) else previewFor(event, zoneId, locale)
+        }
+        return TodayColumn(day.events.size - remaining.size, preview, (remaining.size - PREVIEW_PER_DAY).coerceAtLeast(0))
+    }
+
     fun detailsPage(events: List<TouchCalendarEvent>, requestedPage: Int, pageSize: Int = DETAILS_PER_PAGE): DetailsPage {
         if (events.isEmpty()) return DetailsPage(emptyList(), 0, 0, 0, 0, 0)
         val size = pageSize.coerceIn(1, DETAILS_PER_PAGE)

@@ -105,6 +105,7 @@ class TouchFrameActivity : Activity() {
             val isNight = TouchDayNight.isNight(Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).hour)
             shell.setNight(isNight)
             calendar.setNight(isNight)
+            if (destination == TouchDestination.CALENDAR) calendar.tick(now)
             cameras?.setNight(isNight)
             main.postDelayed(this, 1_000L)
         }

@@ -40,8 +40,14 @@ class TouchCalendarView(
     private var lastWideHeader: Boolean? = null
     private var selectedDetailsPage = 0
 
+    private var renderedDay: LocalDate? = null
+    private var renderedTodayKey: List<TouchCalendarWeekPresentation.EventTiming> = emptyList()
+
     init {
         isFillViewport = true
+        // A soft fade at the scroll edges says the list continues (Agenda and long day lists).
+        isVerticalFadingEdgeEnabled = true
+        setFadingEdgeLength((40 * resources.displayMetrics.density).toInt())
         addView(body, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
     }
 
@@ -51,6 +57,14 @@ class TouchCalendarView(
         rebuild()
     }
     fun setNight(value: Boolean) { if (night != value) { night = value; rebuild() } }
+
+    /** Called every second by the activity clock: rebuild at midnight and when one of today's events starts or ends. */
+    fun tick(nowMillis: Long) {
+        if (LocalDate.now() != renderedDay || todayKey(nowMillis) != renderedTodayKey) rebuild()
+    }
+
+    private fun todayKey(nowMillis: Long) = state.events.filter { it.occursOn(LocalDate.now(), ZoneId.systemDefault()) }
+        .map { TouchCalendarWeekPresentation.timing(it, nowMillis) }
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
@@ -63,6 +77,8 @@ class TouchCalendarView(
     )
 
     private fun rebuild() {
+        renderedDay = LocalDate.now()
+        renderedTodayKey = todayKey(System.currentTimeMillis())
         val kit = TouchKit(context, TouchPalette.forNight(night), scaleFor(height))
         val scale = kit.scale
         setBackgroundColor(kit.palette.wall)
@@ -198,50 +214,76 @@ class TouchCalendarView(
         setPadding(inset, inset, inset, inset)
         val selected = day.date == state.selectedDate
         val today = day.date == LocalDate.now()
-        val base = kit.rounded(p.mat, kit.scale.radiusSmall, if (selected) p.accentStroke else p.line, if (selected) 3 else 1)
+        val past = TouchCalendarDayStyle.toneFor(day.date, LocalDate.now(), inMonth = true) == TouchCalendarDayTone.PAST
+        val fill = when {
+            today -> p.todayFill
+            past -> p.pastFill
+            else -> p.mat
+        }
+        val base = kit.rounded(fill, kit.scale.radiusSmall, when {
+            selected -> p.accentStroke
+            past -> p.pastLine
+            else -> p.line
+        }, if (selected) 3 else 1)
         background = kit.pressable(base, kit.scale.radiusSmall)
         isClickable = true
         isFocusable = true
         isSelected = selected
-        contentDescription = "${spoken(day.date)}, ${countText(day.events.size)}"
+        contentDescription = "${if (today) "Today, " else if (past) "Past, " else ""}${spoken(day.date)}, ${countText(day.events.size)}"
         setOnClickListener { request(state.mode, state.anchor, day.date, false) }
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(kit.text(day.date.format(DateTimeFormatter.ofPattern("EEE", Locale.getDefault())), if (wall) 22f else 20f,
-                TouchFonts.Face.TEXT_BOLD, if (today) p.accentInk else p.inkMuted), LinearLayout.LayoutParams(0, WRAP, 1f))
-            addView(dateBadge(kit, day.date.dayOfMonth.toString(), today, if (wall) 34f else 30f, if (wall) 54 else 46))
+            addView(kit.text(if (today) "Today" else day.date.format(DateTimeFormatter.ofPattern("EEE", Locale.getDefault())), if (wall) 22f else 20f,
+                if (past) TouchFonts.Face.TEXT_MEDIUM else TouchFonts.Face.TEXT_BOLD, when {
+                    today -> p.accentInk
+                    past -> p.pastInk
+                    else -> p.inkMuted
+                }), LinearLayout.LayoutParams(0, WRAP, 1f))
+            addView(dateBadge(kit, day.date.dayOfMonth.toString(), today, if (wall) 34f else 30f, if (wall) 54 else 46).apply {
+                if (past) {
+                    setTextColor(p.pastInk)
+                    typeface = TouchFonts.get(context, TouchFonts.Face.DISPLAY)
+                }
+            })
         })
         when {
             skeleton -> repeat(2) { index ->
                 addView(View(context).apply { background = kit.rounded(p.line, 8) },
                     LinearLayout.LayoutParams(if (index == 0) MATCH else kit.dp(70), kit.dp(18)).apply { topMargin = kit.dp(14) })
             }
-            day.preview.isEmpty() -> addView(kit.text("Free", if (wall) 21f else 19f, color = p.inkMuted), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(12) })
+            day.preview.isEmpty() -> addView(kit.text("Free", if (wall) 21f else 19f, color = if (past) p.pastInk else p.inkMuted), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(12) })
             else -> {
-                day.preview.forEach { preview -> addView(weekEvent(kit, preview, wall), LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = kit.dp(10) }) }
-                if (day.overflowCount > 0) {
+                // Today shows what is still ahead: finished events become a count, the current one reads "Now".
+                val column = if (today) TouchCalendarWeekPresentation.todayColumn(day, System.currentTimeMillis(), ZoneId.systemDefault())
+                    else TouchCalendarWeekPresentation.TodayColumn(0, day.preview, day.overflowCount)
+                if (column.earlierCount > 0) addView(kit.text("${column.earlierCount} earlier", if (wall) 20f else 18f, TouchFonts.Face.TEXT_MEDIUM, p.pastInk),
+                    LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(10) })
+                column.preview.forEach { preview -> addView(weekEvent(kit, preview, wall, past), LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = kit.dp(10) }) }
+                if (column.overflowCount > 0) {
                     addView(View(context), LinearLayout.LayoutParams(0, 0, 1f))
-                    addView(kit.text("${day.overflowCount} more", if (wall) 21f else 19f, TouchFonts.Face.TEXT_BOLD, p.accentInk),
+                    addView(kit.text("${column.overflowCount} more", if (wall) 21f else 19f, TouchFonts.Face.TEXT_BOLD, if (past) p.pastInk else p.accentInk),
                         LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(8) })
                 }
             }
         }
     }
 
-    private fun weekEvent(kit: TouchKit, preview: TouchCalendarWeekPresentation.EventPreview, wall: Boolean) = LinearLayout(context).apply {
+    private fun weekEvent(kit: TouchKit, preview: TouchCalendarWeekPresentation.EventPreview, wall: Boolean, past: Boolean) = LinearLayout(context).apply {
         val p = kit.palette
         orientation = LinearLayout.VERTICAL
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        val ink = if (past) p.pastInk else p.ink
         if (preview.isTimed) {
-            background = kit.startRule(p.accentStroke, 4)
+            background = kit.startRule(if (past) p.pastInk else p.accentStroke, 4)
             setPadding(kit.dp(10), kit.dp(1), 0, kit.dp(1))
         } else {
-            background = kit.rounded(p.accentSoft, 8)
+            background = if (past) kit.rounded(0x00000000, 8, p.pastLine) else kit.rounded(p.accentSoft, 8)
             setPadding(kit.dp(8), kit.dp(4), kit.dp(8), kit.dp(4))
         }
-        addView(kit.text(preview.timeLabel, if (wall) 20f else 18f, TouchFonts.Face.TEXT_BOLD))
-        addView(kit.text(preview.event.title, if (wall) 22f else 19f, maxLines = if (wall) 3 else 2))
+        addView(kit.text(preview.timeLabel, if (wall) 20f else 18f, if (past) TouchFonts.Face.TEXT_MEDIUM else TouchFonts.Face.TEXT_BOLD,
+            if (preview.timeLabel == "Now") p.accentInk else ink))
+        addView(kit.text(preview.event.title, if (wall) 22f else 19f, color = ink, maxLines = if (wall) 3 else 2))
     }
 
     private fun dateBadge(kit: TouchKit, text: String, today: Boolean, sizeSp: Float, diameterDp: Int) = kit.text(text, sizeSp, TouchFonts.Face.DISPLAY_BOLD,
@@ -320,17 +362,26 @@ class TouchCalendarView(
     }
 
     private fun eventRow(kit: TouchKit, event: TouchCalendarEvent) = LinearLayout(context).apply {
+        val p = kit.palette
         orientation = LinearLayout.VERTICAL
-        val time = timeLabel(event)
+        val timing = if (state.selectedDate.isBefore(LocalDate.now())) TouchCalendarWeekPresentation.EventTiming.ENDED
+            else if (state.selectedDate == LocalDate.now()) TouchCalendarWeekPresentation.timing(event, System.currentTimeMillis())
+            else TouchCalendarWeekPresentation.EventTiming.UPCOMING
+        val ended = timing == TouchCalendarWeekPresentation.EventTiming.ENDED
+        val time = if (timing == TouchCalendarWeekPresentation.EventTiming.NOW) "Now" else timeLabel(event)
         contentDescription = "$time, ${event.title}"
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(kit.dp(4), kit.dp(10), kit.dp(4), kit.dp(10))
-            addView(kit.text(time, kit.scale.body, TouchFonts.Face.TEXT_BOLD).apply {
+            addView(kit.text(time, kit.scale.body, if (ended) TouchFonts.Face.TEXT_MEDIUM else TouchFonts.Face.TEXT_BOLD, when {
+                ended -> p.pastInk
+                timing == TouchCalendarWeekPresentation.EventTiming.NOW -> p.accentInk
+                else -> p.ink
+            }).apply {
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 fontFeatureSettings = "tnum"
             }, LinearLayout.LayoutParams(kit.dp((kit.scale.body * 5.6f).toInt()), WRAP))
-            addView(kit.text(event.title, kit.scale.body).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO },
+            addView(kit.text(event.title, kit.scale.body, color = if (ended) p.pastInk else p.ink).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO },
                 LinearLayout.LayoutParams(0, WRAP, 1f))
         })
         addView(kit.hairline(), LinearLayout.LayoutParams(MATCH, kit.dp(1)))
@@ -372,11 +423,11 @@ class TouchCalendarView(
         setPadding(kit.dp((if (wall) 12 else 10) - inset), kit.dp(6 - inset), kit.dp((if (wall) 12 else 10) - inset), kit.dp(6 - inset))
         val events = state.events.filter { it.occursOn(date, ZoneId.systemDefault()) }
             .sortedWith(compareBy({ !it.allDay }, { it.startEpochMillis }))
-        // Past days recede into the wall with no outline; today is tinted and outlined; upcoming days are panels.
+        // Past days stay as greyed, disabled-looking panels; today is tinted and outlined; upcoming days are light panels.
         val base = when (tone) {
             TouchCalendarDayTone.TODAY -> kit.rounded(p.todayFill, 8, p.accentStroke, 3)
-            TouchCalendarDayTone.PAST -> kit.rounded(0x00000000, 8)
-            TouchCalendarDayTone.OUTSIDE_MONTH -> kit.rounded(0x00000000, 8, p.line)
+            TouchCalendarDayTone.PAST -> if (inMonth) kit.rounded(p.pastFill, 8, p.pastLine) else kit.rounded(0x00000000, 8)
+            TouchCalendarDayTone.OUTSIDE_MONTH -> kit.rounded(0x00000000, 8)
             TouchCalendarDayTone.UPCOMING -> kit.rounded(p.mat, 8, p.line)
         }
         background = kit.pressable(base, 8)
@@ -391,6 +442,7 @@ class TouchCalendarView(
         // A day in Month opens its week with that day's complete, paged list.
         setOnClickListener { request(TouchCalendarMode.WEEK, date, date, true) }
         val receded = tone == TouchCalendarDayTone.PAST || tone == TouchCalendarDayTone.OUTSIDE_MONTH
+        val recededInk = if (tone == TouchCalendarDayTone.PAST) p.pastInk else p.inkMuted
         if (tone == TouchCalendarDayTone.TODAY) {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -402,16 +454,16 @@ class TouchCalendarView(
             })
         } else {
             addView(kit.text(date.dayOfMonth.toString(), 24f, if (receded) TouchFonts.Face.DISPLAY else TouchFonts.Face.DISPLAY_BOLD,
-                if (receded) p.inkMuted else p.ink))
+                if (receded) recededInk else p.ink))
         }
         if (skeleton || !inMonth) return@apply
         val limit = if (wall) 2 else 1
         events.take(limit).forEach { event ->
-            addView(kit.text(event.title, if (wall) 20f else 18f, color = if (receded) p.inkMuted else p.ink, maxLines = 1),
+            addView(kit.text(event.title, if (wall) 20f else 18f, color = if (receded) recededInk else p.ink, maxLines = 1),
                 LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = kit.dp(2) })
         }
         if (events.size > limit) addView(kit.text("${events.size - limit} more", if (wall) 20f else 18f, TouchFonts.Face.TEXT_BOLD,
-            if (receded) p.inkMuted else p.accentInk))
+            if (receded) recededInk else p.accentInk))
     }
 
     private fun agenda(kit: TouchKit, skeleton: Boolean) {
@@ -423,6 +475,8 @@ class TouchCalendarView(
             val events = state.events.filter { it.occursOn(current, ZoneId.systemDefault()) }
                 .sortedWith(compareBy({ !it.allDay }, { it.startEpochMillis }, { it.title }))
             val today = current == LocalDate.now()
+            val past = current.isBefore(LocalDate.now())
+            val dayInk = if (past) p.pastInk else p.ink
             body.addView(LinearLayout(context).apply {
                 orientation = if (wide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
                 setPadding(0, kit.dp(14), 0, kit.dp(14))
@@ -437,20 +491,25 @@ class TouchCalendarView(
                         background = kit.startRule(p.accentStroke, 4)
                         setPadding(kit.dp(14), 0, 0, 0)
                     }
-                    addView(kit.text(dayName(current), kit.scale.label, TouchFonts.Face.TEXT_BOLD, if (today) p.accentInk else p.inkMuted))
-                    addView(kit.text(current.format(DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())), kit.scale.headline, TouchFonts.Face.DISPLAY_BOLD))
+                    addView(kit.text(dayName(current), kit.scale.label, TouchFonts.Face.TEXT_BOLD, when {
+                        today -> p.accentInk
+                        past -> p.pastInk
+                        else -> p.inkMuted
+                    }))
+                    addView(kit.text(current.format(DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())), kit.scale.headline,
+                        if (past) TouchFonts.Face.DISPLAY else TouchFonts.Face.DISPLAY_BOLD, dayInk))
                 }, LinearLayout.LayoutParams(if (wide) kit.dp(200) else MATCH, WRAP))
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     when {
                         skeleton -> addView(View(context).apply { background = kit.rounded(p.line, 8) }, LinearLayout.LayoutParams(kit.dp(320), kit.dp(20)).apply { topMargin = kit.dp(6) })
-                        events.isEmpty() -> addView(kit.text("Free", kit.scale.body, color = p.inkMuted))
+                        events.isEmpty() -> addView(kit.text("Free", kit.scale.body, color = if (past) p.pastInk else p.inkMuted))
                         else -> events.forEach { event ->
                             addView(LinearLayout(context).apply {
                                 orientation = LinearLayout.HORIZONTAL
-                                addView(kit.text(timeLabel(event), kit.scale.body, TouchFonts.Face.TEXT_BOLD).apply { fontFeatureSettings = "tnum" },
+                                addView(kit.text(timeLabel(event), kit.scale.body, if (past) TouchFonts.Face.TEXT_MEDIUM else TouchFonts.Face.TEXT_BOLD, dayInk).apply { fontFeatureSettings = "tnum" },
                                     LinearLayout.LayoutParams(kit.dp((kit.scale.body * 5.6f).toInt()), WRAP))
-                                addView(kit.text(event.title, kit.scale.body), LinearLayout.LayoutParams(0, WRAP, 1f))
+                                addView(kit.text(event.title, kit.scale.body, color = dayInk), LinearLayout.LayoutParams(0, WRAP, 1f))
                             }, LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = kit.dp(8) })
                         }
                     }

@@ -50,6 +50,13 @@ internal data class TouchPalette(
     val accentInk: Int,
     /** Today's calendar cell: a tint by day, the dim selection fill by night, always with an accent outline. */
     val todayFill: Int,
+    /**
+     * Past calendar days stay present but read as inactive (text ≥ 4.5:1): a greyed panel by day,
+     * an outlined box on the black wall by night, always with lighter type than upcoming days.
+     */
+    val pastFill: Int,
+    val pastLine: Int,
+    val pastInk: Int,
     val pending: Int,
     val pendingInk: Int,
     val alert: Int,
@@ -72,6 +79,7 @@ internal data class TouchPalette(
             railSelectedStroke = 0xFFF6F4EF.toInt(),
             accent = 0xFF2E5E50.toInt(), onAccent = 0xFFFFFFFF.toInt(), accentStroke = 0xFF2E5E50.toInt(),
             accentSoft = 0xFFDCE6E0.toInt(), accentInk = 0xFF24493F.toInt(), todayFill = 0xFFDCE6E0.toInt(),
+            pastFill = 0xFFD6D3CB.toInt(), pastLine = 0xFFC6C1B6.toInt(), pastInk = 0xFF545B57.toInt(),
             pending = 0xFFF2E3C4.toInt(), pendingInk = 0xFF6B4500.toInt(), alert = 0xFFF4DCD6.toInt(), alertInk = 0xFF8E2A1C.toInt(),
             disabledInk = 0xFF5A625D.toInt(), notice = 0xFF27302C.toInt(), noticeInk = 0xFFF6F4EF.toInt(),
             noticeStroke = 0xFF27302C.toInt(), letterbox = 0xFF1B1F1D.toInt(), scrim = 0x8C101211.toInt(), pressed = 0x241D2321,
@@ -86,6 +94,7 @@ internal data class TouchPalette(
             railSelectedStroke = 0xFFB39668.toInt(),
             accent = 0xFF3A2F1E.toInt(), onAccent = 0xFFC9AA74.toInt(), accentStroke = 0xFFB39668.toInt(),
             accentSoft = 0xFF231D14.toInt(), accentInk = 0xFFC9AA74.toInt(), todayFill = 0xFF3A2F1E.toInt(),
+            pastFill = 0xFF000000.toInt(), pastLine = 0xFF3A3226.toInt(), pastInk = 0xFF8A785A.toInt(),
             pending = 0xFF2B2210.toInt(), pendingInk = 0xFFD1A453.toInt(), alert = 0xFF2E1611.toInt(), alertInk = 0xFFD98C78.toInt(),
             disabledInk = 0xFF8E7A58.toInt(), notice = 0xFF17140F.toInt(), noticeInk = 0xFFB39668.toInt(),
             noticeStroke = 0xFF7A6849.toInt(), letterbox = 0xFF000000.toInt(), scrim = 0x99000000.toInt(), pressed = 0x33B39668,

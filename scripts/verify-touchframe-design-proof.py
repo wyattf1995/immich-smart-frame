@@ -34,6 +34,7 @@ CLASSES = {
     "week": ("com.wyattfleming.touchframe.calendar.TouchCalendarWeekPresentationTest", tests / "calendar/TouchCalendarWeekPresentationTest.kt"),
     "theme": ("com.wyattfleming.touchframe.ui.TouchThemeTest", tests / "ui/TouchThemeTest.kt"),
     "day": ("com.wyattfleming.touchframe.calendar.TouchCalendarDayStyleTest", tests / "calendar/TouchCalendarDayStyleTest.kt"),
+    "today": ("com.wyattfleming.touchframe.calendar.TouchCalendarTodayColumnTest", tests / "calendar/TouchCalendarTodayColumnTest.kt"),
 }
 
 MUTATIONS = [
@@ -65,6 +66,10 @@ MUTATIONS = [
     ("month-past-day-tone-red", main / "calendar/TouchCalendarModel.kt",
      "date.isBefore(today) -> TouchCalendarDayTone.PAST", "false -> TouchCalendarDayTone.PAST", "day",
      {"month cells separate past days, today and upcoming days", "days outside the month are past when earlier and quiet placeholders when later"}),
+    ("today-finished-events-red", main / "calendar/TouchCalendarWeekPresentation.kt",
+     "(event.endEpochMillis ?: event.startEpochMillis) <= nowMillis -> EventTiming.ENDED", "false -> EventTiming.ENDED", "today",
+     {"finished events collapse into a count and the current one reads Now",
+      "timing treats all-day events as current all day and open-ended ones as finished once started"}),
 ]
 
 
