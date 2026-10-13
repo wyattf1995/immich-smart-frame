@@ -42,6 +42,7 @@ suites = {
     "calendar_ranges": (module / "src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarModel.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarRangeParserTest.kt", "com.wyattfleming.touchframe.calendar.TouchCalendarRangeParserTest"),
     "calendar_parser": (module / "src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarParser.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarParserBoundsTest.kt", "com.wyattfleming.touchframe.calendar.TouchCalendarParserBoundsTest"),
     "calendar_repository": (module / "src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarRepository.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarRepositoryTest.kt", "com.wyattfleming.touchframe.calendar.TouchCalendarRepositoryTest"),
+    "configuration": (module / "src/main/kotlin/com/wyattfleming/touchframe/data/TouchConfiguration.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/data/TouchConfigurationTest.kt", "com.wyattfleming.touchframe.data.TouchConfigurationTest"),
 }
 
 
@@ -69,6 +70,7 @@ def static_contract() -> dict[str, object]:
     provisioning = suites["provisioning"][0].read_text()
     scope = suites["scope"][0].read_text()
     calendar_repository = suites["calendar_repository"][0].read_text()
+    configuration = suites["configuration"][0].read_text()
     required = {
         "media-only edge gesture": "destination.isImmersiveMedia &&",
         "48dp edge target": "EDGE_WIDTH_DP = 48",
@@ -95,8 +97,9 @@ def static_contract() -> dict[str, object]:
         "strict monotonic settings revision": "incomingRevision >= 0 && incomingRevision > currentRevision",
         "provisioning collection cap": "private const val MAX_CALENDARS = 4",
         "Calendar socket cleanup ownership": "invalidated.futures.toList()",
+        "Birds URL validation": "if (birds != null && !urlPolicy.isSafeConfigurationUrl(birds)) return null",
     }
-    combined = shell + repo + parser + media + offline + blur + offline_store + hidden_commit + companion + destination_order + settings_policy + provisioning + scope + calendar_repository
+    combined = shell + repo + parser + media + offline + blur + offline_store + hidden_commit + companion + destination_order + settings_policy + provisioning + scope + calendar_repository + configuration
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -431,6 +434,12 @@ try:
         "true",
         {"Birds is visible only when its local feed is configured"},
     )
+    birds_url_validation_red = mutate(
+        "birds-url-validation-red", "configuration",
+        "if (birds != null && !urlPolicy.isSafeConfigurationUrl(birds)) return null",
+        "if (false) return null",
+        {"optional Art and Birds feeds preserve HTTP and HTTPS policy and reject unsafe URLs"},
+    )
     settings_revision_red = mutate(
         "settings-monotonic-revision-red", "settings_policy",
         "incomingRevision >= 0 && incomingRevision > currentRevision",
@@ -503,6 +512,7 @@ try:
         "dispatchExpiryRed": expiry_red, "delayedMainCancellationRed": timeout_cancel_red,
         "destinationPermanentHomeRed": destination_order_red,
         "birdsLocalConfigurationRed": birds_visibility_red,
+        "birdsUrlValidationRed": birds_url_validation_red,
         "settingsMonotonicRevisionRed": settings_revision_red,
         "provisioningCalendarCapRed": provisioning_cap_red,
         "pausedTaskEntryRed": scope_red,
