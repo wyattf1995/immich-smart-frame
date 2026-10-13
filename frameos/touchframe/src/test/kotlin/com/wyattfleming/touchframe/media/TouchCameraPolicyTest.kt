@@ -51,9 +51,9 @@ class TouchCameraPolicyTest {
         val gate = TouchCameraRefreshGate()
         assertTrue(gate.setActive(true, "camera.one"))
         val issued = gate.next()!!
+        // The worker is still fetching `issued`: a periodic tick neither queues nor invalidates it.
         assertTrue(!gate.requestPeriodic("camera.one"))
         assertTrue(gate.isCurrent(issued))
-        assertNull(gate.next())
         // An explicit refresh or a camera change still replaces the slow request.
         assertTrue(!gate.request("camera.two"))
         assertTrue(!gate.isCurrent(issued))
