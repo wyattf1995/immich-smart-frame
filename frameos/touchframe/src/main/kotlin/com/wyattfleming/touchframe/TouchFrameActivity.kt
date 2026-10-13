@@ -543,10 +543,11 @@ class TouchFrameActivity : Activity() {
                 addView(kit.text(getString(R.string.touch_sign_in_title), kit.scale.headline, TouchFonts.Face.DISPLAY_BOLD, palette.mouldingInk))
                 addView(kit.text(getString(R.string.touch_sign_in_subtitle), kit.scale.caption, color = palette.mouldingMuted))
             }, android.widget.LinearLayout.LayoutParams(0, -2, 1f))
+            val barHeight = kit.dp(TouchShellLayout.barHeightDpFor(resources.configuration.screenWidthDp))
             addView(kit.button(getString(R.string.touch_cancel_sign_in), TouchKit.Emphasis.QUIET, quietInk = palette.mouldingInk) {
                 pending.consume()
                 closeAuthorization()
-            })
+            }.apply { minimumHeight = 0 }, android.widget.LinearLayout.LayoutParams(-2, barHeight - kit.dp(12)))
         }, android.widget.LinearLayout.LayoutParams(-1, kit.dp(TouchShellLayout.barHeightDpFor(resources.configuration.screenWidthDp))))
         container.addView(surface, android.widget.LinearLayout.LayoutParams(-1, 0, 1f))
         authorization = surface

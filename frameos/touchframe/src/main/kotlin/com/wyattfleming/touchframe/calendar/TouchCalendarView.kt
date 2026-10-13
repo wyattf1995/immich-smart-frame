@@ -91,7 +91,7 @@ class TouchCalendarView(
         setBackgroundColor(kit.palette.wall)
         body.removeAllViews()
         val pad = kit.dp(scale.pad)
-        body.setPadding(pad, (pad * 0.8f).toInt(), pad, (pad * 0.7f).toInt())
+        body.setPadding(pad, (pad * 0.6f).toInt(), pad, (pad * 0.5f).toInt())
         val wideHeader = isWideHeader()
         lastWideHeader = wideHeader
         calendarHeader(kit, wideHeader)
@@ -216,7 +216,7 @@ class TouchCalendarView(
     private fun weekDayColumn(kit: TouchKit, day: TouchCalendarWeekPresentation.Day, skeleton: Boolean, wall: Boolean) = LinearLayout(context).apply {
         val p = kit.palette
         orientation = LinearLayout.VERTICAL
-        minimumHeight = kit.dp(if (wall) 360 else 228)
+        minimumHeight = kit.dp(if (wall) 330 else 228)
         val inset = kit.dp(if (wall) 14 else 10)
         setPadding(inset, inset, inset, inset)
         val selected = day.date == state.selectedDate
@@ -316,7 +316,7 @@ class TouchCalendarView(
         // banner, when day columns also trim to two previews), the verified 12 elsewhere.
         val pageSize = when {
             !wide -> TouchCalendarWeekPresentation.DETAILS_PER_PAGE
-            kit.scale == TouchScale.WALL -> TouchCalendarWeekPresentation.DETAILS_PER_PAGE
+            kit.scale == TouchScale.WALL -> if (bannerShown()) 8 else 10
             bannerShown() -> 4
             else -> 6
         }
@@ -416,10 +416,16 @@ class TouchCalendarView(
         body.addView(headers, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = kit.dp(10) })
         var date = state.range.start
         val month = state.anchor.month
-        repeat(TouchCalendarRenderPlan.monthWeeks(state.range)) { weekIndex ->
+        val weeks = TouchCalendarRenderPlan.monthWeeks(state.range)
+        val cellHeight = TouchCalendarMonthLayout.cellHeightDp(
+            viewportHeightDp = if (height > 0) height / resources.displayMetrics.density else 0f,
+            weeks = weeks,
+            wall = wall,
+        )
+        repeat(weeks) { weekIndex ->
             val line = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
             repeat(7) { index ->
-                line.addView(dayCell(kit, date, date.month == month, skeleton, wall), LinearLayout.LayoutParams(0, kit.dp(if (wall) 160 else 100), 1f).apply {
+                line.addView(dayCell(kit, date, date.month == month, skeleton, wall), LinearLayout.LayoutParams(0, kit.dp(cellHeight), 1f).apply {
                     if (index > 0) marginStart = kit.dp(6)
                 })
                 date = date.plusDays(1)
@@ -599,6 +605,22 @@ class TouchCalendarView(
     private companion object {
         const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
+    }
+}
+
+/** Month cells shrink so a five- or six-week month fits one glance, within readable bounds. */
+internal object TouchCalendarMonthLayout {
+    /** Space Month needs besides the grid: padding, header row, weekday row and the tap hint (dp), as measured in the reviewed mockup. */
+    const val PANEL_CHROME_DP = 210f
+    const val WALL_CHROME_DP = 260f
+    const val ROW_GAP_DP = 6f
+
+    fun cellHeightDp(viewportHeightDp: Float, weeks: Int, wall: Boolean): Int {
+        val max = if (wall) 140 else 100
+        val min = if (wall) 104 else 72
+        if (viewportHeightDp <= 0f || weeks <= 0) return max
+        val fitted = (viewportHeightDp - (if (wall) WALL_CHROME_DP else PANEL_CHROME_DP)) / weeks - ROW_GAP_DP
+        return fitted.toInt().coerceIn(min, max)
     }
 }
 

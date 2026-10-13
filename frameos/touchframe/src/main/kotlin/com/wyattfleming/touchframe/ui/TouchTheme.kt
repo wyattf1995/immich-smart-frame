@@ -148,9 +148,9 @@ internal data class TouchScale(
 ) {
     companion object {
         val WALL = TouchScale(
-            clock = 176f, clockSuffix = 44f, display = 76f, title = 40f, headline = 32f, body = 26f,
+            clock = 150f, clockSuffix = 40f, display = 76f, title = 40f, headline = 32f, body = 26f,
             label = 22f, caption = 20f, rail = 18f, target = 72, stepper = 104, setpoint = 104f,
-            pad = 48, gap = 32, radius = 20, radiusSmall = 14,
+            pad = 48, gap = 28, radius = 20, radiusSmall = 14,
         )
         val PANEL = TouchScale(
             clock = 104f, clockSuffix = 32f, display = 56f, title = 32f, headline = 26f, body = 22f,
@@ -167,7 +167,8 @@ internal data class TouchScale(
         fun forScreen(configuration: android.content.res.Configuration): TouchScale =
             forScreenHeightDp(configuration.screenHeightDp.toFloat())
 
-        const val WALL_MIN_SCREEN_HEIGHT_DP = 1000f
+        /** Below the 1920×1080 frame's 1080dp even when a 48dp system bar is reported, above 800dp panels. */
+        const val WALL_MIN_SCREEN_HEIGHT_DP = 960f
     }
 }
 

@@ -344,12 +344,10 @@ class TouchShellLayout(
             isSelected = selected
             contentDescription = item.label
             minimumWidth = dp(MIN_TARGET_DP)
+            // The whole bar height is the touch target; the chip is drawn inset inside it. The
+            // background is set before the padding: an InsetDrawable reports padding and would replace it.
+            background = insetChip(if (selected) rounded(palette.selected, palette.selectedStroke) else rounded(Color.TRANSPARENT, null), dp(2))
             setPadding(dp(if (large) 26 else 20), 0, dp(if (large) 26 else 20), 0)
-            // The whole bar height is the touch target; the chip is drawn inset inside it.
-            background = android.graphics.drawable.InsetDrawable(
-                if (selected) rounded(palette.selected, palette.selectedStroke) else rounded(Color.TRANSPARENT, null),
-                dp(2), dp(TAB_INSET_DP), dp(2), dp(TAB_INSET_DP),
-            )
             setOnClickListener {
                 hideMenu()
                 onNavigate(item)
@@ -368,8 +366,8 @@ class TouchShellLayout(
         isFocusable = true
         contentDescription = "Settings"
         minimumWidth = dp(MIN_TARGET_DP)
+        background = insetChip(rounded(palette.settings, palette.settingsStroke), 0)
         setPadding(dp(20), 0, dp(20), 0)
-        background = android.graphics.drawable.InsetDrawable(rounded(palette.settings, palette.settingsStroke), 0, dp(TAB_INSET_DP), 0, dp(TAB_INSET_DP))
         setOnClickListener { onSettings() }
         addView(icon(R.drawable.ic_touch_settings, palette.settingsInk, large))
         addView(label("Settings", palette.settingsInk, large))
@@ -404,6 +402,17 @@ class TouchShellLayout(
         includeFontPadding = false
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
         maxLines = 1
+    }
+
+    /** A full-height touch target whose visible chip is inset; pressing tints the chip, never moves it. */
+    private fun insetChip(chip: android.graphics.drawable.Drawable, horizontalInset: Int): android.graphics.drawable.Drawable {
+        val mask = android.graphics.drawable.InsetDrawable(rounded(Color.WHITE, null), horizontalInset, dp(TAB_INSET_DP), horizontalInset, dp(TAB_INSET_DP))
+        val pressed = TouchPalette.forNight(night).pressed or 0x22000000
+        return android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(if (night) pressed else 0x33FFFFFF),
+            android.graphics.drawable.InsetDrawable(chip, horizontalInset, dp(TAB_INSET_DP), horizontalInset, dp(TAB_INSET_DP)),
+            mask,
+        )
     }
 
     private fun rounded(color: Int, stroke: Int?) = android.graphics.drawable.GradientDrawable().apply {

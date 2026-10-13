@@ -318,7 +318,7 @@ class TouchCameraView(
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             val pad = kit.dp(kit.scale.pad)
-            setPadding(pad, (pad * 0.8f).toInt(), pad, (pad * 0.7f).toInt())
+            setPadding(pad, (pad * 0.6f).toInt(), pad, (pad * 0.5f).toInt())
             addView(stage, LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
             addView(list, LinearLayout.LayoutParams(kit.dp(if (wall) 340 else 270), LayoutParams.MATCH_PARENT).apply { marginStart = kit.dp(kit.scale.gap) })
         }

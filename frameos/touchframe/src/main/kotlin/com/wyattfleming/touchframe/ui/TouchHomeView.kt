@@ -194,7 +194,7 @@ class TouchHomeView private constructor(
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             val pad = kit.dp(scale.pad)
-            setPadding(pad, (pad * 0.8f).toInt(), pad, (pad * 0.7f).toInt())
+            setPadding(pad, (pad * 0.6f).toInt(), pad, (pad * 0.5f).toInt())
         }
         content.addView(header(kit, large), LinearLayout.LayoutParams(MATCH, WRAP))
         bannerSlot = FrameLayout(context).also { content.addView(it, LinearLayout.LayoutParams(MATCH, WRAP)) }
