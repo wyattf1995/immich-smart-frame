@@ -367,24 +367,51 @@ class TouchCalendarView(
     private fun dayCell(kit: TouchKit, date: LocalDate, inMonth: Boolean, skeleton: Boolean, wall: Boolean) = LinearLayout(context).apply {
         val p = kit.palette
         orientation = LinearLayout.VERTICAL
-        setPadding(kit.dp(if (wall) 12 else 10), kit.dp(6), kit.dp(if (wall) 12 else 10), kit.dp(6))
+        val tone = TouchCalendarDayStyle.toneFor(date, LocalDate.now(), inMonth)
+        val inset = if (tone == TouchCalendarDayTone.TODAY) 2 else 0
+        setPadding(kit.dp((if (wall) 12 else 10) - inset), kit.dp(6 - inset), kit.dp((if (wall) 12 else 10) - inset), kit.dp(6 - inset))
         val events = state.events.filter { it.occursOn(date, ZoneId.systemDefault()) }
             .sortedWith(compareBy({ !it.allDay }, { it.startEpochMillis }))
-        background = kit.pressable(kit.rounded(if (inMonth) p.mat else 0x00000000, 8, p.line), 8)
+        // Past days recede into the wall with no outline; today is tinted and outlined; upcoming days are panels.
+        val base = when (tone) {
+            TouchCalendarDayTone.TODAY -> kit.rounded(p.todayFill, 8, p.accentStroke, 3)
+            TouchCalendarDayTone.PAST -> kit.rounded(0x00000000, 8)
+            TouchCalendarDayTone.OUTSIDE_MONTH -> kit.rounded(0x00000000, 8, p.line)
+            TouchCalendarDayTone.UPCOMING -> kit.rounded(p.mat, 8, p.line)
+        }
+        background = kit.pressable(base, 8)
         isClickable = true
         isFocusable = true
-        contentDescription = "${spoken(date)}, ${countText(events.size)}, open week"
+        val prefix = when (tone) {
+            TouchCalendarDayTone.TODAY -> "Today, "
+            TouchCalendarDayTone.PAST -> "Past, "
+            else -> ""
+        }
+        contentDescription = "$prefix${spoken(date)}, ${countText(events.size)}, open week"
         // A day in Month opens its week with that day's complete, paged list.
         setOnClickListener { request(TouchCalendarMode.WEEK, date, date, true) }
-        val today = date == LocalDate.now()
-        addView(if (today) dateBadge(kit, date.dayOfMonth.toString(), true, 22f, 32).apply { minWidth = kit.dp(44) }
-            else kit.text(date.dayOfMonth.toString(), 24f, if (inMonth) TouchFonts.Face.DISPLAY_BOLD else TouchFonts.Face.DISPLAY, if (inMonth) p.ink else p.inkMuted))
+        val receded = tone == TouchCalendarDayTone.PAST || tone == TouchCalendarDayTone.OUTSIDE_MONTH
+        if (tone == TouchCalendarDayTone.TODAY) {
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(dateBadge(kit, date.dayOfMonth.toString(), true, 22f, 32).apply { minWidth = kit.dp(44) })
+                addView(kit.text("Today", if (wall) 20f else 18f, TouchFonts.Face.TEXT_BOLD, p.accentInk).apply {
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }, LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = kit.dp(8) })
+            })
+        } else {
+            addView(kit.text(date.dayOfMonth.toString(), 24f, if (receded) TouchFonts.Face.DISPLAY else TouchFonts.Face.DISPLAY_BOLD,
+                if (receded) p.inkMuted else p.ink))
+        }
         if (skeleton || !inMonth) return@apply
         val limit = if (wall) 2 else 1
         events.take(limit).forEach { event ->
-            addView(kit.text(event.title, if (wall) 20f else 18f, maxLines = 1), LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = kit.dp(2) })
+            addView(kit.text(event.title, if (wall) 20f else 18f, color = if (receded) p.inkMuted else p.ink, maxLines = 1),
+                LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = kit.dp(2) })
         }
-        if (events.size > limit) addView(kit.text("${events.size - limit} more", if (wall) 20f else 18f, TouchFonts.Face.TEXT_BOLD, p.accentInk))
+        if (events.size > limit) addView(kit.text("${events.size - limit} more", if (wall) 20f else 18f, TouchFonts.Face.TEXT_BOLD,
+            if (receded) p.inkMuted else p.accentInk))
     }
 
     private fun agenda(kit: TouchKit, skeleton: Boolean) {

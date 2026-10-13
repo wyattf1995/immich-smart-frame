@@ -33,6 +33,7 @@ CLASSES = {
     "idle": ("com.wyattfleming.touchframe.ui.TouchIdleReturnPolicyTest", tests / "ui/TouchIdleReturnPolicyTest.kt"),
     "week": ("com.wyattfleming.touchframe.calendar.TouchCalendarWeekPresentationTest", tests / "calendar/TouchCalendarWeekPresentationTest.kt"),
     "theme": ("com.wyattfleming.touchframe.ui.TouchThemeTest", tests / "ui/TouchThemeTest.kt"),
+    "day": ("com.wyattfleming.touchframe.calendar.TouchCalendarDayStyleTest", tests / "calendar/TouchCalendarDayStyleTest.kt"),
 }
 
 MUTATIONS = [
@@ -61,6 +62,9 @@ MUTATIONS = [
     ("theme-night-selection-red", main / "ui/TouchTheme.kt",
      "railSelected = 0xFF2A2318.toInt()", "railSelected = 0xFFE8C88E.toInt()", "theme",
      {"every text token pair meets AA in both palettes", "night palette is dim and warm for bedrooms"}),
+    ("month-past-day-tone-red", main / "calendar/TouchCalendarModel.kt",
+     "date.isBefore(today) -> TouchCalendarDayTone.PAST", "false -> TouchCalendarDayTone.PAST", "day",
+     {"month cells separate past days, today and upcoming days", "days outside the month are past when earlier and quiet placeholders when later"}),
 ]
 
 
