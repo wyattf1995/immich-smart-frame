@@ -299,6 +299,8 @@ class TouchCameraView(
     }
 
     private fun styleControl(view: TextView, palette: TouchCameraPalette, selected: Boolean, action: Boolean) {
+        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+        view.includeFontPadding = false
         view.setTextColor(ColorStateList(
             arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
             intArrayOf(palette.disabledInk, if (selected || action) palette.accentInk else palette.ink),
@@ -432,6 +434,7 @@ internal data class TouchCameraPalette(
         } else {
             TouchCameraPalette(
                 surface = 0xFFF1EDE4.toInt(), panel = 0xFFE3E6DF.toInt(), ink = 0xFF182630.toInt(),
+                // Day controls need dark ink over teal; this is a proof-specific unique marker.
                 accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),
                 disabledSurface = 0xFFD7D5CE.toInt(), disabledInk = 0xFF48555B.toInt(),
             )
