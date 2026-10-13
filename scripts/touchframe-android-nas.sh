@@ -112,6 +112,7 @@ run_step touchframe-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-da
 run_step touchframe-shared-tests-preflight bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :frame-shared:testDebugUnitTest"
 run_step touchframe-tests-preflight bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:testDebugUnitTest"
 run_step touchframe-source-proof python3 "$root_dir/scripts/verify-touchframe-proof.py" "$root_dir"
+run_step weather-header-source-proof python3 "$root_dir/scripts/verify-weather-header-layout-proof.py" "$root_dir"
 run_step touchframe-shared-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :frame-shared:testDebugUnitTest"
 run_step touchframe-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:testDebugUnitTest"
 run_step touchframe-assemble-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:assembleRelease"
@@ -158,7 +159,7 @@ PY
 python3 - "$root_dir" "$report_zip" <<'PY'
 import sys,zipfile
 from pathlib import Path
-root,out=map(Path,sys.argv[1:]); include=[root/'reports/touchframe-android',root/'frameos/touchframe/build/reports',root/'frameos/touchframe/build/test-results',root/'frameos/frame-shared/build/reports',root/'frameos/frame-shared/build/test-results']
+root,out=map(Path,sys.argv[1:]); include=[root/'reports/frameos-weather-header',root/'reports/touchframe-android',root/'frameos/touchframe/build/reports',root/'frameos/touchframe/build/test-results',root/'frameos/frame-shared/build/reports',root/'frameos/frame-shared/build/test-results']
 with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
  for base in include:
   if base.exists():

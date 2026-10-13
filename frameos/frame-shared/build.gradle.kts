@@ -72,6 +72,7 @@ val syncSharedTestSources by tasks.registering(SharedInputSync::class) {
             "com/wyattfleming/frameos/photos/FramePhotoBridgePackagingContractTest.kt",
             "com/wyattfleming/frameos/photos/FrameSharedPlaybackMetadataTest.kt",
             "com/wyattfleming/frameos/control/FrameCompanionEventStoreTest.kt",
+            "com/wyattfleming/frameos/ui/WeatherHeaderLayoutTest.kt",
         )
     }
     generatedDirectory.set(layout.buildDirectory.dir("generated/shared/test/kotlin"))
