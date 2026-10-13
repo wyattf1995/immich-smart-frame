@@ -47,6 +47,23 @@ class TouchCameraPolicyTest {
         assertTrue(!gate.request("camera.two"))
     }
 
+    @Test fun periodicTickNeverInvalidatesAFetchInFlight() {
+        val gate = TouchCameraRefreshGate()
+        assertTrue(gate.setActive(true, "camera.one"))
+        val issued = gate.next()!!
+        assertTrue(!gate.requestPeriodic("camera.one"))
+        assertTrue(gate.isCurrent(issued))
+        assertNull(gate.next())
+        // An explicit refresh or a camera change still replaces the slow request.
+        assertTrue(!gate.request("camera.two"))
+        assertTrue(!gate.isCurrent(issued))
+        assertEquals("camera.two", gate.next()!!.camera)
+        assertNull(gate.next())
+        // Idle again: the next periodic tick schedules a fresh fetch.
+        assertTrue(gate.requestPeriodic("camera.two"))
+        assertEquals("camera.two", gate.next()!!.camera)
+    }
+
     @Test fun samplingBoundsLargeImages() {
         listOf(7680 to 4320, 1921 to 1081).forEach { (width, height) ->
             val sample = TouchCameraPolicy.sampleSize(width, height)
