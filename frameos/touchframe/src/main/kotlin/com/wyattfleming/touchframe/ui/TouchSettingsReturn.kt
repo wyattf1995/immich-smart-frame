@@ -1,5 +1,7 @@
 package com.wyattfleming.touchframe.ui
 
+import android.app.Activity
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
@@ -27,13 +29,10 @@ class TouchSettingsReturn(private val context: Context) {
                     textSize = 20f
                     minHeight = (56 * resources.displayMetrics.density).toInt()
                     setOnClickListener {
-                        // Keep the control available if Android cannot bring our task back.
-                        runCatching {
-                            context.startActivity(Intent(context, TouchFrameActivity::class.java).addFlags(
-                                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
-                            ))
-                        }.onSuccess { remove() }
+                        // Dispatch acceptance does not prove Android foregrounded our task.
+                        // TouchFrameActivity.onResume is the only confirmation that removes this control.
+                        runCatching { bringTouchTaskToFront() }
+                        if (TouchSettingsReturnPlan.dismissOverlayAfterReturnDispatch()) remove()
                     }
                 }
                 @Suppress("DEPRECATION")
@@ -81,9 +80,46 @@ class TouchSettingsReturn(private val context: Context) {
         }
     }
 
+    private fun bringTouchTaskToFront() {
+        val task = (context as? Activity)?.let(::owningAppTask)
+        val shouldLaunch = when (TouchSettingsReturnPlan.routeFor(task != null)) {
+            TouchSettingsReturnRoute.MOVE_EXISTING_TASK -> !runCatching { requireNotNull(task).moveToFront() }.isSuccess
+            TouchSettingsReturnRoute.LAUNCH_SINGLE_TOP_TASK -> true
+        }
+        if (!shouldLaunch) return
+        context.startActivity(
+            Intent(context, TouchFrameActivity::class.java)
+                .addFlags(TouchSettingsReturnPlan.FALLBACK_LAUNCH_FLAGS),
+        )
+    }
+
+    private fun owningAppTask(activity: Activity): ActivityManager.AppTask? = runCatching {
+        val manager = activity.getSystemService(ActivityManager::class.java)
+        manager?.appTasks?.firstOrNull { task ->
+            TouchSettingsReturnPlan.isOwningTask(task.taskInfo.id, activity.taskId)
+        }
+    }.getOrNull()
+
     fun remove() {
         val current = button ?: return
         button = null
         runCatching { manager.removeViewImmediate(current) }
     }
+}
+
+internal enum class TouchSettingsReturnRoute { MOVE_EXISTING_TASK, LAUNCH_SINGLE_TOP_TASK }
+
+internal object TouchSettingsReturnPlan {
+    val FALLBACK_LAUNCH_FLAGS = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+
+    fun isOwningTask(candidateTaskId: Int, activityTaskId: Int): Boolean = candidateTaskId == activityTaskId
+
+    fun routeFor(hasAppTask: Boolean): TouchSettingsReturnRoute = if (hasAppTask) {
+        TouchSettingsReturnRoute.MOVE_EXISTING_TASK
+    } else {
+        TouchSettingsReturnRoute.LAUNCH_SINGLE_TOP_TASK
+    }
+
+    /** A successful dispatch is not proof that the Settings task yielded foreground. */
+    fun dismissOverlayAfterReturnDispatch(): Boolean = false
 }

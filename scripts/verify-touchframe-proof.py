@@ -27,9 +27,11 @@ bridge_result_dir = frame / "frame-shared" / "build" / "test-results" / "testDeb
 bridge_class = "com.wyattfleming.frameos.photos.FramePhotoBridgePreparedAttachmentContractTest"
 suites = {
     "shell": (module / "src/main/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayout.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayoutTest.kt", "com.wyattfleming.touchframe.ui.TouchShellLayoutTest"),
+    "settings_return": (module / "src/main/kotlin/com/wyattfleming/touchframe/ui/TouchSettingsReturn.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/ui/TouchSettingsReturnPlanTest.kt", "com.wyattfleming.touchframe.ui.TouchSettingsReturnPlanTest"),
     "parser": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeParser.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeParserTest.kt", "com.wyattfleming.touchframe.home.TouchHomeParserTest"),
     "repository": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepository.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepositoryTest.kt", "com.wyattfleming.touchframe.home.TouchHomeRepositoryTest"),
     "media": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchMediaLoadStateTest.kt", "com.wyattfleming.touchframe.media.TouchMediaLoadStateTest"),
+    "camera_palette": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchCameraView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchCameraPaletteTest.kt", "com.wyattfleming.touchframe.media.TouchCameraPaletteTest"),
     "offline": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoLifecycleTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoLifecycleTest"),
     "blur": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflineBlurPlanTest.kt", "com.wyattfleming.touchframe.media.TouchOfflineBlurPlanTest"),
     "offline_store": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStore.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStoreScopeGateTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoStoreScopeGateTest"),
@@ -58,9 +60,11 @@ def require_file(path: Path) -> None:
 
 def static_contract() -> dict[str, object]:
     shell = suites["shell"][0].read_text()
+    settings_return = suites["settings_return"][0].read_text()
     repo = suites["repository"][0].read_text()
     parser = suites["parser"][0].read_text()
     media = suites["media"][0].read_text()
+    camera_palette = suites["camera_palette"][0].read_text()
     offline = suites["offline"][0].read_text()
     blur = suites["blur"][0].read_text()
     offline_store = suites["offline_store"][0].read_text()
@@ -79,12 +83,17 @@ def static_contract() -> dict[str, object]:
         "56dp horizontal threshold": "HORIZONTAL_THRESHOLD_DP = 56",
         "32dp vertical tolerance": "VERTICAL_TOLERANCE_DP = 32",
         "AA Settings and selected rail ink": "private const val ACCESSIBLE_RAIL_INK = -15722718",
+        "Settings return task fronting": "requireNotNull(task).moveToFront()",
+        "Settings return owning task lookup": "manager?.appTasks?.firstOrNull { task ->",
+        "Settings return task identity fence": "TouchSettingsReturnPlan.isOwningTask(task.taskInfo.id, activity.taskId)",
+        "Settings return overlay resume fence": "fun dismissOverlayAfterReturnDispatch(): Boolean = false",
         "direct state API": "/api/states/$entityId",
         "direct calendar API": "/api/calendars/$calendarId",
         "bounded request workers": "MAX_REQUEST_WORKERS = 2",
         "cancel operation generation gate": "!acceptOperation(operation)",
         "calendar event cap": "MAX_EVENTS_PER_CALENDAR = 200",
         "same-url crash retry": "if (configuredUrl == url) return if (contentProcessClosed)",
+        "Camera palette accessible accent": "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
         "pause lifecycle gate": "if (closed || !resumed) return\n            resumed = false",
         "Photos-active fallback gate": "active = value && attachment != null",
         "bounded blurred backdrop": "const val MAX_BACKDROP_EDGE = 128",
@@ -104,10 +113,12 @@ def static_contract() -> dict[str, object]:
         "calendar weekday header allowance": "WEEKDAY_HEADER_MIN_HEIGHT_DP = 48",
         "Birds URL validation": "if (birds != null && !urlPolicy.isSafeConfigurationUrl(birds)) return null",
     }
-    combined = shell + repo + parser + media + offline + blur + offline_store + hidden_commit + companion + destination_order + settings_policy + provisioning + scope + calendar_repository + calendar_presentation + configuration
+    combined = shell + settings_return + repo + parser + media + camera_palette + offline + blur + offline_store + hidden_commit + companion + destination_order + settings_policy + provisioning + scope + calendar_repository + calendar_presentation + configuration
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
+    if "Intent.FLAG_ACTIVITY_REORDER_TO_FRONT" in settings_return:
+        raise RuntimeError("Settings return must not reorder a task after Settings accepts a launch")
     forbidden = ("<iframe", "WebView", "loadUri(")
     found = [needle for needle in forbidden if needle in repo or needle in parser]
     if found:
@@ -329,6 +340,12 @@ try:
         "private const val ACCESSIBLE_RAIL_INK = -922140",
         {"selected and Settings rail ink satisfy AA contrast in both palettes"},
     )
+    settings_return_red = mutate(
+        "settings-return-overlay-red", "settings_return",
+        "fun dismissOverlayAfterReturnDispatch(): Boolean = false",
+        "fun dismissOverlayAfterReturnDispatch(): Boolean = true",
+        {"return dispatch retains overlay until the host resumes"},
+    )
     cap_red = mutate(
         "calendar-cap-red", "parser",
         "const val MAX_EVENTS_PER_CALENDAR = 200",
@@ -356,6 +373,12 @@ try:
         "return if (contentProcessClosed) Decision.RETRY_REQUIRED else Decision.LOAD",
         "return Decision.LOAD",
         {"contentCrashRequiresExplicitRetryAndUsesTheMostRecentConfiguredUrl"},
+    )
+    camera_palette_red = mutate(
+        "camera-palette-contrast-red", "camera_palette",
+        "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
+        "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFFF1EDE4.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
+        {"camera controls keep readable foregrounds on each explicit palette"},
     )
     offline_red = mutate(
         "offline-hidden-photos-red", "offline",
@@ -516,8 +539,10 @@ try:
         "sourceTestAnnotationCount": expected_tests, "initial": initial, "preparedBridgeInitial": bridge_initial,
         "preparedBridgeSessionGateRed": bridge_red, "edgeRed": edge_red,
         "shellContrastRed": shell_contrast_red,
+        "settingsReturnOverlayRed": settings_return_red,
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red,
         "climateStaleGateRed": climate_stale_red, "mediaCrashRetryRed": media_red,
+        "cameraPaletteContrastRed": camera_palette_red,
         "offlineHiddenPhotosRed": offline_red,
         "offlineBackdropBoundRed": blur_red,
         "offlineAttachmentGenerationRed": attachment_gate_red,
