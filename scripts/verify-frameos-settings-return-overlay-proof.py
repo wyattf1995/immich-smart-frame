@@ -39,7 +39,7 @@ def run(name,label,failures):
 checks={}
 mutations={
  'lifecycle':('if (!adapter.canDrawOverlays()) return Outcome.OVERLAY_PERMISSION_DENIED','if (!adapter.canDrawOverlays()) return Outcome.LAUNCHED'),
- 'legacy_type':('if (apiLevel >= Build.VERSION_CODES.O) APPLICATION_OVERLAY else PHONE','if (apiLevel >= Build.VERSION_CODES.M) APPLICATION_OVERLAY else PHONE'),
+ 'legacy_type':('if (apiLevel >= Build.VERSION_CODES.O) applicationOverlayForAndroid8OrLater() else PHONE','if (apiLevel >= Build.VERSION_CODES.M) applicationOverlayForAndroid8OrLater() else PHONE'),
 }
 try:
     for name,(before,after) in mutations.items():
