@@ -17,6 +17,7 @@ import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.WebRequestError
+import org.mozilla.geckoview.WebResponse
 import java.net.URI
 
 /**
@@ -35,7 +36,7 @@ class TouchMediaView(
         ?.isTouchExplorationEnabled == true
     private val geckoView = GeckoView(context).apply {
         setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
-        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
     }
     private val retryButton = TextView(context).apply {
         text = "Retry"
@@ -78,7 +79,10 @@ class TouchMediaView(
         this.label = label
         if (configuredUrl == url) return
         configuredUrl = url
-        contentProcessClosed = false
+        if (contentProcessClosed) {
+            reportContentProcessClosed()
+            return
+        }
         retryButton.visibility = View.GONE
         onStatus?.invoke(null)
         session?.loadUri(url)
@@ -174,6 +178,11 @@ class TouchMediaView(
         }
         next.contentDelegate = object : GeckoSession.ContentDelegate {
             override fun onFirstContentfulPaint(session: GeckoSession) = reportReady()
+
+            // Do not hand downloads or unknown content to an external activity.
+            override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
+                reportFailure("Downloads are unavailable")
+            }
 
             override fun onCrash(session: GeckoSession) = reportContentProcessClosed()
 
