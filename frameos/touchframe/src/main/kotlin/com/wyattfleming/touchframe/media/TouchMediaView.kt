@@ -19,6 +19,7 @@ import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.WebRequestError
 import org.mozilla.geckoview.WebResponse
+import java.util.concurrent.Future
 
 /**
  * One retained Gecko content session for Photos and Art. Home is a separate
@@ -87,6 +88,13 @@ class TouchMediaView(
         session?.let(offlinePhotos::detach)
         showUrl(url, "Art")
     }
+
+    fun setPhotosPaused(paused: Boolean): Boolean = photosProfile != null && offlinePhotos.setPaused(paused)
+
+    fun movePhoto(forward: Boolean): Boolean = photosProfile != null && offlinePhotos.move(forward)
+
+    fun applyHiddenPhotos(assetIds: Set<String>, canCommit: () -> Boolean = { true }): Future<Boolean>? =
+        if (photosProfile == null) null else offlinePhotos.applyHiddenAssets(assetIds, canCommit)
 
     fun showUrl(url: String, label: String) {
         if (label != "Photos") {

@@ -110,7 +110,7 @@ internal class TouchOfflinePhotos(
     fun setPaused(paused: Boolean): Boolean = bridge.setPlaybackPaused(paused)
     fun move(forward: Boolean): Boolean = bridge.movePhoto(forward)
     fun applyHiddenAssets(assetIds: Set<String>, canCommit: () -> Boolean = { true }) =
-        worker.submit<Boolean> { bridge.applyHiddenAssets(assetIds, canCommit) }
+        worker.submit<Boolean> { reserve.applyHiddenAssets(assetIds, canCommit) }
 
     override fun close() {
         if (closed) return
