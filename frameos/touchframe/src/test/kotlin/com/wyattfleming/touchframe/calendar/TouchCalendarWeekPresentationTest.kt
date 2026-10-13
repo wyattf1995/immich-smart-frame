@@ -12,6 +12,11 @@ class TouchCalendarWeekPresentationTest {
     private val range = TouchCalendarRange.forMode(TouchCalendarMode.WEEK, LocalDate.of(2026, 3, 10))
 
     @Test
+    fun startsInWeekModeForTouchCalendar() {
+        assertEquals(TouchCalendarMode.WEEK, TouchCalendarWeekPresentation.DEFAULT_MODE)
+    }
+
+    @Test
     fun groupsSevenDaysWithAllDayFirstAndBoundedPreview() {
         val events = listOf(
             event("Later timed", 2026, 3, 9, 15, 0),
