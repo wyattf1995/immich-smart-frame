@@ -12,6 +12,7 @@ import java.util.Locale
  */
 object TouchCalendarWeekPresentation {
     const val PREVIEW_PER_DAY = 3
+    const val DETAILS_PER_PAGE = 12
     val DEFAULT_MODE: TouchCalendarMode = TouchCalendarMode.WEEK
 
     data class EventPreview(
@@ -25,6 +26,15 @@ object TouchCalendarWeekPresentation {
         val events: List<TouchCalendarEvent>,
         val preview: List<EventPreview>,
         val overflowCount: Int,
+    )
+
+    data class DetailsPage(
+        val events: List<TouchCalendarEvent>,
+        val page: Int,
+        val pageCount: Int,
+        val totalEvents: Int,
+        val firstEventNumber: Int,
+        val lastEventNumber: Int,
     )
 
     fun days(
@@ -48,6 +58,22 @@ object TouchCalendarWeekPresentation {
                 overflowCount = (matching.size - PREVIEW_PER_DAY).coerceAtLeast(0),
             )
         }
+    }
+
+    fun detailsPage(events: List<TouchCalendarEvent>, requestedPage: Int): DetailsPage {
+        if (events.isEmpty()) return DetailsPage(emptyList(), 0, 0, 0, 0, 0)
+        val pageCount = (events.size + DETAILS_PER_PAGE - 1) / DETAILS_PER_PAGE
+        val page = requestedPage.coerceIn(0, pageCount - 1)
+        val firstIndex = page * DETAILS_PER_PAGE
+        val pageEvents = events.subList(firstIndex, minOf(firstIndex + DETAILS_PER_PAGE, events.size))
+        return DetailsPage(
+            events = pageEvents,
+            page = page,
+            pageCount = pageCount,
+            totalEvents = events.size,
+            firstEventNumber = firstIndex + 1,
+            lastEventNumber = firstIndex + pageEvents.size,
+        )
     }
 
     private fun previewFor(event: TouchCalendarEvent, zoneId: ZoneId, locale: Locale): EventPreview =

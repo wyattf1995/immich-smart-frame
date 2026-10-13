@@ -38,12 +38,17 @@ class TouchCalendarView(
     )
     private var night = false
     private var lastWideHeader: Boolean? = null
+    private var selectedDetailsPage = 0
 
     init {
         addView(body, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
     }
 
-    fun render(next: TouchCalendarState) { state = next; rebuild() }
+    fun render(next: TouchCalendarState) {
+        if (next.selectedDate != state.selectedDate || next.range != state.range || next.events != state.events) selectedDetailsPage = 0
+        state = next
+        rebuild()
+    }
     fun setNight(value: Boolean) { if (night != value) { night = value; rebuild() } }
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
@@ -191,7 +196,27 @@ class TouchCalendarView(
 
     private fun selectedDetails(events: List<TouchCalendarEvent>, ink: Int) {
         body.addView(text(state.selectedDate.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.getDefault())), 24f, ink, bold = true))
-        if (events.isEmpty()) body.addView(text("No events selected", 18f, ink)) else events.forEach { body.addView(eventRow(it, ink)) }
+        val page = TouchCalendarWeekPresentation.detailsPage(events, selectedDetailsPage)
+        selectedDetailsPage = page.page
+        if (page.events.isEmpty()) {
+            body.addView(text("No events selected", 18f, ink))
+            return
+        }
+        body.addView(text("Events ${page.firstEventNumber}–${page.lastEventNumber} of ${page.totalEvents}", 18f, ink))
+        page.events.forEach { body.addView(eventRow(it, ink)) }
+        if (page.pageCount > 1) {
+            val controls = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+            controls.addView(control("Previous events", ink, if (night) Color.rgb(153, 209, 187) else Color.rgb(21, 107, 88), false) {
+                selectedDetailsPage = (selectedDetailsPage - 1).coerceAtLeast(0)
+                rebuild()
+            }.apply { isEnabled = page.page > 0 }, LinearLayout.LayoutParams(0, dp(56), 1f))
+            controls.addView(text("${page.page + 1} of ${page.pageCount}", 18f, ink, true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(0, dp(56), .8f))
+            controls.addView(control("Next events", ink, if (night) Color.rgb(153, 209, 187) else Color.rgb(21, 107, 88), false) {
+                selectedDetailsPage = (selectedDetailsPage + 1).coerceAtMost(page.pageCount - 1)
+                rebuild()
+            }.apply { isEnabled = page.page < page.pageCount - 1 }, LinearLayout.LayoutParams(0, dp(56), 1f))
+            body.addView(controls)
+        }
     }
 
     private fun month(ink: Int, accent: Int) {
