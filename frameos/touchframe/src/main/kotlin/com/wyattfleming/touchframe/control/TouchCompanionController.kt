@@ -37,7 +37,8 @@ class TouchCompanionController private constructor(
     private val statusProvider: () -> FrameRemoteStatus?,
     private val onCommand: (FrameRemoteCommand, Long) -> CommandResult,
     private val onSettings: (FrameRemoteSettings, Long) -> Boolean,
-    private val onEvent: (com.wyattfleming.frameos.control.FrameCompanionEvent, Long) -> Boolean,
+    /** Called on the poll worker; the supplied predicate must fence persistence and UI handoff. */
+    private val onEvent: (com.wyattfleming.frameos.control.FrameCompanionEvent, Long, () -> Boolean) -> Boolean,
     /** Called off-main; the supplied predicate must fence any disk commit. */
     private val onHiddenAssets: (Set<String>, Long, () -> Boolean) -> Boolean,
 ) : AutoCloseable {
@@ -173,7 +174,7 @@ class TouchCompanionController private constructor(
             onMain(expectedGeneration) { onSettings(it, expectedGeneration) } == true
         } ?: true
         val eventAccepted = envelope.event?.let {
-            onMain(expectedGeneration) { onEvent(it, expectedGeneration) } == true
+            onEvent(it, expectedGeneration) { isCurrent(expectedGeneration) }
         } ?: true
         val hiddenAccepted = envelope.hiddenAssets?.let { ids ->
             onHiddenAssets(ids, expectedGeneration) { isCurrent(expectedGeneration) }
@@ -260,7 +261,7 @@ class TouchCompanionController private constructor(
             statusProvider: () -> FrameRemoteStatus?,
             onCommand: (FrameRemoteCommand, Long) -> CommandResult,
             onSettings: (FrameRemoteSettings, Long) -> Boolean,
-            onEvent: (com.wyattfleming.frameos.control.FrameCompanionEvent, Long) -> Boolean,
+            onEvent: (com.wyattfleming.frameos.control.FrameCompanionEvent, Long, () -> Boolean) -> Boolean,
             onHiddenAssets: (Set<String>, Long, () -> Boolean) -> Boolean,
         ): TouchCompanionController = TouchCompanionController(
             credentials = { FrameCompanionCredentialsStore(context).read() },
@@ -301,7 +302,7 @@ class TouchCompanionController private constructor(
             statusProvider: () -> FrameRemoteStatus?,
             onCommand: (FrameRemoteCommand, Long) -> CommandResult,
             onSettings: (FrameRemoteSettings, Long) -> Boolean = { _, _ -> true },
-            onEvent: (com.wyattfleming.frameos.control.FrameCompanionEvent, Long) -> Boolean = { _, _ -> true },
+            onEvent: (com.wyattfleming.frameos.control.FrameCompanionEvent, Long, () -> Boolean) -> Boolean = { _, _, _ -> true },
             onHiddenAssets: (Set<String>, Long, () -> Boolean) -> Boolean = { _, _, _ -> true },
         ) = TouchCompanionController(credentials, journal, poll, mainExecutor, scheduler, mainCallbackTimeoutMillis, nowMillis, statusProvider, onCommand, onSettings, onEvent, onHiddenAssets)
 
