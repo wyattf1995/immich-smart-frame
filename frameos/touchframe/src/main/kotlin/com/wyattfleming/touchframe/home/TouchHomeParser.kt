@@ -19,23 +19,29 @@ class TouchHomeParser {
         return state to text
     }
 
-    fun parseClimate(expectedEntityId: String, body: String): TouchClimate {
+    /** Missing or malformed bounds produce no controllable climate card. */
+    fun parseClimate(expectedEntityId: String, body: String): TouchClimate? {
         val root = JSONObject(body)
         require(root.optString("entity_id") == expectedEntityId) { "Unexpected climate entity" }
         val attributes = root.optJSONObject("attributes") ?: JSONObject()
         val modes = attributes.optJSONArray("hvac_modes")?.strings(MAX_MODES).orEmpty()
         val mode = root.optString("state").trim().takeIf(String::isNotBlank)
             ?: throw IllegalArgumentException("Climate mode missing")
+        val unit = attributes.optString("temperature_unit").trim().takeIf(String::isNotBlank) ?: return null
+        val minimum = attributes.optNumber("min_temp") ?: return null
+        val maximum = attributes.optNumber("max_temp") ?: return null
+        val step = attributes.optNumber("target_temp_step") ?: return null
+        if (minimum > maximum || step <= 0.0) return null
         return TouchClimate(
             entityId = expectedEntityId,
             currentTemperature = attributes.optNumber("current_temperature"),
             targetTemperature = attributes.optNumber("temperature"),
-            unit = attributes.optString("temperature_unit").trim(),
+            unit = unit,
             mode = mode,
             modes = modes,
-            minTemperature = attributes.optNumber("min_temp"),
-            maxTemperature = attributes.optNumber("max_temp"),
-            step = attributes.optNumber("target_temp_step"),
+            minTemperature = minimum,
+            maxTemperature = maximum,
+            step = step,
         )
     }
 

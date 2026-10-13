@@ -12,7 +12,6 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.time.ZoneId
-import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -20,40 +19,10 @@ import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
-/** Data displayed by the direct native Home view; no auth material is retained here. */
-data class TouchHomeModel(
-    val weatherText: String,
-    val temperatureText: String,
-    val events: List<TouchCalendarEvent>,
-    val climate: TouchClimate?,
-    val connection: TouchConnection,
-    val lastUpdatedEpochMillis: Long?,
-) {
-    companion object {
-        fun empty(connection: TouchConnection) = TouchHomeModel("Unavailable", "Unavailable", emptyList(), null, connection, null)
-    }
+/** A token provider must honor the remaining request budget and never log auth material. */
+fun interface TouchHomeTokenProvider {
+    fun accessToken(deadline: WeatherRequestDeadline): String?
 }
-
-data class TouchCalendarEvent(
-    val title: String,
-    val startEpochMillis: Long,
-    val endEpochMillis: Long?,
-    val allDay: Boolean,
-)
-
-data class TouchClimate(
-    val entityId: String,
-    val currentTemperature: Double?,
-    val targetTemperature: Double?,
-    val unit: String,
-    val mode: String,
-    val modes: List<String>,
-    val minTemperature: Double?,
-    val maxTemperature: Double?,
-    val step: Double?,
-)
-
-enum class TouchConnection { CONNECTED, REFRESHING, OFFLINE, SIGN_IN_REQUIRED }
 
 /**
  * Blocking worker API. Call it from the Activity-owned worker, never the main thread.
@@ -61,7 +30,7 @@ enum class TouchConnection { CONNECTED, REFRESHING, OFFLINE, SIGN_IN_REQUIRED }
  */
 class TouchHomeRepository(
     private val configuration: TouchConfiguration,
-    private val tokenProvider: () -> String?,
+    private val tokenProvider: TouchHomeTokenProvider,
     private val transport: HomeAssistantHttpTransport = UrlConnectionHomeAssistantTransport(),
     private val clock: () -> Long = System::currentTimeMillis,
     private val zoneId: ZoneId = ZoneId.systemDefault(),
@@ -77,11 +46,12 @@ class TouchHomeRepository(
     private val cancellableTransport = transport as? CancellableHomeAssistantHttpTransport
 
     fun refresh(previous: TouchHomeModel?): TouchHomeModel {
-        val fallback = previous ?: TouchHomeModel.empty(TouchConnection.OFFLINE)
-        val token = tokenProvider()?.takeIf(String::isNotBlank)
-            ?: return fallback.copy(connection = TouchConnection.SIGN_IN_REQUIRED)
-        val operation = beginOperation() ?: return fallback.copy(connection = TouchConnection.OFFLINE)
+        val fallback = previous ?: emptyModel(TouchConnection.OFFLINE)
         val deadline = deadlineFactory(REFRESH_TIMEOUT_MILLIS)
+        val token = tokenProvider.accessToken(deadline)?.takeIf(String::isNotBlank)
+            ?: return fallback.copy(connection = if (deadline.remainingMillis() == 0L) TouchConnection.OFFLINE else TouchConnection.SIGN_IN_REQUIRED)
+        if (deadline.remainingMillis() == 0L) return fallback.copy(connection = TouchConnection.OFFLINE)
+        val operation = beginOperation() ?: return fallback.copy(connection = TouchConnection.OFFLINE)
         var accepted = false
         return try {
             val headers = headers(token)
@@ -92,20 +62,22 @@ class TouchHomeRepository(
             }
             val weatherText = await(weather, deadline)
             val climateState = await(climate, deadline)
+            val now = Instant.ofEpochMilli(clock())
             val calendarEvents = calendars.flatMap { (calendarId, future) ->
-                parser.parseCalendarEvents(calendarId, await(future, deadline), Instant.ofEpochMilli(clock()), zoneId)
+                parser.parseCalendarEvents(calendarId, await(future, deadline), now, zoneId)
             }.take(MAX_ALL_EVENTS)
             val weatherModel = parser.parseWeather(weatherText)
             val climateModel = parser.parseClimate(configuration.climateEntityId, climateState)
-            lastConfirmedClimate = climateModel
-            TouchHomeModel(
+            val fresh = TouchHomeModel(
                 weatherText = weatherModel.first,
                 temperatureText = weatherModel.second,
                 events = calendarEvents,
                 climate = climateModel,
                 connection = TouchConnection.CONNECTED,
                 lastUpdatedEpochMillis = clock(),
-            ).also { accepted = true }
+            )
+            if (!acceptRefresh(operation, climateModel)) fallback.copy(connection = TouchConnection.OFFLINE)
+            else fresh.also { accepted = true }
         } catch (error: AuthenticationFailure) {
             fallback.copy(connection = TouchConnection.SIGN_IN_REQUIRED)
         } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
@@ -117,30 +89,29 @@ class TouchHomeRepository(
 
     /** Sends no optimistic local update; the parent refresh owns confirmed readback. */
     fun changeClimateMode(mode: String): Boolean {
-        val climate = lastConfirmedClimate ?: return false
+        val climate = synchronized(operationLock) { lastConfirmedClimate } ?: return false
         if (climate.entityId != configuration.climateEntityId || mode !in climate.modes) return false
         return postClimateService("set_hvac_mode", JSONObject().put("hvac_mode", mode))
     }
 
     /** Sends no optimistic local update; the parent refresh owns confirmed readback. */
     fun changeClimateTarget(value: Double): Boolean {
-        val climate = lastConfirmedClimate ?: return false
+        val climate = synchronized(operationLock) { lastConfirmedClimate } ?: return false
         if (!value.isFinite() || climate.entityId != configuration.climateEntityId) return false
-        climate.minTemperature?.let { if (value < it) return false }
-        climate.maxTemperature?.let { if (value > it) return false }
-        climate.step?.takeIf { it > 0.0 }?.let { step ->
-            val anchor = climate.minTemperature ?: 0.0
-            val steps = (value - anchor) / step
-            if (kotlin.math.abs(steps - kotlin.math.round(steps)) > STEP_EPSILON) return false
-        }
+        if (value < climate.minTemperature || value > climate.maxTemperature) return false
+        val steps = (value - climate.minTemperature) / climate.step
+        if (kotlin.math.abs(steps - kotlin.math.round(steps)) > STEP_EPSILON) return false
         return postClimateService("set_temperature", JSONObject().put("temperature", value))
     }
 
     fun cancel() {
-        val operation = synchronized(operationLock) {
-            active?.also { active = null; it.cancelled = true }
-        } ?: return
-        operation.futures.forEach { it.cancel(true) }
+        val futures = synchronized(operationLock) {
+            val operation = active ?: return
+            active = null
+            operation.cancelled = true
+            operation.futures.toList()
+        }
+        futures.forEach { it.cancel(true) }
         cancellableTransport?.cancelInFlight()
     }
 
@@ -150,9 +121,10 @@ class TouchHomeRepository(
     }
 
     private fun postClimateService(service: String, payload: JSONObject): Boolean {
-        val token = tokenProvider()?.takeIf(String::isNotBlank) ?: return false
-        val operation = beginOperation() ?: return false
         val deadline = deadlineFactory(MUTATION_TIMEOUT_MILLIS)
+        val token = tokenProvider.accessToken(deadline)?.takeIf(String::isNotBlank) ?: return false
+        if (deadline.remainingMillis() == 0L) return false
+        val operation = beginOperation() ?: return false
         var accepted = false
         return try {
             val body = payload.put("entity_id", configuration.climateEntityId).toString()
@@ -167,7 +139,7 @@ class TouchHomeRepository(
                     ),
                 )
             }, deadline)
-            (response.statusCode in 200..299).also { accepted = it }
+            (response.statusCode in 200..299 && acceptOperation(operation)).also { accepted = it }
         } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
             false
         } finally {
@@ -187,7 +159,7 @@ class TouchHomeRepository(
 
     private fun getCalendar(calendarId: String, headers: Map<String, String>, deadline: WeatherRequestDeadline): String {
         val start = Instant.ofEpochMilli(clock()).atZone(zoneId).toOffsetDateTime().toString()
-        val end = Instant.ofEpochMilli(clock()).plusDays(CALENDAR_DAYS.toLong()).atZone(zoneId).toOffsetDateTime().toString()
+        val end = Instant.ofEpochMilli(clock()).plus(CALENDAR_DAYS.toLong(), java.time.temporal.ChronoUnit.DAYS).atZone(zoneId).toOffsetDateTime().toString()
         val url = "${configuration.homeAssistantOrigin}/api/calendars/$calendarId?start=${encode(start)}&end=${encode(end)}"
         return execute(HomeAssistantHttpRequest("GET", url, headers, timeoutMillis = remaining(deadline))).body
     }
@@ -203,15 +175,30 @@ class TouchHomeRepository(
         if (active != null) null else Operation().also { active = it }
     }
 
-    private fun finishOperation(operation: Operation, accepted: Boolean) = synchronized(operationLock) {
-        if (active === operation) active = null
-        if (!accepted || operation.cancelled) operation.futures.forEach { it.cancel(true) }
+    private fun finishOperation(operation: Operation, accepted: Boolean) {
+        val futures = synchronized(operationLock) {
+            if (active === operation) active = null
+            if (!accepted || operation.cancelled) operation.futures.toList() else emptyList()
+        }
+        futures.forEach { it.cancel(true) }
     }
 
-    private fun <T> submit(operation: Operation, task: () -> T): Future<T> {
-        check(!operation.cancelled) { "Home operation cancelled" }
-        return requestExecutor.submit<T> {
-            check(!operation.cancelled) { "Home operation cancelled" }
+    private fun acceptRefresh(operation: Operation, climate: TouchClimate?): Boolean = synchronized(operationLock) {
+        if (active !== operation || operation.cancelled) return@synchronized false
+        lastConfirmedClimate = climate
+        true
+    }
+
+    private fun acceptOperation(operation: Operation): Boolean = synchronized(operationLock) {
+        active === operation && !operation.cancelled
+    }
+
+    private fun <T> submit(operation: Operation, task: () -> T): Future<T> = synchronized(operationLock) {
+        check(active === operation && !operation.cancelled) { "Home operation cancelled" }
+        requestExecutor.submit<T> {
+            synchronized(operationLock) {
+                check(active === operation && !operation.cancelled) { "Home operation cancelled" }
+            }
             task()
         }.also(operation.futures::add)
     }
@@ -228,6 +215,9 @@ class TouchHomeRepository(
     private fun remaining(deadline: WeatherRequestDeadline): Long = deadline.remainingMillis().also {
         if (it == 0L) throw TimeoutException("Home refresh deadline elapsed")
     }
+
+    private fun emptyModel(connection: TouchConnection) =
+        TouchHomeModel("Unavailable", "Unavailable", emptyList(), null, connection, null)
 
     private fun headers(token: String): Map<String, String> = mapOf(
         "Accept" to "application/json",

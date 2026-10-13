@@ -10,6 +10,15 @@ class TouchHomeParserTest {
     private val parser = TouchHomeParser()
 
     @Test
+    fun `climate parser with missing control capability suppresses the controllable card`() {
+        val climate = parser.parseClimate(
+            "climate.entryway_entryway",
+            """{"entity_id":"climate.entryway_entryway","state":"heat","attributes":{"temperature_unit":"°F","min_temp":50,"max_temp":85}}""",
+        )
+        org.junit.Assert.assertNull(climate)
+    }
+
+    @Test
     fun `calendar parser handles all-day and date-time events then excludes past events`() {
         val now = Instant.parse("2026-10-12T12:00:00Z")
         val events = parser.parseCalendarEvents(
