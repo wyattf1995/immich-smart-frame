@@ -10,12 +10,27 @@ import org.junit.Test
 
 class TouchMediaLoadStateTest {
     @Test
-    fun sameConfiguredUrlDoesNotRequestAnotherLoadButChangedUrlDoes() {
+    fun sameConfiguredUrlStaysWarmButChangedUrlReplacesItsDocumentSession() {
         val state = TouchMediaLoadState()
 
         assertEquals(TouchMediaLoadState.Decision.LOAD, state.showUrl("https://photos.example/frame"))
         assertEquals(TouchMediaLoadState.Decision.ALREADY_LOADED, state.showUrl("https://photos.example/frame"))
-        assertEquals(TouchMediaLoadState.Decision.LOAD, state.showUrl("https://photos.example/art"))
+        assertEquals(TouchMediaLoadState.Decision.REPLACE_DOCUMENT_SESSION, state.showUrl("https://photos.example/art"))
+        assertEquals(TouchMediaLoadState.Decision.ALREADY_LOADED, state.showUrl("https://photos.example/art"))
+    }
+
+    @Test
+    fun crossUrlProductionPathCoversThenRetiresThePreviousSession() {
+        val source = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt").readText()
+        val replace = source.substring(
+            source.indexOf("private fun reopenAndLoad(url: String)"),
+            source.indexOf("private fun loadConfiguredUrl", startIndex = source.indexOf("private fun reopenAndLoad(url: String)")),
+        )
+
+        assertTrue(source.contains("TouchMediaLoadState.Decision.REPLACE_DOCUMENT_SESSION -> {\n                reopenAndLoad(url)"))
+        assertTrue(replace.indexOf("loadingCover.visibility = View.VISIBLE") < replace.indexOf("val replaced = session"))
+        assertTrue(replace.indexOf("geckoView.visibility = View.INVISIBLE") < replace.indexOf("val replaced = session"))
+        assertTrue(replace.indexOf("session = null") < replace.indexOf("current.close()"))
     }
 
     @Test
