@@ -34,7 +34,9 @@ class TouchHomeRepositoryTest {
             assertEquals(4, transport.requests.size)
             assertEquals(2, transport.requests.count { it.url.contains("/api/states/") })
             assertEquals(2, transport.requests.count { it.url.contains("/api/calendars/") })
-            assertTrue(transport.requests.all { it.timeoutMillis in 1..12_000 })
+            assertTrue(transport.requests.all { request ->
+                request.timeoutMillis?.let { it in 1L..12_000L } == true
+            })
         }
     }
 
