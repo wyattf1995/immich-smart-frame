@@ -82,6 +82,17 @@ class FrameOfflineReserveTest {
     }
 
     @Test
+    fun `retired hidden snapshot is rejected before it mutates reserve policy`() {
+        val root = Files.createTempDirectory("frame-offline-reserve-retired-snapshot").toFile()
+        val asset = "11111111-1111-4111-8111-111111111111"
+        val reserve = FrameOfflineReserve(root, FixedDecoder())
+        assertTrue(reserve.activateScope("https://photos.example/kiosk", "family"))
+        assertTrue(reserve.persist(asset, "visible"))
+        assertFalse(reserve.applyHiddenAssets(setOf(asset)) { false })
+        assertTrue(reserve.persist(asset, "still-visible"))
+    }
+
+    @Test
     fun `bridge persists only exact configured top level photos session and reports health`() {
         val root = Files.createTempDirectory("frame-photo-bridge-test").toFile()
         val reserve = FrameOfflineReserve(root, FixedDecoder())
