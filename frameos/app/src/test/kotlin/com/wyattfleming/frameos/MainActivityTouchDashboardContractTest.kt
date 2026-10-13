@@ -25,17 +25,35 @@ class MainActivityTouchDashboardContractTest {
     }
 
     @Test
-    fun `rail presents the existing Home mode and Settings without a native Today destination`() {
+    fun `rail presents existing Home and Android Settings return without a native Today destination`() {
         val source = mainActivity()
         val buildUi = methodBody(source, "private fun buildUi()")
+        val settingsReturn = readSource("ui/FrameExternalSettingsReturnController.kt")
 
         assertContainsInOrder(
             buildUi,
             listOf(
                 "TouchNavigationRail(this,",
-                "onOpenSettings = { showFrameSettings() }",
+                "onOpenSettings = { openAndroidSettings() }",
                 "onOpenMode = { showMode(it, announceHud = false) }",
                 "it.setModes(TouchNavigationRailPolicy.ordered(availableModes()))",
+            ),
+        )
+        assertContainsInOrder(
+            source,
+            listOf(
+                "private fun openAndroidSettings()",
+                "settingsReturnController.openSettings()",
+            ),
+        )
+        assertContainsInOrder(
+            settingsReturn,
+            listOf(
+                "fun openSettings(): Outcome",
+                "adapter.showReturn(::returnToFrame)",
+                "adapter.launchAndroidSettings()",
+                "private fun returnToFrame()",
+                "if (adapter.launchFrame()) remove()",
             ),
         )
         assertTrue(source.contains("tap Home to return here"))
