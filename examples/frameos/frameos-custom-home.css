@@ -62,3 +62,38 @@
 .fch-forecast-day i { font-style:normal; }
 .fch-forecast-day strong { font-size:13px; }
 .fch-forecast-day small,.fch-forecast-status { grid-column:1/-1; font-size:10px; }
+
+/* Scale readable dashboard text from the 1280px frame to the 1920px panel. */
+.frameos-custom-home {
+  --fch-body: clamp(16px, calc(16px + (100vw - 1280px) * 0.0125), 24px);
+  --fch-label: clamp(14px, calc(14px + (100vw - 1280px) * 0.009375), 20px);
+  --fch-control: clamp(16px, calc(16px + (100vw - 1280px) * 0.009375), 22px);
+  --fch-heading: clamp(16px, calc(16px + (100vw - 1280px) * 0.0125), 24px);
+  font-size: var(--fch-body);
+}
+
+.fch-time { font-size: clamp(112px, calc(112px + (100vw - 1280px) * 0.0875), 168px); }
+.fch-time small { font-size: var(--fch-control); }
+.fch-date, .fch-eyebrow, .fch-card h2 { font-size: var(--fch-label); }
+.fch-weather-icon { font-size: clamp(44px, calc(44px + (100vw - 1280px) * 0.03125), 64px); }
+.fch-weather-temp { font-size: clamp(44px, calc(44px + (100vw - 1280px) * 0.046875), 74px); }
+.fch-weather-state { font-size: var(--fch-body); }
+.fch-status { font-size: var(--fch-label); }
+.fch-status strong { font-size: var(--fch-body); }
+.fch-next-meta, .fch-state, .fch-draft { font-size: var(--fch-control); }
+.fch-feedback { font-size: var(--fch-label); }
+.fch-event { font-size: var(--fch-body); line-height: 1.3; }
+.fch-mode, .fch-adjust, .fch-action { min-height: 48px; font-size: var(--fch-control); }
+.fch-link { min-height: 64px; font-size: var(--fch-control); }
+.fch-link small { font-size: var(--fch-label); }
+.fch-forecast { gap: clamp(8px, calc(8px + (100vw - 1280px) * 0.00625), 12px); }
+.fch-forecast-day { font-size: var(--fch-label); line-height: 1.25; padding: 6px 8px; }
+.fch-forecast-day b, .fch-forecast-day small, .fch-forecast-status { font-size: var(--fch-label); }
+.fch-forecast-day strong { font-size: var(--fch-control); }
+
+@media (max-width: 720px) {
+  .frameos-custom-home { overflow-wrap: anywhere; }
+  .fch-time { font-size: 72px; }
+  .fch-forecast { flex-wrap: wrap; }
+  .fch-event time { min-width: 0; }
+}
