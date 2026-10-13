@@ -86,7 +86,7 @@ class PerformanceContract(unittest.TestCase):
 
     def test_old_clients_bad_revisions_cross_device_and_restart_receive_full_policy(self):
         full = self.poll()
-        for revision in (None, '', '☃', [], {}, True, '0'*64):
+        for revision in (None, '', '☃', '\ud800', [], {}, True, '0'*64, 'A'*64):
             self.assertIn('hiddenAssets', self.poll(revision))
         other = self.store.poll('other', {'knownSnapshotRevision': full['snapshotRevision']})
         self.assertIn('hiddenAssets', other)
