@@ -6,7 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function loadScript({ connectNative, historyValues = [], frames, push = false, documentReady = true, sharedSession = "session-1", sharedSlide = "slide-1", sharedPaused = false } = {}) {
+function loadScript({ connectNative, sendNativeMessage, historyValues = [], frames, push = false, documentReady = true, sharedSession = "session-1", sharedSlide = "slide-1", sharedPaused = false } = {}) {
   const events = [];
   const nativeMessages = [];
   const diagnosticMessages = [];
@@ -106,7 +106,7 @@ function loadScript({ connectNative, historyValues = [], frames, push = false, d
     },
     browser: { runtime: { connectNative: connectNative || (() => port), sendNativeMessage(_name, message) {
       if (message.type === "bridge-diagnostic") diagnosticMessages.push(message); else nativeMessages.push(message);
-      return Promise.resolve({ accepted: true });
+      return sendNativeMessage ? sendNativeMessage(message) : Promise.resolve({ accepted: true });
     } } },
     document: {
       body,
@@ -784,4 +784,48 @@ test("shared playback ignores page-owned, malformed, oversized, throwing, and da
   assert.doesNotThrow(() => runtime.fireRawEvent("frame:shared-playback-state", throwing));
   assert.equal(runtime.nativeMessages.filter(({ type }) => type === "shared-playback-state").length, 0);
   assert.equal(runtime.body.classList.contains("polling-paused"), false);
+});
+
+
+test("stale native completion cannot clear the current capture owner", async () => {
+  const firstId = "11111111-1111-4111-8111-111111111111";
+  const secondId = "22222222-2222-4222-8222-222222222222";
+  const pending = [];
+  const runtime = loadScript({
+    historyValues: [`*${firstId}:first`],
+    frames: [{ images: ["data:image/jpeg;base64,first"] }],
+    sendNativeMessage(message) {
+      let resolve, reject;
+      const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+      pending.push({ message, resolve, reject });
+      return promise;
+    },
+  });
+  runtime.runMicrotasks();
+  assert.deepEqual(runtime.nativeMessages.map(message => message.assetId), [firstId]);
+
+  runtime.setHistory([`*${secondId}:second`]);
+  runtime.setFrameImage(0, "data:image/jpeg;base64,second");
+  runtime.fireEvent("load");
+  runtime.runMicrotasks();
+  assert.deepEqual(runtime.nativeMessages.map(message => message.assetId), [firstId, secondId]);
+
+  pending[0].resolve({ accepted: true });
+  await Promise.resolve();
+  runtime.fireEvent("load");
+  runtime.runMicrotasks();
+  assert.deepEqual(
+    runtime.nativeMessages.map(message => message.assetId),
+    [firstId, secondId],
+    "a stale first completion must not admit a duplicate second capture",
+  );
+
+  pending[0].reject(new Error("late rejection"));
+  await Promise.resolve();
+  runtime.runTimers();
+  assert.deepEqual(
+    runtime.nativeMessages.map(message => message.assetId),
+    [firstId, secondId],
+    "a stale first rejection must not schedule retry work for the newer capture",
+  );
 });
