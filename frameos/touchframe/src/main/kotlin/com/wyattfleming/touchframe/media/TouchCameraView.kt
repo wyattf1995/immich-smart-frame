@@ -71,6 +71,7 @@ class TouchCameraView(
     private fun requestRefresh() {
         if (!active || closed) return
         val requestGeneration = ++generation
+        connection?.disconnect()
         val camera = selected
         worker.execute { fetch(camera, requestGeneration) }
     }
