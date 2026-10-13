@@ -19,6 +19,9 @@ node "$root/scripts/tests/test-frameos-home-forecast-integration.mjs" | tee "$ro
 python3 "$root/scripts/verify-frameos-home-forecast-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-home-forecast-integration-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-custom-home-content-proof.py" "$root"
+node "$root/scripts/tests/test-frameos-home-late-bootstrap.mjs" \
+  | tee "$root/reports/frameos-legacy/home-late-bootstrap-tests.log"
+python3 "$root/scripts/verify-frameos-home-late-bootstrap-proof.py" "$root"
 python3 "$root/scripts/verify-frameos-touchscreen-spa-proof.py" "$root"
 
 node "$root/scripts/tests/test-frameos-art-gallery.mjs" | tee "$root/reports/frameos-legacy/art-gallery-tests.log"
