@@ -1,4 +1,4 @@
-package com.wyattfleming.frameos.home
+package com.wyattfleming.touchframe.home
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.fail
