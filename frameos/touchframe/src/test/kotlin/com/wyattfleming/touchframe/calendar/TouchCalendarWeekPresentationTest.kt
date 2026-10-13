@@ -3,9 +3,9 @@ package com.wyattfleming.touchframe.calendar
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
 class TouchCalendarWeekPresentationTest {
     private val zone = ZoneId.of("America/Los_Angeles")
