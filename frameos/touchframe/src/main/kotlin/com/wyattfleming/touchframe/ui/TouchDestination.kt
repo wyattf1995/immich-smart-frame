@@ -8,10 +8,15 @@ enum class TouchDestination(
     HOME("Home", "⌂"),
     PHOTOS("Photos", "▧"),
     ART("Art", "◈"),
+    BIRDS("Birds", "♢"),
     WEATHER("Weather", "☀"),
     CAMERAS("Cameras", "◉"),
     CALENDAR("Calendar", "▣"),
     ;
+
+    /** Any retained Gecko media surface. Birds keeps the persistent rail visible. */
+    val usesWebMedia: Boolean
+        get() = this == PHOTOS || this == ART || this == BIRDS
 
     val isImmersiveMedia: Boolean
         get() = this == PHOTOS || this == ART
@@ -20,14 +25,17 @@ enum class TouchDestination(
 /** Stable remote-mode ordering with Home permanently retained as the local anchor. */
 internal object TouchDestinationOrder {
     /** Preview order used until a non-negative remote settings revision is accepted. */
-    val defaults: List<TouchDestination> = listOf(
-        TouchDestination.HOME,
-        TouchDestination.PHOTOS,
-        TouchDestination.ART,
-        TouchDestination.WEATHER,
-        TouchDestination.CALENDAR,
-        TouchDestination.CAMERAS,
-    )
+    val defaults: List<TouchDestination> = defaults(birdsConfigured = false)
+
+    fun defaults(birdsConfigured: Boolean): List<TouchDestination> = buildList {
+        add(TouchDestination.HOME)
+        add(TouchDestination.PHOTOS)
+        add(TouchDestination.ART)
+        if (birdsConfigured) add(TouchDestination.BIRDS)
+        add(TouchDestination.WEATHER)
+        add(TouchDestination.CALENDAR)
+        add(TouchDestination.CAMERAS)
+    }
 
     fun normalize(remoteOrder: List<TouchDestination>): List<TouchDestination> = buildList {
         add(TouchDestination.HOME)

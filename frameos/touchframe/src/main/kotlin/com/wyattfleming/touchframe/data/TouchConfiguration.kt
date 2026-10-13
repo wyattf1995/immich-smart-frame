@@ -13,6 +13,8 @@ data class TouchConfiguration(
     val climateEntityId: String,
     val calendarEntityIds: List<String>,
     val cameraEntityIds: List<String>,
+    /** Optional read-only external Birds feed; absent feeds never create a Birds route. */
+    val birdsUrl: String? = null,
 ) {
     companion object {
         const val DEFAULT_CLIMATE_ENTITY_ID = "climate.entryway_entryway"
@@ -32,15 +34,18 @@ data class TouchConfiguration(
             climateEntityId: String = DEFAULT_CLIMATE_ENTITY_ID,
             calendarEntityIds: List<String> = DEFAULT_CALENDAR_ENTITY_IDS,
             cameraEntityIds: List<String> = DEFAULT_CAMERA_ENTITY_IDS,
+            birdsUrl: String? = null,
             urlPolicy: FrameUrlPolicy = FrameUrlPolicy(),
         ): TouchConfiguration? {
             val photos = photosUrl.trim()
             val home = homeAssistantUrl.trim()
             val weather = weatherEntityId.trim()
             val art = artUrl?.trim()?.ifEmpty { null }
+            val birds = birdsUrl?.trim()?.ifEmpty { null }
             val climate = climateEntityId.trim()
             if (!urlPolicy.isSafeConfigurationUrl(photos) || !urlPolicy.isSafeConfigurationUrl(home)) return null
             if (art != null && !urlPolicy.isSafeConfigurationUrl(art)) return null
+            if (birds != null && !urlPolicy.isSafeConfigurationUrl(birds)) return null
             val homeUri = runCatching { URI(home) }.getOrNull() ?: return null
             if (!homeUri.scheme.equals("https", ignoreCase = true) || homeUri.host.isNullOrBlank() || homeUri.userInfo != null) return null
             if (!WEATHER_ENTITY.matches(weather) || !CLIMATE_ENTITY.matches(climate)) return null
@@ -52,6 +57,7 @@ data class TouchConfiguration(
                 homeAssistantOrigin = origin(homeUri),
                 weatherEntityId = weather,
                 artUrl = art,
+                birdsUrl = birds,
                 climateEntityId = climate,
                 calendarEntityIds = calendars.ifEmpty { DEFAULT_CALENDAR_ENTITY_IDS },
                 cameraEntityIds = cameras.ifEmpty { DEFAULT_CAMERA_ENTITY_IDS },
@@ -99,6 +105,7 @@ class TouchConfigurationStore(context: Context) {
             homeAssistantUrl = home,
             weatherEntityId = weather,
             artUrl = preferences.getString(KEY_ART_URL, null),
+            birdsUrl = preferences.getString(KEY_BIRDS_URL, null),
             climateEntityId = preferences.getString(KEY_CLIMATE_ENTITY_ID, TouchConfiguration.DEFAULT_CLIMATE_ENTITY_ID)
                 ?: TouchConfiguration.DEFAULT_CLIMATE_ENTITY_ID,
             calendarEntityIds = preferences.getStringSet(KEY_CALENDAR_ENTITY_IDS, null)?.toList()
@@ -114,6 +121,7 @@ class TouchConfigurationStore(context: Context) {
             .putString(KEY_HOME_ASSISTANT_URL, value.homeAssistantUrl)
             .putString(KEY_WEATHER_ENTITY_ID, value.weatherEntityId)
             .putString(KEY_ART_URL, value.artUrl)
+            .putString(KEY_BIRDS_URL, value.birdsUrl)
             .putString(KEY_CLIMATE_ENTITY_ID, value.climateEntityId)
             .putStringSet(KEY_CALENDAR_ENTITY_IDS, value.calendarEntityIds.toSet())
             .putStringSet(KEY_CAMERA_ENTITY_IDS, value.cameraEntityIds.toSet())
@@ -131,6 +139,7 @@ class TouchConfigurationStore(context: Context) {
             .putString(KEY_HOME_ASSISTANT_URL, configuration.homeAssistantUrl)
             .putString(KEY_WEATHER_ENTITY_ID, configuration.weatherEntityId)
             .putString(KEY_ART_URL, configuration.artUrl)
+            .putString(KEY_BIRDS_URL, configuration.birdsUrl)
             .putString(KEY_CLIMATE_ENTITY_ID, configuration.climateEntityId)
             .putStringSet(KEY_CALENDAR_ENTITY_IDS, configuration.calendarEntityIds.toSet())
             .putStringSet(KEY_CAMERA_ENTITY_IDS, configuration.cameraEntityIds.toSet())
@@ -148,6 +157,7 @@ class TouchConfigurationStore(context: Context) {
         const val KEY_HOME_ASSISTANT_URL = "home_assistant_url"
         const val KEY_WEATHER_ENTITY_ID = "weather_entity_id"
         const val KEY_ART_URL = "art_url"
+        const val KEY_BIRDS_URL = "birds_url"
         const val KEY_CLIMATE_ENTITY_ID = "climate_entity_id"
         const val KEY_CALENDAR_ENTITY_IDS = "calendar_entity_ids"
         const val KEY_CAMERA_ENTITY_IDS = "camera_entity_ids"
@@ -156,6 +166,7 @@ class TouchConfigurationStore(context: Context) {
             KEY_HOME_ASSISTANT_URL,
             KEY_WEATHER_ENTITY_ID,
             KEY_ART_URL,
+            KEY_BIRDS_URL,
             KEY_CLIMATE_ENTITY_ID,
             KEY_CALENDAR_ENTITY_IDS,
             KEY_CAMERA_ENTITY_IDS,
