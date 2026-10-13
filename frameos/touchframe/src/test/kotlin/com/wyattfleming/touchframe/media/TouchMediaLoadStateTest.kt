@@ -58,6 +58,85 @@ class TouchMediaLoadStateTest {
     }
 
     @Test
+    fun foregroundLoadingExpiresOnceAndDoesNotRearmAfterTimeout() {
+        val deadline = TouchMediaRenderDeadline()
+        val load = TouchMediaRenderDeadline.LoadToken(loadGeneration = 4, sessionGeneration = 2)
+        val scheduled = requireNotNull(deadline.beginLoading(load, foreground = true))
+
+        assertTrue(deadline.expire(scheduled))
+        assertFalse(deadline.expire(scheduled))
+        assertNull(deadline.foregrounded())
+    }
+
+    @Test
+    fun hiddenLoadingCancelsDeadlineAndRearmerGetsFreshForegroundWait() {
+        val deadline = TouchMediaRenderDeadline()
+        val load = TouchMediaRenderDeadline.LoadToken(loadGeneration = 7, sessionGeneration = 3)
+
+        assertNull(deadline.beginLoading(load, foreground = false))
+        val firstWait = requireNotNull(deadline.foregrounded())
+        deadline.hidden()
+        assertFalse(deadline.expire(firstWait))
+        val rearmedWait = requireNotNull(deadline.foregrounded())
+        assertFalse(firstWait == rearmedWait)
+        assertFalse(deadline.expire(firstWait))
+        assertTrue(deadline.expire(rearmedWait))
+    }
+
+    @Test
+    fun readinessFailureAndSessionReplacementCancelTheDeadline() {
+        val deadline = TouchMediaRenderDeadline()
+        val ready = TouchMediaRenderDeadline.LoadToken(loadGeneration = 1, sessionGeneration = 1)
+        val readyWait = requireNotNull(deadline.beginLoading(ready, foreground = true))
+        deadline.ready()
+        assertFalse(deadline.expire(readyWait))
+
+        val failed = TouchMediaRenderDeadline.LoadToken(loadGeneration = 2, sessionGeneration = 1)
+        val failedWait = requireNotNull(deadline.beginLoading(failed, foreground = true))
+        deadline.failed()
+        assertFalse(deadline.expire(failedWait))
+
+        val replaced = TouchMediaRenderDeadline.LoadToken(loadGeneration = 3, sessionGeneration = 1)
+        val replacedWait = requireNotNull(deadline.beginLoading(replaced, foreground = true))
+        deadline.sessionReplaced()
+        assertFalse(deadline.expire(replacedWait))
+
+        val closed = TouchMediaRenderDeadline.LoadToken(loadGeneration = 4, sessionGeneration = 2)
+        val closedWait = requireNotNull(deadline.beginLoading(closed, foreground = true))
+        deadline.close()
+        assertFalse(deadline.expire(closedWait))
+    }
+
+    @Test
+    fun staleGenerationOrSessionDeadlineCannotFailReplacementContent() {
+        val deadline = TouchMediaRenderDeadline()
+        val old = TouchMediaRenderDeadline.LoadToken(loadGeneration = 5, sessionGeneration = 3)
+        val replacement = TouchMediaRenderDeadline.LoadToken(loadGeneration = 6, sessionGeneration = 4)
+
+        val oldWait = requireNotNull(deadline.beginLoading(old, foreground = true))
+        val replacementWait = requireNotNull(deadline.beginLoading(replacement, foreground = true))
+        assertFalse(deadline.expire(oldWait))
+        assertTrue(deadline.expire(replacementWait))
+    }
+
+    @Test
+    fun productionViewArmsAndFencesTheForegroundRenderDeadline() {
+        val source = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt").readText()
+
+        assertTrue(source.contains("private var renderDeadlineTask: Runnable? = null"))
+        assertTrue(source.contains("val load = TouchMediaRenderDeadline.LoadToken(++loadGeneration, sessionGeneration)"))
+        assertTrue(source.contains("armRenderDeadline(renderDeadline.beginLoading(load, active))"))
+        assertTrue(source.contains("armRenderDeadline(renderDeadline.foregrounded())"))
+        assertTrue(source.contains("renderDeadline.hidden()"))
+        assertTrue(source.contains("postDelayed(task, RENDER_DEADLINE_MILLIS)"))
+        assertTrue(source.contains("if (!renderDeadline.expire(token)) return@Runnable"))
+        assertTrue(source.contains("token.load.sessionGeneration == sessionGeneration"))
+        assertTrue(source.contains("context.getString(R.string.touch_media_render_timeout)"))
+        assertTrue(source.contains("renderDeadline.close()\n        cancelRenderDeadlineTask()"))
+        assertTrue(source.contains("renderDeadline.failed()\n        cancelRenderDeadlineTask()\n        loadState.markContentProcessClosed"))
+    }
+
+    @Test
     fun retryWithoutAConfiguredUrlDoesNothingAndOriginPolicyRejectsEscape() {
         assertNull(TouchMediaLoadState().retry())
         val policy = FrameUrlPolicy()
