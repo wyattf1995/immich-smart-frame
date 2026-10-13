@@ -47,13 +47,15 @@ class TouchHomeRepository(
 
     fun refresh(previous: TouchHomeModel?): TouchHomeModel {
         val fallback = previous ?: emptyModel(TouchConnection.OFFLINE)
-        val deadline = deadlineFactory(REFRESH_TIMEOUT_MILLIS)
-        val token = tokenProvider.accessToken(deadline)?.takeIf(String::isNotBlank)
-            ?: return fallback.copy(connection = if (deadline.remainingMillis() == 0L) TouchConnection.OFFLINE else TouchConnection.SIGN_IN_REQUIRED)
-        if (deadline.remainingMillis() == 0L) return fallback.copy(connection = TouchConnection.OFFLINE)
         val operation = beginOperation() ?: return fallback.copy(connection = TouchConnection.OFFLINE)
+        val deadline = deadlineFactory(REFRESH_TIMEOUT_MILLIS)
         var accepted = false
         return try {
+            val token = tokenProvider.accessToken(deadline)?.takeIf(String::isNotBlank)
+                ?: return fallback.copy(connection = if (deadline.remainingMillis() == 0L) TouchConnection.OFFLINE else TouchConnection.SIGN_IN_REQUIRED)
+            if (deadline.remainingMillis() == 0L || !acceptOperation(operation)) {
+                return fallback.copy(connection = TouchConnection.OFFLINE)
+            }
             val headers = headers(token)
             val weather = submit(operation) { getState(configuration.weatherEntityId, headers, deadline) }
             val climate = submit(operation) { getState(configuration.climateEntityId, headers, deadline) }
@@ -65,7 +67,7 @@ class TouchHomeRepository(
             val now = Instant.ofEpochMilli(clock())
             val calendarEvents = calendars.flatMap { (calendarId, future) ->
                 parser.parseCalendarEvents(calendarId, await(future, deadline), now, zoneId)
-            }.take(MAX_ALL_EVENTS)
+            }.sortedBy(TouchCalendarEvent::startEpochMillis).take(MAX_ALL_EVENTS)
             val weatherModel = parser.parseWeather(weatherText)
             val climateModel = parser.parseClimate(configuration.climateEntityId, climateState)
             val fresh = TouchHomeModel(
@@ -121,12 +123,12 @@ class TouchHomeRepository(
     }
 
     private fun postClimateService(service: String, payload: JSONObject): Boolean {
-        val deadline = deadlineFactory(MUTATION_TIMEOUT_MILLIS)
-        val token = tokenProvider.accessToken(deadline)?.takeIf(String::isNotBlank) ?: return false
-        if (deadline.remainingMillis() == 0L) return false
         val operation = beginOperation() ?: return false
+        val deadline = deadlineFactory(MUTATION_TIMEOUT_MILLIS)
         var accepted = false
         return try {
+            val token = tokenProvider.accessToken(deadline)?.takeIf(String::isNotBlank) ?: return false
+            if (deadline.remainingMillis() == 0L || !acceptOperation(operation)) return false
             val body = payload.put("entity_id", configuration.climateEntityId).toString()
             val response = await(submit(operation) {
                 execute(
