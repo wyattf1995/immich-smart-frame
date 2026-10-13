@@ -32,6 +32,7 @@ class TouchThemeTest {
             assertReadable("$name ink on today", p.ink, p.todayFill)
             assertReadable("$name today label", p.accentInk, p.todayFill)
             assertReadable("$name past day text", p.pastInk, p.pastFill)
+            assertReadable("$name secondary text on today", p.todayMutedInk, p.todayFill)
         }
     }
 
