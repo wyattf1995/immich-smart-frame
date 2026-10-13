@@ -14,9 +14,6 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
 import android.widget.Toast
 import com.wyattfleming.frameos.auth.*
 import com.wyattfleming.frameos.config.FrameExperienceSettings
@@ -28,6 +25,7 @@ import com.wyattfleming.frameos.ui.WeatherContentView
 import com.wyattfleming.frameos.weather.*
 import com.wyattfleming.frameos.web.FrameOAuthWebSurface
 import com.wyattfleming.touchframe.concurrent.TouchTaskScope
+import com.wyattfleming.touchframe.calendar.*
 import com.wyattfleming.touchframe.control.TouchCompanionController
 import com.wyattfleming.touchframe.control.TouchRemoteSettingsPolicy
 import com.wyattfleming.touchframe.data.TouchConfiguration
@@ -40,7 +38,6 @@ import com.wyattfleming.touchframe.ui.*
 import java.security.SecureRandom
 import java.time.Instant
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.FutureTask
@@ -76,6 +73,8 @@ class TouchFrameActivity : Activity() {
     private var destination = TouchDestination.HOME
     private var configuration: TouchConfiguration? = null
     private var repository: TouchHomeRepository? = null
+    private var calendarRepository: TouchCalendarRepository? = null
+    private var calendarInFlight = false
     private var oauth: HomeAssistantOAuthClient? = null
     private var weatherRemote: HomeAssistantWeatherRemote? = null
     private var weatherSnapshot: WeatherSnapshot? = null
@@ -85,7 +84,8 @@ class TouchFrameActivity : Activity() {
     private lateinit var shell: TouchShellLayout
     private lateinit var home: TouchHomeView
     private lateinit var weather: WeatherContentView
-    private lateinit var calendar: ScrollView
+    private lateinit var calendar: TouchCalendarView
+    private var calendarState = TouchCalendarState(TouchCalendarMode.AGENDA, java.time.LocalDate.now(), java.time.LocalDate.now(), TouchCalendarRange.forMode(TouchCalendarMode.AGENDA, java.time.LocalDate.now()), emptyList(), TouchCalendarConnection.OFFLINE, null)
     private lateinit var settingsReturn: TouchSettingsReturn
     private var media: TouchMediaView? = null
     private var cameras: TouchCameraView? = null
@@ -102,12 +102,14 @@ class TouchFrameActivity : Activity() {
             updateDisplayBehavior(now)
             val hour = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).hour
             shell.setNight(hour < 7 || hour >= 19)
+            calendar.setNight(hour < 7 || hour >= 19)
             main.postDelayed(this, 1_000L)
         }
     }
     private val refresh = Runnable {
         when (destination) {
-            TouchDestination.HOME, TouchDestination.CALENDAR -> refreshHome()
+            TouchDestination.HOME -> refreshHome()
+            TouchDestination.CALENDAR -> requestCalendar(calendarState.mode, calendarState.anchor, calendarState.selectedDate)
             TouchDestination.WEATHER -> refreshWeather()
             else -> Unit
         }
@@ -137,7 +139,7 @@ class TouchFrameActivity : Activity() {
             setOnPrimaryActionListener(::signIn)
             visibility = View.GONE
         }
-        calendar = ScrollView(this).apply { setBackgroundColor(PAPER); visibility = View.GONE }
+        calendar = TouchCalendarView(this, ::requestCalendar).apply { visibility = View.GONE }
         shell.content.addView(home, fill())
         shell.content.addView(weather, fill())
         shell.content.addView(calendar, fill())
@@ -153,7 +155,7 @@ class TouchFrameActivity : Activity() {
         )
         applyDestinationOrder()
         home.render(model)
-        renderCalendar()
+        calendar.render(calendarState)
         if (configuration == null) message("This frame needs its connection configuration")
     }
 
@@ -167,6 +169,9 @@ class TouchFrameActivity : Activity() {
         )
         oauth = client
         repository = TouchHomeRepository(config, TouchHomeTokenProvider { deadline ->
+            synchronized(tokenLock) { if (Thread.currentThread().isInterrupted) null else client.validAccessToken(deadline) }
+        })
+        calendarRepository = TouchCalendarRepository(config, TouchCalendarTokenProvider { deadline ->
             synchronized(tokenLock) { if (Thread.currentThread().isInterrupted) null else client.validAccessToken(deadline) }
         })
         weatherRemote = HomeAssistantWeatherRemote(
@@ -197,6 +202,7 @@ class TouchFrameActivity : Activity() {
         main.removeCallbacks(clock)
         main.removeCallbacks(refresh)
         refreshInFlight = false
+        calendarInFlight = false
         weatherInFlight = false
         climateInFlight = false
         home.setClimateBusy(false)
@@ -232,13 +238,16 @@ class TouchFrameActivity : Activity() {
         // Cancellation may disconnect a socket. Keep that work away from touch dispatch and
         // capture these exact instances so a resumed activity's new clients are unaffected.
         val oldRepository = repository
+        val oldCalendarRepository = calendarRepository
         val oldWeather = weatherRemote
         val oldOAuth = oauth
         repository = null
+        calendarRepository = null
         weatherRemote = null
         oauth = null
         cancellationWorker.execute {
             oldRepository?.close()
+            oldCalendarRepository?.close()
             oldWeather?.cancel()
             oldOAuth?.cancelInFlight()
         }
@@ -265,7 +274,7 @@ class TouchFrameActivity : Activity() {
         main.removeCallbacks(refresh)
         when (next) {
             TouchDestination.HOME -> refreshHome()
-            TouchDestination.CALENDAR -> { renderCalendar(); refreshHome() }
+            TouchDestination.CALENDAR -> requestCalendar(calendarState.mode, calendarState.anchor, calendarState.selectedDate)
             TouchDestination.WEATHER -> refreshWeather()
             TouchDestination.PHOTOS, TouchDestination.ART, TouchDestination.BIRDS -> {
                 val url = webMediaUrl(next) ?: run { message("${next.label} is not configured"); return }
@@ -330,7 +339,7 @@ class TouchFrameActivity : Activity() {
                 if (!isCurrent()) return@post
                 model = cached
                 home.render(cached)
-                if (destination == TouchDestination.CALENDAR) renderCalendar()
+                if (destination == TouchDestination.CALENDAR) calendar.render(calendarState)
             }
             val fallback = cached ?: previous
             val next = runCatching { source.refresh(fallback) }.getOrElse { fallback.copy(connection = TouchConnection.OFFLINE) }
@@ -342,9 +351,31 @@ class TouchFrameActivity : Activity() {
                 refreshInFlight = false
                 model = next
                 home.render(next)
-                if (destination == TouchDestination.CALENDAR) renderCalendar()
+                if (destination == TouchDestination.CALENDAR) calendar.render(calendarState)
                 main.removeCallbacks(refresh)
                 main.postDelayed(refresh, 60_000L)
+            }
+        }
+    }
+
+    private fun requestCalendar(mode: TouchCalendarMode, anchor: java.time.LocalDate, selected: java.time.LocalDate) {
+        val source = calendarRepository ?: return
+        if (!resumed || calendarInFlight || !networkAllowed()) return
+        val range = TouchCalendarRange.forMode(mode, anchor)
+        calendarInFlight = true
+        calendarState = calendarState.copy(mode = mode, anchor = anchor, selectedDate = selected, range = range, loading = true)
+        calendar.render(calendarState)
+        val prior = calendarState
+        tasks.submit(worker) { isCurrent ->
+            val loaded = runCatching { source.load(range) }.getOrElse { TouchCalendarLoad(emptyList(), TouchCalendarConnection.OFFLINE) }
+            if (!isCurrent()) return@submit
+            main.post {
+                if (!isCurrent()) return@post
+                calendarInFlight = false
+                // Preserve usable current-range results when this refresh cannot reach Home Assistant.
+                val retained = if (loaded.connection == TouchCalendarConnection.OFFLINE && prior.events.isNotEmpty()) prior.events else loaded.events
+                calendarState = calendarState.copy(events = retained, connection = loaded.connection, updatedEpochMillis = loaded.updatedEpochMillis ?: prior.updatedEpochMillis, loading = false, partial = loaded.partial)
+                calendar.render(calendarState)
             }
         }
     }
@@ -456,25 +487,6 @@ class TouchFrameActivity : Activity() {
         authorizationContainer?.let(root::removeView)
         authorizationContainer = null
         if (hadAuthorization && restoreDestination && resumed) navigate(destination)
-    }
-
-    private fun renderCalendar() {
-        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(28), dp(24), dp(28), dp(24)) }
-        fun line(value: String, size: Float) = TextView(this).apply { text = value; textSize = size; setTextColor(INK); setPadding(0, dp(12), 0, dp(12)) }
-        list.addView(line("Your week", 42f))
-        if (model.connection == TouchConnection.SIGN_IN_REQUIRED) list.addView(Button(this).apply {
-            text = "Sign in to Home Assistant"; minHeight = dp(56); setOnClickListener { signIn() }
-        })
-        if (model.events.isEmpty()) list.addView(line(if (model.connection == TouchConnection.CONNECTED) "No upcoming events" else "Calendar is not available yet", 24f))
-        val format = DateTimeFormatter.ofPattern("EEE, MMM d · h:mm a", Locale.getDefault()).withZone(ZoneId.systemDefault())
-        val dayFormat = DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault()).withZone(ZoneId.systemDefault())
-        model.events.take(80).forEach { event ->
-            list.addView(line(event.title, 28f))
-            list.addView(line((if (event.allDay) dayFormat else format).format(Instant.ofEpochMilli(event.startEpochMillis)) + if (event.allDay) " · All day" else "", 20f))
-        }
-        if (model.connection == TouchConnection.OFFLINE) list.addView(line("Offline · showing the last available schedule", 20f))
-        calendar.removeAllViews()
-        calendar.addView(list)
     }
 
     override fun onUserInteraction() {
