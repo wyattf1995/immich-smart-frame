@@ -104,8 +104,12 @@ class AndroidFrameExternalSettingsReturnAdapter(private val context: Context) : 
 internal object FrameExternalSettingsOverlayWindowType {
     @Suppress("DEPRECATION")
     const val PHONE: Int = WindowManager.LayoutParams.TYPE_PHONE
-    const val APPLICATION_OVERLAY: Int = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
 
     fun forApi(apiLevel: Int): Int =
-        if (apiLevel >= Build.VERSION_CODES.O) APPLICATION_OVERLAY else PHONE
+        if (apiLevel >= Build.VERSION_CODES.O) applicationOverlayForAndroid8OrLater() else PHONE
+
+    /** The Android 8 overlay value is never evaluated on Android 6 or 7. */
+    @android.annotation.TargetApi(Build.VERSION_CODES.O)
+    private fun applicationOverlayForAndroid8OrLater(): Int =
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
 }
