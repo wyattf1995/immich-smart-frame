@@ -26,6 +26,7 @@ suites = {
     "parser": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeParser.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeParserTest.kt", "com.wyattfleming.touchframe.home.TouchHomeParserTest"),
     "repository": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepository.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepositoryTest.kt", "com.wyattfleming.touchframe.home.TouchHomeRepositoryTest"),
     "media": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchMediaLoadStateTest.kt", "com.wyattfleming.touchframe.media.TouchMediaLoadStateTest"),
+    "companion": (module / "src/main/kotlin/com/wyattfleming/touchframe/control/TouchCompanionController.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/control/TouchCompanionControllerTest.kt", "com.wyattfleming.touchframe.control.TouchCompanionControllerTest"),
     "scope": (module / "src/main/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScope.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScopeTest.kt", "com.wyattfleming.touchframe.concurrent.TouchTaskScopeTest"),
 }
 
@@ -44,6 +45,7 @@ def static_contract() -> dict[str, object]:
     repo = suites["repository"][0].read_text()
     parser = suites["parser"][0].read_text()
     media = suites["media"][0].read_text()
+    companion = suites["companion"][0].read_text()
     scope = suites["scope"][0].read_text()
     required = {
         "media-only edge gesture": "destination.isImmersiveMedia &&",
@@ -57,8 +59,12 @@ def static_contract() -> dict[str, object]:
         "calendar event cap": "MAX_EVENTS_PER_CALENDAR = 200",
         "same-url crash retry": "if (configuredUrl == url) return if (contentProcessClosed)",
         "pause lifecycle gate": "if (closed || !resumed) return\n            resumed = false",
+        "worker credential reread": "if (credentials() != currentCredentials)",
+        "worker event acceptance": "onEvent(it, expectedGeneration) { isCurrent(expectedGeneration) }",
+        "main callback timeout cancellation": "task.cancel(false)",
+        "dispatch-time command expiry": "if (nowMillis() > command.expiresAtMillis)",
     }
-    combined = shell + repo + parser + media + scope
+    combined = shell + repo + parser + media + companion + scope
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -149,6 +155,30 @@ try:
         "return Decision.LOAD",
         {"content crash requires explicit retry and uses the most recent configured url"},
     )
+    credential_red = mutate(
+        "companion-credential-reread-red", "companion",
+        "if (credentials() != currentCredentials) {",
+        "if (false) {",
+        {"credential change during poll commits none of the old snapshot"},
+    )
+    event_worker_red = mutate(
+        "companion-event-worker-red", "companion",
+        "onEvent(it, expectedGeneration) { isCurrent(expectedGeneration) }",
+        "onMain(expectedGeneration) { onEvent(it, expectedGeneration) { isCurrent(expectedGeneration) } } == true",
+        {"event acceptance runs on poll worker and blocks snapshot command when persistence rejects"},
+    )
+    expiry_red = mutate(
+        "companion-expiry-before-dispatch-red", "companion",
+        "if (nowMillis() > command.expiresAtMillis)",
+        "if (false)",
+        {"command that expires while queued is terminally expired without dispatch"},
+    )
+    timeout_cancel_red = mutate(
+        "companion-delayed-main-cancel-red", "companion",
+        "task.cancel(false)",
+        "Unit",
+        {"timed out queued callback is cancelled before a delayed main executor runs it"},
+    )
     scope_red = mutate(
         "pause-lifecycle-red", "scope",
         "if (closed || !resumed) return\n            resumed = false",
@@ -167,6 +197,8 @@ try:
         "proof": "touchframe-native-direct-data-v2", "passed": True, "command": command,
         "sourceTestAnnotationCount": expected_tests, "initial": initial, "edgeRed": edge_red,
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red, "mediaCrashRetryRed": media_red,
+        "credentialRereadRed": credential_red, "eventWorkerRed": event_worker_red,
+        "dispatchExpiryRed": expiry_red, "delayedMainCancellationRed": timeout_cancel_red,
         "pausedTaskEntryRed": scope_red,
         "restored": restored,
         "originalSourceSha256": source_hashes,
