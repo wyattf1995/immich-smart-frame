@@ -38,6 +38,7 @@ android {
                 "com/wyattfleming/frameos/control/FrameCompanionCredentialsStore.kt",
                 "com/wyattfleming/frameos/control/FrameCompanionEnvelope.kt",
                 "com/wyattfleming/frameos/control/FrameCompanionEventDecoder.kt",
+                "com/wyattfleming/frameos/control/FrameCompanionEventStore.kt",
                 "com/wyattfleming/frameos/control/FrameCompanionSettingsDecoder.kt",
                 "com/wyattfleming/frameos/control/FrameCompanionSnapshotRevision.kt",
                 "com/wyattfleming/frameos/control/FrameCompanionCommandDecoder.kt",

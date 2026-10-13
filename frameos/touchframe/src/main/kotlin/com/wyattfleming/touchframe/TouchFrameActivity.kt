@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -18,15 +19,23 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.wyattfleming.frameos.auth.*
+import com.wyattfleming.frameos.config.FrameExperienceSettings
+import com.wyattfleming.frameos.config.FrameExperienceStore
+import com.wyattfleming.frameos.config.QuietHoursBrightnessPolicy
+import com.wyattfleming.frameos.control.*
+import com.wyattfleming.frameos.navigation.FrameMode
 import com.wyattfleming.frameos.ui.WeatherContentView
 import com.wyattfleming.frameos.weather.*
 import com.wyattfleming.frameos.web.FrameOAuthWebSurface
 import com.wyattfleming.touchframe.concurrent.TouchTaskScope
+import com.wyattfleming.touchframe.control.TouchCompanionController
+import com.wyattfleming.touchframe.control.TouchRemoteSettingsPolicy
 import com.wyattfleming.touchframe.data.TouchConfiguration
 import com.wyattfleming.touchframe.data.TouchConfigurationStore
 import com.wyattfleming.touchframe.home.*
 import com.wyattfleming.touchframe.media.TouchCameraView
 import com.wyattfleming.touchframe.media.TouchMediaView
+import com.wyattfleming.touchframe.media.TouchOfflinePhotoStore
 import com.wyattfleming.touchframe.ui.*
 import java.security.SecureRandom
 import java.time.Instant
@@ -34,6 +43,9 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Touch navigation and native Home own this activity; the Lenovo activity is never hosted. */
 class TouchFrameActivity : Activity() {
@@ -45,6 +57,18 @@ class TouchFrameActivity : Activity() {
     private val cancellationWorker = Executors.newSingleThreadExecutor()
     private lateinit var homeCache: TouchHomeCache
     private var cacheLoaded = false
+    private lateinit var photoStore: TouchOfflinePhotoStore
+    private lateinit var companion: TouchCompanionController
+    private lateinit var experienceStore: FrameExperienceStore
+    private var experience = FrameExperienceSettings()
+    private var photosPaused = false
+    private var holdUntilMillis = 0L
+    private var lastInteractionMillis = SystemClock.elapsedRealtime()
+    private var lastAppliedBrightness: Float? = null
+    private var currentAssetId: String? = null
+    private var lastPhotoAt: Long? = null
+    private var lastMediaError: String? = null
+    private val runtimePreferences by lazy { getSharedPreferences("touchframe_runtime", MODE_PRIVATE) }
     private var resumed = false
     private var refreshInFlight = false
     private var weatherInFlight = false
@@ -55,6 +79,7 @@ class TouchFrameActivity : Activity() {
     private var oauth: HomeAssistantOAuthClient? = null
     private var weatherRemote: HomeAssistantWeatherRemote? = null
     private var weatherSnapshot: WeatherSnapshot? = null
+    private var lastWeatherAt: Long? = null
     private var model = TouchHomeModel("", "", emptyList(), null, TouchConnection.REFRESHING, null)
     private lateinit var root: FrameLayout
     private lateinit var shell: TouchShellLayout
@@ -74,6 +99,7 @@ class TouchFrameActivity : Activity() {
             if (!resumed) return
             val now = System.currentTimeMillis()
             home.tick(now)
+            updateDisplayBehavior(now)
             val hour = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).hour
             shell.setNight(hour < 7 || hour >= 19)
             main.postDelayed(this, 1_000L)
@@ -93,6 +119,10 @@ class TouchFrameActivity : Activity() {
         immersive()
         configuration = TouchConfigurationStore(this).read()
         homeCache = TouchHomeCache(getSharedPreferences("touch_home_cache", MODE_PRIVATE))
+        experienceStore = FrameExperienceStore(this)
+        experience = experienceStore.read()
+        photoStore = TouchOfflinePhotoStore(this)
+        configuration?.let { photoStore.activateScope(it.photosUrl, photoProfile(it)) }
         settingsReturn = TouchSettingsReturn(this)
         root = FrameLayout(this)
         shell = TouchShellLayout(this, ::navigate) {
@@ -113,6 +143,15 @@ class TouchFrameActivity : Activity() {
         shell.content.addView(calendar, fill())
         root.addView(shell, fill())
         setContentView(root)
+        companion = TouchCompanionController.create(
+            applicationContext,
+            statusProvider = ::companionStatus,
+            onCommand = { command, _ -> applyRemoteCommand(command) },
+            onSettings = ::applyRemoteSettings,
+            onEvent = ::showRemoteEvent,
+            onHiddenAssets = ::applyHiddenAssets,
+        )
+        applyDestinationOrder()
         home.render(model)
         renderCalendar()
         if (configuration == null) message("This frame needs its connection configuration")
@@ -146,12 +185,15 @@ class TouchFrameActivity : Activity() {
         main.removeCallbacks(clock)
         clock.run()
         navigate(destination)
+        companion.setEnabled(networkAllowed() && runtimePreferences.getBoolean("companion_enabled", false))
+        companion.start()
         if (!networkAllowed() && !lanPromptShown) requestLocalNetwork()
     }
 
     override fun onPause() {
         resumed = false
         tasks.pause()
+        companion.stop()
         main.removeCallbacks(clock)
         main.removeCallbacks(refresh)
         refreshInFlight = false
@@ -169,8 +211,10 @@ class TouchFrameActivity : Activity() {
         settingsReturn.remove()
         closeAuthorization(restoreDestination = false)
         tasks.close()
+        companion.close()
         releaseData()
         media?.close()
+        photoStore.close()
         cameras?.close()
         worker.shutdownNow()
         authorizationWorker.shutdownNow()
@@ -227,13 +271,24 @@ class TouchFrameActivity : Activity() {
                 val url = if (next == TouchDestination.PHOTOS) configuration?.photosUrl else configuration?.artUrl
                 if (url == null) { message("${next.label} is not configured"); return }
                 if (!networkAllowed()) { requestLocalNetwork(); return }
-                val surface = media ?: TouchMediaView(this, runtime).also {
+                val surface = media ?: TouchMediaView(this, runtime, photoStore = photoStore).also {
                     media = it
-                    it.onStatus = { status -> if (destination.isImmersiveMedia && status != null) message(status) }
+                    it.onStatus = { status ->
+                        lastMediaError = status
+                        if (destination.isImmersiveMedia && status != null) message(status)
+                    }
+                    it.onPhotoObserved = { photo ->
+                        currentAssetId = photo.assetId
+                        lastPhotoAt = System.currentTimeMillis()
+                        lastMediaError = null
+                    }
                     // Native panels cover this retained view; Home never reattaches a browser surface.
                     shell.content.addView(it, 0, fill())
                 }
-                surface.showUrl(url, next.label)
+                if (next == TouchDestination.PHOTOS) {
+                    surface.showPhotos(url, photoProfile(requireNotNull(configuration)))
+                    surface.setPhotosPaused(photosPaused)
+                } else surface.showArt(url)
                 surface.setVisibleActive(resumed)
             }
             TouchDestination.CAMERAS -> {
@@ -324,7 +379,10 @@ class TouchFrameActivity : Activity() {
                 if (!isCurrent()) return@post
                 weatherInFlight = false
                 val load = when (result) {
-                    is WeatherRemoteResult.Success -> WeatherLoadResult.Fresh(result.snapshot).also { weatherSnapshot = result.snapshot }
+                    is WeatherRemoteResult.Success -> WeatherLoadResult.Fresh(result.snapshot).also {
+                        weatherSnapshot = result.snapshot
+                        lastWeatherAt = System.currentTimeMillis()
+                    }
                     is WeatherRemoteResult.AuthRequired -> weatherSnapshot?.let { WeatherLoadResult.Stale(it, true) } ?: WeatherLoadResult.AuthRequired
                     is WeatherRemoteResult.Offline -> weatherSnapshot?.let { WeatherLoadResult.Stale(it) } ?: WeatherLoadResult.Offline
                 }
@@ -412,6 +470,182 @@ class TouchFrameActivity : Activity() {
         calendar.addView(list)
     }
 
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        lastInteractionMillis = SystemClock.elapsedRealtime()
+    }
+
+    private fun updateDisplayBehavior(now: Long) {
+        val brightness = QuietHoursBrightnessPolicy.effectivePercent(null, experience.quietHours,
+            Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalTime())?.div(100f)
+            ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        if (lastAppliedBrightness != brightness) {
+            window.attributes = window.attributes.apply { screenBrightness = brightness }
+            lastAppliedBrightness = brightness
+        }
+        if (holdUntilMillis > 0 && now >= holdUntilMillis) {
+            holdUntilMillis = 0
+            photosPaused = false
+            media?.setPhotosPaused(false)
+        }
+        if (authorization == null && destination != TouchDestination.ART && destination != TouchDestination.PHOTOS &&
+            configuration != null && SystemClock.elapsedRealtime() - lastInteractionMillis >= experience.idleReturnSeconds * 1_000L) {
+            lastInteractionMillis = SystemClock.elapsedRealtime()
+            navigate(TouchDestination.PHOTOS)
+        }
+    }
+
+    private fun photoProfile(config: TouchConfiguration): String = FramePhotosProfileUrl.profile(config.photosUrl) ?: "balanced"
+
+    private fun companionStatus(): FrameRemoteStatus? {
+        if (!resumed) return null
+        val reserve = photoStore.publishedStatus()
+        return FrameRemoteStatus(
+            mode = FrameMode.valueOf(destination.name), photosPaused = photosPaused,
+            lastPaintAt = null, lastWeatherAt = lastWeatherAt,
+            recoveryCount = 0, lastError = lastMediaError, offline = media?.offlineVisible == true,
+            appVersion = "touch-0.1.0", currentAssetId = currentAssetId, lastPhotoAt = lastPhotoAt,
+            profile = configuration?.let(::photoProfile), offlineAssets = reserve.offlineAssets, offlineBytes = reserve.offlineBytes,
+        )
+    }
+
+    private fun applyRemoteCommand(command: FrameRemoteCommand): TouchCompanionController.CommandResult {
+        if (!resumed || authorization != null) return TouchCompanionController.CommandResult.Failed("Frame is not ready")
+        lastInteractionMillis = SystemClock.elapsedRealtime()
+        return when (command) {
+            is FrameRemoteCommand.ShowMode -> {
+                val route = TouchDestination.entries.firstOrNull { it.name == command.mode.name }
+                    ?: return TouchCompanionController.CommandResult.Unsupported("Mode is unavailable on this frame")
+                navigate(route)
+                if (destination == route) TouchCompanionController.CommandResult.Applied()
+                else TouchCompanionController.CommandResult.Failed("Mode is not configured")
+            }
+            is FrameRemoteCommand.PhotoStep -> {
+                if (destination != TouchDestination.PHOTOS || media?.movePhoto(command.forward) != true)
+                    TouchCompanionController.CommandResult.Failed("Photos is not ready")
+                else TouchCompanionController.CommandResult.Dispatched()
+            }
+            is FrameRemoteCommand.PhotoPause -> {
+                photosPaused = command.paused
+                holdUntilMillis = 0
+                val sent = media?.setPhotosPaused(photosPaused) == true
+                if (sent) TouchCompanionController.CommandResult.Dispatched()
+                else TouchCompanionController.CommandResult.Applied("Pause applied for this session")
+            }
+            is FrameRemoteCommand.PhotoHold -> {
+                photosPaused = true
+                holdUntilMillis = System.currentTimeMillis() + command.durationSeconds * 1_000L
+                val sent = media?.setPhotosPaused(true) == true
+                if (sent) TouchCompanionController.CommandResult.Dispatched()
+                else TouchCompanionController.CommandResult.Applied("Hold applied for this session")
+            }
+            is FrameRemoteCommand.SetProfile -> {
+                if (updateProfile(command.profile)) TouchCompanionController.CommandResult.Dispatched()
+                else TouchCompanionController.CommandResult.Failed("Profile is unavailable")
+            }
+        }
+    }
+
+    private fun updateProfile(profile: String): Boolean {
+        val previous = configuration ?: return false
+        val url = FramePhotosProfileUrl.withProfile(previous.photosUrl, profile) ?: return false
+        if (url == previous.photosUrl) return true
+        val next = previous.copy(photosUrl = url)
+        configuration = next
+        TouchConfigurationStore(this).write(next)
+        currentAssetId = null
+        lastPhotoAt = null
+        photoStore.activateScope(url, profile)
+        if (destination == TouchDestination.PHOTOS) navigate(TouchDestination.PHOTOS)
+        return true
+    }
+
+    private fun applyRemoteSettings(settings: FrameRemoteSettings, token: Long): Boolean {
+        if (!companion.isCurrent(token)) return false
+        if (!TouchRemoteSettingsPolicy.shouldApply(experience.settingsRevision, settings.revision)) return true
+        if (!updateProfile(settings.profile)) return false
+        experience = FrameExperienceSettings(
+            orderedEnabledModes = settings.modeOrder, quietHours = settings.quietHours,
+            deactivateHiddenHomeAssistant = settings.hiddenHomeSuspend,
+            idleReturnSeconds = settings.idleReturnSeconds, eventOverlaysEnabled = settings.eventOverlaysEnabled,
+            settingsRevision = settings.revision,
+        )
+        experienceStore.write(experience)
+        applyDestinationOrder()
+        updateDisplayBehavior(System.currentTimeMillis())
+        return true
+    }
+
+    private fun applyDestinationOrder() {
+        if (experience.settingsRevision < 0) return
+        val destinations = experience.orderedEnabledModes.mapNotNull { mode ->
+            TouchDestination.entries.firstOrNull { it.name == mode.name }
+        }
+        home.setDestinations(destinations)
+        shell.setDestinations(destinations)
+    }
+
+    /** Companion worker waits for the owned reserve worker, then for a bounded UI commit. */
+    private fun applyHiddenAssets(ids: Set<String>, token: Long, canCommit: () -> Boolean): Boolean {
+        val active = AtomicBoolean(true)
+        val current = { active.get() && canCommit() && companion.isCurrent(token) }
+        val update = photoStore.applyHiddenAssets(ids, current)
+        val applied = try {
+            update.get(8, TimeUnit.SECONDS)
+        } catch (_: Exception) {
+            active.set(false)
+            update.cancel(true)
+            false
+        }
+        if (!applied || !current()) return false
+        val accepted = onCompanionMain(current) {
+            // Called on main: hidden cached content is removed synchronously.
+            media?.hideOfflinePhotoIfHidden(ids)
+            if (currentAssetId?.lowercase(Locale.ROOT) in ids) {
+                currentAssetId = null
+                if (destination == TouchDestination.PHOTOS) media?.movePhoto(true)
+            }
+            true
+        } == true
+        active.set(false)
+        return accepted
+    }
+
+    /** Event persistence is owned by the companion worker; only presentation touches main. */
+    private fun showRemoteEvent(event: FrameCompanionEvent, token: Long, canCommit: () -> Boolean): Boolean {
+        val current = { canCommit() && companion.isCurrent(token) }
+        val eligible = onCompanionMain(current) { eventMayShow() } ?: return false
+        if (!eligible) return true
+        if (!current()) return false
+        return when (FrameCompanionEventStore(applicationContext).claimResult(event.id, System.currentTimeMillis())) {
+            FrameCompanionEventStore.ClaimResult.PERSISTENCE_FAILED -> false
+            FrameCompanionEventStore.ClaimResult.ALREADY_HANDLED -> current()
+            FrameCompanionEventStore.ClaimResult.CLAIMED -> onCompanionMain(current) {
+                if (eventMayShow()) message(event.text)
+                true
+            } == true
+        }
+    }
+
+    private fun eventMayShow(): Boolean = resumed && authorization == null && experience.eventOverlaysEnabled &&
+        destination == TouchDestination.PHOTOS && !photosPaused &&
+        experience.quietHours?.isActiveAt(java.time.LocalTime.now()) != true
+
+    /** Never waits on main; cancels a queued delivery when its worker stops waiting. */
+    private fun <T> onCompanionMain(canCommit: () -> Boolean, action: () -> T): T? {
+        check(Looper.myLooper() != Looper.getMainLooper())
+        val active = AtomicBoolean(true)
+        val delivery = FutureTask<T?> { if (active.get() && canCommit()) action() else null }
+        main.post(delivery)
+        return try {
+            delivery.get(2, TimeUnit.SECONDS)
+        } catch (_: Exception) {
+            active.set(false)
+            delivery.cancel(false)
+            null
+        }
+    }
+
     private fun cacheEntities(config: TouchConfiguration): List<String> =
         listOf(config.weatherEntityId, config.climateEntityId) + config.calendarEntityIds
 
@@ -429,7 +663,10 @@ class TouchFrameActivity : Activity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == LAN_REQUEST) {
-            if (networkAllowed()) navigate(destination) else message("Local network access is off. You can enable it in Android Settings.")
+            if (networkAllowed()) {
+                companion.setEnabled(runtimePreferences.getBoolean("companion_enabled", false))
+                navigate(destination)
+            } else message("Local network access is off. You can enable it in Android Settings.")
         }
     }
 
