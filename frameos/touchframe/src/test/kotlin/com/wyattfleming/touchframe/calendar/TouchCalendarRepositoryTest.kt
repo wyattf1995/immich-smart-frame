@@ -34,4 +34,16 @@ class TouchCalendarRepositoryTest {
         assertTrue(requests.single().url.contains("start=2026-10-01"))
         assertTrue(requests.single().url.contains("end=2026-10-08"))
     }
+    @Test fun `one transport exception remains a partial calendar result`() {
+        val config = TouchConfiguration("https://photos.example", "https://ha.example", "https://ha.example", "weather.home", null, "climate.home", listOf("calendar.one", "calendar.two"), emptyList())
+        val transport = HomeAssistantHttpTransport { request ->
+            if (request.url.contains("calendar.one")) HomeAssistantHttpResponse(200, "[]") else throw java.io.IOException("offline")
+        }
+        TouchCalendarRepository(config, TouchCalendarTokenProvider { "token" }, transport, ZoneId.of("UTC")).use { repository ->
+            val loaded = repository.load(TouchCalendarRange(LocalDate.of(2026, 10, 12), LocalDate.of(2026, 10, 19)))
+            assertEquals(TouchCalendarConnection.CONNECTED, loaded.connection)
+            assertTrue(loaded.partial)
+        }
+    }
+
 }
