@@ -6,11 +6,13 @@ import org.junit.Test
 import java.io.File
 
 class MainActivitySystemSettingsContractTest {
-    private val source = File("src/main/kotlin/com/wyattfleming/frameos/MainActivity.kt").readText()
+    private val activitySource = File("src/main/kotlin/com/wyattfleming/frameos/MainActivity.kt").readText()
+    private val adapterSource = File("src/main/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsReturnController.kt").readText()
 
-    @Test fun `frame Settings opens the Android Settings landing page`() {
-        assertTrue(source.contains("setNeutralButton(\"Android settings\")"))
-        assertTrue(source.contains("Intent(android.provider.Settings.ACTION_SETTINGS)"))
-        assertFalse(source.contains("Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)"))
+    @Test fun `rail Settings opens Android Settings directly through the return controller`() {
+        assertTrue(activitySource.contains("onOpenSettings = { openAndroidSettings() }"))
+        assertTrue(activitySource.contains("private fun openAndroidSettings()"))
+        assertTrue(adapterSource.contains("Intent(Settings.ACTION_SETTINGS)"))
+        assertFalse(adapterSource.contains("Intent(Settings.ACTION_WIFI_SETTINGS)"))
     }
 }

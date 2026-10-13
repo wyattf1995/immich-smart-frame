@@ -1,7 +1,6 @@
 package com.wyattfleming.frameos
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.content.Intent
@@ -792,7 +791,7 @@ class MainActivity : Activity() {
         touchRail = null
         if (touchNavigationEnabled && activeConfiguration != null) {
             touchRail = TouchNavigationRail(this,
-                onOpenSettings = { showFrameSettings() },
+                onOpenSettings = { openAndroidSettings() },
                 onOpenMode = { showMode(it, announceHud = false) },
             ).also {
                 it.setModes(TouchNavigationRailPolicy.ordered(availableModes()))
@@ -1211,21 +1210,14 @@ class MainActivity : Activity() {
         scheduleIdleReset()
     }
 
-    private fun showFrameSettings() {
-        AlertDialog.Builder(this)
-            .setTitle("Your frame")
-            .setMessage("Home brings together your calendar, weather and home controls.\n\nPhotos and Art fill the screen. Swipe inward from the left edge to open the menu, then tap Home to return here.")
-            .setPositiveButton("Done", null)
-            .setNeutralButton("Android settings") { _, _ ->
-                when (settingsReturnController.openSettings()) {
-                    FrameExternalSettingsReturnController.Outcome.LAUNCHED -> Unit
-                    FrameExternalSettingsReturnController.Outcome.OVERLAY_PERMISSION_DENIED ->
-                        showHud("Android Settings is unavailable until the FrameOS return button is enabled")
-                    FrameExternalSettingsReturnController.Outcome.EXTERNAL_LAUNCH_FAILED ->
-                        showHud("Android Settings could not be opened")
-                }
-            }
-            .show()
+    private fun openAndroidSettings() {
+        when (settingsReturnController.openSettings()) {
+            FrameExternalSettingsReturnController.Outcome.LAUNCHED -> Unit
+            FrameExternalSettingsReturnController.Outcome.OVERLAY_PERMISSION_DENIED ->
+                showHud("Android Settings is unavailable until the FrameOS return button is enabled")
+            FrameExternalSettingsReturnController.Outcome.EXTERNAL_LAUNCH_FAILED ->
+                showHud("Android Settings could not be opened")
+        }
     }
 
     private fun availability(): FrameModeAvailability = FrameModeAvailability(
