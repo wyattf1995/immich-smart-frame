@@ -179,6 +179,9 @@ try {
     for (let i = 0; i < 5; i++) { await action(pages[kind].page, kind, i); await sleep(300); }
     await pages[kind].page.screenshot({ path: join(output, `${kind}-smoke.png`), fullPage: false });
   }
+  await context.request.post(base + '/fixture/config', { data: { preferences: 200 } });
+  await pages.companion.page.reload({ waitUntil: 'domcontentloaded' });
+  await pages.companion.page.locator('#preferences li').nth(199).waitFor({ state: 'attached' });
   await sleep(3000);
   result.continuousUseStartedAt = new Date().toISOString();
   for (const kind of ['home', 'companion', 'birds', 'art']) {
