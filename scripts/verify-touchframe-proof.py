@@ -27,6 +27,7 @@ bridge_result_dir = frame / "frame-shared" / "build" / "test-results" / "testDeb
 bridge_class = "com.wyattfleming.frameos.photos.FramePhotoBridgePreparedAttachmentContractTest"
 suites = {
     "shell": (module / "src/main/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayout.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayoutTest.kt", "com.wyattfleming.touchframe.ui.TouchShellLayoutTest"),
+    "destinations": (module / "src/main/kotlin/com/wyattfleming/touchframe/ui/TouchDestination.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/ui/TouchDestinationOrderTest.kt", "com.wyattfleming.touchframe.ui.TouchDestinationOrderTest"),
     "parser": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeParser.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeParserTest.kt", "com.wyattfleming.touchframe.home.TouchHomeParserTest"),
     "repository": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepository.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepositoryTest.kt", "com.wyattfleming.touchframe.home.TouchHomeRepositoryTest"),
     "media": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchMediaLoadStateTest.kt", "com.wyattfleming.touchframe.media.TouchMediaLoadStateTest"),
@@ -49,6 +50,7 @@ def require_file(path: Path) -> None:
 
 def static_contract() -> dict[str, object]:
     shell = suites["shell"][0].read_text()
+    destinations = suites["destinations"][0].read_text()
     repo = suites["repository"][0].read_text()
     parser = suites["parser"][0].read_text()
     media = suites["media"][0].read_text()
@@ -62,6 +64,7 @@ def static_contract() -> dict[str, object]:
         "48dp edge target": "EDGE_WIDTH_DP = 48",
         "56dp horizontal threshold": "HORIZONTAL_THRESHOLD_DP = 56",
         "32dp vertical tolerance": "VERTICAL_TOLERANCE_DP = 32",
+        "remote destination Home anchor": "add(TouchDestination.HOME)",
         "direct state API": "/api/states/$entityId",
         "direct calendar API": "/api/calendars/$calendarId",
         "bounded request workers": "MAX_REQUEST_WORKERS = 2",
@@ -75,7 +78,7 @@ def static_contract() -> dict[str, object]:
         "offline scope generation": "class TouchOfflineStoreScopeGate",
         "hidden commit cancellation gate": "!task.isCancelled && !Thread.currentThread().isInterrupted",
     }
-    combined = shell + repo + parser + media + offline + blur + offline_store + hidden_commit + scope
+    combined = shell + destinations + repo + parser + media + offline + blur + offline_store + hidden_commit + scope
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -193,6 +196,12 @@ try:
         {"prepared UI attachment preserves configured session and never activates disk scope"},
         bridge_source_bytes,
     )
+    destination_red = mutate(
+        "destination-home-anchor-red", "destinations",
+        "add(TouchDestination.HOME)",
+        "add(TouchDestination.ART)",
+        {"remote order anchors Home and removes repeated modes"},
+    )
     edge_red = mutate(
         "edge-media-only-red", "shell",
         "destination.isImmersiveMedia &&\n        downX in 0f..edgeWidth.toFloat()",
@@ -283,7 +292,7 @@ try:
     (out / "touchframe-source-proof.json").write_text(json.dumps({
         "proof": "touchframe-native-direct-data-v2", "passed": True, "command": command,
         "sourceTestAnnotationCount": expected_tests, "initial": initial, "preparedBridgeInitial": bridge_initial,
-        "preparedBridgeSessionGateRed": bridge_red, "edgeRed": edge_red,
+        "preparedBridgeSessionGateRed": bridge_red, "destinationHomeAnchorRed": destination_red, "edgeRed": edge_red,
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red, "mediaCrashRetryRed": media_red,
         "offlineHiddenPhotosRed": offline_red,
         "offlineBackdropBoundRed": blur_red,
