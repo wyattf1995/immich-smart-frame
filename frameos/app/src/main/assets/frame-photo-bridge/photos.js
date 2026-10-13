@@ -13,6 +13,8 @@ const MAX_SHARED_PLAYBACK_DETAIL_CHARS = 512;
 const SHARED_SCALAR = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 let lastFingerprint = "";
 let inFlightFingerprint = "";
+let inFlightCaptureToken = 0;
+let nextCaptureToken = 0;
 let rejectedFingerprint = "";
 let rejectedRetries = 0;
 let queued = false;
@@ -116,11 +118,17 @@ function capture() {
   const fingerprint = `${assetId}:${base64.length}:${base64.slice(0, 24)}`;
   const captureFingerprint = snapshotNonce ? `${fingerprint}:${snapshotNonce}` : fingerprint;
   if ((!snapshotNonce && fingerprint === lastFingerprint) || captureFingerprint === inFlightFingerprint) return;
+  const captureToken = ++nextCaptureToken;
   inFlightFingerprint = captureFingerprint;
+  inFlightCaptureToken = captureToken;
   const message = { type: "loaded-photo", assetId, image: base64 };
   if (snapshotNonce) message.snapshotNonce = snapshotNonce;
-  browser.runtime.sendNativeMessage("frame_photo_bridge", message).then((response) => {
+  const completeCapture = (response) => {
+    // A different visible image may have replaced this request while native persistence ran.
+    // Only the current owner may clear capture, retry, or paused-snapshot state.
+    if (captureToken !== inFlightCaptureToken || captureFingerprint !== inFlightFingerprint) return;
     inFlightFingerprint = "";
+    inFlightCaptureToken = 0;
     if (response && response.accepted) {
       lastFingerprint = fingerprint;
       if (snapshotNonce === pauseSnapshotNonce) {
@@ -133,10 +141,8 @@ function capture() {
       return;
     }
     retryRejectedCapture(captureFingerprint);
-  }).catch(() => {
-    inFlightFingerprint = "";
-    retryRejectedCapture(captureFingerprint);
-  });
+  };
+  browser.runtime.sendNativeMessage("frame_photo_bridge", message).then(completeCapture, () => completeCapture(null));
 }
 
 function retryRejectedCapture(fingerprint) {
