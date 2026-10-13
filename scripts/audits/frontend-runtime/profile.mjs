@@ -170,7 +170,7 @@ try {
   }
   await pages.home.page.locator('#custom-home:not([hidden]) [data-adjust="temperature:1"]').waitFor({ timeout: 20000 });
   await pages.art.page.locator('.artwork').waitFor();
-  await pages.companion.page.locator('#preferences li').first().waitFor();
+  await pages.companion.page.locator('#preferences li').first().waitFor({ state: 'attached' });
   await pages.birds.page.locator('#speciesGrid > *').first().waitFor();
   await pages.birds.page.waitForFunction(() => parseFloat(document.querySelector('#audioMeterLevel')?.style.width) > 0);
   const artCollection = await context.request.get(base + '/art/collection.json');
@@ -186,7 +186,7 @@ try {
     const baseline = await measure(page, cdp, kind, `${kind}-baseline-30s`, 30, { trace: true });
     if (kind === 'companion') {
       await context.request.post(base + '/fixture/config', { data: { preferences: 1000 } });
-      await page.reload({ waitUntil: 'domcontentloaded' }); await page.locator('#preferences li').nth(999).waitFor();
+      await page.reload({ waitUntil: 'domcontentloaded' }); await page.locator('#preferences li').nth(999).waitFor({ state: 'attached' });
       await measure(page, cdp, kind, 'companion-stress-1000-30s', 30, { trace: true });
     } else if (kind === 'birds') {
       await context.request.post(base + '/fixture/config', { data: { audioHz: 20, summaryCount: 500, recentCount: 500 } });
