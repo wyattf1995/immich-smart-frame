@@ -1,0 +1,457 @@
+package com.wyattfleming.touchframe
+
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+import com.wyattfleming.frameos.auth.*
+import com.wyattfleming.frameos.ui.WeatherContentView
+import com.wyattfleming.frameos.weather.*
+import com.wyattfleming.frameos.web.FrameOAuthWebSurface
+import com.wyattfleming.touchframe.concurrent.TouchTaskScope
+import com.wyattfleming.touchframe.data.TouchConfiguration
+import com.wyattfleming.touchframe.data.TouchConfigurationStore
+import com.wyattfleming.touchframe.home.*
+import com.wyattfleming.touchframe.media.TouchCameraView
+import com.wyattfleming.touchframe.media.TouchMediaView
+import com.wyattfleming.touchframe.ui.*
+import java.security.SecureRandom
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import java.util.concurrent.Executors
+
+/** Touch navigation and native Home own this activity; the Lenovo activity is never hosted. */
+class TouchFrameActivity : Activity() {
+    private val main = Handler(Looper.getMainLooper())
+    private val worker = Executors.newSingleThreadExecutor()
+    private val authorizationWorker = Executors.newSingleThreadExecutor()
+    private val tokenLock = Any()
+    private val tasks = TouchTaskScope()
+    private val cancellationWorker = Executors.newSingleThreadExecutor()
+    private lateinit var homeCache: TouchHomeCache
+    private var cacheLoaded = false
+    private var resumed = false
+    private var refreshInFlight = false
+    private var weatherInFlight = false
+    private var climateInFlight = false
+    private var destination = TouchDestination.HOME
+    private var configuration: TouchConfiguration? = null
+    private var repository: TouchHomeRepository? = null
+    private var oauth: HomeAssistantOAuthClient? = null
+    private var weatherRemote: HomeAssistantWeatherRemote? = null
+    private var weatherSnapshot: WeatherSnapshot? = null
+    private var model = TouchHomeModel("", "", emptyList(), null, TouchConnection.REFRESHING, null)
+    private lateinit var root: FrameLayout
+    private lateinit var shell: TouchShellLayout
+    private lateinit var home: TouchHomeView
+    private lateinit var weather: WeatherContentView
+    private lateinit var calendar: ScrollView
+    private lateinit var settingsReturn: TouchSettingsReturn
+    private var media: TouchMediaView? = null
+    private var cameras: TouchCameraView? = null
+    private var authorization: FrameOAuthWebSurface? = null
+    private var authorizationContainer: View? = null
+    private var pendingAuthorization: SharedPreferencesPendingOAuthStateStore? = null
+    private var lanPromptShown = false
+    private val runtime get() = (application as TouchFrameApplication).runtime
+    private val clock = object : Runnable {
+        override fun run() {
+            if (!resumed) return
+            val now = System.currentTimeMillis()
+            home.tick(now)
+            val hour = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).hour
+            shell.setNight(hour < 7 || hour >= 19)
+            main.postDelayed(this, 1_000L)
+        }
+    }
+    private val refresh = Runnable {
+        when (destination) {
+            TouchDestination.HOME, TouchDestination.CALENDAR -> refreshHome()
+            TouchDestination.WEATHER -> refreshWeather()
+            else -> Unit
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        immersive()
+        configuration = TouchConfigurationStore(this).read()
+        homeCache = TouchHomeCache(getSharedPreferences("touch_home_cache", MODE_PRIVATE))
+        settingsReturn = TouchSettingsReturn(this)
+        root = FrameLayout(this)
+        shell = TouchShellLayout(this, ::navigate) {
+            if (!settingsReturn.open()) message("Enable the FrameOS Touch return button before opening Android Settings")
+        }
+        home = TouchHomeView(this, { route ->
+            TouchDestination.entries.firstOrNull { it.name.equals(route, true) }?.let(::navigate)
+        }, ::signIn, { mode -> changeClimate { it.changeClimateMode(mode) } },
+            { value -> changeClimate { it.changeClimateTarget(value) } })
+        weather = WeatherContentView(this).apply {
+            presentation = WeatherPresentation(emptyMessage = "Sign in to Home Assistant for weather", authenticationRequired = true)
+            setOnPrimaryActionListener(::signIn)
+            visibility = View.GONE
+        }
+        calendar = ScrollView(this).apply { setBackgroundColor(PAPER); visibility = View.GONE }
+        shell.content.addView(home, fill())
+        shell.content.addView(weather, fill())
+        shell.content.addView(calendar, fill())
+        root.addView(shell, fill())
+        setContentView(root)
+        home.render(model)
+        renderCalendar()
+        if (configuration == null) message("This frame needs its connection configuration")
+    }
+
+    private fun initializeData() {
+        val config = configuration ?: return
+        val callback = config.homeAssistantOrigin + HomeAssistantOAuthEndpoint.CALLBACK_PATH
+        val client = HomeAssistantOAuthClient(
+            HomeAssistantOAuthEndpoint.fromDisplayUrl(config.homeAssistantUrl), callback,
+            UrlConnectionHomeAssistantTransport(), AndroidKeystoreOAuthSessionStore(this, callback),
+            System::currentTimeMillis,
+        )
+        oauth = client
+        repository = TouchHomeRepository(config, TouchHomeTokenProvider { deadline ->
+            synchronized(tokenLock) { if (Thread.currentThread().isInterrupted) null else client.validAccessToken(deadline) }
+        })
+        weatherRemote = HomeAssistantWeatherRemote(
+            HomeAssistantWeatherEndpoint.fromDisplayUrl(config.homeAssistantUrl),
+            UrlConnectionHomeAssistantTransport(), HomeAssistantWeatherParser(),
+        )
+    }
+
+    override fun onResume() {
+        super.onResume()
+        resumed = true
+        tasks.resume()
+        initializeData()
+        settingsReturn.remove()
+        immersive()
+        main.removeCallbacks(clock)
+        clock.run()
+        navigate(destination)
+        if (!networkAllowed() && !lanPromptShown) requestLocalNetwork()
+    }
+
+    override fun onPause() {
+        resumed = false
+        tasks.pause()
+        main.removeCallbacks(clock)
+        main.removeCallbacks(refresh)
+        refreshInFlight = false
+        weatherInFlight = false
+        climateInFlight = false
+        home.setClimateBusy(false)
+        releaseData()
+        media?.setVisibleActive(false)
+        cameras?.setActive(false)
+        closeAuthorization(restoreDestination = false)
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        settingsReturn.remove()
+        closeAuthorization(restoreDestination = false)
+        tasks.close()
+        releaseData()
+        media?.close()
+        cameras?.close()
+        worker.shutdownNow()
+        authorizationWorker.shutdownNow()
+        cancellationWorker.shutdown()
+        main.removeCallbacksAndMessages(null)
+        super.onDestroy()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        shell.select(destination)
+    }
+
+    private fun releaseData() {
+        // Cancellation may disconnect a socket. Keep that work away from touch dispatch and
+        // capture these exact instances so a resumed activity's new clients are unaffected.
+        val oldRepository = repository
+        val oldWeather = weatherRemote
+        val oldOAuth = oauth
+        repository = null
+        weatherRemote = null
+        oauth = null
+        cancellationWorker.execute {
+            oldRepository?.close()
+            oldWeather?.cancel()
+            oldOAuth?.cancelInFlight()
+        }
+    }
+
+    private fun navigate(next: TouchDestination) {
+        if (next.isImmersiveMedia) {
+            val url = if (next == TouchDestination.PHOTOS) configuration?.photosUrl else configuration?.artUrl
+            if (url == null) { message("${next.label} is not configured"); return }
+        }
+        if (next == TouchDestination.CAMERAS && configuration == null) { message("Cameras are not configured"); return }
+        if ((next.isImmersiveMedia || next == TouchDestination.CAMERAS) && !networkAllowed()) {
+            requestLocalNetwork()
+            return
+        }
+        destination = next
+        shell.select(next)
+        home.visibility = if (next == TouchDestination.HOME) View.VISIBLE else View.GONE
+        weather.visibility = if (next == TouchDestination.WEATHER) View.VISIBLE else View.GONE
+        calendar.visibility = if (next == TouchDestination.CALENDAR) View.VISIBLE else View.GONE
+        cameras?.visibility = if (next == TouchDestination.CAMERAS) View.VISIBLE else View.GONE
+        cameras?.setActive(resumed && networkAllowed() && next == TouchDestination.CAMERAS)
+        media?.setVisibleActive(resumed && networkAllowed() && next.isImmersiveMedia)
+        main.removeCallbacks(refresh)
+        when (next) {
+            TouchDestination.HOME -> refreshHome()
+            TouchDestination.CALENDAR -> { renderCalendar(); refreshHome() }
+            TouchDestination.WEATHER -> refreshWeather()
+            TouchDestination.PHOTOS, TouchDestination.ART -> {
+                val url = if (next == TouchDestination.PHOTOS) configuration?.photosUrl else configuration?.artUrl
+                if (url == null) { message("${next.label} is not configured"); return }
+                if (!networkAllowed()) { requestLocalNetwork(); return }
+                val surface = media ?: TouchMediaView(this, runtime).also {
+                    media = it
+                    it.onStatus = { status -> if (destination.isImmersiveMedia && status != null) message(status) }
+                    // Native panels cover this retained view; Home never reattaches a browser surface.
+                    shell.content.addView(it, 0, fill())
+                }
+                surface.showUrl(url, next.label)
+                surface.setVisibleActive(resumed)
+            }
+            TouchDestination.CAMERAS -> {
+                val config = configuration ?: return
+                if (!networkAllowed()) { requestLocalNetwork(); return }
+                val view = cameras ?: TouchCameraView(this, config.homeAssistantOrigin, config.cameraEntityIds) { deadline ->
+                    synchronized(tokenLock) {
+                        if (Thread.currentThread().isInterrupted) null else oauth?.validAccessToken(deadline)
+                    }
+                }.also {
+                    cameras = it
+                    it.onSignIn = ::signIn
+                    shell.content.addView(it, fill())
+                }
+                view.visibility = View.VISIBLE
+                view.setActive(resumed)
+            }
+        }
+    }
+
+    private fun refreshHome() {
+        val source = repository ?: return
+        val config = configuration ?: return
+        if (!resumed || refreshInFlight || climateInFlight || !networkAllowed()) return
+        refreshInFlight = true
+        val previous = model
+        val shouldReadCache = !cacheLoaded
+        tasks.submit(worker) { isCurrent ->
+            val cached = if (shouldReadCache) homeCache.read(config.homeAssistantOrigin, cacheEntities(config)) else null
+            if (!isCurrent()) return@submit
+            if (cached != null) main.post {
+                if (!isCurrent()) return@post
+                model = cached
+                home.render(cached)
+                if (destination == TouchDestination.CALENDAR) renderCalendar()
+            }
+            val fallback = cached ?: previous
+            val next = runCatching { source.refresh(fallback) }.getOrElse { fallback.copy(connection = TouchConnection.OFFLINE) }
+            if (!isCurrent()) return@submit
+            if (next.connection == TouchConnection.CONNECTED) homeCache.write(config.homeAssistantOrigin, cacheEntities(config), next)
+            main.post {
+                if (!isCurrent()) return@post
+                cacheLoaded = true
+                refreshInFlight = false
+                model = next
+                home.render(next)
+                if (destination == TouchDestination.CALENDAR) renderCalendar()
+                main.removeCallbacks(refresh)
+                main.postDelayed(refresh, 60_000L)
+            }
+        }
+    }
+
+    private fun changeClimate(command: (TouchHomeRepository) -> Boolean) {
+        val source = repository ?: return
+        if (!resumed || climateInFlight || !networkAllowed()) return
+        climateInFlight = true
+        home.setClimateBusy(true, "Applying…")
+        val previous = model
+        tasks.submit(worker) { isCurrent ->
+            if (!isCurrent()) return@submit
+            val accepted = runCatching { command(source) }.getOrDefault(false)
+            val next = if (accepted) runCatching { source.refresh(previous) }.getOrNull() else null
+            main.post {
+                if (!isCurrent()) return@post
+                climateInFlight = false
+                if (next != null) { model = next; home.render(next) }
+                home.setClimateBusy(false, if (accepted && next?.connection == TouchConnection.CONNECTED)
+                    "Updated" else "Could not confirm the change. Please retry.")
+            }
+        }
+    }
+
+    private fun refreshWeather() {
+        val config = configuration ?: return
+        val remote = weatherRemote ?: return
+        val client = oauth ?: return
+        if (!resumed || weatherInFlight || !networkAllowed()) return
+        weatherInFlight = true
+        tasks.submit(worker) { isCurrent ->
+            val deadline = WeatherRequestDeadline(timeoutMillis = 12_000L)
+            val result = runCatching {
+                val token = synchronized(tokenLock) { if (isCurrent()) client.validAccessToken(deadline) else null }
+                if (token == null) WeatherRemoteResult.AuthRequired("Sign-in needed")
+                else if (isCurrent()) remote.fetch(config.weatherEntityId, token, deadline) else WeatherRemoteResult.Offline("Cancelled")
+            }.getOrElse { WeatherRemoteResult.Offline("Unavailable") }
+            main.post {
+                if (!isCurrent()) return@post
+                weatherInFlight = false
+                val load = when (result) {
+                    is WeatherRemoteResult.Success -> WeatherLoadResult.Fresh(result.snapshot).also { weatherSnapshot = result.snapshot }
+                    is WeatherRemoteResult.AuthRequired -> weatherSnapshot?.let { WeatherLoadResult.Stale(it, true) } ?: WeatherLoadResult.AuthRequired
+                    is WeatherRemoteResult.Offline -> weatherSnapshot?.let { WeatherLoadResult.Stale(it) } ?: WeatherLoadResult.Offline
+                }
+                weather.presentation = WeatherPresenter(ZoneId.systemDefault(), Locale.getDefault()).present(load).let {
+                    if (load == WeatherLoadResult.AuthRequired) it.copy(authenticationRequired = true) else it
+                }
+                if (destination == TouchDestination.WEATHER) {
+                    main.removeCallbacks(refresh)
+                    main.postDelayed(refresh, 60_000L)
+                }
+            }
+        }
+    }
+
+    private fun signIn() {
+        val config = configuration ?: return
+        val client = oauth ?: return
+        if (authorization != null || !resumed) return
+        if (!networkAllowed()) { requestLocalNetwork(); return }
+        val callback = config.homeAssistantOrigin + HomeAssistantOAuthEndpoint.CALLBACK_PATH
+        val pending = SharedPreferencesPendingOAuthStateStore(this)
+        val state = OAuthState.fromCryptographicBytes(ByteArray(32).also(SecureRandom()::nextBytes))
+        pending.write(state)
+        pendingAuthorization = pending
+        val request = HomeAssistantOAuthEndpoint.fromDisplayUrl(config.homeAssistantUrl).authorizationRequest(callback, state)
+        val verifier = OAuthCallbackVerifier(pending, callback)
+        val container = FrameLayout(this).apply { setBackgroundColor(PAPER) }
+        val surface = FrameOAuthWebSurface(this, runtime, request.url, config.homeAssistantUrl, callback, { url ->
+            val code = verifier.verify(url)
+            closeAuthorization(restoreDestination = false)
+            if (code == null) { message("Sign-in could not be verified"); navigate(destination) }
+            else {
+                tasks.submit(authorizationWorker) { isCurrent ->
+                    val deadline = WeatherRequestDeadline(timeoutMillis = 12_000L)
+                    val success = synchronized(tokenLock) { isCurrent() && client.exchangeAuthorizationCode(code.code, deadline) }
+                    main.post {
+                        if (!isCurrent()) return@post
+                        message(if (success) "Connected to Home Assistant" else "Sign-in could not be completed")
+                        navigate(destination)
+                    }
+                }
+            }
+        }, { closeAuthorization(); message("Sign-in could not be completed") })
+        container.addView(surface, fill())
+        container.addView(Button(this).apply {
+            text = "Cancel sign-in"
+            minHeight = dp(56)
+            setOnClickListener { pending.consume(); closeAuthorization() }
+        }, FrameLayout.LayoutParams(-2, dp(56), Gravity.TOP or Gravity.END))
+        authorization = surface
+        authorizationContainer = container
+        media?.setVisibleActive(false)
+        cameras?.setActive(false)
+        root.addView(container, fill())
+        runCatching { surface.start() }.onFailure { closeAuthorization(); message("Sign-in is unavailable") }
+    }
+
+    private fun closeAuthorization(restoreDestination: Boolean = true) {
+        val hadAuthorization = authorization != null
+        pendingAuthorization?.consume()
+        pendingAuthorization = null
+        authorization?.close()
+        authorization = null
+        authorizationContainer?.let(root::removeView)
+        authorizationContainer = null
+        if (hadAuthorization && restoreDestination && resumed) navigate(destination)
+    }
+
+    private fun renderCalendar() {
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(28), dp(24), dp(28), dp(24)) }
+        fun line(value: String, size: Float) = TextView(this).apply { text = value; textSize = size; setTextColor(INK); setPadding(0, dp(12), 0, dp(12)) }
+        list.addView(line("Your week", 42f))
+        if (model.connection == TouchConnection.SIGN_IN_REQUIRED) list.addView(Button(this).apply {
+            text = "Sign in to Home Assistant"; minHeight = dp(56); setOnClickListener { signIn() }
+        })
+        if (model.events.isEmpty()) list.addView(line(if (model.connection == TouchConnection.CONNECTED) "No upcoming events" else "Calendar is not available yet", 24f))
+        val format = DateTimeFormatter.ofPattern("EEE, MMM d · h:mm a", Locale.getDefault()).withZone(ZoneId.systemDefault())
+        val dayFormat = DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault()).withZone(ZoneId.systemDefault())
+        model.events.take(80).forEach { event ->
+            list.addView(line(event.title, 28f))
+            list.addView(line((if (event.allDay) dayFormat else format).format(Instant.ofEpochMilli(event.startEpochMillis)) + if (event.allDay) " · All day" else "", 20f))
+        }
+        if (model.connection == TouchConnection.OFFLINE) list.addView(line("Offline · showing the last available schedule", 20f))
+        calendar.removeAllViews()
+        calendar.addView(list)
+    }
+
+    private fun cacheEntities(config: TouchConfiguration): List<String> =
+        listOf(config.weatherEntityId, config.climateEntityId) + config.calendarEntityIds
+
+    private fun networkAllowed(): Boolean = Build.VERSION.SDK_INT < 37 || checkSelfPermission(LAN_PERMISSION) == PackageManager.PERMISSION_GRANTED
+
+    private fun requestLocalNetwork() {
+        if (Build.VERSION.SDK_INT < 37 || networkAllowed()) return
+        lanPromptShown = true
+        AlertDialog.Builder(this).setTitle("Connect to your home")
+            .setMessage("FrameOS Touch needs local network access to reach your frame services and Home Assistant.")
+            .setPositiveButton("Allow") { _, _ -> requestPermissions(arrayOf(LAN_PERMISSION), LAN_REQUEST) }
+            .setNegativeButton("Later", null).show()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == LAN_REQUEST) {
+            if (networkAllowed()) navigate(destination) else message("Local network access is off. You can enable it in Android Settings.")
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (authorization != null) closeAuthorization() else navigate(TouchDestination.HOME)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun immersive() {
+        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+    }
+
+    private fun message(value: String) { Toast.makeText(this, value, Toast.LENGTH_LONG).show() }
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+    private fun fill() = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+    private companion object {
+        const val PAPER = 0xFFF5F2E9.toInt()
+        const val INK = 0xFF12242B.toInt()
+        const val LAN_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
+        const val LAN_REQUEST = 101
+    }
+}

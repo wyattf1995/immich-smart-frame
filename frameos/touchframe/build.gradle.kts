@@ -40,6 +40,7 @@ android {
 }
 
 dependencies {
+    compileOnly("androidx.annotation:annotation:1.11.0")
     implementation(project(":frame-shared"))
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.1")
     testImplementation("junit:junit:4.13.2")

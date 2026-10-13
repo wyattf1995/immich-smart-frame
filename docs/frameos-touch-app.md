@@ -1,0 +1,61 @@
+# FrameOS Touch
+
+Wyatt requested a separate touchscreen app on October 12, 2026. The gesture-only
+Lenovo application is a different product and remains available. FrameOS Touch
+has its own application ID, `com.wyattfleming.touchframe`, entry point, navigation,
+and lifecycle. It shares tested data, authentication, and rendering components,
+not the Lenovo activity or its mode/gesture state machine.
+
+## Interaction contract
+
+- Home is a native, responsive dashboard. Its clock, navigation, and last known
+  data render immediately; a network refresh never replaces it with a loading page.
+- The navigation rail exposes Home, Photos, Art, Weather, Cameras, Calendar, and
+  full Android Settings. Controls are readable on 1920×1080 and 1280×800 frames.
+- Photos and Art fill the screen. Artwork stays uncropped with blurred margins.
+  An inward swipe in the left 48dp opens the menu; its scrim dismisses the menu.
+- Android Settings opens directly and gets an explicit Return to FrameOS Touch
+  overlay. Failure to establish that return route keeps the user in the app.
+- Home, Calendar, climate controls, and Weather use the authenticated Home
+  Assistant API. Home does not load an HA frontend in an invisible iframe.
+- Reuse the existing Kiosk photo source and art feed, including paid-work
+  exclusions, older-album coverage, no-repeat artwork cycle, and 120-second art
+  interval. Preserve the companion and bounded offline behaviors during integration.
+
+## Data and lifecycle
+
+Home's API requests address a small configured set of entities, not `/api/states`.
+Calendar windows, result counts, HTTP bytes, deadlines, and concurrency are bounded.
+Refresh work belongs to a lifecycle generation; old responses cannot update a new
+screen or credentials. UI navigation does not wait for a network response.
+
+Authentication uses the existing same-origin OAuth verifier, encrypted Android
+Keystore store, bounded HTTPS transport, and short-lived embedded sign-in view.
+The separate package must sign in independently; never copy another application's
+encrypted tokens or Keystore material. Provision only reviewed frame configuration
+on-device. Do not log URLs containing secrets, tokens, or personal response bodies.
+
+Media has a single foreground rendering owner. Native Home avoids the previous
+Home/Photos GeckoView ownership conflict. Do not remove the Lenovo app's protective
+detachment pin or infer that retained sessions imply free background rendering.
+
+## Evidence and release gates
+
+The B7 recovery APK remains installed on the large QA frame. Three Home/Photos
+round trips completed; observed Home upper bounds were 17.474–18.482 seconds and
+Photos 9.141–10.955 seconds. Every warm Home return missed the 15-second target.
+Those observations motivate this architecture; they do not prove a network reload.
+
+The new application is initially a source candidate. Required gates are NAS
+compilation/lint/JVM tests, source-only negative/restored-green proofs, exact APK
+and source identity, and large-frame UI acceptance. Test responsive layouts,
+one-tap navigation, cached/offline states, Settings return, real touch edge menu,
+full-image artwork, and repeated transitions with aggregate app/Gecko memory.
+Measure tap-to-first-usable-content separately from background data freshness.
+
+API references: [Home Assistant REST API](https://developers.home-assistant.io/docs/api/rest/)
+and [authentication API](https://developers.home-assistant.io/docs/auth_api/).
+
+No new Touch APK has been built, signed, installed, or accepted yet. The earlier
+performance-remediation branches are retained; source changes are not deployment
+claims. Shared backend and curation fixes remain in scope for this new application.
