@@ -73,6 +73,14 @@ class TouchThemeTest {
     }
 
     @Test
+    fun `Settings stands apart from the tabs with a visible outline`() {
+        listOf(false, true).forEach { night ->
+            val bar = Palette.forNight(night)
+            assertReadable("Settings outline", bar.settingsStroke!!, bar.settings, 3.0)
+        }
+    }
+
+    @Test
     fun `rail palette is derived from the shared theme`() {
         listOf(false, true).forEach { night ->
             val theme = TouchPalette.forNight(night)
@@ -84,10 +92,18 @@ class TouchThemeTest {
     }
 
     @Test
+    fun `the 1920 frame keeps wall type when a bar and a docked notice shorten its content`() {
+        // 1080 − 80 (bar) − 112 (docked notice strip) = 888dp of content; the class must not change.
+        val contentHeightDp = 1080f - TouchShellLayout.WIDE_BAR_HEIGHT_DP - 112f
+        assertTrue(contentHeightDp < TouchScale.WALL_MIN_SCREEN_HEIGHT_DP)
+        assertEquals(TouchScale.WALL, TouchScale.forScreenHeightDp(1080f))
+    }
+
+    @Test
     fun `scale classes follow content height and keep minimum text sizes`() {
-        assertEquals(TouchScale.WALL, TouchScale.forContentHeightDp(1080f))
-        assertEquals(TouchScale.PANEL, TouchScale.forContentHeightDp(800f))
-        assertEquals(TouchScale.PANEL, TouchScale.forContentHeightDp(480f))
+        assertEquals(TouchScale.WALL, TouchScale.forScreenHeightDp(1080f))
+        assertEquals(TouchScale.PANEL, TouchScale.forScreenHeightDp(800f))
+        assertEquals(TouchScale.PANEL, TouchScale.forScreenHeightDp(480f))
         assertTrue(TouchScale.PANEL.caption >= 18f && TouchScale.WALL.caption >= 20f)
         assertTrue(TouchScale.PANEL.target >= 56 && TouchScale.WALL.target >= 56)
         assertFalse(TouchDayNight.isNight(7))
