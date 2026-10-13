@@ -79,6 +79,34 @@ class TouchCompanionControllerTest {
     }
 
     @Test
+    fun `event acceptance runs on poll worker and blocks snapshot command when persistence rejects`() {
+        val scheduler = ScheduledThreadPoolExecutor(1) { runnable -> Thread(runnable, "event-poll-worker") }
+        val eventReceived = CountDownLatch(1)
+        val commandCalls = AtomicInteger()
+        val eventWorker = AtomicReference<String?>()
+        val controller = controller(
+            scheduler = scheduler,
+            poll = { _, _, _, _ -> FrameCompanionPollResult.Success(eventAndCommandEnvelope()) },
+            onEvent = { _, _, canCommit ->
+                eventWorker.set(Thread.currentThread().name)
+                assertTrue(canCommit())
+                eventReceived.countDown()
+                false // Simulates a failed durable event-store commit.
+            },
+            onCommand = { _, _ -> commandCalls.incrementAndGet(); TouchCompanionController.CommandResult.Applied() },
+        )
+        try {
+            controller.setEnabled(true)
+            controller.start()
+            assertTrue(eventReceived.await(2, TimeUnit.SECONDS))
+            assertTrue(eventWorker.get()?.contains("event-poll-worker") == true)
+            assertEquals(0, commandCalls.get())
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
     fun `credential change during poll commits none of the old snapshot`() {
         val scheduler = ScheduledThreadPoolExecutor(1)
         val credentials = AtomicReference(credentials("first-token"))
@@ -104,7 +132,7 @@ class TouchCompanionControllerTest {
             },
             onCommand = { _, _ -> commandCalls.incrementAndGet(); TouchCompanionController.CommandResult.Applied() },
             onSettings = { _, _ -> settingCalls.incrementAndGet(); true },
-            onEvent = { _, _ -> eventCalls.incrementAndGet(); true },
+            onEvent = { _, _, _ -> eventCalls.incrementAndGet(); true },
             onHiddenAssets = { _, _, _ -> hiddenCalls.incrementAndGet(); true },
         )
         try {
@@ -268,7 +296,7 @@ class TouchCompanionControllerTest {
         nowMillis: () -> Long = { 1_000L },
         onCommand: (com.wyattfleming.frameos.control.FrameRemoteCommand, Long) -> TouchCompanionController.CommandResult = { _, _ -> TouchCompanionController.CommandResult.Applied() },
         onSettings: (com.wyattfleming.frameos.control.FrameRemoteSettings, Long) -> Boolean = { _, _ -> true },
-        onEvent: (com.wyattfleming.frameos.control.FrameCompanionEvent, Long) -> Boolean = { _, _ -> true },
+        onEvent: (com.wyattfleming.frameos.control.FrameCompanionEvent, Long, () -> Boolean) -> Boolean = { _, _, _ -> true },
         onHiddenAssets: (Set<String>, Long, () -> Boolean) -> Boolean = { _, _, _ -> true },
     ): TouchCompanionController = TouchCompanionController.forTest(
         credentials = credentials,
@@ -292,6 +320,12 @@ class TouchCompanionControllerTest {
         token,
         "touch-frame",
     )
+
+    private fun eventAndCommandEnvelope() = """
+        {"schema":1,"deviceId":"touch-frame",
+         "events":[{"id":"22222222-2222-2222-2222-222222222222","type":"calendar","text":"Event","issuedAt":1000,"expiresAt":2000}],
+         "commands":[{"id":"11111111-1111-1111-1111-111111111111","issuedAt":1000,"expiresAt":2000,"type":"show_mode","mode":"PHOTOS"}]}
+    """.trimIndent()
 
     private fun fullEnvelope() = """
         {"schema":1,"deviceId":"touch-frame","hiddenAssets":["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"],
