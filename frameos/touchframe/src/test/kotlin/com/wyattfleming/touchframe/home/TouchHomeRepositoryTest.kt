@@ -3,6 +3,8 @@ package com.wyattfleming.touchframe.home
 import com.wyattfleming.frameos.weather.HomeAssistantHttpRequest
 import com.wyattfleming.frameos.weather.HomeAssistantHttpResponse
 import com.wyattfleming.frameos.weather.HomeAssistantHttpTransport
+import com.wyattfleming.frameos.weather.CancellableHomeAssistantHttpTransport
+import com.wyattfleming.frameos.weather.WeatherRequestDeadline
 import com.wyattfleming.touchframe.data.TouchConfiguration
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -10,6 +12,9 @@ import org.junit.Test
 import java.time.Instant
 import java.time.ZoneOffset
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class TouchHomeRepositoryTest {
     private val config = TouchConfiguration.from(
@@ -46,10 +51,56 @@ class TouchHomeRepositoryTest {
     }
 
     @Test
+    fun `expired total deadline performs no requests and preserves prior cards`() {
+        val previous = TouchHomeModel("Sunny", "72°F", emptyList(), null, TouchConnection.CONNECTED, 5L)
+        val transport = FakeTransport()
+        val expired = { _: Long -> WeatherRequestDeadline(startNanos = 0L, timeoutMillis = 1L, clockNanos = { 1_000_000L }) }
+        TouchHomeRepository(config, { "token" }, transport, deadlineFactory = expired).use { repository ->
+            val result = repository.refresh(previous)
+            assertEquals(TouchConnection.OFFLINE, result.connection)
+            assertEquals("Sunny", result.weatherText)
+            assertTrue(transport.requests.isEmpty())
+        }
+    }
+
+    @Test
+    fun `cancel releases bounded in-flight requests and preserves prior cards`() {
+        val transport = BlockingTransport()
+        val previous = TouchHomeModel("Sunny", "72°F", emptyList(), null, TouchConnection.CONNECTED, 5L)
+        TouchHomeRepository(config, { "token" }, transport).use { repository ->
+            val future = Executors.newSingleThreadExecutor().submit<TouchHomeModel> { repository.refresh(previous) }
+            assertTrue(transport.started.await(2, TimeUnit.SECONDS))
+            repository.cancel()
+            val result = future.get(2, TimeUnit.SECONDS)
+            assertEquals(TouchConnection.OFFLINE, result.connection)
+            assertEquals("Sunny", result.weatherText)
+            assertTrue(transport.cancelled)
+        }
+    }
+
+    @Test
     fun `authentication failure preserves prior cards and requests sign in`() {
         val previous = TouchHomeModel("Sunny", "72°F", emptyList(), null, TouchConnection.CONNECTED, 5L)
         TouchHomeRepository(config, { "token" }, FakeTransport(status = 401)).use { repository ->
             assertEquals(TouchConnection.SIGN_IN_REQUIRED, repository.refresh(previous).connection)
+        }
+    }
+
+    private class BlockingTransport : CancellableHomeAssistantHttpTransport {
+        val started = CountDownLatch(2)
+        private val released = CountDownLatch(1)
+        @Volatile var cancelled = false
+
+        override fun execute(request: HomeAssistantHttpRequest): HomeAssistantHttpResponse {
+            started.countDown()
+            released.await(2, TimeUnit.SECONDS)
+            if (cancelled) throw java.io.InterruptedIOException("cancelled")
+            return HomeAssistantHttpResponse(200, "{}")
+        }
+
+        override fun cancelInFlight() {
+            cancelled = true
+            released.countDown()
         }
     }
 
