@@ -37,6 +37,8 @@ CLASSES = {
     "today": ("com.wyattfleming.touchframe.calendar.TouchCalendarTodayColumnTest", tests / "calendar/TouchCalendarTodayColumnTest.kt"),
     "chip": ("com.wyattfleming.touchframe.ui.TouchShellChipOrderTest", tests / "ui/TouchShellChipOrderTest.kt"),
     "month": ("com.wyattfleming.touchframe.calendar.TouchCalendarMonthLayoutTest", tests / "calendar/TouchCalendarMonthLayoutTest.kt"),
+    "icons": ("com.wyattfleming.touchframe.ui.TouchIconPathTest", tests / "ui/TouchIconPathTest.kt"),
+    "segment": ("com.wyattfleming.touchframe.ui.TouchSegmentedWidthTest", tests / "ui/TouchSegmentedWidthTest.kt"),
 }
 
 MUTATIONS = [
@@ -82,6 +84,13 @@ MUTATIONS = [
      "val fitted = (viewportHeightDp - (if (wall) WALL_CHROME_DP else PANEL_CHROME_DP)) / weeks - ROW_GAP_DP",
      "val fitted = (viewportHeightDp - (if (wall) WALL_CHROME_DP else PANEL_CHROME_DP)) / 5 - ROW_GAP_DP", "month",
      {"six-week months shrink their cells to fit the frame"}),
+    ("icon-implicit-moveto-red", module / "src/main/res/drawable/ic_touch_chevron_left.xml",
+     'android:pathData="m15 5l-7 7 7 7"', 'android:pathData="m15 5-7 7 7 7"', "icons",
+     {"icon paths never rely on implicit lineto after moveto, which API 23 draws as nothing"}),
+    ("segment-equal-weight-red", main / "ui/TouchTheme.kt",
+     "LinearLayout.LayoutParams(segmentWidth, dp(scale.target - 8), 1f)",
+     "LinearLayout.LayoutParams(0, dp(scale.target - 8), 1f)", "segment",
+     {"every segment starts at the widest label so a wrap-content control never truncates one"}),
 ]
 
 
