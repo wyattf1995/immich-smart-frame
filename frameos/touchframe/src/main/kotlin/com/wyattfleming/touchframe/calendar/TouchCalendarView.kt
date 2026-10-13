@@ -217,7 +217,7 @@ class TouchCalendarView(
     private fun weekDayColumn(kit: TouchKit, day: TouchCalendarWeekPresentation.Day, skeleton: Boolean, wall: Boolean) = LinearLayout(context).apply {
         val p = kit.palette
         orientation = LinearLayout.VERTICAL
-        minimumHeight = kit.dp(if (wall) 380 else 280)
+        minimumHeight = kit.dp(if (wall) 360 else 228)
         val inset = kit.dp(if (wall) 14 else 10)
         setPadding(inset, inset, inset, inset)
         val selected = day.date == state.selectedDate
@@ -273,10 +273,12 @@ class TouchCalendarView(
                     LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(10) })
                 if (column.earlierCount > 0 && column.preview.isEmpty()) addView(kit.text("Nothing else today", if (wall) 21f else 19f,
                     color = p.todayMutedInk), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(8) })
-                column.preview.forEach { preview -> addView(weekEvent(kit, preview, wall, past), LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = kit.dp(10) }) }
-                if (column.overflowCount > 0) {
+                val limit = if (!wall && bannerShown()) 2 else column.preview.size
+                column.preview.take(limit).forEach { preview -> addView(weekEvent(kit, preview, wall, past), LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = kit.dp(10) }) }
+                val overflow = column.overflowCount + (column.preview.size - limit)
+                if (overflow > 0) {
                     addView(View(context), LinearLayout.LayoutParams(0, 0, 1f))
-                    addView(kit.text("${column.overflowCount} more", if (wall) 21f else 19f, TouchFonts.Face.TEXT_BOLD, if (past) p.pastInk else p.accentInk),
+                    addView(kit.text("$overflow more", if (wall) 21f else 19f, TouchFonts.Face.TEXT_BOLD, if (past) p.pastInk else p.accentInk),
                         LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(8) })
                 }
             }
@@ -311,13 +313,13 @@ class TouchCalendarView(
 
     private fun selectedDetails(kit: TouchKit, events: List<TouchCalendarEvent>, wide: Boolean) {
         val p = kit.palette
-        // Only whole rows: two columns of four on the 1280 panel (two with a banner), the verified 12 elsewhere.
-        val banner = state.connection == TouchCalendarConnection.OFFLINE || state.partial
+        // Only whole rows under the top bar: two columns of three on the 1280 panel (two each with a
+        // banner, when day columns also trim to two previews), the verified 12 elsewhere.
         val pageSize = when {
             !wide -> TouchCalendarWeekPresentation.DETAILS_PER_PAGE
             kit.scale == TouchScale.WALL -> TouchCalendarWeekPresentation.DETAILS_PER_PAGE
-            banner -> 4
-            else -> 8
+            bannerShown() -> 4
+            else -> 6
         }
         val page = TouchCalendarWeekPresentation.detailsPage(events, selectedDetailsPage, pageSize)
         selectedDetailsPage = page.page
@@ -418,7 +420,7 @@ class TouchCalendarView(
         repeat(TouchCalendarRenderPlan.monthWeeks(state.range)) { weekIndex ->
             val line = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
             repeat(7) { index ->
-                line.addView(dayCell(kit, date, date.month == month, skeleton, wall), LinearLayout.LayoutParams(0, kit.dp(if (wall) 160 else 112), 1f).apply {
+                line.addView(dayCell(kit, date, date.month == month, skeleton, wall), LinearLayout.LayoutParams(0, kit.dp(if (wall) 160 else 100), 1f).apply {
                     if (index > 0) marginStart = kit.dp(6)
                 })
                 date = date.plusDays(1)
@@ -540,6 +542,9 @@ class TouchCalendarView(
             date = date.plusDays(1)
         }
     }
+
+    private fun bannerShown() = (state.connection == TouchCalendarConnection.OFFLINE && state.events.isNotEmpty()) ||
+        (state.connection == TouchCalendarConnection.CONNECTED && state.partial)
 
     private fun refresh() = request(state.mode, state.anchor, state.selectedDate, true)
     private fun request(mode: TouchCalendarMode, anchor: LocalDate, selected: LocalDate, refresh: Boolean) = onStateRequest(mode, anchor, selected, refresh)

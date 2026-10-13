@@ -161,11 +161,10 @@ class TouchHomeView private constructor(
 
     /** Defers a consumed Activity configuration change until the content has a layout pass. */
     fun refreshLayoutForConfiguration(configuration: Configuration) {
-        val contentWidthDp = TouchHomeLayout.contentWidthDp(
-            configuration.screenWidthDp.toFloat(),
-            TouchShellLayout.railWidthDpFor(configuration.screenWidthDp).toFloat(),
-        )
-        requestLayoutClass(TouchHomeLayout.isLargeLandscape(contentWidthDp, configuration.screenHeightDp.toFloat()))
+        // Top navigation takes no width; it takes the bar's height from the content instead.
+        val contentWidthDp = TouchHomeLayout.contentWidthDp(configuration.screenWidthDp.toFloat(), 0f)
+        val contentHeightDp = configuration.screenHeightDp - TouchShellLayout.barHeightDpFor(configuration.screenWidthDp)
+        requestLayoutClass(TouchHomeLayout.isLargeLandscape(contentWidthDp, contentHeightDp.toFloat()))
         requestLayout()
     }
 

@@ -425,9 +425,9 @@ try:
     )
     rail_viewport_red = mutate(
         "rail-scroll-viewport-red", "shell",
-        "railViewport.addView(rail, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))",
-        "addView(rail, LayoutParams(dp(80), LayoutParams.MATCH_PARENT, Gravity.START))",
-        {"short rails attach through a fill viewport"},
+        "tabViewport.addView(tabs, FrameLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))",
+        "bar.addView(tabs, LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))",
+        {"navigation tabs attach through a horizontal fill viewport"},
     )
     shell_contrast_red = mutate(
         "shell-contrast-red", "shell",

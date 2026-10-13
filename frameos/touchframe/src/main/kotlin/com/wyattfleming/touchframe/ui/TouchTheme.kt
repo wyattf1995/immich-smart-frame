@@ -153,7 +153,7 @@ internal data class TouchScale(
             pad = 48, gap = 32, radius = 20, radiusSmall = 14,
         )
         val PANEL = TouchScale(
-            clock = 120f, clockSuffix = 32f, display = 56f, title = 32f, headline = 26f, body = 22f,
+            clock = 104f, clockSuffix = 32f, display = 56f, title = 32f, headline = 26f, body = 22f,
             label = 20f, caption = 18f, rail = 15f, target = 72, stepper = 84, setpoint = 80f,
             pad = 32, gap = 24, radius = 20, radiusSmall = 14,
         )
@@ -161,7 +161,8 @@ internal data class TouchScale(
         /** Height decides the class: the 1280×800 panel and compact overrides use the smaller scale. */
         fun forContentHeightDp(heightDp: Float): TouchScale = if (heightDp >= WALL_MIN_HEIGHT_DP) WALL else PANEL
 
-        const val WALL_MIN_HEIGHT_DP = 1000f
+        /** Content height under the top bar: 1000dp on the 1920×1080 frame, 732dp on the 1280×800 frame. */
+        const val WALL_MIN_HEIGHT_DP = 900f
     }
 }
 

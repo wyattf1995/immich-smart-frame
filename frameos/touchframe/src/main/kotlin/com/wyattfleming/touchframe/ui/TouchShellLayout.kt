@@ -10,17 +10,17 @@ import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.Space
+import android.widget.HorizontalScrollView
 import android.widget.TextView
 import com.wyattfleming.touchframe.R
 import kotlin.math.abs
 import kotlin.math.pow
 
 /**
- * Owns only persistent shell chrome. The caller owns each destination's content and lifecycle.
- * Media destinations keep the content frame edge-to-edge until a deliberate left-edge gesture
- * reveals this navigation menu.
+ * Owns only persistent shell chrome: a top navigation bar (the frame's moulding along the top
+ * edge) with tabs, the time and Settings. The caller owns each destination's content and
+ * lifecycle. Media destinations keep the content frame edge-to-edge until a deliberate left-edge
+ * gesture drops this bar down over them.
  */
 // Constructed by TouchFrameActivity with callbacks; never inflated from XML.
 @SuppressLint("ViewConstructor")
@@ -39,10 +39,26 @@ class TouchShellLayout(
         isClickable = true
         setOnClickListener { hideMenu() }
     }
-    private val railViewport = ScrollView(context).apply {
+    /** Tabs scroll sideways (with fading edges) rather than truncate or wrap under large fonts or a seventh tab. */
+    private val tabViewport = HorizontalScrollView(context).apply {
         isFillViewport = true
+        isHorizontalScrollBarEnabled = false
+        isHorizontalFadingEdgeEnabled = true
     }
-    private val rail = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private val tabs = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+    }
+    private val clock = TextView(context).apply {
+        includeFontPadding = false
+        gravity = Gravity.CENTER_VERTICAL
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
+    }
+    private val bar = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+    }
+    private var clockText: CharSequence = ""
     private val noticeHost = FrameLayout(context)
     private val edgeHint = FrameLayout(context).apply {
         visibility = View.GONE
@@ -62,7 +78,9 @@ class TouchShellLayout(
         addView(noticeHost, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START))
         addView(edgeHint, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.CENTER_VERTICAL))
         addView(scrim, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        addView(railViewport, LayoutParams(dp(80), LayoutParams.MATCH_PARENT, Gravity.START))
+        addView(bar, LayoutParams(LayoutParams.MATCH_PARENT, dp(barHeightDpFor(resources.configuration.screenWidthDp)), Gravity.TOP))
+        bar.addView(tabViewport, LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+        bar.addView(clock, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))
         scrim.addView(TextView(context).apply {
             text = context.getString(R.string.touch_menu_close_hint)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
@@ -74,8 +92,8 @@ class TouchShellLayout(
             }
             setPadding(dp(20), dp(14), dp(20), dp(14))
             importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
-        }, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.CENTER_VERTICAL))
-        railViewport.addView(rail, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        }, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        tabViewport.addView(tabs, FrameLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))
         select(TouchDestination.HOME)
     }
 
@@ -116,6 +134,13 @@ class TouchShellLayout(
         if (!destination.isImmersiveMedia) return
         menuVisible = false
         applyChrome()
+    }
+
+    /** The bar carries the time on every screen except Home, whose clock is the page itself. */
+    fun setClock(text: CharSequence) {
+        if (text == clockText) return
+        clockText = text
+        clock.text = text
     }
 
     fun setNight(isNight: Boolean) {
@@ -248,18 +273,27 @@ class TouchShellLayout(
 
     private fun applyChrome() {
         val palette = Palette.forNight(night)
+        val barHeight = dp(barHeightDpFor(resources.configuration.screenWidthDp))
+        val large = barHeightDpFor(resources.configuration.screenWidthDp) >= WIDE_BAR_HEIGHT_DP
         setBackgroundColor(palette.background)
-        railViewport.setBackgroundColor(palette.rail)
-        rebuildRail(palette)
+        bar.setBackgroundColor(palette.rail)
+        bar.setPadding(dp(8), 0, dp(8), 0)
+        bar.layoutParams = (bar.layoutParams as LayoutParams).apply { height = barHeight }
+        rebuildTabs(palette, barHeight, large)
+        clock.typeface = TouchFonts.get(context, TouchFonts.Face.DISPLAY)
+        clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (large) 30f else 27f)
+        clock.setTextColor(palette.ink)
+        clock.setPadding(dp(16), 0, dp(16), 0)
+        clock.text = clockText
+        clock.visibility = if (destination == TouchDestination.HOME) View.GONE else View.VISIBLE
 
-        val railWidth = dp(railWidthDpFor(resources.configuration.screenWidthDp))
-        railViewport.layoutParams = (railViewport.layoutParams as LayoutParams).apply { width = railWidth }
-        railViewport.visibility = if (menuVisible) View.VISIBLE else View.GONE
+        bar.visibility = if (menuVisible) View.VISIBLE else View.GONE
         scrim.visibility = if (destination.isImmersiveMedia && menuVisible) View.VISIBLE else View.GONE
-        (scrim.getChildAt(0)?.layoutParams as? LayoutParams)?.leftMargin = railWidth + dp(48)
+        (scrim.getChildAt(0)?.layoutParams as? LayoutParams)?.topMargin = barHeight + dp(40)
         (scrim.getChildAt(0) as? TextView)?.setTextColor(if (night) TouchPalette.NIGHT.ink else 0xFFF6F4EF.toInt())
         content.layoutParams = (content.layoutParams as LayoutParams).apply {
-            leftMargin = if (destination.isImmersiveMedia) 0 else railWidth
+            topMargin = if (destination.isImmersiveMedia) 0 else barHeight
+            leftMargin = 0
             // A docked notice takes a strip under native content instead of covering its controls.
             bottomMargin = if (noticeVisible && !destination.isImmersiveMedia) noticeStripHeight() else 0
         }
@@ -269,11 +303,10 @@ class TouchShellLayout(
 
     /** Docks notices at the start of the content area, inside the strip reserved by [applyChrome]. */
     private fun positionOverlays() {
-        val railWidth = if (destination.isImmersiveMedia) 0 else dp(railWidthDpFor(resources.configuration.screenWidthDp))
         val scale = TouchScale.forContentHeightDp(height / resources.displayMetrics.density)
         noticeHost.layoutParams = (noticeHost.layoutParams as LayoutParams).apply {
             gravity = Gravity.BOTTOM or Gravity.START
-            leftMargin = railWidth + dp(scale.pad)
+            leftMargin = dp(scale.pad)
             bottomMargin = dp(scale.pad / 2)
         }
     }
@@ -283,59 +316,52 @@ class TouchShellLayout(
         return dp(scale.target + 16 + scale.pad / 2)
     }
 
-    private fun rebuildRail(palette: Palette) {
-        rail.removeAllViews()
-        destinations.forEach { item -> rail.addView(destinationButton(item, palette)) }
-        rail.addView(Space(context), LinearLayout.LayoutParams(0, 0, 1f))
-        rail.addView(settingsButton(palette))
+    private fun rebuildTabs(palette: Palette, barHeight: Int, large: Boolean) {
+        tabs.removeAllViews()
+        destinations.forEach { item -> tabs.addView(destinationTab(item, palette, barHeight, large)) }
+        if (bar.childCount > 2) bar.removeViewAt(2)
+        bar.addView(settingsTab(palette, barHeight, large))
     }
 
-    private fun destinationButton(item: TouchDestination, palette: Palette): View {
+    private fun destinationTab(item: TouchDestination, palette: Palette, barHeight: Int, large: Boolean): View {
         val selected = item == destination
         return LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             isClickable = true
             isFocusable = true
             isSelected = selected
             contentDescription = item.label
-            minimumHeight = dp(MIN_TARGET_DP)
-            setPadding(dp(4), dp(5), dp(4), dp(5))
+            minimumWidth = dp(MIN_TARGET_DP)
+            setPadding(dp(if (large) 24 else 18), 0, dp(if (large) 24 else 18), 0)
             background = if (selected) rounded(palette.selected, palette.selectedStroke) else rounded(Color.TRANSPARENT, null)
             setOnClickListener {
                 hideMenu()
                 onNavigate(item)
             }
-            addView(icon(item.icon, if (selected) palette.selectedInk else palette.muted))
-            addView(label(item.label, if (selected) palette.selectedInk else palette.ink))
+            addView(icon(item.icon, if (selected) palette.selectedInk else palette.muted, large))
+            addView(label(item.label, if (selected) palette.selectedInk else palette.ink, large))
         }.also { view ->
-            view.layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(RAIL_BUTTON_HEIGHT_DP)).apply {
-                setMargins(dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP), dp(RAIL_BUTTON_TOP_MARGIN_DP), dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP), 0)
+            view.layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, barHeight - dp(TAB_INSET_DP * 2)).apply {
+                marginEnd = dp(4)
             }
         }
     }
 
-    private fun settingsButton(palette: Palette): View = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        gravity = Gravity.CENTER
+    private fun settingsTab(palette: Palette, barHeight: Int, large: Boolean): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
         isClickable = true
         isFocusable = true
         contentDescription = "Settings"
-        minimumHeight = dp(MIN_TARGET_DP)
-        setPadding(dp(4), dp(5), dp(4), dp(5))
+        minimumWidth = dp(MIN_TARGET_DP)
+        setPadding(dp(18), 0, dp(18), 0)
         background = rounded(palette.settings, palette.settingsStroke)
         setOnClickListener { onSettings() }
-        addView(icon(R.drawable.ic_touch_settings, palette.settingsInk))
-        addView(label("Settings", palette.settingsInk))
+        addView(icon(R.drawable.ic_touch_settings, palette.settingsInk, large))
+        addView(label("Settings", palette.settingsInk, large))
     }.also { view ->
-        view.layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(RAIL_BUTTON_HEIGHT_DP)).apply {
-            setMargins(
-                dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP),
-                dp(RAIL_BUTTON_TOP_MARGIN_DP),
-                dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP),
-                dp(SETTINGS_BOTTOM_MARGIN_DP),
-            )
-        }
+        view.layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, barHeight - dp(TAB_INSET_DP * 2))
     }
 
     private val TouchDestination.icon: Int
@@ -349,32 +375,22 @@ class TouchShellLayout(
             TouchDestination.CALENDAR -> R.drawable.ic_touch_calendar
         }
 
-    private fun icon(resource: Int, color: Int): ImageView = ImageView(context).apply {
+    private fun icon(resource: Int, color: Int, large: Boolean): ImageView = ImageView(context).apply {
         setImageDrawable(context.getDrawable(resource)?.mutate()?.apply { setTint(color) })
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
-        layoutParams = LinearLayout.LayoutParams(dp(RAIL_ICON_DP), dp(RAIL_ICON_DP)).apply { bottomMargin = dp(4) }
+        val size = dp(if (large) 30 else 26)
+        layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = dp(10) }
     }
 
-    /**
-     * Single-line label in one weight, so selection never changes its width; it shrinks (never
-     * truncates) only when an enlarged system font scale would not fit the pinned rail width.
-     */
-    private fun label(value: String, color: Int): TextView = TextView(context).apply {
+    /** Single-line label in one weight, so selection never changes a tab's width. */
+    private fun label(value: String, color: Int, large: Boolean): TextView = TextView(context).apply {
         text = value
         setTextColor(color)
         typeface = TouchFonts.get(context, TouchFonts.Face.TEXT_MEDIUM)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, if (large) 22f else 19f)
         includeFontPadding = false
-        gravity = Gravity.CENTER
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
         maxLines = 1
-        val railDp = railWidthDpFor(resources.configuration.screenWidthDp)
-        val available = dp(railDp - 2 * RAIL_BUTTON_HORIZONTAL_MARGIN_DP - 8).toFloat()
-        var size = if (railDp >= 96) 18f else 15f
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, size)
-        while (paint.measureText(value) > available && size > MIN_RAIL_LABEL_SP) {
-            size -= 0.5f
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, size)
-        }
     }
 
     private fun rounded(color: Int, stroke: Int?) = android.graphics.drawable.GradientDrawable().apply {
@@ -390,17 +406,14 @@ class TouchShellLayout(
         const val HORIZONTAL_THRESHOLD_DP = 56
         const val VERTICAL_TOLERANCE_DP = 32
         const val MIN_TARGET_DP = 56
-        const val RAIL_BUTTON_HEIGHT_DP = 68
-        private const val RAIL_BUTTON_HORIZONTAL_MARGIN_DP = 2
-        const val RAIL_BUTTON_TOP_MARGIN_DP = 6
-        const val SETTINGS_BOTTOM_MARGIN_DP = 8
-        private const val RAIL_ICON_DP = 28
-        private const val MIN_RAIL_LABEL_SP = 11f
+        const val PANEL_BAR_HEIGHT_DP = 68
+        const val WIDE_BAR_HEIGHT_DP = 80
+        private const val TAB_INSET_DP = 6
         private const val INFO_NOTICE_MILLIS = 6_000L
         private const val ERROR_NOTICE_MILLIS = 30_000L
         private const val EDGE_HINT_MILLIS = 4_000L
 
-        fun railWidthDpFor(screenWidthDp: Int): Int = if (screenWidthDp >= 1400) 96 else 80
+        fun barHeightDpFor(screenWidthDp: Int): Int = if (screenWidthDp >= 1400) WIDE_BAR_HEIGHT_DP else PANEL_BAR_HEIGHT_DP
 
     }
 }
