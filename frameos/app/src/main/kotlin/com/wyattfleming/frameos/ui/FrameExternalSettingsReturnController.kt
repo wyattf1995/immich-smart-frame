@@ -53,7 +53,7 @@ class AndroidFrameExternalSettingsReturnAdapter(private val context: Context) : 
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var returnView: View? = null
 
-    override fun canDrawOverlays(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && Settings.canDrawOverlays(context)
+    override fun canDrawOverlays(): Boolean = Settings.canDrawOverlays(context)
 
     override fun showReturn(onReturn: () -> Unit): Boolean = runCatching {
         if (returnView != null) return true
@@ -68,7 +68,7 @@ class AndroidFrameExternalSettingsReturnAdapter(private val context: Context) : 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            FrameExternalSettingsOverlayWindowType.forApi(Build.VERSION.SDK_INT),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             android.graphics.PixelFormat.TRANSLUCENT,
         ).apply {
@@ -98,4 +98,14 @@ class AndroidFrameExternalSettingsReturnAdapter(private val context: Context) : 
         ))
         true
     }.getOrDefault(false)
+}
+
+/** Chooses the system-supported overlay type without broadening the overlay permission scope. */
+internal object FrameExternalSettingsOverlayWindowType {
+    @Suppress("DEPRECATION")
+    const val PHONE: Int = WindowManager.LayoutParams.TYPE_PHONE
+    const val APPLICATION_OVERLAY: Int = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+
+    fun forApi(apiLevel: Int): Int =
+        if (apiLevel >= Build.VERSION_CODES.O) APPLICATION_OVERLAY else PHONE
 }
