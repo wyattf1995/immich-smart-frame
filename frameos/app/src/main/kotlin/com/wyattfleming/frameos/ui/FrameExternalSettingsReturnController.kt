@@ -1,5 +1,6 @@
 package com.wyattfleming.frameos.ui
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -107,6 +108,9 @@ internal object FrameExternalSettingsOverlayWindowType {
     @Suppress("DEPRECATION")
     const val PHONE: Int = WindowManager.LayoutParams.TYPE_PHONE
 
+    // Production supplies Build.VERSION.SDK_INT; the injectable parameter keeps API23/25/26 behavior unit-testable.
+    // Lint recognizes direct SDK_INT guards but cannot infer that relationship through this parameter.
+    @SuppressLint("NewApi")
     fun forApi(apiLevel: Int): Int =
         if (apiLevel >= Build.VERSION_CODES.O) applicationOverlayForAndroid8OrLater() else PHONE
 
