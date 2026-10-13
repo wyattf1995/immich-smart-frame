@@ -33,4 +33,15 @@ class TouchOfflinePhotoLifecycleTest {
         lifecycle.setActive(false)
         assertFalse(lifecycle.canUseFallback(photos, generation))
     }
+
+    @Test fun `stale same session preparation cannot enable capture`() {
+        val gate = TouchOfflineAttachmentGate()
+        val first = gate.begin()
+        val replacement = gate.begin()
+
+        assertFalse(gate.isCurrent(first))
+        assertTrue(gate.isCurrent(replacement))
+        gate.invalidate()
+        assertFalse(gate.isCurrent(replacement))
+    }
 }
