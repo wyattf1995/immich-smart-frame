@@ -42,12 +42,14 @@ class TouchTaskScope : AutoCloseable {
             val submissionEpoch = epoch
             task = ScopedTask(submissionEpoch, block)
             tasks += task
-            try {
-                executor.execute(task)
-            } catch (_: RejectedExecutionException) {
-                tasks.remove(task)
-                return null
-            }
+        }
+        // Registration stays atomic with pause; execution must not hold the lifecycle lock.
+        try {
+            executor.execute(task)
+        } catch (_: RejectedExecutionException) {
+            synchronized(lock) { tasks.remove(task) }
+            task.cancel(false)
+            return null
         }
         return task
     }
@@ -72,22 +74,23 @@ class TouchTaskScope : AutoCloseable {
     private inner class ScopedTask(
         private val submissionEpoch: Long,
         private val block: (isCurrent: () -> Boolean) -> Unit,
-    ) : FutureTask<Unit>({ Unit }) {
+    ) : FutureTask<Unit>({
+        if (isCurrent(submissionEpoch)) {
+            block { isCurrent(submissionEpoch) }
+        }
+        Unit
+    }) {
+        // Callable exceptions settle the Future; done always releases our registration.
         override fun run() {
-            if (isCurrent(submissionEpoch)) {
-                super.run()
-            } else {
+            if (isCancelled || !isCurrent(submissionEpoch)) {
                 cancel(false)
+                return
             }
+            super.run()
         }
 
         override fun done() {
             synchronized(lock) { tasks.remove(this) }
-        }
-
-        override fun set(value: Unit?) {
-            block { isCurrent(submissionEpoch) }
-            super.set(value)
         }
     }
 }
