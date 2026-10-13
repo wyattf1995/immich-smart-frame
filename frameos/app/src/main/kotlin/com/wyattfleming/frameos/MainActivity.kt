@@ -1376,24 +1376,31 @@ class MainActivity : Activity() {
         companionPollInFlight = true
         val generation = companionPollGeneration
         val snapshot = diagnosticStore.snapshot()
-        val reserveStatus = photoReserve.status()
-        val status = FrameRemoteStatus(
-            mode = state.mode,
-            photosPaused = state.photosPaused,
+        val pollMode = state.mode
+        val pollPhotosPaused = state.photosPaused
+        val pollOffline = ::offlinePhoto.isInitialized && offlinePhoto.visibility == View.VISIBLE
+        val pollCurrentAssetId = currentPhotoAssetId
+        val pollLastPhotoAt = lastPhotoAt
+        val pollProfile = configuration?.photosUrl?.let(FramePhotosProfileUrl::profile)
+        val pollAppVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"
+        val sentSnapshotRevision = FrameCompanionSnapshotRevision.forRequest(companionSnapshotRevision)
+        companionWorkerExecutor.submit {
+            val reserveStatus = photoReserve.publishedStatus()
+            val status = FrameRemoteStatus(
+            mode = pollMode,
+            photosPaused = pollPhotosPaused,
             lastPaintAt = snapshot.lastPaintEpochMillis.takeIf { it > 0 },
             lastWeatherAt = snapshot.lastWeatherSuccessEpochMillis.takeIf { it > 0 },
             recoveryCount = snapshot.recoveryCount,
             lastError = snapshot.lastError,
-            offline = ::offlinePhoto.isInitialized && offlinePhoto.visibility == View.VISIBLE,
-            appVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown",
-            currentAssetId = currentPhotoAssetId,
-            lastPhotoAt = lastPhotoAt,
-            profile = configuration?.photosUrl?.let(FramePhotosProfileUrl::profile),
+            offline = pollOffline,
+            appVersion = pollAppVersion,
+            currentAssetId = pollCurrentAssetId,
+            lastPhotoAt = pollLastPhotoAt,
+            profile = pollProfile,
             offlineAssets = reserveStatus.offlineAssets,
             offlineBytes = reserveStatus.offlineBytes,
-        )
-        val sentSnapshotRevision = FrameCompanionSnapshotRevision.forRequest(companionSnapshotRevision)
-        companionWorkerExecutor.submit {
+            )
             val pendingAcks = FrameCompanionCommandStore(this).consumeAcks()
             val result = FrameCompanionClient(credentials.endpoint, credentials.token).poll(
                 credentials.deviceId,

@@ -104,6 +104,8 @@ class FrameOfflineReserve(
 
     private var scope: FramePhotoScope? = null
     private var entries = emptyList<Entry>()
+    /** Last fully committed reserve state. UI poll reads this without taking the disk mutation monitor. */
+    @Volatile private var publishedStatus = Status(offlineAssets = 0, offlineBytes = 0L, latest = null)
     /** Device-private full snapshot supplied by the authenticated companion response. */
     private var hiddenAssets = emptySet<String>()
 
@@ -125,6 +127,7 @@ class FrameOfflineReserve(
         removeHiddenEntries()
         writeScope()
         writeIndex()
+        refreshPublishedStatus()
         return true
     }
 
@@ -171,6 +174,7 @@ class FrameOfflineReserve(
         entries = (listOf(Entry(assetId, capturedAt, target)) + entries.filterNot { it.assetId.equals(assetId, true) }).toMutableList()
         evict(activeScope.key)
         writeIndex()
+        refreshPublishedStatus()
         return entries.any { it.assetId.equals(assetId, true) }
     }
 
@@ -182,6 +186,7 @@ class FrameOfflineReserve(
         removeHiddenEntries()
         writeScope()
         writeIndex()
+        refreshPublishedStatus()
         return true
     }
 
@@ -193,9 +198,12 @@ class FrameOfflineReserve(
 
     @Synchronized
     fun status(): Status {
-        val valid = entries()
-        return Status(offlineAssets = valid.size, offlineBytes = valid.sumOf { it.file.length() }, latest = valid.firstOrNull())
+        refreshPublishedStatus()
+        return publishedStatus
     }
+
+    /** Never performs disk I/O or enters the reserve monitor; suitable for the UI poll hot path. */
+    fun publishedStatus(): Status = publishedStatus
 
     /** Drops persisted JPEGs when the process receives a low-memory signal. */
     @Synchronized
@@ -206,6 +214,7 @@ class FrameOfflineReserve(
             writeScope()
             writeIndex()
         }
+        refreshPublishedStatus()
     }
 
     @Synchronized
@@ -214,6 +223,7 @@ class FrameOfflineReserve(
         entries = emptyList()
         scope = null
         hiddenAssets = emptySet()
+        refreshPublishedStatus()
     }
 
     private fun evict(scopeKey: String) {
@@ -289,6 +299,13 @@ class FrameOfflineReserve(
         if (hiddenAssets.isEmpty()) return
         entries.filter { it.assetId.lowercase() in hiddenAssets }.forEach { it.file.delete() }
         entries = entries.filterNot { it.assetId.lowercase() in hiddenAssets }
+    }
+
+    /** Called under the reserve monitor only after a complete mutation or explicit worker status refresh. */
+    private fun refreshPublishedStatus() {
+        val valid = entries.filter { it.file.isFile }
+        entries = valid
+        publishedStatus = Status(offlineAssets = valid.size, offlineBytes = valid.sumOf { it.file.length() }, latest = valid.firstOrNull())
     }
 
     private fun clearFiles() {
