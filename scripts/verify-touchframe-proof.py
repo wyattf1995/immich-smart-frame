@@ -235,6 +235,12 @@ try:
         "session === target",
         {"same session and exact scope retain the offline attachment"},
     )
+    paused_capture_red = mutate(
+        "offline-paused-capture-red", "offline",
+        "fun captureEnabled(): Boolean = active && !paused",
+        "fun captureEnabled(): Boolean = active",
+        {"pause suppresses trusted capture while preserving visible Photos state"},
+    )
     scope_red = mutate(
         "pause-lifecycle-red", "scope",
         "if (closed || !resumed) return\n            resumed = false",
@@ -259,6 +265,7 @@ try:
         "offlineBackdropBoundRed": blur_red,
         "offlineAttachmentGenerationRed": attachment_gate_red,
         "offlineExactScopeRed": attachment_scope_red,
+        "offlinePausedCaptureRed": paused_capture_red,
         "pausedTaskEntryRed": scope_red,
         "restored": restored, "preparedBridgeRestored": bridge_restored,
         "preparedBridgeSourceSha256": bridge_source_hash,
