@@ -43,11 +43,11 @@ export const fixtureMetadata = Object.freeze({
   interactionSelectors: Object.freeze({
     hostIframe: "#panel",
     customHome: "#custom-home",
-    homeThermostat: "[data-home-action='set-temperature']",
-    homeHvacMode: "[data-home-action='set-hvac-mode']",
+    homeThermostat: "[data-adjust='temperature:1']",
+    homeHvacMode: "[data-mode]",
     artGallery: "#art-gallery",
-    artNext: "[data-art-action='next']",
-    artPrevious: "[data-art-action='previous']",
+    artButtons: "#art-gallery .art-controls button",
+    artButtonLabels: Object.freeze({ previous: "Previous", next: "Next", pause: "Pause", resume: "Resume" }),
   }),
 });
 
@@ -98,10 +98,11 @@ const homeFixture = () => `<!doctype html>
 (() => {
   const counters = { stateReads: 0, callService: 0, callWS: 0, stateIdentityReplacements: 0 };
   let churn = false;
+  let churnTimer = null;
   const baseStates = {};
   for (let index = 0; index < ${HOME_STATE_COUNT}; index += 1) baseStates['sensor.synthetic_' + index] = { entity_id: 'sensor.synthetic_' + index, state: String(index), attributes: { friendly_name: 'Synthetic sensor ' + index } };
   Object.assign(baseStates, {
-    'climate.entryway_entryway': { entity_id: 'climate.entryway_entryway', state: 'heat', attributes: { friendly_name: 'Entryway', current_temperature: 69, temperature: 70, target_temp_step: 1, hvac_modes: ['off','heat','cool'], temperature_unit: '°F' } },
+    'climate.entryway_entryway': { entity_id: 'climate.entryway_entryway', state: 'heat', attributes: { friendly_name: 'Entryway', current_temperature: 69, temperature: 70, min_temp: 50, max_temp: 90, target_temp_step: 1, hvac_modes: ['off','heat','cool'], temperature_unit: '°F' } },
     'weather.forecast_home': { entity_id: 'weather.forecast_home', state: 'sunny', attributes: { temperature: 72, temperature_unit: '°F' } },
     'weather.home': { entity_id: 'weather.home', state: 'sunny', attributes: { temperature: 72, temperature_unit: '°F' } },
     'calendar.family': { entity_id: 'calendar.family', state: 'on', attributes: { friendly_name: 'Family', message: 'Synthetic family event', start_time: '2026-10-12T10:00:00', end_time: '2026-10-12T11:00:00', all_day: false } },
@@ -113,14 +114,24 @@ const homeFixture = () => `<!doctype html>
     'camera.garage_garage_camera': { entity_id: 'camera.garage_garage_camera', state: 'idle', attributes: { friendly_name: 'Garage' } },
     'camera.living_room_living_room_camera': { entity_id: 'camera.living_room_living_room_camera', state: 'idle', attributes: { friendly_name: 'Living room' } },
   });
+  let currentStates = baseStates;
+  const replaceStatesIdentity = () => { currentStates = Object.assign({}, baseStates); counters.stateIdentityReplacements += 1; };
   const connection = { connected: true };
   const hass = { connected: true, connection, config: { unit_system: { temperature: '°F' } },
     callService(domain, service, data) { counters.callService += 1; if (domain === 'climate' && data && data.entity_id === 'climate.entryway_entryway') { if (service === 'set_temperature' && Number.isFinite(Number(data.temperature))) baseStates['climate.entryway_entryway'].attributes.temperature = Number(data.temperature); if (service === 'set_hvac_mode' && typeof data.hvac_mode === 'string') baseStates['climate.entryway_entryway'].state = data.hvac_mode; } return Promise.resolve(); },
     callWS() { counters.callWS += 1; return Promise.resolve({ response: { 'weather.forecast_home': { forecast: [{ datetime: '2026-10-12T09:00:00-07:00', condition: 'sunny', temperature: 72, templow: 56, precipitation_probability: 0 }, { datetime: '2026-10-13T09:00:00-07:00', condition: 'partlycloudy', temperature: 71, templow: 55, precipitation_probability: 10 }, { datetime: '2026-10-14T09:00:00-07:00', condition: 'rainy', temperature: 63, templow: 51, precipitation_probability: 70 }] } } }); },
   };
-  Object.defineProperty(hass, 'states', { enumerable: true, get() { counters.stateReads += 1; if (!churn) return baseStates; counters.stateIdentityReplacements += 1; return Object.assign({}, baseStates); } });
+  Object.defineProperty(hass, 'states', { enumerable: true, get() { counters.stateReads += 1; return currentStates; } });
+  const setStatesIdentityChurn = (value) => {
+    churn = Boolean(value);
+    if (!churn) { window.clearInterval(churnTimer); churnTimer = null; currentStates = baseStates; return; }
+    if (churnTimer !== null) return;
+    replaceStatesIdentity();
+    churnTimer = window.setInterval(replaceStatesIdentity, 1000);
+  };
+  window.addEventListener('pagehide', () => { window.clearInterval(churnTimer); churnTimer = null; });
   document.querySelector('home-assistant').hass = hass;
-  window.__fixture = Object.freeze({ counters, setStatesIdentityChurn(value) { churn = Boolean(value); }, getStatesIdentityChurn() { return churn; }, hass });
+  window.__fixture = Object.freeze({ counters, setStatesIdentityChurn, getStatesIdentityChurn() { return churn; }, hass });
 })();
 </script></body></html>`;
 
