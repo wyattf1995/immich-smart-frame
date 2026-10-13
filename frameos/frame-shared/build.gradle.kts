@@ -3,6 +3,73 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Android source sets accept directories, not PatternFilterable.include. These
+// build-owned mirrors keep the reviewed allowlist while compiling the canonical
+// app sources. Task inputs track source-proof mutations; no source is hand-copied.
+val syncSharedMainSources by tasks.registering(Sync::class) {
+    from("../app/src/main/kotlin") {
+        include(
+            "com/wyattfleming/frameos/FrameOperationLogger.kt",
+            "com/wyattfleming/frameos/control/FrameCompanionClient.kt",
+            "com/wyattfleming/frameos/control/FrameCompanionCommandStore.kt",
+            "com/wyattfleming/frameos/control/FrameCompanionCommandJournal.kt",
+            "com/wyattfleming/frameos/control/FrameCompanionCredentialsStore.kt",
+            "com/wyattfleming/frameos/control/FrameCompanionEnvelope.kt",
+            "com/wyattfleming/frameos/control/FrameCompanionEventDecoder.kt",
+            "com/wyattfleming/frameos/control/FrameCompanionEventStore.kt",
+            "com/wyattfleming/frameos/control/FrameCompanionSettingsDecoder.kt",
+            "com/wyattfleming/frameos/control/FrameCompanionSnapshotRevision.kt",
+            "com/wyattfleming/frameos/control/FrameCompanionCommandDecoder.kt",
+            "com/wyattfleming/frameos/control/FrameRemoteControlPolicy.kt",
+            "com/wyattfleming/frameos/control/FrameRemoteEndpoint.kt",
+            "com/wyattfleming/frameos/control/FrameRemoteModels.kt",
+            "com/wyattfleming/frameos/control/FrameRemotePollPolicy.kt",
+            "com/wyattfleming/frameos/control/FrameCompanionResponseReader.kt",
+            "com/wyattfleming/frameos/control/FramePhotosProfileUrl.kt",
+            "com/wyattfleming/frameos/navigation/FrameMode.kt",
+            "com/wyattfleming/frameos/config/FrameExperienceSettings.kt",
+            "com/wyattfleming/frameos/config/FrameExperienceStore.kt",
+            "com/wyattfleming/frameos/config/QuietHoursBrightnessPolicy.kt",
+            "com/wyattfleming/frameos/auth/**",
+            "com/wyattfleming/frameos/weather/**",
+            "com/wyattfleming/frameos/security/FrameUrlPolicy.kt",
+            "com/wyattfleming/frameos/photos/FrameOfflineReserve.kt",
+            "com/wyattfleming/frameos/photos/FramePhotoAttachmentEpoch.kt",
+            "com/wyattfleming/frameos/photos/FramePhotoBridge.kt",
+            "com/wyattfleming/frameos/photos/FrameSharedPlaybackMetadata.kt",
+            "com/wyattfleming/frameos/ui/WeatherContentView.kt",
+            "com/wyattfleming/frameos/web/FrameOAuthWebSurface.kt",
+        )
+    }
+    into(layout.buildDirectory.dir("generated/shared/main/kotlin"))
+}
+
+val syncSharedTestSources by tasks.registering(Sync::class) {
+    from("../app/src/test/kotlin") {
+        include(
+            "com/wyattfleming/frameos/auth/**",
+            "com/wyattfleming/frameos/weather/**",
+            "com/wyattfleming/frameos/security/FrameUrlPolicyTest.kt",
+            "com/wyattfleming/frameos/photos/FrameOfflineReserveTest.kt",
+            "com/wyattfleming/frameos/photos/FrameOfflineReserveMigrationTest.kt",
+            "com/wyattfleming/frameos/photos/FramePhotoAttachmentEpochTest.kt",
+            "com/wyattfleming/frameos/photos/FramePhotoBridgeCallbackResponseTest.kt",
+            "com/wyattfleming/frameos/photos/FramePhotoBridgeDiagnosticsTest.kt",
+            "com/wyattfleming/frameos/photos/FramePhotoBridgeExtensionContractTest.kt",
+            "com/wyattfleming/frameos/photos/FramePhotoBridgePreparedAttachmentContractTest.kt",
+            "com/wyattfleming/frameos/photos/FramePhotoBridgePackagingContractTest.kt",
+            "com/wyattfleming/frameos/photos/FrameSharedPlaybackMetadataTest.kt",
+            "com/wyattfleming/frameos/control/FrameCompanionEventStoreTest.kt",
+        )
+    }
+    into(layout.buildDirectory.dir("generated/shared/test/kotlin"))
+}
+
+val syncSharedAssets by tasks.registering(Sync::class) {
+    from("../app/src/main/assets") { include("frame-photo-bridge/**") }
+    into(layout.buildDirectory.dir("generated/shared/main/assets"))
+}
+
 android {
     namespace = "com.wyattfleming.frameshared"
     compileSdk = 37
@@ -29,60 +96,12 @@ android {
 
     sourceSets {
         getByName("main") {
-            java.setSrcDirs(listOf("src/main/kotlin", "../app/src/main/kotlin"))
-            java.include(
-                "com/wyattfleming/frameos/FrameOperationLogger.kt",
-                "com/wyattfleming/frameos/control/FrameCompanionClient.kt",
-                "com/wyattfleming/frameos/control/FrameCompanionCommandStore.kt",
-                "com/wyattfleming/frameos/control/FrameCompanionCommandJournal.kt",
-                "com/wyattfleming/frameos/control/FrameCompanionCredentialsStore.kt",
-                "com/wyattfleming/frameos/control/FrameCompanionEnvelope.kt",
-                "com/wyattfleming/frameos/control/FrameCompanionEventDecoder.kt",
-                "com/wyattfleming/frameos/control/FrameCompanionEventStore.kt",
-                "com/wyattfleming/frameos/control/FrameCompanionSettingsDecoder.kt",
-                "com/wyattfleming/frameos/control/FrameCompanionSnapshotRevision.kt",
-                "com/wyattfleming/frameos/control/FrameCompanionCommandDecoder.kt",
-                "com/wyattfleming/frameos/control/FrameRemoteControlPolicy.kt",
-                "com/wyattfleming/frameos/control/FrameRemoteEndpoint.kt",
-                "com/wyattfleming/frameos/control/FrameRemoteModels.kt",
-                "com/wyattfleming/frameos/control/FrameRemotePollPolicy.kt",
-                "com/wyattfleming/frameos/control/FrameCompanionResponseReader.kt",
-                "com/wyattfleming/frameos/control/FramePhotosProfileUrl.kt",
-                "com/wyattfleming/frameos/navigation/FrameMode.kt",
-                "com/wyattfleming/frameos/config/FrameExperienceSettings.kt",
-                "com/wyattfleming/frameos/config/FrameExperienceStore.kt",
-                "com/wyattfleming/frameos/config/QuietHoursBrightnessPolicy.kt",
-                "com/wyattfleming/frameos/auth/**",
-                "com/wyattfleming/frameos/weather/**",
-                "com/wyattfleming/frameos/security/FrameUrlPolicy.kt",
-                "com/wyattfleming/frameos/photos/FrameOfflineReserve.kt",
-                "com/wyattfleming/frameos/photos/FramePhotoAttachmentEpoch.kt",
-                "com/wyattfleming/frameos/photos/FramePhotoBridge.kt",
-                "com/wyattfleming/frameos/photos/FrameSharedPlaybackMetadata.kt",
-                "com/wyattfleming/frameos/ui/WeatherContentView.kt",
-                "com/wyattfleming/frameos/web/FrameOAuthWebSurface.kt",
-            )
-            assets.srcDir("../app/src/main/assets")
-            assets.include("frame-photo-bridge/**")
+            java.setSrcDirs(listOf("src/main/kotlin", syncSharedMainSources))
+            assets.srcDir(syncSharedAssets)
         }
         getByName("test") {
-            java.setSrcDirs(listOf("src/test/kotlin", "../app/src/test/kotlin"))
+            java.setSrcDirs(listOf("src/test/kotlin", syncSharedTestSources))
             resources.srcDir("../app/src/test/resources")
-            java.include(
-                "com/wyattfleming/frameos/auth/**",
-                "com/wyattfleming/frameos/weather/**",
-                "com/wyattfleming/frameos/security/FrameUrlPolicyTest.kt",
-                "com/wyattfleming/frameos/photos/FrameOfflineReserveTest.kt",
-                "com/wyattfleming/frameos/photos/FrameOfflineReserveMigrationTest.kt",
-                "com/wyattfleming/frameos/photos/FramePhotoAttachmentEpochTest.kt",
-                "com/wyattfleming/frameos/photos/FramePhotoBridgeCallbackResponseTest.kt",
-                "com/wyattfleming/frameos/photos/FramePhotoBridgeDiagnosticsTest.kt",
-                "com/wyattfleming/frameos/photos/FramePhotoBridgeExtensionContractTest.kt",
-                "com/wyattfleming/frameos/photos/FramePhotoBridgePreparedAttachmentContractTest.kt",
-                "com/wyattfleming/frameos/photos/FramePhotoBridgePackagingContractTest.kt",
-                "com/wyattfleming/frameos/photos/FrameSharedPlaybackMetadataTest.kt",
-                "com/wyattfleming/frameos/control/FrameCompanionEventStoreTest.kt",
-            )
         }
     }
 }
