@@ -37,3 +37,28 @@ Interpretation limits:
 
 No app installation, credentials, real controls, firmware or household media are
 needed or authorized by this harness.
+
+## Source identity and optimized-view comparison
+
+Every run requires `AUDIT-SOURCE-IDENTITY.json` in the source root. Its
+`productCommit` and every listed non-harness product file are verified by byte
+count and SHA-256 before the loopback server starts. A missing, malformed, or
+mismatched receipt fails the run; the returned receipt is copied into the
+archive.
+
+The default invocation remains the historic baseline workload, including its
+full saved-choice DOM and width-based Bird meter waits. Pass
+`--optimized-views` only when validating the approved lazy Companion and
+transform-based Bird implementations. It keeps the same 4 tabs, CPU ×4,
+30-second baselines, 1,000-choice stress case, 20 Hz Bird stream, and
+125-second Art interval. In this mode the harness additionally requires:
+
+- a connected, closed Companion panel with zero saved-choice rows and zero
+  preference GETs before the first expansion;
+- exactly 50 visible rows after expansion of the 1,000-choice fixture, then a
+  bounded second page; and
+- a non-zero computed `transform`/`scaleX` meter instead of an inline width.
+
+The profile records the available count, current page, and preference-request
+counts in `companionOptimizedContract`. It does not claim a device, browser, or
+NAS run until the guarded browser runtime exports its receipt.
