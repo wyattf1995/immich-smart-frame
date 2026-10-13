@@ -1,6 +1,7 @@
 package com.wyattfleming.touchframe.ui
 
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -112,16 +113,21 @@ class TouchHomeView private constructor(
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
         val large = isLargeLandscape()
-        if (lastLargeLayout != null && lastLargeLayout != large) rebuild()
-        lastLargeLayout = large
+        if (TouchHomeLayout.needsRebuild(lastLargeLayout, large)) rebuild(large)
     }
 
-    private fun rebuild() {
+    /** Rebuilds once when a consumed Activity configuration changes the layout class. */
+    fun refreshLayoutForConfiguration(configuration: Configuration) {
+        val large = TouchHomeLayout.isLargeLandscape(configuration.screenWidthDp, configuration.screenHeightDp)
+        if (TouchHomeLayout.needsRebuild(lastLargeLayout, large)) rebuild(large)
+    }
+
+    private fun rebuild(large: Boolean = isLargeLandscape()) {
+        lastLargeLayout = large
         scrollPosition = scrollView?.scrollY ?: scrollPosition
         removeAllViews()
         val dashboard = model
-        val type = typography()
-        val large = isLargeLandscape()
+        val type = typography(large)
         setBackgroundColor(style.background)
         val scroll = ScrollView(context).apply {
             isFillViewport = true
@@ -396,10 +402,11 @@ class TouchHomeView private constructor(
     private fun isLargeLandscape(): Boolean {
         val density = resources.displayMetrics.density
         val widthDp = if (width > 0) width / density else resources.configuration.screenWidthDp.toFloat()
-        return widthDp >= LARGE_LANDSCAPE_DP && (height == 0 || width >= height)
+        val heightDp = if (height > 0) height / density else resources.configuration.screenHeightDp.toFloat()
+        return TouchHomeLayout.isLargeLandscape(widthDp, heightDp)
     }
 
-    private fun typography(): Typography = if (isLargeLandscape()) {
+    private fun typography(large: Boolean): Typography = if (large) {
         Typography(body = 24f, small = 20f, clock = 108f)
     } else {
         Typography(body = 18f, small = 16f, clock = 72f)
@@ -477,7 +484,15 @@ class TouchHomeView private constructor(
     private fun Context.dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private companion object {
-        const val LARGE_LANDSCAPE_DP = 900f
         const val MAX_EVENTS = 5
     }
+}
+
+internal object TouchHomeLayout {
+    const val LARGE_LANDSCAPE_DP = 900f
+
+    fun isLargeLandscape(widthDp: Float, heightDp: Float): Boolean =
+        widthDp >= LARGE_LANDSCAPE_DP && (heightDp <= 0f || widthDp >= heightDp)
+
+    fun needsRebuild(previous: Boolean?, next: Boolean): Boolean = previous != next
 }
