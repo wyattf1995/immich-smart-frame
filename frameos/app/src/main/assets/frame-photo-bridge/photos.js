@@ -16,6 +16,7 @@ let inFlightFingerprint = "";
 let rejectedFingerprint = "";
 let rejectedRetries = 0;
 let queued = false;
+let captureMutationTimer = 0;
 let retryTimer = 0;
 let desiredPlaybackPaused = null;
 let pauseSnapshotNonce = null;
@@ -315,7 +316,8 @@ function isCaptureMutation(mutation) {
 }
 
 function scheduleCaptureMutations(mutations) {
-  if (mutations.some(isCaptureMutation)) scheduleCapture();
+  if (!mutations.some(isCaptureMutation) || captureMutationTimer) return;
+  captureMutationTimer = setTimeout(() => { captureMutationTimer = 0; scheduleCapture(); }, 50);
 }
 
 function setPollingPaused(paused) {
@@ -412,7 +414,7 @@ function initializeDomCapture() {
   new MutationObserver(() => {
     if (desiredPlaybackPaused && !document.body.classList.contains("polling-paused")) setPollingPaused(true);
   }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
-  new MutationObserver(scheduleCaptureMutations).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
+  new MutationObserver(scheduleCaptureMutations).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
   // Only a document with no observed main#kiosk request has a DOM-ready baseline.
   // A failed or 204 request may already have left the settle set, but has no pair.
   if (!hasObservedKioskRequest && settlingKioskRequests.size === 0) kioskCaptureReady = true;
