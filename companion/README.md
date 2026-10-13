@@ -62,6 +62,11 @@ pruning keeps up to 1,000 terminal entries and never discards a live queued
 command to make room. Preference reads and exports use WAL read snapshots.
 The version-1 preference export streams to a temporary file before atomic
 replacement, with memory independent of total preference count.
+Preference updates first commit to SQLite, then synchronously attempt that export.
+If replacement fails, the request returns 503 even though the saved policy remains
+available to Companion APIs; one revision-tracked exporter retries in the background
+with bounded backoff until the Kiosk file catches up. The existing valid export stays
+in place during a failed attempt, and startup resumes any interrupted publication.
 
 Allowed commands: `show_mode` with `mode`, `photo_next`, `photo_previous`,
 `photo_pause`, `photo_resume`, `photo_hold` with `durationSeconds` (15–3600), and

@@ -1,8 +1,11 @@
 import importlib.util
 import json
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 MODULE = Path(__file__).resolve().parents[1] / 'server.py'
 spec = importlib.util.spec_from_file_location('frame_companion', MODULE)
@@ -124,6 +127,98 @@ class CompanionTests(unittest.TestCase):
         data=json.loads(export.read_text());self.assertEqual(data['devices']['main']['assets'][asset],'hide');self.assertEqual(data['devices']['parents']['assets'],{})
         self.store.feedback('main',{'assetId':asset,'preference':'clear'})
         self.assertEqual(json.loads(export.read_text())['devices']['main']['assets'],{})
+
+    def test_failed_export_keeps_sqlite_policy_dirty_then_retries(self):
+        export = Path(self.tmp.name) / 'export' / 'preferences.json'
+        self.store = module.FrameStore(Path(self.tmp.name) / 'state.db', {}, ['balanced','family'], clock=lambda: self.clock, preferences_export=export)
+        prior = export.read_bytes()
+        asset = '11111111-1111-4111-8111-111111111111'
+        try:
+            with patch.object(module.os, 'replace', side_effect=OSError('fixture replacement failure')):
+                with self.assertRaises(OSError):
+                    self.store.feedback('main', {'assetId':asset, 'preference':'hide'})
+                with self.store.db(write=False) as db:
+                    desired, published = self.store._export_revisions(db)
+                self.assertGreater(desired, published)
+                self.assertEqual(export.read_bytes(), prior)
+                self.assertEqual(self.store.poll('main', {'status': {}})['hiddenAssets'], [asset])
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline and json.loads(export.read_text())['devices']['main']['assets'].get(asset) != 'hide':
+                time.sleep(.01)
+            self.assertEqual(json.loads(export.read_text())['devices']['main']['assets'][asset], 'hide')
+            with self.store.db(write=False) as db:
+                desired, published = self.store._export_revisions(db)
+            self.assertEqual(published, desired)
+        finally:
+            self.store.close()
+
+    def test_newer_feedback_is_published_after_older_snapshot(self):
+        export = Path(self.tmp.name) / 'export' / 'preferences.json'
+        self.store = module.FrameStore(Path(self.tmp.name) / 'state.db', {}, ['balanced','family'], clock=lambda: self.clock, preferences_export=export)
+        first = '11111111-1111-4111-8111-111111111111'
+        second = '22222222-2222-4222-8222-222222222222'
+        at_replace = threading.Event()
+        release_replace = threading.Event()
+        original_replace = module.os.replace
+        calls = []
+        def blocked_replace(source, destination):
+            calls.append((source, destination))
+            if len(calls) == 1:
+                at_replace.set()
+                self.assertTrue(release_replace.wait(2))
+            return original_replace(source, destination)
+        first_error = []
+        def save_first():
+            try:
+                self.store.feedback('main', {'assetId':first, 'preference':'hide'})
+            except Exception as error:
+                first_error.append(error)
+        try:
+            with patch.object(module.os, 'replace', side_effect=blocked_replace):
+                worker = threading.Thread(target=save_first)
+                worker.start()
+                self.assertTrue(at_replace.wait(2))
+                second_worker = threading.Thread(target=lambda: self.store.feedback('main', {'assetId':second, 'preference':'hide'}))
+                second_worker.start()
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    with self.store.db(write=False) as db:
+                        desired, _ = self.store._export_revisions(db)
+                    if desired >= 3: break
+                    time.sleep(.005)
+                self.assertEqual(desired, 3)
+                release_replace.set()
+                worker.join(2); second_worker.join(2)
+            self.assertFalse(worker.is_alive()); self.assertFalse(second_worker.is_alive()); self.assertEqual(first_error, [])
+            self.assertEqual(len(calls), 2)
+            data = json.loads(export.read_text())['devices']['main']['assets']
+            self.assertEqual(data, {first:'hide', second:'hide'})
+            with self.store.db(write=False) as db:
+                desired, published = self.store._export_revisions(db)
+            self.assertEqual((desired, published), (3, 3))
+        finally:
+            release_replace.set()
+            self.store.close()
+
+    def test_restart_recovers_dirty_export_and_close_cancels_retry(self):
+        export = Path(self.tmp.name) / 'export' / 'preferences.json'
+        self.store = module.FrameStore(Path(self.tmp.name) / 'state.db', {}, ['balanced','family'], clock=lambda: self.clock, preferences_export=export)
+        asset = '11111111-1111-4111-8111-111111111111'
+        with patch.object(module, 'EXPORT_RETRY_INITIAL_SECONDS', 60), patch.object(module.os, 'replace', side_effect=OSError('fixture replacement failure')):
+            with self.assertRaises(OSError):
+                self.store.feedback('main', {'assetId':asset, 'preference':'hide'})
+            retry = self.store.export_retry_thread
+            self.assertIsNotNone(retry)
+            self.store.close()
+            self.assertFalse(retry.is_alive())
+        reopened = module.FrameStore(Path(self.tmp.name) / 'state.db', {}, ['balanced','family'], clock=lambda: self.clock, preferences_export=export)
+        try:
+            self.assertEqual(json.loads(export.read_text())['devices']['main']['assets'][asset], 'hide')
+            with reopened.db(write=False) as db:
+                desired, published = reopened._export_revisions(db)
+            self.assertEqual(published, desired)
+        finally:
+            reopened.close()
     def test_auth_invalid_unicode_and_role_token_reuse(self):
         config={'operatorUsername':'frame','operatorPassword':'p'*32,'operatorToken':'o'*48,'devices':{'main':{'token':'d'*48}}}
         auth=module.FrameAuth(config)
