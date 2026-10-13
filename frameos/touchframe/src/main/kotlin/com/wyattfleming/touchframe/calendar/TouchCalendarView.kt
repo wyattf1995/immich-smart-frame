@@ -77,17 +77,16 @@ class TouchCalendarView(
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
         val wasWide = lastWideHeader ?: return
-        if (isWideHeader() != wasWide || (height != oldHeight && scaleFor(height) != scaleFor(oldHeight))) post { rebuild() }
+        if (isWideHeader() != wasWide || TouchScale.forScreen(resources.configuration) != lastScale) post { rebuild() }
     }
 
-    private fun scaleFor(heightPx: Int) = TouchScale.forContentHeightDp(
-        if (heightPx > 0) heightPx / resources.displayMetrics.density else resources.configuration.screenHeightDp.toFloat(),
-    )
+    private var lastScale: TouchScale? = null
 
     private fun rebuild() {
         renderedDay = LocalDate.now()
         renderedTodayKey = todayKey(System.currentTimeMillis())
-        val kit = TouchKit(context, TouchPalette.forNight(night), scaleFor(height))
+        val kit = TouchKit(context, TouchPalette.forNight(night), TouchScale.forScreen(resources.configuration))
+        lastScale = kit.scale
         val scale = kit.scale
         setBackgroundColor(kit.palette.wall)
         body.removeAllViews()

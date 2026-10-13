@@ -271,18 +271,19 @@ class TouchCameraView(
         requestRefresh()
     }
 
-    private fun kit() = TouchKit(context, TouchPalette.forNight(night), TouchScale.forContentHeightDp(
-        if (height > 0) height / resources.displayMetrics.density else resources.configuration.screenHeightDp.toFloat()))
+    private fun kit() = TouchKit(context, TouchPalette.forNight(night), TouchScale.forScreen(resources.configuration))
+
+    private var builtScale: TouchScale? = null
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
-        if (oldHeight > 0 && TouchScale.forContentHeightDp(height / resources.displayMetrics.density) !=
-            TouchScale.forContentHeightDp(oldHeight / resources.displayMetrics.density)) post { rebuild() }
+        if (builtScale != null && TouchScale.forScreen(resources.configuration) != builtScale) post { rebuild() }
     }
 
     /** Builds the stage, caption and camera list; network state lands in [renderStage]. */
     private fun rebuild() {
         val kit = kit()
+        builtScale = kit.scale
         val palette = TouchCameraPalette.forNight(night)
         val p = kit.palette
         removeAllViews()

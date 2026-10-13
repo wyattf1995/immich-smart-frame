@@ -128,10 +128,15 @@ class TouchShellLayout(
         hideEdgeHintNow()
         menuVisible = true
         applyChrome()
+        // The swipe moves right, so the bar follows it in from the left edge.
+        bar.translationX = -width.toFloat()
+        bar.animate().translationX(0f).setDuration(MENU_SLIDE_MILLIS).start()
     }
 
     fun hideMenu() {
         if (!destination.isImmersiveMedia) return
+        bar.animate().cancel()
+        bar.translationX = 0f
         menuVisible = false
         applyChrome()
     }
@@ -159,7 +164,7 @@ class TouchShellLayout(
     fun showNotice(message: String, tone: NoticeTone = NoticeTone.INFO, actionLabel: String? = null, action: (() -> Unit)? = null) {
         removeCallbacks(hideNotice)
         noticeHost.removeAllViews()
-        val kit = TouchKit(context, TouchPalette.forNight(night), TouchScale.forContentHeightDp(height / resources.displayMetrics.density))
+        val kit = TouchKit(context, TouchPalette.forNight(night), TouchScale.forScreen(resources.configuration))
         val p = kit.palette
         val (fill, ink, stroke) = if (tone == NoticeTone.ERROR) Triple(p.alert, p.alertInk, p.alertInk) else Triple(p.notice, p.noticeInk, p.noticeStroke)
         val notice = LinearLayout(context).apply {
@@ -198,7 +203,7 @@ class TouchShellLayout(
     /** A brief, non-interactive cue that the menu lives behind the left edge of full-screen media. */
     fun showEdgeHint() {
         if (!destination.isImmersiveMedia || menuVisible) return
-        val kit = TouchKit(context, TouchPalette.forNight(night), TouchScale.forContentHeightDp(height / resources.displayMetrics.density))
+        val kit = TouchKit(context, TouchPalette.forNight(night), TouchScale.forScreen(resources.configuration))
         val ink = if (night) kit.palette.ink else 0xFFF6F4EF.toInt()
         edgeHint.removeAllViews()
         edgeHint.addView(View(context).apply {
@@ -276,7 +281,10 @@ class TouchShellLayout(
         val barHeight = dp(barHeightDpFor(resources.configuration.screenWidthDp))
         val large = barHeightDpFor(resources.configuration.screenWidthDp) >= WIDE_BAR_HEIGHT_DP
         setBackgroundColor(palette.background)
-        bar.setBackgroundColor(palette.rail)
+        bar.background = android.graphics.drawable.LayerDrawable(arrayOf(
+            android.graphics.drawable.ColorDrawable(palette.barRule),
+            android.graphics.drawable.ColorDrawable(palette.rail),
+        )).apply { setLayerInset(1, 0, 0, 0, dp(1)) }
         bar.setPadding(dp(8), 0, dp(8), 0)
         bar.layoutParams = (bar.layoutParams as LayoutParams).apply { height = barHeight }
         rebuildTabs(palette, barHeight, large)
@@ -303,7 +311,7 @@ class TouchShellLayout(
 
     /** Docks notices at the start of the content area, inside the strip reserved by [applyChrome]. */
     private fun positionOverlays() {
-        val scale = TouchScale.forContentHeightDp(height / resources.displayMetrics.density)
+        val scale = TouchScale.forScreen(resources.configuration)
         noticeHost.layoutParams = (noticeHost.layoutParams as LayoutParams).apply {
             gravity = Gravity.BOTTOM or Gravity.START
             leftMargin = dp(scale.pad)
@@ -312,14 +320,17 @@ class TouchShellLayout(
     }
 
     private fun noticeStripHeight(): Int {
-        val scale = TouchScale.forContentHeightDp(height / resources.displayMetrics.density)
+        val scale = TouchScale.forScreen(resources.configuration)
         return dp(scale.target + 16 + scale.pad / 2)
     }
 
     private fun rebuildTabs(palette: Palette, barHeight: Int, large: Boolean) {
         tabs.removeAllViews()
         destinations.forEach { item -> tabs.addView(destinationTab(item, palette, barHeight, large)) }
-        if (bar.childCount > 2) bar.removeViewAt(2)
+        while (bar.childCount > 2) bar.removeViewAt(2)
+        // A divider and gap keep Settings (which leaves the app) from reading as one more tab.
+        bar.addView(View(context).apply { setBackgroundColor(palette.settingsStroke ?: palette.muted); alpha = 0.5f },
+            LinearLayout.LayoutParams(dp(1), barHeight - dp(32)).apply { marginEnd = dp(16) })
         bar.addView(settingsTab(palette, barHeight, large))
     }
 
@@ -333,8 +344,12 @@ class TouchShellLayout(
             isSelected = selected
             contentDescription = item.label
             minimumWidth = dp(MIN_TARGET_DP)
-            setPadding(dp(if (large) 24 else 18), 0, dp(if (large) 24 else 18), 0)
-            background = if (selected) rounded(palette.selected, palette.selectedStroke) else rounded(Color.TRANSPARENT, null)
+            setPadding(dp(if (large) 26 else 20), 0, dp(if (large) 26 else 20), 0)
+            // The whole bar height is the touch target; the chip is drawn inset inside it.
+            background = android.graphics.drawable.InsetDrawable(
+                if (selected) rounded(palette.selected, palette.selectedStroke) else rounded(Color.TRANSPARENT, null),
+                dp(2), dp(TAB_INSET_DP), dp(2), dp(TAB_INSET_DP),
+            )
             setOnClickListener {
                 hideMenu()
                 onNavigate(item)
@@ -342,9 +357,7 @@ class TouchShellLayout(
             addView(icon(item.icon, if (selected) palette.selectedInk else palette.muted, large))
             addView(label(item.label, if (selected) palette.selectedInk else palette.ink, large))
         }.also { view ->
-            view.layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, barHeight - dp(TAB_INSET_DP * 2)).apply {
-                marginEnd = dp(4)
-            }
+            view.layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, barHeight)
         }
     }
 
@@ -355,13 +368,13 @@ class TouchShellLayout(
         isFocusable = true
         contentDescription = "Settings"
         minimumWidth = dp(MIN_TARGET_DP)
-        setPadding(dp(18), 0, dp(18), 0)
-        background = rounded(palette.settings, palette.settingsStroke)
+        setPadding(dp(20), 0, dp(20), 0)
+        background = android.graphics.drawable.InsetDrawable(rounded(palette.settings, palette.settingsStroke), 0, dp(TAB_INSET_DP), 0, dp(TAB_INSET_DP))
         setOnClickListener { onSettings() }
         addView(icon(R.drawable.ic_touch_settings, palette.settingsInk, large))
         addView(label("Settings", palette.settingsInk, large))
     }.also { view ->
-        view.layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, barHeight - dp(TAB_INSET_DP * 2))
+        view.layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, barHeight)
     }
 
     private val TouchDestination.icon: Int
@@ -412,6 +425,7 @@ class TouchShellLayout(
         private const val INFO_NOTICE_MILLIS = 6_000L
         private const val ERROR_NOTICE_MILLIS = 30_000L
         private const val EDGE_HINT_MILLIS = 4_000L
+        private const val MENU_SLIDE_MILLIS = 200L
 
         fun barHeightDpFor(screenWidthDp: Int): Int = if (screenWidthDp >= 1400) WIDE_BAR_HEIGHT_DP else PANEL_BAR_HEIGHT_DP
 
@@ -493,6 +507,8 @@ internal data class Palette(
     val settings: Int,
     val settingsInk: Int,
     val settingsStroke: Int?,
+    /** 1dp rule under the bar; gives the black night bar an edge against the black wall. */
+    val barRule: Int,
 ) {
     internal companion object {
         // #101722 gives AA contrast on the light mat selection used by day; night uses its own amber outline.
@@ -505,7 +521,8 @@ internal data class Palette(
                 selected = theme.railSelected,
                 selectedInk = if (night) theme.railSelectedInk else ACCESSIBLE_RAIL_INK,
                 selectedStroke = if (night) theme.railSelectedStroke else null,
-                settings = theme.moulding, settingsInk = theme.mouldingInk, settingsStroke = theme.mouldingLine,
+                settings = theme.moulding, settingsInk = theme.mouldingInk, settingsStroke = theme.mouldingMuted,
+                barRule = if (night) theme.line else theme.moulding,
             )
         }
 

@@ -155,8 +155,7 @@ class TouchHomeView private constructor(
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
         requestLayoutClass(isLargeLandscape())
-        val nextScale = TouchScale.forContentHeightDp(height / resources.displayMetrics.density)
-        if (height > 0 && nextScale != scale) post { if (TouchScale.forContentHeightDp(this.height / resources.displayMetrics.density) != scale) rebuild() }
+        if (TouchScale.forScreen(resources.configuration) != scale) post { if (TouchScale.forScreen(resources.configuration) != scale) rebuild() }
     }
 
     /** Defers a consumed Activity configuration change until the content has a layout pass. */
@@ -181,7 +180,7 @@ class TouchHomeView private constructor(
 
     private fun rebuild(large: Boolean = isLargeLandscape()) {
         layoutTransition.markRendered(large)
-        scale = TouchScale.forContentHeightDp(if (height > 0) height / resources.displayMetrics.density else resources.configuration.screenHeightDp.toFloat())
+        scale = TouchScale.forScreen(resources.configuration)
         scrollPosition = scrollView?.scrollY ?: scrollPosition
         removeAllViews()
         renderedKeys = HashMap()

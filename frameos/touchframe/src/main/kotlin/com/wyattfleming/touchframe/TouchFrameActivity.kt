@@ -508,7 +508,7 @@ class TouchFrameActivity : Activity() {
         val request = HomeAssistantOAuthEndpoint.fromDisplayUrl(config.homeAssistantUrl).authorizationRequest(callback, state)
         val verifier = OAuthCallbackVerifier(pending, callback)
         val palette = TouchPalette.forNight(TouchDayNight.isNight(Instant.now().atZone(ZoneId.systemDefault()).hour))
-        val kit = TouchKit(this, palette, TouchScale.forContentHeightDp(resources.configuration.screenHeightDp.toFloat()))
+        val kit = TouchKit(this, palette, TouchScale.forScreen(resources.configuration))
         val container = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             setBackgroundColor(palette.wall)
@@ -547,7 +547,7 @@ class TouchFrameActivity : Activity() {
                 pending.consume()
                 closeAuthorization()
             })
-        }, android.widget.LinearLayout.LayoutParams(-1, kit.dp(kit.scale.target + 24)))
+        }, android.widget.LinearLayout.LayoutParams(-1, kit.dp(TouchShellLayout.barHeightDpFor(resources.configuration.screenWidthDp))))
         container.addView(surface, android.widget.LinearLayout.LayoutParams(-1, 0, 1f))
         authorization = surface
         authorizationContainer = container

@@ -158,11 +158,16 @@ internal data class TouchScale(
             pad = 32, gap = 24, radius = 20, radiusSmall = 14,
         )
 
-        /** Height decides the class: the 1280×800 panel and compact overrides use the smaller scale. */
-        fun forContentHeightDp(heightDp: Float): TouchScale = if (heightDp >= WALL_MIN_HEIGHT_DP) WALL else PANEL
+        /**
+         * The screen, not the content area, decides the class: a docked notice or the top bar
+         * shortens content, and must never drop the 1920×1080 frame into 1280×800 type.
+         */
+        fun forScreenHeightDp(screenHeightDp: Float): TouchScale = if (screenHeightDp >= WALL_MIN_SCREEN_HEIGHT_DP) WALL else PANEL
 
-        /** Content height under the top bar: 1000dp on the 1920×1080 frame, 732dp on the 1280×800 frame. */
-        const val WALL_MIN_HEIGHT_DP = 900f
+        fun forScreen(configuration: android.content.res.Configuration): TouchScale =
+            forScreenHeightDp(configuration.screenHeightDp.toFloat())
+
+        const val WALL_MIN_SCREEN_HEIGHT_DP = 1000f
     }
 }
 
