@@ -3,6 +3,7 @@ package com.wyattfleming.touchframe.calendar
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -48,7 +49,7 @@ class TouchCalendarWeekPresentationTest {
         val dstSunday = event("DST meeting", 2026, 3, 8, 10, 0)
         val sundayRange = TouchCalendarRange.forMode(TouchCalendarMode.WEEK, LocalDate.of(2026, 3, 8))
 
-        val sunday = TouchCalendarWeekPresentation.days(sundayRange, listOf(dstSunday), zone).last()
+        val sunday = TouchCalendarWeekPresentation.days(sundayRange, listOf(dstSunday), zone, Locale.US).last()
 
         assertEquals(LocalDate.of(2026, 3, 8), sunday.date)
         assertEquals("10:00 AM", sunday.preview.single().timeLabel)
