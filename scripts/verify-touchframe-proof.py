@@ -375,6 +375,12 @@ try:
         "if (false) {",
         {"hiddenContentCrashRecoversExactlyOnceWhenTheUserReturns"},
     )
+    media_active_crash_red = mutate(
+        "media-active-crash-retry-red", "media",
+        "} else {\n                Decision.RETRY_REQUIRED\n            }",
+        "} else {\n                Decision.LOAD\n            }",
+        {"contentCrashRequiresExplicitRetryAndUsesTheMostRecentConfiguredUrl"},
+    )
     camera_palette_red = mutate(
         "camera-palette-contrast-red", "camera_palette",
         "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
@@ -542,7 +548,9 @@ try:
         "shellContrastRed": shell_contrast_red,
         "settingsReturnOverlayRed": settings_return_red,
         "calendarCapRed": cap_red, "cancelGenerationRed": cancel_red,
-        "climateStaleGateRed": climate_stale_red, "mediaCrashRetryRed": media_red,
+        "climateStaleGateRed": climate_stale_red,
+        "mediaHiddenReturnRecoveryRed": media_red,
+        "mediaActiveCrashRetryRed": media_active_crash_red,
         "cameraPaletteContrastRed": camera_palette_red,
         "offlineHiddenPhotosRed": offline_red,
         "offlineBackdropBoundRed": blur_red,
