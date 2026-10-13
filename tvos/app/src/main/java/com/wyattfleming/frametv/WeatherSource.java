@@ -23,6 +23,10 @@ final class WeatherSource {
         void onStatus(String title, String detail, String provider);
     }
     private static final int MAX_RESPONSE_BYTES = 128 * 1024;
+    // The native panels show a short forecast. Keep untrusted JSON arrays bounded even
+    // though the response byte cap is also enforced at the network boundary.
+    private static final int MAX_HOURLY_ENTRIES = 168;
+    private static final int MAX_DAILY_ENTRIES = 16;
     private final Context context;
     private final Listener listener;
     private final WeatherPreferences preferences;
@@ -79,21 +83,55 @@ final class WeatherSource {
         String homeAddress = new TvPreferences(context).url(Feature.HOME);
         if (preferences.homeAssistantPreferred() && WeatherCachePolicy.isUsable(homeAddress,
                 preferences.homeAssistantSource(), preferences.homeAssistantFetchedAt(), now)) {
-            try {
-                showForecast(parseForecast(preferences.homeAssistantJson()), location == null ? "Home" : location.label,
-                        preferences.homeAssistantFetchedAt(), true, "Home Assistant");
-                return;
-            } catch (JSONException ignored) { /* Use the public forecast when HA has no usable snapshot. */ }
+            parseCachedForecast(preferences.homeAssistantJson(), location == null ? "Home" : location.label,
+                    preferences.homeAssistantFetchedAt(), "Home Assistant", null, () -> loadPublicForecast(location));
+            return;
         }
+        loadPublicForecast(location);
+    }
+
+    private void loadPublicForecast(WeatherLocation location) {
         if (location == null) { showUnconfigured(); return; }
-        boolean usable = WeatherCachePolicy.isUsable(location.sourceKey(), preferences.cachedSource(), preferences.fetchedAt(), now);
-        if (usable) {
-            try { showForecast(parseForecast(preferences.cachedJson()), location.label, preferences.fetchedAt(), true, "Open-Meteo"); }
-            catch (JSONException ignored) { usable = false; }
-        } else {
+        long now = System.currentTimeMillis();
+        String sourceKey = location.sourceKey();
+        boolean usable = WeatherCachePolicy.isUsable(sourceKey, preferences.cachedSource(), preferences.fetchedAt(), now);
+        if (!usable) {
             listener.onStatus(location.label, "Loading hourly and daily weather…", "Open-Meteo");
+            if (!loading) fetch(location);
+            return;
         }
-        if (!loading && (!usable || WeatherCachePolicy.shouldRefresh(preferences.fetchedAt(), now))) fetch(location);
+        parseCachedForecast(preferences.cachedJson(), location.label, preferences.fetchedAt(), "Open-Meteo", sourceKey, () -> {
+            listener.onStatus(location.label, "Loading hourly and daily weather…", "Open-Meteo");
+            fetch(location);
+        }, () -> {
+            if (WeatherCachePolicy.shouldRefresh(preferences.fetchedAt(), System.currentTimeMillis())) fetch(location);
+        });
+    }
+
+    /** Parses cached JSON on the weather worker, never on the UI handler. */
+    private void parseCachedForecast(String payload, String label, long fetchedAt, String provider, String sourceKey,
+            Runnable malformed, Runnable... afterSuccess) {
+        if (loading) return;
+        loading = true;
+        final long request = ++requestNumber;
+        executor.execute(() -> {
+            WeatherForecast parsed = null;
+            try { parsed = parseForecast(payload); } catch (JSONException ignored) { }
+            final WeatherForecast forecast = parsed;
+            main.post(() -> {
+                WeatherLocation currentLocation = preferences.location();
+                if (!currentRequest(request, sourceKey, currentLocation)) return;
+                loading = false;
+                if (forecast == null) { malformed.run(); return; }
+                showForecast(forecast, label, fetchedAt, true, provider);
+                if (afterSuccess.length == 1) afterSuccess[0].run();
+            });
+        });
+    }
+
+    private boolean currentRequest(long request, String sourceKey, WeatherLocation currentLocation) {
+        return !closed && resumed && request == requestNumber && (sourceKey == null
+                || currentLocation != null && sourceKey.equals(currentLocation.sourceKey()));
     }
 
     private void fetch(WeatherLocation location) {
@@ -101,24 +139,20 @@ final class WeatherSource {
         final long request = ++requestNumber;
         final String sourceKey = location.sourceKey();
         executor.execute(() -> {
-            String payload = null;
-            Exception failure = null;
-            try { payload = requestForecast(location); }
-            catch (Exception error) { failure = error; }
-            final String response = payload;
-            final Exception result = failure;
+            String response = null;
+            WeatherForecast parsed = null;
+            try {
+                response = requestForecast(location);
+                parsed = parseForecast(response);
+                preferences.saveForecast(sourceKey, response, System.currentTimeMillis());
+            } catch (Exception ignored) { }
+            final WeatherForecast forecast = parsed;
             main.post(() -> {
-                WeatherLocation currentLocation = preferences.location();
-                if (closed || !resumed || request != requestNumber || currentLocation == null
-                        || !sourceKey.equals(currentLocation.sourceKey())) return;
+                if (!currentRequest(request, sourceKey, preferences.location())) return;
                 loading = false;
-                if (response != null) {
-                    try {
-                        WeatherForecast forecast = parseForecast(response);
-                        preferences.saveForecast(sourceKey, response, System.currentTimeMillis());
-                        showForecast(forecast, location.label, System.currentTimeMillis(), false, "Open-Meteo");
-                        return;
-                    } catch (JSONException malformed) { resultError(location, "Forecast data needs a retry"); return; }
+                if (forecast != null) {
+                    showForecast(forecast, location.label, System.currentTimeMillis(), false, "Open-Meteo");
+                    return;
                 }
                 if (!WeatherCachePolicy.isUsable(location.sourceKey(), preferences.cachedSource(), preferences.fetchedAt(), System.currentTimeMillis()))
                     resultError(location, "Weather is temporarily unavailable");
@@ -180,6 +214,7 @@ final class WeatherSource {
         JSONArray hourCodes = hourly.optJSONArray("weather_code");
         JSONArray precipitation = hourly.optJSONArray("precipitation_probability");
         JSONArray daylight = hourly.optJSONArray("is_day");
+        requireAligned("hourly.time", hourTimes, MAX_HOURLY_ENTRIES, hourTemps, hourCodes, precipitation, daylight);
         List<WeatherForecast.Hour> hours = new ArrayList<>();
         for (int i = 0; i < hourTimes.length(); i++) hours.add(new WeatherForecast.Hour(
                 longAt(hourTimes, i, -1), numberAt(hourTemps, i), integerAt(hourCodes, i), integerAt(precipitation, i), daylightAt(daylight, i)));
@@ -187,12 +222,22 @@ final class WeatherSource {
         JSONArray highs = daily.getJSONArray("temperature_2m_max");
         JSONArray lows = daily.getJSONArray("temperature_2m_min");
         JSONArray dayCodes = daily.optJSONArray("weather_code");
+        requireAligned("daily.time", dayTimes, MAX_DAILY_ENTRIES, highs, lows, dayCodes);
         List<WeatherForecast.Day> days = new ArrayList<>();
         for (int i = 0; i < dayTimes.length(); i++) days.add(new WeatherForecast.Day(
                 longAt(dayTimes, i, -1), numberAt(highs, i), numberAt(lows, i), integerAt(dayCodes, i)));
         String id = root.optString("timezone", "UTC");
         TimeZone zone = TimeZone.getTimeZone(id);
         return new WeatherForecast(numberAt(current, "temperature_2m"), integerAt(current, "weather_code"), hours, days, zone);
+    }
+
+    /** Required and optional series must describe the same bounded timeline. */
+    private static void requireAligned(String name, JSONArray timeline, int maximum, JSONArray... values) throws JSONException {
+        int size = timeline.length();
+        if (size < 1 || size > maximum) throw new JSONException(name + " must contain 1.." + maximum + " entries");
+        for (JSONArray value : values) {
+            if (value != null && value.length() != size) throw new JSONException(name + " arrays must be aligned");
+        }
     }
 
     private static Boolean daylightAt(JSONArray values, int index) {

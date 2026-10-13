@@ -70,13 +70,12 @@ import com.wyattfleming.frameos.control.FrameControlStore
 import com.wyattfleming.frameos.control.FrameCompanionClient
 import com.wyattfleming.frameos.control.FrameCompanionCredentialsStore
 import com.wyattfleming.frameos.control.FrameRemoteStatus
-import com.wyattfleming.frameos.control.FrameCompanionCommandDecoder
 import com.wyattfleming.frameos.control.FrameRemoteCommand
 import com.wyattfleming.frameos.control.FrameCompanionCommandStore
-import com.wyattfleming.frameos.control.FrameCompanionSettingsDecoder
-import com.wyattfleming.frameos.control.FrameCompanionResponseDecoder
-import com.wyattfleming.frameos.control.FrameCompanionEventDecoder
 import com.wyattfleming.frameos.control.FrameCompanionEventStore
+import com.wyattfleming.frameos.control.FrameCompanionEnvelope
+import com.wyattfleming.frameos.control.FrameCompanionEnvelopeDecoder
+import com.wyattfleming.frameos.control.FrameCompanionSnapshotRevision
 import com.wyattfleming.frameos.control.FramePhotosProfileUrl
 import com.wyattfleming.frameos.photos.FrameSharedPlaybackMetadata
 import com.wyattfleming.frameos.control.FrameRemoteSettings
@@ -86,6 +85,8 @@ import com.wyattfleming.frameos.ui.FrameTouchInputLayout
 import com.wyattfleming.frameos.ui.FrameHomeBackNavigation
 import com.wyattfleming.frameos.ui.WeatherContentView
 import com.wyattfleming.frameos.ui.TouchNavigationRail
+import com.wyattfleming.frameos.ui.AndroidFrameExternalSettingsReturnAdapter
+import com.wyattfleming.frameos.ui.FrameExternalSettingsReturnController
 import com.wyattfleming.frameos.ui.dp
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherEndpoint
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherParser
@@ -115,6 +116,7 @@ import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 
 internal fun isNewManualPhotoStepAsset(previousAssetId: String?, observedAssetId: String): Boolean =
@@ -128,6 +130,7 @@ class MainActivity : Activity() {
     private val modeGestureBurst = ModeGestureBurst()
     private val weatherWorkerExecutor: ExecutorService = Executors.newFixedThreadPool(2)
     private val companionWorkerExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val companionReserveExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val weatherRequestExecutor: ExecutorService = Executors.newFixedThreadPool(3)
     private val authorizationExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val secureRandom = SecureRandom()
@@ -139,6 +142,7 @@ class MainActivity : Activity() {
     }
 
     private lateinit var root: FrameTouchInputLayout
+    private lateinit var settingsReturnController: FrameExternalSettingsReturnController
     private lateinit var weatherContent: WeatherContentView
     private lateinit var hud: LinearLayout
     private lateinit var hudLabel: TextView
@@ -225,6 +229,8 @@ class MainActivity : Activity() {
     private var bootRecoveryConfirmed = false
     private var companionPollInFlight = false
     private var companionPollGeneration = 0L
+    private var companionSnapshotRevision: String? = null
+    private val companionReserveToken = AtomicLong(0L)
     private val pollCompanion = Runnable { pollCompanion() }
     private val refreshQuietHours = Runnable {
         if (activityResumed) applyBrightness(state.brightnessOverridePercent)
@@ -345,6 +351,7 @@ class MainActivity : Activity() {
             savedConfiguration
         }
         buildUi()
+        settingsReturnController = FrameExternalSettingsReturnController(AndroidFrameExternalSettingsReturnAdapter(this))
         initializeWeatherRuntime()
         enterImmersiveMode()
         render(state, announce = false)
@@ -370,6 +377,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        settingsReturnController.onResume()
         activityResumed = true
         refreshLocalProvisioning()
         unregisterHomeBack?.invoke()
@@ -434,11 +442,13 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        settingsReturnController.onDestroy()
         closeWeatherAuthorization(consumeState = true)
         invalidateCompanionPoll()
         cancelHomeAssistantWork(stage = "activity_destroy", clearPendingAuthorizationCode = true)
         weatherWorkerExecutor.shutdownNow()
         companionWorkerExecutor.shutdownNow()
+        companionReserveExecutor.shutdownNow()
         cancelPhotoWork()
         hideOfflinePhoto()
         photoWorkerExecutor.shutdownNow()
@@ -1206,8 +1216,14 @@ class MainActivity : Activity() {
             .setTitle("Your frame")
             .setMessage("Home brings together your calendar, weather and home controls.\n\nPhotos and Art fill the screen. Swipe inward from the left edge to open the menu, then tap Home to return here.")
             .setPositiveButton("Done", null)
-            .setNeutralButton("Wi-Fi settings") { _, _ ->
-                runCatching { startActivity(Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)) }
+            .setNeutralButton("Android settings") { _, _ ->
+                when (settingsReturnController.openSettings()) {
+                    FrameExternalSettingsReturnController.Outcome.LAUNCHED -> Unit
+                    FrameExternalSettingsReturnController.Outcome.OVERLAY_PERMISSION_DENIED ->
+                        showHud("Android Settings is unavailable until the FrameOS return button is enabled")
+                    FrameExternalSettingsReturnController.Outcome.EXTERNAL_LAUNCH_FAILED ->
+                        showHud("Android Settings could not be opened")
+                }
             }
             .show()
     }
@@ -1360,62 +1376,66 @@ class MainActivity : Activity() {
         companionPollInFlight = true
         val generation = companionPollGeneration
         val snapshot = diagnosticStore.snapshot()
-        val reserveStatus = photoReserve.status()
-        val status = FrameRemoteStatus(
-            mode = state.mode,
-            photosPaused = state.photosPaused,
+        val pollMode = state.mode
+        val pollPhotosPaused = state.photosPaused
+        val pollOffline = ::offlinePhoto.isInitialized && offlinePhoto.visibility == View.VISIBLE
+        val pollCurrentAssetId = currentPhotoAssetId
+        val pollLastPhotoAt = lastPhotoAt
+        val pollProfile = configuration?.photosUrl?.let(FramePhotosProfileUrl::profile)
+        val pollAppVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"
+        val sentSnapshotRevision = FrameCompanionSnapshotRevision.forRequest(companionSnapshotRevision)
+        companionWorkerExecutor.submit {
+            val reserveStatus = photoReserve.publishedStatus()
+            val status = FrameRemoteStatus(
+            mode = pollMode,
+            photosPaused = pollPhotosPaused,
             lastPaintAt = snapshot.lastPaintEpochMillis.takeIf { it > 0 },
             lastWeatherAt = snapshot.lastWeatherSuccessEpochMillis.takeIf { it > 0 },
             recoveryCount = snapshot.recoveryCount,
             lastError = snapshot.lastError,
-            offline = ::offlinePhoto.isInitialized && offlinePhoto.visibility == View.VISIBLE,
-            appVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown",
-            currentAssetId = currentPhotoAssetId,
-            lastPhotoAt = lastPhotoAt,
-            profile = configuration?.photosUrl?.let(FramePhotosProfileUrl::profile),
+            offline = pollOffline,
+            appVersion = pollAppVersion,
+            currentAssetId = pollCurrentAssetId,
+            lastPhotoAt = pollLastPhotoAt,
+            profile = pollProfile,
             offlineAssets = reserveStatus.offlineAssets,
             offlineBytes = reserveStatus.offlineBytes,
-        )
-        companionWorkerExecutor.submit {
+            )
             val pendingAcks = FrameCompanionCommandStore(this).consumeAcks()
             val result = FrameCompanionClient(credentials.endpoint, credentials.token).poll(
                 credentials.deviceId,
                 status,
                 pendingAcks,
+                sentSnapshotRevision,
             )
+            val envelope = (result as? com.wyattfleming.frameos.control.FrameCompanionPollResult.Success)?.let {
+                FrameCompanionEnvelopeDecoder.decode(it.body, credentials.deviceId, System.currentTimeMillis(), sentSnapshotRevision)
+            }
             handler.post {
                 companionPollInFlight = false
+                val credentialsStillCurrent = FrameCompanionCredentialsStore(this).read() == credentials
                 if (
                     generation != companionPollGeneration ||
                     !activityResumed ||
                     isFinishing ||
                     isDestroyed ||
-                    FrameCompanionCredentialsStore(this).read() != credentials
+                    !credentialsStillCurrent
                 ) {
+                    if (!credentialsStillCurrent) invalidateCompanionPoll()
                     scheduleCompanionPoll()
                     return@post
                 }
-                if (
-                    result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success &&
-                    FrameCompanionResponseDecoder.isForDevice(result.body, credentials.deviceId)
-                ) {
-                    FrameCompanionCommandStore(this).clearAcks(pendingAcks)
-                    FrameCompanionSettingsDecoder.decode(result.body)?.let(::applyCompanionSettings)
-                    applyHiddenPhotoSnapshot(result.body)
-                    maybeShowCompanionEvent(result.body)
-                    FrameCompanionCommandDecoder.decode(result.body, System.currentTimeMillis())?.let { command ->
-                        val store = FrameCompanionCommandStore(this)
-                        if (store.claim(command.id)) {
-                            store.ack(command.id, applyCompanionCommand(command))
-                        }
-                    }
-                }
+                if (envelope != null) applyCompanionEnvelope(envelope, pendingAcks)
                 scheduleCompanionPoll(if (result is com.wyattfleming.frameos.control.FrameCompanionPollResult.Success) 5_000L else 10_000L)
             }
         }
     }
 
     private fun invalidateCompanionPoll() {
+        // Retire queued reserve changes before changing the lifecycle generation. A task
+        // that already crossed reserve's guarded commit boundary completes atomically.
+        companionReserveToken.incrementAndGet()
+        companionSnapshotRevision = null
         companionPollGeneration += 1
     }
 
@@ -1435,32 +1455,49 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun applyHiddenPhotoSnapshot(payload: String) {
-        val ids = runCatching {
-            val values = org.json.JSONObject(payload).optJSONArray("hiddenAssets") ?: return
-            require(values.length() <= 1_000)
-            buildSet {
-                repeat(values.length()) { index ->
-                    val id = values.getString(index)
-                    require(Regex("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$").matches(id))
-                    add(id.lowercase(Locale.ROOT))
+    private fun applyCompanionEnvelope(envelope: FrameCompanionEnvelope, pendingAcks: List<com.wyattfleming.frameos.control.FrameRemoteAck>) {
+        FrameCompanionCommandStore(this).clearAcks(pendingAcks)
+        when (envelope) {
+            is FrameCompanionEnvelope.Unchanged -> Unit
+            is FrameCompanionEnvelope.Full -> {
+                envelope.settings?.let(::applyCompanionSettings)
+                envelope.event?.let(::maybeShowCompanionEvent)
+                envelope.command?.let { command ->
+                    val store = FrameCompanionCommandStore(this)
+                    if (store.claim(command.id)) store.ack(command.id, applyCompanionCommand(command))
                 }
-            }
-        }.getOrNull() ?: return
-        if (!photoReserve.applyHiddenAssets(ids)) return
-        if (currentPhotoAssetId?.lowercase(Locale.ROOT) in ids) {
-            currentPhotoAssetId = null
-            if (state.mode == FrameMode.PHOTOS) {
-                if (photoFallbackPolicy.isShowing) showOfflinePhoto(manual = true) else movePhoto(true)
+                val hiddenAssets = envelope.hiddenAssets
+                if (hiddenAssets == null) {
+                    companionSnapshotRevision = envelope.snapshotRevision
+                } else {
+                    applyHiddenPhotoSnapshot(hiddenAssets, envelope.snapshotRevision)
+                }
             }
         }
     }
 
-    private fun maybeShowCompanionEvent(payload: String) {
+    /** Queued reserve work is rejected after invalidation; accepted disk work is atomic. */
+    private fun applyHiddenPhotoSnapshot(ids: Set<String>, revision: String?) {
+        val token = companionReserveToken.incrementAndGet()
+        companionReserveExecutor.submit {
+            val applied = photoReserve.applyHiddenAssets(ids) { companionReserveToken.get() == token }
+            handler.post {
+                if (companionReserveToken.get() != token || !applied) return@post
+                companionSnapshotRevision = revision
+                if (currentPhotoAssetId?.lowercase(Locale.ROOT) in ids) {
+                    currentPhotoAssetId = null
+                    if (state.mode == FrameMode.PHOTOS) {
+                        if (photoFallbackPolicy.isShowing) showOfflinePhoto(manual = true) else movePhoto(true)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun maybeShowCompanionEvent(event: com.wyattfleming.frameos.control.FrameCompanionEvent) {
         if (!experienceSettings.eventOverlaysEnabled || state.mode != FrameMode.PHOTOS || state.photosPaused) return
         if (experienceSettings.quietHours?.isActiveAt(LocalTime.now()) == true) return
         val now = System.currentTimeMillis()
-        val event = FrameCompanionEventDecoder.decode(payload, now) ?: return
         if (!FrameCompanionEventStore(this).claim(event.id, now)) return
         showHud(event.text)
         handler.removeCallbacks(hideHud)
