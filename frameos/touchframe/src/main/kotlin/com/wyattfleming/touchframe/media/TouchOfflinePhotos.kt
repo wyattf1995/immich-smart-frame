@@ -9,25 +9,20 @@ import android.os.Looper
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
-import com.wyattfleming.frameos.photos.FrameOfflineReserve
 import com.wyattfleming.frameos.photos.FramePhotoBridge
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
-import java.io.File
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Device-private offline fallback for the actual configured Photos session only.
  * Art never attaches the bridge and never reads this reserve. Disk work and JPEG
- * decode run on [worker]; UI delivery is fenced by [fallbackGeneration].
+ * decode run on the store worker; UI delivery is fenced by [fallbackGeneration].
  */
 internal class TouchOfflinePhotos(
     context: Context,
-    private val worker: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "touchframe-offline-photos").apply { isDaemon = true }
-    },
+    private val store: TouchOfflinePhotoStore,
+    private val onPhotoObservedCallback: (FramePhotoBridge.PhotoObserved) -> Unit = {},
 ) : AutoCloseable {
     private val backdrop = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
     private val foreground = ImageView(context).apply {
@@ -42,44 +37,54 @@ internal class TouchOfflinePhotos(
     }
 
     private val main = Handler(Looper.getMainLooper())
-    private val reserve = FrameOfflineReserve(File(context.filesDir, "touchframe-offline-photos"))
-    private val bridge = FramePhotoBridge(reserve, onPhotoObserved = ::onObserved)
+    private val bridge = FramePhotoBridge(store.reserve, onPhotoObserved = ::onObserved)
     private val lifecycle = TouchOfflinePhotoLifecycle()
-    @Volatile private var photosActive = false
+    private val captureGate = TouchOfflineCaptureGate()
+    private val attachmentIdentity = TouchOfflineAttachmentIdentity()
     @Volatile private var closed = false
     @Volatile private var fallbackGeneration = 0L
     private val attachmentGate = TouchOfflineAttachmentGate()
     @Volatile private var session: GeckoSession? = null
     private var bitmap: Bitmap? = null
     private var blurredBitmap: Bitmap? = null
+    private var displayedAssetId: String? = null
 
     fun attach(runtime: GeckoRuntime, target: GeckoSession, photosUrl: String, profile: String, active: Boolean) {
+        if (!closed && attachmentIdentity.matches(target, photosUrl, profile)) {
+            setActive(active)
+            return
+        }
         detachCurrent()
         session = target
+        attachmentIdentity.replace(target, photosUrl, profile)
         lifecycle.attach(target)
-        photosActive = active
-        lifecycle.setActive(active)
+        captureGate.setActive(active && !closed)
+        lifecycle.setActive(captureGate.isActive())
         val expectedAttachment = attachmentGate.begin()
-        worker.execute {
-            if (closed || session !== target || !attachmentGate.isCurrent(expectedAttachment) ||
-                !bridge.configure(target, photosUrl, profile)
-            ) return@execute
-            if (closed || session !== target || !attachmentGate.isCurrent(expectedAttachment)) {
-                bridge.detach(target)
-                return@execute
-            }
-            main.post {
+        store.prepareBridge(bridge, target, photosUrl, profile) {
+            !closed && session === target && attachmentGate.isCurrent(expectedAttachment)
+        }.let { preparation ->
+            store.execute {
+                val prepared = runCatching { preparation.get() }.getOrDefault(false)
+                if (!prepared) {
+                    main.post {
+                        if (!closed && session === target && attachmentGate.isCurrent(expectedAttachment)) detach(target)
+                    }
+                    return@execute
+                }
                 if (closed || session !== target || !attachmentGate.isCurrent(expectedAttachment)) {
                     bridge.detach(target)
-                    return@post
+                    return@execute
                 }
-                // Gecko extension creation stays on the UI thread after worker scope activation.
-                bridge.attachPrepared(runtime, target) { ready ->
-                    if (closed || session !== target || !attachmentGate.isCurrent(expectedAttachment) || !ready) return@attachPrepared
-                    worker.execute {
-                        if (!closed && session === target && attachmentGate.isCurrent(expectedAttachment)) {
-                            bridge.setCaptureEnabled(photosActive, photosPaused = false)
-                        }
+                main.post {
+                    if (closed || session !== target || !attachmentGate.isCurrent(expectedAttachment)) {
+                        bridge.detach(target)
+                        return@post
+                    }
+                    // Gecko extension creation stays on the UI thread after worker scope activation.
+                    bridge.attachPrepared(runtime, target) { ready ->
+                        if (closed || session !== target || !attachmentGate.isCurrent(expectedAttachment) || !ready) return@attachPrepared
+                        queueCaptureGate(target, expectedAttachment)
                     }
                 }
             }
@@ -87,40 +92,35 @@ internal class TouchOfflinePhotos(
     }
 
     fun setActive(active: Boolean) {
-        photosActive = active && !closed && session != null
-        lifecycle.setActive(photosActive)
-        val attached = session
-        val expectedAttachment = attachmentGate.current()
-        if (attached != null) worker.execute {
-            if (!closed && session === attached && attachmentGate.isCurrent(expectedAttachment)) {
-                bridge.setCaptureEnabled(photosActive, photosPaused = false)
-            }
-        }
-        if (!photosActive) hideFallback()
+        captureGate.setActive(active && !closed && session != null)
+        lifecycle.setActive(captureGate.isActive())
+        session?.let { queueCaptureGate(it, attachmentGate.current()) }
+        if (!captureGate.isActive()) hideFallback()
     }
 
     fun detach(target: GeckoSession) {
         if (session !== target) return
-        photosActive = false
+        captureGate.setActive(false)
         lifecycle.detach(target)
         fallbackGeneration += 1L
         attachmentGate.invalidate()
         bridge.detach(target)
         session = null
+        attachmentIdentity.clear()
         hideFallback()
     }
 
     fun showFallback() {
         val attached = session ?: return
-        if (!photosActive || closed) return
+        if (!captureGate.isActive() || closed) return
         val lifecycleGeneration = lifecycle.currentGeneration()
         val generation = ++fallbackGeneration
-        worker.execute {
-            val entry = reserve.latest() ?: return@execute
+        store.execute {
+            val entry = store.reserve.latest() ?: return@execute
             val decoded = runCatching { BitmapFactory.decodeFile(entry.file.path) }.getOrNull() ?: return@execute
             val blurred = blurBackdrop(decoded)
             main.post {
-                if (closed || !photosActive || generation != fallbackGeneration || !lifecycle.canUseFallback(attached, lifecycleGeneration)) {
+                if (closed || !captureGate.isActive() || generation != fallbackGeneration || !lifecycle.canUseFallback(attached, lifecycleGeneration)) {
                     decoded.recycle()
                     blurred?.recycle()
                     return@post
@@ -129,6 +129,7 @@ internal class TouchOfflinePhotos(
                 bitmap = decoded
                 val previousBlurred = blurredBitmap
                 blurredBitmap = blurred
+                displayedAssetId = entry.assetId
                 backdrop.setImageBitmap(blurred)
                 foreground.setImageBitmap(decoded)
                 view.visibility = View.VISIBLE
@@ -148,44 +149,71 @@ internal class TouchOfflinePhotos(
         blurredBitmap?.recycle()
         bitmap = null
         blurredBitmap = null
+        displayedAssetId = null
     }
 
-    fun setPaused(paused: Boolean): Boolean = bridge.setPlaybackPaused(paused)
+    fun setPaused(paused: Boolean): Boolean {
+        captureGate.setPaused(paused)
+        session?.let { queueCaptureGate(it, attachmentGate.current()) }
+        return bridge.setPlaybackPaused(paused)
+    }
     fun move(forward: Boolean): Boolean = bridge.movePhoto(forward)
     fun applyHiddenAssets(assetIds: Set<String>, canCommit: () -> Boolean = { true }) =
-        worker.submit<Boolean> { reserve.applyHiddenAssets(assetIds, canCommit) }
+        store.applyHiddenAssets(assetIds, canCommit)
+
+    fun hideFallbackIfHidden(assetIds: Set<String>) {
+        main.post {
+            if (TouchOfflineHiddenAssetPolicy.hides(displayedAssetId, assetIds)) hideFallback()
+        }
+    }
+
+    fun isOfflineVisible(): Boolean = view.visibility == View.VISIBLE
 
     override fun close() {
         if (closed) return
         closed = true
-        photosActive = false
+        captureGate.setActive(false)
         fallbackGeneration += 1L
         attachmentGate.invalidate()
         session?.let { lifecycle.detach(it); bridge.detach(it) }
         session = null
+        attachmentIdentity.clear()
         bridge.close()
-        worker.shutdownNow()
         hideFallback()
     }
 
     private fun detachCurrent() {
         session?.let { lifecycle.detach(it); bridge.detach(it) }
         session = null
+        attachmentIdentity.clear()
         fallbackGeneration += 1L
         attachmentGate.invalidate()
         hideFallback()
     }
 
 
-    /** Worker-only: blur a bounded copy before ImageView center-crops the backdrop. */
+    private fun queueCaptureGate(target: GeckoSession, expectedAttachment: Long) {
+        store.execute {
+            if (!closed && session === target && attachmentGate.isCurrent(expectedAttachment)) {
+                bridge.setCaptureEnabled(captureGate.isActive(), captureGate.isPaused())
+            }
+        }
+    }
+
+    /** Worker-only: blur a bounded mutable ARGB copy before center-cropping the backdrop. */
     private fun blurBackdrop(source: Bitmap): Bitmap? = runCatching {
         val plan = TouchOfflineBlurPlan.forForeground(source.width, source.height)
-        val small = if (plan.backdropWidth == source.width && plan.backdropHeight == source.height) {
-            source.copy(source.config ?: Bitmap.Config.ARGB_8888, true)
+        val scaled = if (plan.backdropWidth == source.width && plan.backdropHeight == source.height) {
+            source
         } else {
             Bitmap.createScaledBitmap(source, plan.backdropWidth, plan.backdropHeight, true)
         }
         // Never mutate source: it remains the foreground's uncropped FIT_CENTER bitmap.
+        val small = try {
+            scaled.copy(Bitmap.Config.ARGB_8888, true) ?: return@runCatching null
+        } finally {
+            if (scaled !== source) scaled.recycle()
+        }
         val width = small.width
         val height = small.height
         val pixels = IntArray(width * height)
@@ -212,8 +240,49 @@ internal class TouchOfflinePhotos(
 
     private fun onObserved(photo: FramePhotoBridge.PhotoObserved) {
         main.post {
-            if (!closed && photosActive && lifecycle.canUseFallback(session, lifecycle.currentGeneration()) && bridge.isCurrentObservation(photo)) hideFallback()
+            if (!closed && captureGate.isActive() && lifecycle.canUseFallback(session, lifecycle.currentGeneration()) && bridge.isCurrentObservation(photo)) hideFallback()
+            onPhotoObservedCallback(photo)
         }
+    }
+}
+
+/** Normalizes server-hidden asset IDs before retaining a cached fallback on screen. */
+internal object TouchOfflineHiddenAssetPolicy {
+    fun hides(displayedAssetId: String?, hiddenAssetIds: Set<String>): Boolean =
+        displayedAssetId != null && hiddenAssetIds.any { it.equals(displayedAssetId, ignoreCase = true) }
+}
+
+/** Thread-safe active/paused state used at every trusted capture gate. */
+internal class TouchOfflineCaptureGate {
+    @Volatile private var active = false
+    @Volatile private var paused = false
+
+    fun setActive(value: Boolean) { active = value }
+    fun setPaused(value: Boolean) { paused = value }
+    fun isActive(): Boolean = active
+    fun isPaused(): Boolean = paused
+    fun captureEnabled(): Boolean = active && !paused
+}
+
+/** Exact session/URL/profile identity that permits a no-work return to Photos. */
+internal class TouchOfflineAttachmentIdentity {
+    private var session: Any? = null
+    private var photosUrl: String? = null
+    private var profile: String? = null
+
+    fun matches(target: Any, url: String, requestedProfile: String): Boolean =
+        session === target && photosUrl == url && profile == requestedProfile
+
+    fun replace(target: Any, url: String, requestedProfile: String) {
+        session = target
+        photosUrl = url
+        profile = requestedProfile
+    }
+
+    fun clear() {
+        session = null
+        photosUrl = null
+        profile = null
     }
 }
 

@@ -32,6 +32,7 @@ suites = {
     "media": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchMediaLoadStateTest.kt", "com.wyattfleming.touchframe.media.TouchMediaLoadStateTest"),
     "offline": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoLifecycleTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoLifecycleTest"),
     "blur": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflineBlurPlanTest.kt", "com.wyattfleming.touchframe.media.TouchOfflineBlurPlanTest"),
+    "offline_store": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStore.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStoreScopeGateTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoStoreScopeGateTest"),
     "scope": (module / "src/main/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScope.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/concurrent/TouchTaskScopeTest.kt", "com.wyattfleming.touchframe.concurrent.TouchTaskScopeTest"),
 }
 
@@ -52,6 +53,7 @@ def static_contract() -> dict[str, object]:
     media = suites["media"][0].read_text()
     offline = suites["offline"][0].read_text()
     blur = suites["blur"][0].read_text()
+    offline_store = suites["offline_store"][0].read_text()
     scope = suites["scope"][0].read_text()
     required = {
         "media-only edge gesture": "destination.isImmersiveMedia &&",
@@ -68,8 +70,9 @@ def static_contract() -> dict[str, object]:
         "Photos-active fallback gate": "active = value && attachment != null",
         "bounded blurred backdrop": "const val MAX_BACKDROP_EDGE = 128",
         "uncropped foreground mapping": "TouchOfflineBlurPlan.forForeground",
+        "offline scope generation": "class TouchOfflineStoreScopeGate",
     }
-    combined = shell + repo + parser + media + offline + blur + scope
+    combined = shell + repo + parser + media + offline + blur + offline_store + scope
     missing = [name for name, needle in required.items() if needle not in combined]
     if missing:
         raise RuntimeError(f"missing TouchFrame source contract markers: {missing}")
@@ -229,6 +232,30 @@ try:
         "fun isCurrent(expected: Long): Boolean = true",
         {"stale same session preparation cannot enable capture"},
     )
+    attachment_scope_red = mutate(
+        "offline-exact-scope-red", "offline",
+        "session === target && photosUrl == url && profile == requestedProfile",
+        "session === target",
+        {"same session and exact scope retain the offline attachment"},
+    )
+    paused_capture_red = mutate(
+        "offline-paused-capture-red", "offline",
+        "fun captureEnabled(): Boolean = active && !paused",
+        "fun captureEnabled(): Boolean = active",
+        {"pause suppresses trusted capture while preserving visible Photos state"},
+    )
+    hidden_cached_red = mutate(
+        "offline-hidden-cached-red", "offline",
+        "displayedAssetId != null && hiddenAssetIds.any { it.equals(displayedAssetId, ignoreCase = true) }",
+        "false",
+        {"hidden policy removes a cached matching photo but keeps unrelated fallback"},
+    )
+    offline_store_red = mutate(
+        "offline-store-same-scope-red", "offline_store",
+        "if (requestedScope == scope) return generation.get()",
+        "return generation.incrementAndGet()",
+        {"same requested scope retains its generation for pre-view policy work"},
+    )
     scope_red = mutate(
         "pause-lifecycle-red", "scope",
         "if (closed || !resumed) return\n            resumed = false",
@@ -252,6 +279,10 @@ try:
         "offlineHiddenPhotosRed": offline_red,
         "offlineBackdropBoundRed": blur_red,
         "offlineAttachmentGenerationRed": attachment_gate_red,
+        "offlineExactScopeRed": attachment_scope_red,
+        "offlinePausedCaptureRed": paused_capture_red,
+        "offlineHiddenCachedRed": hidden_cached_red,
+        "offlineStoreSameScopeRed": offline_store_red,
         "pausedTaskEntryRed": scope_red,
         "restored": restored, "preparedBridgeRestored": bridge_restored,
         "preparedBridgeSourceSha256": bridge_source_hash,
