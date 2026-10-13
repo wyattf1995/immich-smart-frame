@@ -340,8 +340,8 @@ try:
     packaging_initial = run_bridge("packaging-initial-green", set(), packaging_class)
     try:
         original = packaging_bytes.decode()
-        assert original.count('"version": "1.0.8"') == 1
-        packaging_manifest.write_text(original.replace('"version": "1.0.8"', '"version": "1.0.7"'))
+        assert original.count('"version": "1.0.9"') == 1
+        packaging_manifest.write_text(original.replace('"version": "1.0.9"', '"version": "1.0.8"'))
         packaging_red = run_bridge("packaging-version-red", {"built in extension version identifies its complete packaged asset set"}, packaging_class)
     finally:
         packaging_manifest.write_bytes(packaging_bytes)
