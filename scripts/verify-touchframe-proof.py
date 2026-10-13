@@ -177,7 +177,7 @@ def run_repository_case(label: str, expected_failures: set[str]) -> dict[str, ob
         raise missing_results(log, result.returncode, f"expected one repository JUnit XML, found {xmls}")
     cases = list(ET.parse(xmls[0]).getroot().iter("testcase"))
     selected = [case for case in cases if case.get("name") == repository_climate_case]
-    if len(selected) != 1:
+    if len(cases) != 1 or len(selected) != 1:
         raise RuntimeError(f"expected exact targeted repository case once, found {[case.get('name') for case in cases]}")
     case = selected[0]
     failed = {case.get("name") or ""} if case.find("failure") is not None else set()
