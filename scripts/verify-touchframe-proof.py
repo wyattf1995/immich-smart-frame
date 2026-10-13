@@ -100,6 +100,8 @@ def static_contract() -> dict[str, object]:
         "cancel operation generation gate": "!acceptOperation(operation)",
         "calendar event cap": "MAX_EVENTS_PER_CALENDAR = 200",
         "hidden crash has one return recovery": "if (hiddenReturnRecoveryAvailable) {",
+        "bounded foreground media render deadline": "armRenderDeadline(renderDeadline.beginLoading(load, active))",
+        "media deadline session fence": "token.load.sessionGeneration == sessionGeneration",
         "Camera palette accessible accent": "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
         "pause lifecycle gate": "if (closed || !resumed) return\n            resumed = false",
         "Photos-active fallback gate": "active = value && attachment != null",
@@ -411,6 +413,18 @@ try:
             "hiddenContentCrashRecoversExactlyOnceWhenTheUserReturns",
         },
     )
+    media_render_deadline_red = mutate(
+        "media-foreground-render-deadline-red", "media",
+        "armRenderDeadline(renderDeadline.beginLoading(load, active))",
+        "armRenderDeadline(null)",
+        {"productionViewArmsAndFencesTheForegroundRenderDeadline"},
+    )
+    media_deadline_close_red = mutate(
+        "media-render-deadline-close-red", "media",
+        "renderDeadline.close()\n        cancelRenderDeadlineTask()",
+        "// render deadline teardown disabled",
+        {"productionViewArmsAndFencesTheForegroundRenderDeadline"},
+    )
     camera_palette_red = mutate(
         "camera-palette-contrast-red", "camera_palette",
         "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
@@ -584,6 +598,8 @@ try:
         "mediaHiddenReturnRecoveryRed": media_red,
         "mediaContentfulPaintReadinessRed": media_paint_readiness_red,
         "mediaActiveCrashRetryRed": media_active_crash_red,
+        "mediaForegroundRenderDeadlineRed": media_render_deadline_red,
+        "mediaRenderDeadlineCloseRed": media_deadline_close_red,
         "cameraPaletteContrastRed": camera_palette_red,
         "offlineHiddenPhotosRed": offline_red,
         "offlineBackdropBoundRed": blur_red,
