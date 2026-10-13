@@ -45,8 +45,7 @@ internal class TouchOfflinePhotos(
     private val reserve = FrameOfflineReserve(File(context.filesDir, "touchframe-offline-photos"))
     private val bridge = FramePhotoBridge(reserve, onPhotoObserved = ::onObserved)
     private val lifecycle = TouchOfflinePhotoLifecycle()
-    @Volatile private var photosActive = false
-    @Volatile private var photosPaused = false
+    private val captureGate = TouchOfflineCaptureGate()
     private val attachmentIdentity = TouchOfflineAttachmentIdentity()
     @Volatile private var closed = false
     @Volatile private var fallbackGeneration = 0L
@@ -64,8 +63,8 @@ internal class TouchOfflinePhotos(
         session = target
         attachmentIdentity.replace(target, photosUrl, profile)
         lifecycle.attach(target)
-        photosActive = active
-        lifecycle.setActive(active)
+        captureGate.setActive(active && !closed)
+        lifecycle.setActive(captureGate.isActive())
         val expectedAttachment = attachmentGate.begin()
         worker.execute {
             val prepared = !closed && session === target && attachmentGate.isCurrent(expectedAttachment) &&
@@ -95,15 +94,15 @@ internal class TouchOfflinePhotos(
     }
 
     fun setActive(active: Boolean) {
-        photosActive = active && !closed && session != null
-        lifecycle.setActive(photosActive)
+        captureGate.setActive(active && !closed && session != null)
+        lifecycle.setActive(captureGate.isActive())
         session?.let { queueCaptureGate(it, attachmentGate.current()) }
-        if (!photosActive) hideFallback()
+        if (!captureGate.isActive()) hideFallback()
     }
 
     fun detach(target: GeckoSession) {
         if (session !== target) return
-        photosActive = false
+        captureGate.setActive(false)
         lifecycle.detach(target)
         fallbackGeneration += 1L
         attachmentGate.invalidate()
@@ -115,7 +114,7 @@ internal class TouchOfflinePhotos(
 
     fun showFallback() {
         val attached = session ?: return
-        if (!photosActive || closed) return
+        if (!captureGate.isActive() || closed) return
         val lifecycleGeneration = lifecycle.currentGeneration()
         val generation = ++fallbackGeneration
         worker.execute {
@@ -123,7 +122,7 @@ internal class TouchOfflinePhotos(
             val decoded = runCatching { BitmapFactory.decodeFile(entry.file.path) }.getOrNull() ?: return@execute
             val blurred = blurBackdrop(decoded)
             main.post {
-                if (closed || !photosActive || generation != fallbackGeneration || !lifecycle.canUseFallback(attached, lifecycleGeneration)) {
+                if (closed || !captureGate.isActive() || generation != fallbackGeneration || !lifecycle.canUseFallback(attached, lifecycleGeneration)) {
                     decoded.recycle()
                     blurred?.recycle()
                     return@post
@@ -154,7 +153,7 @@ internal class TouchOfflinePhotos(
     }
 
     fun setPaused(paused: Boolean): Boolean {
-        photosPaused = paused
+        captureGate.setPaused(paused)
         session?.let { queueCaptureGate(it, attachmentGate.current()) }
         return bridge.setPlaybackPaused(paused)
     }
@@ -165,7 +164,7 @@ internal class TouchOfflinePhotos(
     override fun close() {
         if (closed) return
         closed = true
-        photosActive = false
+        captureGate.setActive(false)
         fallbackGeneration += 1L
         attachmentGate.invalidate()
         session?.let { lifecycle.detach(it); bridge.detach(it) }
@@ -189,7 +188,7 @@ internal class TouchOfflinePhotos(
     private fun queueCaptureGate(target: GeckoSession, expectedAttachment: Long) {
         worker.execute {
             if (!closed && session === target && attachmentGate.isCurrent(expectedAttachment)) {
-                bridge.setCaptureEnabled(photosActive, photosPaused)
+                bridge.setCaptureEnabled(captureGate.isActive(), captureGate.isPaused())
             }
         }
     }
@@ -234,9 +233,21 @@ internal class TouchOfflinePhotos(
 
     private fun onObserved(photo: FramePhotoBridge.PhotoObserved) {
         main.post {
-            if (!closed && photosActive && lifecycle.canUseFallback(session, lifecycle.currentGeneration()) && bridge.isCurrentObservation(photo)) hideFallback()
+            if (!closed && captureGate.isActive() && lifecycle.canUseFallback(session, lifecycle.currentGeneration()) && bridge.isCurrentObservation(photo)) hideFallback()
         }
     }
+}
+
+/** Thread-safe active/paused state used at every trusted capture gate. */
+internal class TouchOfflineCaptureGate {
+    @Volatile private var active = false
+    @Volatile private var paused = false
+
+    fun setActive(value: Boolean) { active = value }
+    fun setPaused(value: Boolean) { paused = value }
+    fun isActive(): Boolean = active
+    fun isPaused(): Boolean = paused
+    fun captureEnabled(): Boolean = active && !paused
 }
 
 /** Exact session/URL/profile identity that permits a no-work return to Photos. */
