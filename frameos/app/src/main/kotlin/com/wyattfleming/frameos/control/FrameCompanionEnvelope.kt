@@ -33,9 +33,13 @@ object FrameCompanionEnvelopeDecoder {
         }
         val commands = root.optJSONArray("commands")
         require(commands == null || commands.length() <= 1)
+        val settings = FrameCompanionSettingsDecoder.decode(root)
+        // A server that explicitly supplied settings must supply a complete valid model.
+        // Otherwise accepting this revision would suppress the corrective full response.
+        require(!root.has("settings") || settings != null)
         FrameCompanionEnvelope.Full(
             snapshotRevision = revision,
-            settings = FrameCompanionSettingsDecoder.decode(root),
+            settings = settings,
             hiddenAssets = hiddenAssets(root),
             event = FrameCompanionEventDecoder.decode(root, nowMillis),
             command = FrameCompanionCommandDecoder.decode(root, nowMillis),
