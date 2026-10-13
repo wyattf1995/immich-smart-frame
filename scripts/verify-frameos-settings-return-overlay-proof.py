@@ -12,11 +12,13 @@ source=frame/'app/src/main/kotlin/com/wyattfleming/frameos/ui/FrameExternalSetti
 tests={
  'lifecycle': frame/'app/src/test/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsReturnControllerTest.kt',
  'legacy_type': frame/'app/src/test/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsOverlayWindowTypeTest.kt',
+ 'lint_isolation': frame/'app/src/test/kotlin/com/wyattfleming/frameos/ui/FrameExternalSettingsOverlayWindowTypeTest.kt',
 }
 report=frame/'app/build/test-results/testDebugUnitTest'
 classes={
  'lifecycle':'com.wyattfleming.frameos.ui.FrameExternalSettingsReturnControllerTest',
  'legacy_type':'com.wyattfleming.frameos.ui.FrameExternalSettingsOverlayWindowTypeTest',
+ 'lint_isolation':'com.wyattfleming.frameos.ui.FrameExternalSettingsOverlayWindowTypeTest',
 }
 xml_names={name:'TEST-'+value+'.xml' for name,value in classes.items()}
 for path in (source,*tests.values()):
@@ -32,14 +34,15 @@ def run(name,label,failures):
     matches=list(report.rglob(xml_names[name])); assert len(matches)==1,matches
     xml=out/f'settings-return-overlay-{label}.xml'; shutil.copy2(matches[0],xml)
     root_xml=ElementTree.parse(xml).getroot(); cases=list(root_xml.iter('testcase')); failed=list(root_xml.iter('failure')); errors=list(root_xml.iter('error'))
-    expected={'lifecycle':5,'legacy_type':2}[name]
+    expected={'lifecycle':5,'legacy_type':3,'lint_isolation':3}[name]
     assert len(cases)==expected and len(failed)==failures and not errors,(name,len(cases),len(failed),len(errors))
     return {'negative_exit' if failures else 'restored_green_exit':result.returncode,'log':log.name,'junit_xml':xml.name,'tests':len(cases),'failures':len(failed)}
 
 checks={}
 mutations={
  'lifecycle':('if (!adapter.canDrawOverlays()) return Outcome.OVERLAY_PERMISSION_DENIED','if (!adapter.canDrawOverlays()) return Outcome.LAUNCHED'),
- 'legacy_type':('if (apiLevel >= Build.VERSION_CODES.O) APPLICATION_OVERLAY else PHONE','if (apiLevel >= Build.VERSION_CODES.M) APPLICATION_OVERLAY else PHONE'),
+ 'legacy_type':('if (apiLevel >= Build.VERSION_CODES.O) applicationOverlayForAndroid8OrLater() else PHONE','if (apiLevel >= Build.VERSION_CODES.M) applicationOverlayForAndroid8OrLater() else PHONE'),
+ 'lint_isolation':('@android.annotation.TargetApi(Build.VERSION_CODES.O)','@Suppress("unused")'),
 }
 try:
     for name,(before,after) in mutations.items():
