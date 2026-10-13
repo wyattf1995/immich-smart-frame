@@ -36,13 +36,19 @@ class TouchCalendarView(context: Context, private val onStateRequest: (TouchCale
         setBackgroundColor(paper); body.removeAllViews(); body.setPadding(dp(28), dp(22), dp(28), dp(32))
         body.addView(text("Calendar", 36f, ink, bold = true))
         body.addView(row(listOf("Agenda" to TouchCalendarMode.AGENDA, "Week" to TouchCalendarMode.WEEK, "Month" to TouchCalendarMode.MONTH), ink, accent) { _, mode -> request(requireNotNull(mode), state.anchor, state.selectedDate, true) })
-        body.addView(row(listOf("‹" to null, "Today" to null, "›" to null), ink, accent) { label, _ ->
-            when (label) { "‹" -> request(state.mode, previousAnchor(), state.selectedDate, true); "›" -> request(state.mode, nextAnchor(), state.selectedDate, true); else -> request(state.mode, LocalDate.now(), LocalDate.now(), true) }
+        body.addView(row(listOf("Previous" to null, "Today" to null, "Next" to null), ink, accent) { label, _ ->
+            when (label) { "Previous" -> request(state.mode, previousAnchor(), state.selectedDate, true); "Next" -> request(state.mode, nextAnchor(), state.selectedDate, true); else -> request(state.mode, LocalDate.now(), LocalDate.now(), true) }
         })
         body.addView(text(title(), 26f, ink, bold = true))
         if (state.loading) body.addView(text("Updating schedule…", 18f, ink))
         when (state.connection) {
-            TouchCalendarConnection.SIGN_IN_REQUIRED -> body.addView(Button(context).apply { text = context.getString(R.string.touch_calendar_sign_in); minHeight = dp(56); setOnClickListener { onSignIn() } })
+            TouchCalendarConnection.SIGN_IN_REQUIRED -> body.addView(Button(context).apply {
+                text = context.getString(R.string.touch_calendar_sign_in)
+                textSize = TouchCalendarPresentation.CONTROL_TEXT_SP
+                isAllCaps = false
+                minHeight = dp(56)
+                setOnClickListener { onSignIn() }
+            })
             TouchCalendarConnection.OFFLINE -> body.addView(text(if (state.events.isEmpty()) "Calendar is unavailable." else "Offline · showing the last available schedule.", 18f, ink))
             TouchCalendarConnection.CONNECTED -> if (state.partial) body.addView(text("Some calendars could not be refreshed.", 18f, ink))
         }
@@ -66,14 +72,56 @@ class TouchCalendarView(context: Context, private val onStateRequest: (TouchCale
     }
     private fun month(ink: Int, accent: Int) {
         val headers = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        listOf("M","T","W","T","F","S","S").forEach { headers.addView(text(it, 16f, ink, true), LinearLayout.LayoutParams(0, dp(28), 1f)) }; body.addView(headers)
+        listOf("M", "T", "W", "T", "F", "S", "S").forEach {
+            headers.addView(weekdayHeader(it, ink), LinearLayout.LayoutParams(0, dp(TouchCalendarPresentation.WEEKDAY_HEADER_MIN_HEIGHT_DP), 1f))
+        }
+        body.addView(headers)
         var date = state.range.start; val weeks = TouchCalendarRenderPlan.monthWeeks(state.range)
         repeat(weeks) { val line = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }; repeat(7) { val current = date; line.addView(dayCell(current, ink, accent), LinearLayout.LayoutParams(0, dp(64), 1f)); date = date.plusDays(1) }; body.addView(line) }
     }
-    private fun dayButton(date: LocalDate, ink: Int, accent: Int) = Button(context).apply { text = context.getString(R.string.touch_calendar_day_summary, date.format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault())), state.events.count { it.occursOn(date, ZoneId.systemDefault()) }); minHeight = dp(56); setTextColor(if (date == state.selectedDate) selectedInk() else ink); setOnClickListener { request(state.mode, state.anchor, date, false) }; background = background(accent, date == state.selectedDate) }
-    private fun dayCell(date: LocalDate, ink: Int, accent: Int) = TextView(context).apply { text = if (state.events.any { it.occursOn(date, ZoneId.systemDefault()) }) context.getString(R.string.touch_calendar_day_with_events, date.dayOfMonth) else context.getString(R.string.touch_calendar_day_number, date.dayOfMonth); textSize = 18f; gravity = Gravity.CENTER; setTextColor(if (date == state.selectedDate) selectedInk() else ink); isClickable = true; contentDescription = date.toString(); background = background(accent, date == state.selectedDate); setOnClickListener { request(state.mode, state.anchor, date, false) } }
+    private fun dayButton(date: LocalDate, ink: Int, accent: Int) = Button(context).apply {
+        text = context.getString(R.string.touch_calendar_day_summary, date.format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault())), state.events.count { it.occursOn(date, ZoneId.systemDefault()) })
+        textSize = TouchCalendarPresentation.DAY_LABEL_TEXT_SP
+        isAllCaps = false
+        minHeight = dp(56)
+        setTextColor(if (date == state.selectedDate) selectedInk() else ink)
+        setOnClickListener { request(state.mode, state.anchor, date, false) }
+        background = background(accent, date == state.selectedDate)
+    }
+    private fun dayCell(date: LocalDate, ink: Int, accent: Int) = TextView(context).apply {
+        text = if (state.events.any { it.occursOn(date, ZoneId.systemDefault()) }) context.getString(R.string.touch_calendar_day_with_events, date.dayOfMonth) else context.getString(R.string.touch_calendar_day_number, date.dayOfMonth)
+        textSize = TouchCalendarPresentation.DAY_LABEL_TEXT_SP
+        gravity = Gravity.CENTER
+        setTextColor(if (date == state.selectedDate) selectedInk() else ink)
+        isClickable = true
+        contentDescription = date.toString()
+        background = background(accent, date == state.selectedDate)
+        setOnClickListener { request(state.mode, state.anchor, date, false) }
+    }
     private fun eventRow(event: TouchCalendarEvent, ink: Int) = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(10), dp(12), dp(10)); addView(text(event.title, 20f, ink, true)); addView(text(if (event.allDay) "All day" else Instant.ofEpochMilli(event.startEpochMillis).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault())), 17f, ink)) }
-    private fun row(items: List<Pair<String, TouchCalendarMode?>>, ink: Int, accent: Int, action: (String, TouchCalendarMode?) -> Unit) = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; items.forEach { (label, mode) -> addView(Button(context).apply { text = label; minHeight = dp(56); setTextColor(if (mode == state.mode) selectedInk() else ink); background = background(accent, mode == state.mode); setOnClickListener { action(label, mode) } }, LinearLayout.LayoutParams(0, dp(56), 1f)) } }
+    private fun row(items: List<Pair<String, TouchCalendarMode?>>, ink: Int, accent: Int, action: (String, TouchCalendarMode?) -> Unit) = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        items.forEach { (label, mode) ->
+            addView(Button(context).apply {
+                text = label
+                textSize = TouchCalendarPresentation.CONTROL_TEXT_SP
+                isAllCaps = false
+                contentDescription = TouchCalendarPresentation.contentDescriptionFor(label)
+                minHeight = dp(56)
+                setTextColor(if (mode == state.mode) selectedInk() else ink)
+                background = background(accent, mode == state.mode)
+                setOnClickListener { action(label, mode) }
+            }, LinearLayout.LayoutParams(0, dp(56), 1f))
+        }
+    }
+    private fun weekdayHeader(value: String, color: Int) = TextView(context).apply {
+        text = value
+        textSize = TouchCalendarPresentation.WEEKDAY_HEADER_TEXT_SP
+        gravity = Gravity.CENTER
+        minHeight = dp(TouchCalendarPresentation.WEEKDAY_HEADER_MIN_HEIGHT_DP)
+        setTextColor(color)
+        setTypeface(typeface, Typeface.BOLD)
+    }
     private fun text(value: String, size: Float, color: Int, bold: Boolean = false) = TextView(context).apply { text = value; textSize = size; setTextColor(color); setPadding(0, dp(8), 0, dp(8)); if (bold) setTypeface(typeface, Typeface.BOLD) }
     private fun selectedInk() = if (night) Color.rgb(18, 31, 28) else Color.WHITE
     private fun background(accent: Int, selected: Boolean) = GradientDrawable().apply { cornerRadius = dp(10).toFloat(); setColor(if (selected) accent else Color.TRANSPARENT); setStroke(dp(1), accent) }
@@ -82,4 +130,17 @@ class TouchCalendarView(context: Context, private val onStateRequest: (TouchCale
     private fun nextAnchor() = when (state.mode) { TouchCalendarMode.AGENDA -> state.anchor.plusDays(7); TouchCalendarMode.WEEK -> state.anchor.plusWeeks(1); TouchCalendarMode.MONTH -> state.anchor.plusMonths(1) }
     private fun title() = when (state.mode) { TouchCalendarMode.MONTH -> state.anchor.format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault())); else -> "${state.range.start} – ${state.range.endExclusive.minusDays(1)}" }
     private fun dp(value: Int) = (value * resources.displayMetrics.density + .5f).toInt()
+}
+
+internal object TouchCalendarPresentation {
+    const val CONTROL_TEXT_SP = 22f
+    const val DAY_LABEL_TEXT_SP = 20f
+    const val WEEKDAY_HEADER_TEXT_SP = 20f
+    const val WEEKDAY_HEADER_MIN_HEIGHT_DP = 48
+
+    fun contentDescriptionFor(label: String): String = when (label) {
+        "Previous" -> "Previous calendar period"
+        "Next" -> "Next calendar period"
+        else -> label
+    }
 }
