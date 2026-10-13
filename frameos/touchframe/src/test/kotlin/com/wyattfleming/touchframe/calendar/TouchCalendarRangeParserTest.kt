@@ -25,6 +25,10 @@ class TouchCalendarRangeParserTest {
         assertTrue(parsed.occursOn(LocalDate.of(2026, 3, 4), zone))
         assertFalse(parsed.occursOn(LocalDate.of(2026, 3, 5), zone))
     }
+    @Test fun `point event with missing end remains in its requested day`() {
+        val range = TouchCalendarRange(LocalDate.of(2026, 3, 1), LocalDate.of(2026, 3, 2))
+        assertEquals(1, TouchCalendarParser().parse("calendar.family", """[{"summary":"Reminder","start":{"dateTime":"2026-03-01T00:00:00Z"}}]""", range, ZoneId.of("UTC")).size)
+    }
     @Test fun `midnight timed end is exclusive of next day`() {
         val range = TouchCalendarRange(LocalDate.of(2026, 3, 1), LocalDate.of(2026, 3, 4))
         val event = TouchCalendarParser().parse("calendar.family", """[{"summary":"Late","start":{"dateTime":"2026-03-02T20:00:00Z"},"end":{"dateTime":"2026-03-03T00:00:00Z"}}]""", range, ZoneId.of("UTC")).single()
