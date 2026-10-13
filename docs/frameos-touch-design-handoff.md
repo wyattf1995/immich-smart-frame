@@ -39,6 +39,10 @@ Home Assistant supplies authenticated data and service calls; it is not the
 frontend for the native Home, Weather, or Calendar screens. The browser surface
 is reserved for its documented media uses and the short-lived sign-in flow.
 
+`WeatherContentView` is shared with the older FrameOS app. A Touch-only redesign
+must preserve that app's behavior; changes to the shared presentation require
+validation in both affected targets.
+
 Entity IDs in the existing defaults and legacy examples are installation-specific
 configuration conventions, not a discovery mechanism or a universal Home
 Assistant schema. Provision explicit climate, calendar and camera entity IDs for
@@ -157,8 +161,9 @@ Design rounds, critiques, renders and the rubric are kept outside the repository
 ## Evidence boundary
 
 A prior small-frame verification covered Calendar and Weather on source
-`e7403b4f`. The combined Touch candidate at `9cde0afd` is newer and has not
-thereby gained installation or device-acceptance status. Keep candidate source,
+`e7403b4f`. The combined Touch source at `62d2c67b` has independently verified
+[compilation, lint, JVM tests, and regression proofs](frameos-touch-validation-20261013.md).
+It has not thereby gained installation or device-acceptance status. Keep candidate source,
 compiled artifacts, signed artifacts, and device evidence distinct in future
 design and release notes. Household screenshots, authentication, device
 identifiers and operational receipts stay in the private handoff; use synthetic
