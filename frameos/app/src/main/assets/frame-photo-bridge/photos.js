@@ -414,10 +414,9 @@ function initializeDomCapture() {
   new MutationObserver(() => {
     if (desiredPlaybackPaused && !document.body.classList.contains("polling-paused")) setPollingPaused(true);
   }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
-  // HTMX remains the primary transaction signal.  The fallback observes only the
-  // Kiosk subtree, avoiding unrelated page/header mutations and coalescing its scans.
-  const captureRoot = document.querySelector("#kiosk-container") || document.body;
-  new MutationObserver(scheduleCaptureMutations).observe(captureRoot, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
+  // Body is stable across Kiosk outerHTML swaps; isCaptureMutation strictly rejects
+  // unrelated descendants while HTMX remains the primary transaction signal.
+  new MutationObserver(scheduleCaptureMutations).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "value", "class", "style"] });
   // Only a document with no observed main#kiosk request has a DOM-ready baseline.
   // A failed or 204 request may already have left the settle set, but has no pair.
   if (!hasObservedKioskRequest && settlingKioskRequests.size === 0) kioskCaptureReady = true;
