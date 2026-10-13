@@ -89,7 +89,7 @@ class TouchCameraView(
         }
         cameras = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
         cameraIds.forEach { id ->
-            val button = button(cameraLabel(id)) { selectCamera(id) }
+            val button = button(TouchCameraLabels.forEntityId(id)) { selectCamera(id) }
             cameraButtons[id] = button
             cameras.addView(button, LinearLayout.LayoutParams(0, context.dp(56), 1f))
         }
@@ -318,12 +318,27 @@ class TouchCameraView(
         setColor(color)
     }
 
-    private fun cameraLabel(id: String) = id.removePrefix("camera.").replace('_', ' ').replaceFirstChar { it.titlecase() }
     private fun Context.dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     private companion object {
         const val MAX_BYTES = 8 * 1024 * 1024
         const val TOTAL_TIMEOUT_MILLIS = 8_000L
+    }
+}
+
+/** Humanizes a configured entity ID without changing the ID used for snapshot requests. */
+internal object TouchCameraLabels {
+    fun forEntityId(id: String): String {
+        val tokens = id.removePrefix("camera.").split('_').filter(String::isNotBlank)
+        val collapsed = collapseImmediatelyRepeatedLeadingTokens(tokens)
+        return collapsed.joinToString(" ").replaceFirstChar { it.titlecase() }
+    }
+
+    private fun collapseImmediatelyRepeatedLeadingTokens(tokens: List<String>): List<String> {
+        val repeatedPrefixLength = (1..tokens.size / 2).firstOrNull { prefixLength ->
+            tokens.take(prefixLength) == tokens.drop(prefixLength).take(prefixLength)
+        } ?: return tokens
+        return tokens.take(repeatedPrefixLength) + tokens.drop(repeatedPrefixLength * 2)
     }
 }
 

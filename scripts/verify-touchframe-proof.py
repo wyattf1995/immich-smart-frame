@@ -33,6 +33,7 @@ suites = {
     "repository": (module / "src/main/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepository.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/home/TouchHomeRepositoryTest.kt", "com.wyattfleming.touchframe.home.TouchHomeRepositoryTest"),
     "media": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchMediaLoadStateTest.kt", "com.wyattfleming.touchframe.media.TouchMediaLoadStateTest"),
     "camera_palette": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchCameraView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchCameraPaletteTest.kt", "com.wyattfleming.touchframe.media.TouchCameraPaletteTest"),
+    "camera_label": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchCameraView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchCameraLabelTest.kt", "com.wyattfleming.touchframe.media.TouchCameraLabelTest"),
     "offline": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoLifecycleTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoLifecycleTest"),
     "blur": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflineBlurPlanTest.kt", "com.wyattfleming.touchframe.media.TouchOfflineBlurPlanTest"),
     "offline_store": (module / "src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStore.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotoStoreScopeGateTest.kt", "com.wyattfleming.touchframe.media.TouchOfflinePhotoStoreScopeGateTest"),
@@ -103,6 +104,7 @@ def static_contract() -> dict[str, object]:
         "bounded foreground media render deadline": "armRenderDeadline(renderDeadline.beginLoading(load, active))",
         "media deadline session fence": "token.load.sessionGeneration == sessionGeneration",
         "Camera palette accessible accent": "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
+        "Camera label prefix collapse": "return tokens.take(repeatedPrefixLength) + tokens.drop(repeatedPrefixLength * 2)",
         "pause lifecycle gate": "if (closed || !resumed) return\n            resumed = false",
         "Photos-active fallback gate": "active = value && attachment != null",
         "bounded blurred backdrop": "const val MAX_BACKDROP_EDGE = 128",
@@ -431,6 +433,12 @@ try:
         "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFFF1EDE4.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
         {"camera controls keep readable foregrounds on each explicit palette"},
     )
+    camera_label_red = mutate(
+        "camera-label-prefix-red", "camera_label",
+        "return tokens.take(repeatedPrefixLength) + tokens.drop(repeatedPrefixLength * 2)",
+        "return tokens",
+        {"cameraLabelsCollapseOnlyImmediatelyRepeatedLeadingTokens"},
+    )
     offline_red = mutate(
         "offline-hidden-photos-red", "offline",
         "active = value && attachment != null",
@@ -601,6 +609,7 @@ try:
         "mediaForegroundRenderDeadlineRed": media_render_deadline_red,
         "mediaRenderDeadlineCloseRed": media_deadline_close_red,
         "cameraPaletteContrastRed": camera_palette_red,
+        "cameraLabelPrefixRed": camera_label_red,
         "offlineHiddenPhotosRed": offline_red,
         "offlineBackdropBoundRed": blur_red,
         "offlineAttachmentGenerationRed": attachment_gate_red,
