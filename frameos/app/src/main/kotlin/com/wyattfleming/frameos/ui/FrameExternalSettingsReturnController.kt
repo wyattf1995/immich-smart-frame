@@ -36,8 +36,9 @@ class FrameExternalSettingsReturnController(private val adapter: Adapter) {
     fun onDestroy() = remove()
 
     private fun returnToFrame() {
-        remove()
-        adapter.launchFrame()
+        // Retain the affordance when launch fails; the user can retry instead of being
+        // stranded in the vendor Settings activity.
+        if (adapter.launchFrame()) remove()
     }
 
     private fun remove() {
