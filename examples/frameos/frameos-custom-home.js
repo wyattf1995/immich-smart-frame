@@ -83,7 +83,7 @@
     const render = (force = false) => {
       if (destroyed) return;
       const hass = options.getHass();
-      if (!hass?.states) { options.onUnavailable?.(); if (lastSignature !== "unavailable") root.innerHTML = '<section class="frameos-custom-home"><p class="fch-next-empty">Home Assistant is reconnecting…</p></section>'; lastSignature = "unavailable"; return; }
+      if (!hass?.states) { options.onUnavailable?.(); if (lastSignature !== "unavailable") root.innerHTML = '<section class="frameos-custom-home"><p class="fch-next-empty">Home Assistant is reconnecting…</p></section>'; lastSignature = "unavailable"; lastModelKey = null; return; }
       const now = clock(typeof options.now === "function" ? options.now() : new Date());
       // The facade is already bounded by the panel.  Compare it before formatting markup so
       // ordinary one-second ticks only patch clock nodes; date/night remain model inputs.

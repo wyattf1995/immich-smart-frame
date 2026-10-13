@@ -303,16 +303,13 @@ function skipNoSwapKioskRequest(event) {
   }
 }
 
+function isKioskNode(node) {
+  return node instanceof HTMLElement && (node.id === "kiosk-container" || node.id === "kiosk" || typeof node.closest === "function" && node.closest("#kiosk-container") !== null);
+}
 function isCaptureMutation(mutation) {
-  if (mutation.type === "childList") return true;
-  if (mutation.type !== "attributes") return false;
-  if (mutation.attributeName === "src" || mutation.attributeName === "value") return true;
-  if (mutation.attributeName !== "class" && mutation.attributeName !== "style") return false;
-  const target = mutation.target;
-  if (target === document.documentElement || target === document.body) return true;
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.id === "kiosk-container" || target.id === "kiosk") return true;
-  return typeof target.closest === "function" && target.closest("#kiosk") !== null;
+  if (mutation.type === "childList") return isKioskNode(mutation.target) || Array.from(mutation.addedNodes).some(isKioskNode) || Array.from(mutation.removedNodes).some(isKioskNode);
+  if (mutation.type !== "attributes" || !["src", "value", "class", "style"].includes(mutation.attributeName)) return false;
+  return isKioskNode(mutation.target);
 }
 
 function scheduleCaptureMutations(mutations) {
