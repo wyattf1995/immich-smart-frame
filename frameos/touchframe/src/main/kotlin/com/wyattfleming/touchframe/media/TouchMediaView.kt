@@ -150,6 +150,7 @@ class TouchMediaView(
     /** Keeps the attached view while stopping foreground Gecko work when hidden. */
     fun setVisibleActive(active: Boolean) {
         if (closed || this.active == active) return
+        loadState.visibilityChanged(active, sessionGeneration)
         this.active = active
         geckoView.importantForAccessibility = if (active) {
             View.IMPORTANT_FOR_ACCESSIBILITY_YES
@@ -291,7 +292,7 @@ class TouchMediaView(
 
             override fun onCrash(session: GeckoSession) = reportContentProcessClosed(session)
 
-            override fun onKill(session: GeckoSession) = reportContentProcessClosed(session)
+            override fun onKill(session: GeckoSession) = reportContentProcessKilled(session)
         }
         next.open(runtime)
         sessionGeneration += 1
@@ -323,6 +324,15 @@ class TouchMediaView(
         retryButton.visibility = View.VISIBLE
         if (photosProfile != null) offlinePhotos.showFallback()
         onStatus?.invoke(message)
+    }
+
+    private fun reportContentProcessKilled(source: GeckoSession) {
+        if (!isCurrentSession(source)) return
+        // onKill may arrive after a hidden session has been foregrounded. One
+        // retained-return ticket survives that delay; replacement consumes it,
+        // so another kill cannot create a reload loop. onCrash stays manual.
+        val url = loadState.recoverForegroundKill(sessionGeneration)
+        if (url != null) reopenAndLoad(url) else reportContentProcessClosed(source)
     }
 
     private fun reportContentProcessClosed(source: GeckoSession? = session) {
@@ -376,9 +386,38 @@ internal class TouchMediaLoadState {
         private set
     private var contentProcessClosed = false
     private var hiddenReturnRecoveryAvailable = false
+    private data class RetainedReturn(val url: String, val generation: Long)
+    private var hiddenDocument: RetainedReturn? = null
+    private var foregroundKillRecovery: RetainedReturn? = null
+
+    fun visibilityChanged(active: Boolean, sessionGeneration: Long) {
+        if (active) {
+            foregroundKillRecovery = hiddenDocument?.takeIf {
+                !contentProcessClosed && it.url == configuredUrl && it.generation == sessionGeneration
+            }
+            hiddenDocument = null
+        } else {
+            foregroundKillRecovery = null
+            hiddenDocument = configuredUrl?.takeUnless { contentProcessClosed }
+                ?.let { RetainedReturn(it, sessionGeneration) }
+        }
+    }
+
+    /** At most one onKill recovery per real hidden-to-visible retained return. */
+    fun recoverForegroundKill(sessionGeneration: Long): String? {
+        val ticket = foregroundKillRecovery ?: return null
+        foregroundKillRecovery = null
+        return ticket.url.takeIf { !contentProcessClosed && it == configuredUrl && ticket.generation == sessionGeneration }
+    }
+
+    private fun clearReturnRecovery() {
+        hiddenDocument = null
+        foregroundKillRecovery = null
+    }
 
     fun showUrl(url: String): Decision {
         if (contentProcessClosed) {
+            clearReturnRecovery()
             configuredUrl = url
             return if (hiddenReturnRecoveryAvailable) {
                 contentProcessClosed = false
@@ -389,18 +428,21 @@ internal class TouchMediaLoadState {
             }
         }
         if (configuredUrl == url) return Decision.ALREADY_LOADED
+        clearReturnRecovery()
         val hasRetainedDocument = configuredUrl != null
         configuredUrl = url
         return if (hasRetainedDocument) Decision.REPLACE_DOCUMENT_SESSION else Decision.LOAD
     }
 
     fun markContentProcessClosed(whileHidden: Boolean = false) {
+        clearReturnRecovery()
         contentProcessClosed = true
         hiddenReturnRecoveryAvailable = whileHidden
     }
 
     fun retry(): RetryRequest? {
         val url = configuredUrl ?: return null
+        clearReturnRecovery()
         val reopen = contentProcessClosed
         contentProcessClosed = false
         hiddenReturnRecoveryAvailable = false
