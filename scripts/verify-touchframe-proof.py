@@ -26,6 +26,7 @@ bridge_test = frame / "app" / "src/test/kotlin/com/wyattfleming/frameos/photos/F
 bridge_result_dir = frame / "frame-shared" / "build" / "test-results" / "testDebugUnitTest"
 bridge_class = "com.wyattfleming.frameos.photos.FramePhotoBridgePreparedAttachmentContractTest"
 suites = {
+    "calendar_week": (module / "src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarWeekPresentation.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarWeekPresentationTest.kt", "com.wyattfleming.touchframe.calendar.TouchCalendarWeekPresentationTest"),
     "shell": (module / "src/main/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayout.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayoutTest.kt", "com.wyattfleming.touchframe.ui.TouchShellLayoutTest"),
     "home_layout": (module / "src/main/kotlin/com/wyattfleming/touchframe/ui/TouchHomeView.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/ui/TouchHomeLayoutTest.kt", "com.wyattfleming.touchframe.ui.TouchHomeLayoutTest"),
     "settings_return": (module / "src/main/kotlin/com/wyattfleming/touchframe/ui/TouchSettingsReturn.kt", module / "src/test/kotlin/com/wyattfleming/touchframe/ui/TouchSettingsReturnPlanTest.kt", "com.wyattfleming.touchframe.ui.TouchSettingsReturnPlanTest"),
@@ -356,6 +357,57 @@ try:
         {"prepared UI attachment preserves configured session and never activates disk scope"},
         bridge_source_bytes,
     )
+    edge_stream_red = mutate(
+        "edge-stream-ownership-red", "shell",
+        "return result.ownsStream || super.dispatchTouchEvent(event)",
+        "return super.dispatchTouchEvent(event)",
+        {"layout binds edge policy before child dispatch"},
+    )
+    edge_once_red = mutate(
+        "edge-stream-once-red", "shell",
+        "val revealNow = !revealed && TouchShellGesture.shouldReveal(",
+        "val revealNow = TouchShellGesture.shouldReveal(",
+        {"blank child edge stream is owned from DOWN through reveal and terminal UP"},
+    )
+    kill_binding_red = mutate(
+        "media-kill-binding-red", "media",
+        "override fun onKill(session: GeckoSession) = reportContentProcessKilled(session)",
+        "override fun onKill(session: GeckoSession) = reportContentProcessClosed(session)",
+        {"productionKillRecoveryIsIdentityFencedAndCrashRemainsManual"},
+    )
+    kill_once_red = mutate(
+        "media-kill-once-red", "media",
+        "val ticket = foregroundKillRecovery ?: return null\n        foregroundKillRecovery = null",
+        "val ticket = foregroundKillRecovery ?: return null\n        // ticket consumption disabled",
+        {"delayedKillAfterWarmReturnRecoversOnceWithoutPaintRearming", "hideClearsTheOldTicketAndTheNextRealReturnGetsOneChance"},
+    )
+    kill_generation_red = mutate(
+        "media-kill-generation-red", "media",
+        "it == configuredUrl && ticket.generation == sessionGeneration",
+        "it == configuredUrl",
+        {"retainedTicketCannotRecoverADifferentSessionGeneration"},
+    )
+    week_preview_red = mutate(
+        "calendar-week-preview-red", "calendar_week",
+        "const val PREVIEW_PER_DAY = 3", "const val PREVIEW_PER_DAY = 4",
+        {"groupsSevenDaysWithAllDayFirstAndBoundedPreview"},
+    )
+    week_details_red = mutate(
+        "calendar-week-details-red", "calendar_week",
+        "const val DETAILS_PER_PAGE = 12", "const val DETAILS_PER_PAGE = 13",
+        {"boundsSelectedDayDetailsToTwelveEventsAndReportsTheVisibleRange", "selectedDayDetailPagesKeepEveryEventReachable"},
+    )
+    week_default_red = mutate(
+        "calendar-week-default-red", "calendar_week",
+        "val DEFAULT_MODE: TouchCalendarMode = TouchCalendarMode.WEEK",
+        "val DEFAULT_MODE: TouchCalendarMode = TouchCalendarMode.AGENDA",
+        {"startsInWeekModeForTouchCalendar"},
+    )
+    weather_location_red = mutate(
+        "weather-location-provision-red", "provisioning",
+        "weatherLocationLabel = weatherLocationLabel,", "weatherLocationLabel = null,",
+        {"weather location propagates through bounded initial provisioning"},
+    )
     edge_red = mutate(
         "edge-media-only-red", "shell",
         "destination.isImmersiveMedia &&\n        downX in 0f..edgeWidth.toFloat()",
@@ -415,7 +467,7 @@ try:
         "media-hidden-return-recovery-red", "media",
         "if (hiddenReturnRecoveryAvailable) {",
         "if (false) {",
-        {"hiddenContentCrashRecoversExactlyOnceWhenTheUserReturns"},
+        {"hiddenContentCrashRecoversExactlyOnceWhenTheUserReturns", "hiddenDeliveredClosureConsumesAllRecoveryBeforeReplacement"},
     )
     media_paint_readiness_red = mutate(
         "media-contentful-paint-readiness-red", "media",
@@ -443,6 +495,9 @@ try:
         "} else {\n                Decision.LOAD\n            }",
         {
             "contentCrashRequiresExplicitRetryAndUsesTheMostRecentConfiguredUrl",
+            "delayedKillAfterWarmReturnRecoversOnceWithoutPaintRearming",
+            "activeCrashAndExplicitRetryClearTheReturnTicket",
+            "hiddenDeliveredClosureConsumesAllRecoveryBeforeReplacement",
             "hiddenContentCrashRecoversExactlyOnceWhenTheUserReturns",
         },
     )
@@ -652,6 +707,11 @@ try:
         "packagingRestored": packaging_restored, "packagingUnchangedSha256": packaging_hashes,
         "sourceTestAnnotationCount": expected_tests, "initial": initial, "preparedBridgeInitial": bridge_initial,
         "preparedBridgeSessionGateRed": bridge_red, "edgeRed": edge_red,
+        "edgeStreamOwnershipRed": edge_stream_red, "edgeStreamOnceRed": edge_once_red,
+        "mediaKillBindingRed": kill_binding_red, "mediaKillOnceRed": kill_once_red,
+        "mediaKillGenerationRed": kill_generation_red,
+        "calendarWeekPreviewRed": week_preview_red, "calendarWeekDetailsRed": week_details_red,
+        "calendarWeekDefaultRed": week_default_red, "weatherLocationProvisionRed": weather_location_red,
         "homeLayoutTransitionRed": home_first_measure_red,
         "shellContrastRed": shell_contrast_red,
         "railScrollableViewportRed": rail_viewport_red,
