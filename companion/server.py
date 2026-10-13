@@ -112,6 +112,11 @@ class FrameStore:
                 if defaults['profile'] not in profiles: defaults['profile'] = profiles[0]
                 initial = settings_patch(defaults, conf.get('settings', {}), profiles)
                 db.execute('INSERT OR IGNORE INTO devices(id,label,settings) VALUES(?,?,?)', (device, str(conf.get('label', device))[:80], json.dumps(initial)))
+            # Every configured startup refreshes the mounted snapshot. Mark it
+            # durable first, so a missing mount/file or added device also retries
+            # after a transient first export error even if prior revisions matched.
+            if self.preferences_export:
+                db.execute('UPDATE export_state SET desired_revision=desired_revision+1 WHERE name=?', (EXPORT_STATE,))
         if self.preferences_export:
             try:
                 # Startup deliberately refreshes the file even when a durable
@@ -194,7 +199,9 @@ class FrameStore:
                     self.export_retry_thread = None
                     return
             except (OSError, sqlite3.Error):
-                delay = min(EXPORT_RETRY_MAX_SECONDS, delay * 2)
+                # A catch-up pass may intentionally use delay zero. An error
+                # after it must return to a positive bounded backoff.
+                delay = min(EXPORT_RETRY_MAX_SECONDS, max(EXPORT_RETRY_INITIAL_SECONDS, delay * 2))
 
     def close(self):
         with self.export_retry_lock:
