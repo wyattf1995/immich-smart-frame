@@ -1,6 +1,7 @@
 import com.android.build.api.variant.HostTestBuilder
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitivity
 
 plugins {
     id("com.android.library")
@@ -132,6 +133,11 @@ androidComponents {
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     workingDir = file("../app")
+    // Packaging contracts read these canonical files directly without Android test resources.
+    // Track them or Gradle may restore a green test result after an extension asset changes.
+    inputs.dir(file("../app/src/main/assets/frame-photo-bridge"))
+        .withPropertyName("framePhotoBridgePackagingAssets")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 dependencies {
