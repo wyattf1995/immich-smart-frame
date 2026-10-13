@@ -75,6 +75,7 @@ class TouchFrameActivity : Activity() {
     private var repository: TouchHomeRepository? = null
     private var calendarRepository: TouchCalendarRepository? = null
     private var calendarInFlight = false
+    private var calendarRequestGeneration = 0L
     private var oauth: HomeAssistantOAuthClient? = null
     private var weatherRemote: HomeAssistantWeatherRemote? = null
     private var weatherSnapshot: WeatherSnapshot? = null
@@ -263,6 +264,11 @@ class TouchFrameActivity : Activity() {
             requestLocalNetwork()
             return
         }
+        if (destination == TouchDestination.CALENDAR && next != TouchDestination.CALENDAR) {
+            calendarRequestGeneration++
+            calendarInFlight = false
+            calendarRepository?.cancel()
+        }
         destination = next
         shell.select(next)
         home.visibility = if (next == TouchDestination.HOME) View.VISIBLE else View.GONE
@@ -360,22 +366,30 @@ class TouchFrameActivity : Activity() {
 
     private fun requestCalendar(mode: TouchCalendarMode, anchor: java.time.LocalDate, selected: java.time.LocalDate) {
         val source = calendarRepository ?: return
-        if (!resumed || calendarInFlight || !networkAllowed()) return
+        if (!resumed || !networkAllowed()) return
         val range = TouchCalendarRange.forMode(mode, anchor)
-        calendarInFlight = true
         val selectedForRange = if (selected < range.start || selected >= range.endExclusive) anchor else selected
-        calendarState = calendarState.copy(mode = mode, anchor = anchor, selectedDate = selectedForRange, range = range, loading = true)
-        calendar.render(calendarState)
+        // A selected day inside an already-fetched range is local UI state, not another network request.
+        if (!calendarState.loading && calendarState.range == range && calendarState.events.isNotEmpty()) {
+            calendarState = calendarState.copy(mode = mode, anchor = anchor, selectedDate = selectedForRange)
+            calendar.render(calendarState)
+            return
+        }
         val prior = calendarState
+        val request = ++calendarRequestGeneration
+        calendarInFlight = true
+        source.cancel()
+        calendarState = calendarState.copy(mode = mode, anchor = anchor, selectedDate = selectedForRange, range = range, loading = true, partial = false)
+        calendar.render(calendarState)
         tasks.submit(worker) { isCurrent ->
             val loaded = runCatching { source.load(range) }.getOrElse { TouchCalendarLoad(emptyList(), TouchCalendarConnection.OFFLINE) }
-            if (!isCurrent()) return@submit
+            if (!isCurrent() || request != calendarRequestGeneration || destination != TouchDestination.CALENDAR) return@submit
             main.post {
-                if (!isCurrent()) return@post
+                if (!isCurrent() || request != calendarRequestGeneration || destination != TouchDestination.CALENDAR) return@post
                 calendarInFlight = false
-                // Preserve usable current-range results when this refresh cannot reach Home Assistant.
-                val retained = if (loaded.connection == TouchCalendarConnection.OFFLINE && prior.events.isNotEmpty()) prior.events else loaded.events
-                calendarState = calendarState.copy(events = retained, connection = loaded.connection, updatedEpochMillis = loaded.updatedEpochMillis ?: prior.updatedEpochMillis, loading = false, partial = loaded.partial)
+                // Offline retention is valid only for exactly the range that was requested.
+                val retained = if (loaded.connection == TouchCalendarConnection.OFFLINE && prior.range == range) prior.events else loaded.events
+                calendarState = calendarState.copy(events = retained, connection = loaded.connection, updatedEpochMillis = loaded.updatedEpochMillis ?: if (prior.range == range) prior.updatedEpochMillis else null, loading = false, partial = loaded.partial)
                 calendar.render(calendarState)
             }
         }

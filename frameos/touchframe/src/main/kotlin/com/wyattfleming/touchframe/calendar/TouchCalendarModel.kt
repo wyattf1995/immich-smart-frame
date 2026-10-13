@@ -41,9 +41,11 @@ data class TouchCalendarEvent(
     init { require(title.isNotBlank() && title.length <= MAX_TITLE_LENGTH); require(endEpochMillis == null || endEpochMillis >= startEpochMillis) }
     fun occursOn(date: LocalDate, zoneId: ZoneId): Boolean {
         val start = Instant.ofEpochMilli(startEpochMillis).atZone(zoneId).toLocalDate()
-        val rawEnd = endEpochMillis?.let(Instant::ofEpochMilli)?.atZone(zoneId)?.toLocalDate()
-        // Calendar all-day end dates are exclusive; do not paint an event onto its ending date.
-        val end = if (allDay && rawEnd != null && rawEnd.isAfter(start)) rawEnd.minusDays(1) else rawEnd ?: start
+        val endZoned = endEpochMillis?.let(Instant::ofEpochMilli)?.atZone(zoneId)
+        val rawEnd = endZoned?.toLocalDate()
+        // Calendar all-day and timed midnight end instants are exclusive.
+        val exclusiveEnd = allDay || endZoned?.toLocalTime() == java.time.LocalTime.MIDNIGHT
+        val end = if (exclusiveEnd && rawEnd != null && rawEnd.isAfter(start)) rawEnd.minusDays(1) else rawEnd ?: start
         return !date.isBefore(start) && !date.isAfter(end)
     }
     companion object { const val MAX_TITLE_LENGTH = 200 }
