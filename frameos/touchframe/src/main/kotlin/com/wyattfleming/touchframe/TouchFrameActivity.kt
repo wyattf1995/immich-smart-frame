@@ -104,8 +104,10 @@ class TouchFrameActivity : Activity() {
             home.tick(now)
             updateDisplayBehavior(now)
             val hour = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).hour
-            shell.setNight(hour < 7 || hour >= 19)
-            calendar.setNight(hour < 7 || hour >= 19)
+            val isNight = hour < 7 || hour >= 19
+            shell.setNight(isNight)
+            calendar.setNight(isNight)
+            cameras?.setNight(isNight)
             main.postDelayed(this, 1_000L)
         }
     }
@@ -333,6 +335,8 @@ class TouchFrameActivity : Activity() {
                     shell.content.addView(it, fill())
                 }
                 view.visibility = View.VISIBLE
+                val hour = Instant.ofEpochMilli(System.currentTimeMillis()).atZone(ZoneId.systemDefault()).hour
+                view.setNight(hour < 7 || hour >= 19)
                 view.setActive(resumed)
             }
         }
