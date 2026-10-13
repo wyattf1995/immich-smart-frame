@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
-const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9xQAAAABJRU5ErkJggg==', 'base64');
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMwnpn2HwAEZwIylb2spAAAAABJRU5ErkJggg==', 'base64');
 const DEFAULTS = Object.freeze({ preferences: 200, audioHz: 2, recentCount: 10, summaryCount: 200 });
 let config = { ...DEFAULTS };
 let fixtureState;
