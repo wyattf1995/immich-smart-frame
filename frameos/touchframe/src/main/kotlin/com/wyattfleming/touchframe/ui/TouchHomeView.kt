@@ -59,6 +59,8 @@ class TouchHomeView private constructor(
     private var climateMessage: String? = null
     private var clockView: TextView? = null
     private var dateView: TextView? = null
+    private var scrollView: ScrollView? = null
+    private var scrollPosition = 0
     private var lastLargeLayout: Boolean? = null
 
     init {
@@ -106,46 +108,69 @@ class TouchHomeView private constructor(
     }
 
     private fun rebuild() {
+        scrollPosition = scrollView?.scrollY ?: scrollPosition
         removeAllViews()
         val dashboard = model
         val type = typography()
+        val large = isLargeLandscape()
         setBackgroundColor(style.background)
         val scroll = ScrollView(context).apply {
             isFillViewport = true
             clipToPadding = false
         }
+        scrollView = scroll
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(context.dp(24), context.dp(20), context.dp(24), context.dp(28))
+            setPadding(context.dp(24), context.dp(18), context.dp(24), context.dp(28))
         }
-        content.addView(header(type))
-        content.addView(statusCard(dashboard, type), LinearLayout.LayoutParams(
+        content.addView(glanceHeader(dashboard, type, large))
+        content.addView(statusRow(dashboard, type), LinearLayout.LayoutParams(
             LayoutParams.MATCH_PARENT,
             LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = context.dp(14) })
-        val body = LinearLayout(context).apply {
-            orientation = if (isLargeLandscape()) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        ).apply { topMargin = context.dp(8) })
+        val overview = LinearLayout(context).apply {
+            orientation = if (large) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
         }
-        val first = overviewColumn(dashboard, type)
-        val second = actionColumn(dashboard, type)
-        if (isLargeLandscape()) {
-            body.addView(first, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1.16f).apply {
+        val events = eventsCard(dashboard?.events.orEmpty(), type)
+        val climate = climateCard(dashboard?.climate, dashboard?.connection, type)
+        if (large) {
+            overview.addView(events, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply {
                 marginEnd = context.dp(16)
             })
-            body.addView(second, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 0.84f))
+            overview.addView(climate, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         } else {
-            body.addView(first)
-            body.addView(second, LinearLayout.LayoutParams(
+            overview.addView(events)
+            overview.addView(climate, LinearLayout.LayoutParams(
                 LayoutParams.MATCH_PARENT,
                 LayoutParams.WRAP_CONTENT,
             ).apply { topMargin = context.dp(16) })
         }
-        content.addView(body, LinearLayout.LayoutParams(
+        content.addView(overview, LinearLayout.LayoutParams(
+            LayoutParams.MATCH_PARENT,
+            LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = context.dp(12) })
+        content.addView(exploreTiles(type), LinearLayout.LayoutParams(
             LayoutParams.MATCH_PARENT,
             LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = context.dp(16) })
         scroll.addView(content, ScrollView.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         addView(scroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        scroll.post { scroll.scrollTo(0, scrollPosition.coerceAtLeast(0)) }
+    }
+
+    private fun glanceHeader(snapshot: TouchHomeModel?, type: Typography, large: Boolean): View = LinearLayout(context).apply {
+        orientation = if (large) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        val time = header(type)
+        val weather = weatherHeader(snapshot, type)
+        if (large) {
+            addView(time, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1.1f).apply { marginEnd = context.dp(20) })
+            addView(weather, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 0.9f))
+        } else {
+            addView(time)
+            addView(weather, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                topMargin = context.dp(10)
+            })
+        }
     }
 
     private fun header(type: Typography): View = LinearLayout(context).apply {
@@ -158,48 +183,25 @@ class TouchHomeView private constructor(
         addView(date)
     }
 
-    private fun statusCard(snapshot: TouchHomeModel?, type: Typography): View = card().apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(context.dp(18), context.dp(16), context.dp(18), context.dp(16))
-        addView(label(connectionText(snapshot?.connection), type.small, true))
+    /** A thin state row keeps Home glanceable; sign-in has exactly one entry point. */
+    private fun statusRow(snapshot: TouchHomeModel?, type: Typography): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        addView(label(connectionText(snapshot?.connection), type.small, true), LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         snapshot?.lastUpdatedEpochMillis?.let { updated ->
             addView(label("Updated ${timeAt(updated)}", type.small, false))
         }
         if (snapshot?.connection == TouchConnection.SIGN_IN_REQUIRED) {
-            addView(button("Sign in", type.body) { onSignIn() }, LinearLayout.LayoutParams(
+            addView(button("Sign in", type.small) { onSignIn() }, LinearLayout.LayoutParams(
                 LayoutParams.WRAP_CONTENT,
                 context.dp(56),
-            ).apply { topMargin = context.dp(12) })
+            ).apply { marginStart = context.dp(12) })
         }
     }
 
-    private fun overviewColumn(snapshot: TouchHomeModel?, type: Typography): View = LinearLayout(context).apply {
+    private fun weatherHeader(snapshot: TouchHomeModel?, type: Typography): View = card().apply {
         orientation = LinearLayout.VERTICAL
-        addView(weatherCard(snapshot, type))
-        addView(eventsCard(snapshot?.events.orEmpty(), type), LinearLayout.LayoutParams(
-            LayoutParams.MATCH_PARENT,
-            LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = context.dp(16) })
-        addView(climateCard(snapshot?.climate, snapshot?.connection, type), LinearLayout.LayoutParams(
-            LayoutParams.MATCH_PARENT,
-            LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = context.dp(16) })
-    }
-
-    private fun actionColumn(snapshot: TouchHomeModel?, type: Typography): View = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        addView(exploreCard(type))
-        if (snapshot?.connection == TouchConnection.SIGN_IN_REQUIRED) {
-            addView(signInCard(type), LinearLayout.LayoutParams(
-                LayoutParams.MATCH_PARENT,
-                LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = context.dp(16) })
-        }
-    }
-
-    private fun weatherCard(snapshot: TouchHomeModel?, type: Typography): View = card().apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(context.dp(18), context.dp(16), context.dp(18), context.dp(16))
+        setPadding(context.dp(18), context.dp(12), context.dp(18), context.dp(12))
         addView(label("Weather", type.small, true))
         val weather = snapshot?.weatherText?.takeIf { it.isNotBlank() } ?: "Weather unavailable"
         val temperature = snapshot?.temperatureText?.takeIf { it.isNotBlank() } ?: "Temperature unavailable"
@@ -209,7 +211,7 @@ class TouchHomeView private constructor(
 
     private fun eventsCard(events: List<TouchCalendarEvent>, type: Typography): View = card().apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(context.dp(18), context.dp(16), context.dp(18), context.dp(16))
+        setPadding(context.dp(18), context.dp(14), context.dp(18), context.dp(14))
         addView(label("Up next", type.small, true))
         if (events.isEmpty()) {
             addView(label("No upcoming events", type.body, false))
@@ -224,7 +226,7 @@ class TouchHomeView private constructor(
 
     private fun climateCard(climate: TouchClimate?, connection: TouchConnection?, type: Typography): View = card().apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(context.dp(18), context.dp(16), context.dp(18), context.dp(16))
+        setPadding(context.dp(18), context.dp(14), context.dp(18), context.dp(14))
         addView(label("Climate", type.small, true))
         if (climate == null) {
             addView(label("Climate unavailable", type.body, false))
@@ -242,18 +244,16 @@ class TouchHomeView private constructor(
             type.small,
             false,
         ))
-        val modes = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-        climate.modes.distinct().forEach { candidate ->
-            modes.addView(button(
+        val modes = twoColumnGrid(climate.modes.distinct()) { candidate ->
+            modeButton(
                 candidate.replaceFirstChar { it.titlecase(Locale.getDefault()) },
                 type.small,
+                selected = candidate == climate.mode,
                 enabled = canMutate,
-            ) { onClimateMode(candidate) }, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)).apply {
-                if (childCount > 0) topMargin = context.dp(8)
-            })
+            ) { onClimateMode(candidate) }
         }
         addView(modes, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-            topMargin = context.dp(12)
+            topMargin = context.dp(8)
         })
         val adjust = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
         adjust.addView(button("−", type.body, enabled = canMutate) { changeTarget(climate, -1) }, LinearLayout.LayoutParams(0, context.dp(56), 1f).apply {
@@ -282,28 +282,46 @@ class TouchHomeView private constructor(
         }
     }
 
-    private fun exploreCard(type: Typography): View = card().apply {
+    private fun exploreTiles(type: Typography): View = card().apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(context.dp(18), context.dp(16), context.dp(18), context.dp(16))
+        setPadding(context.dp(18), context.dp(14), context.dp(18), context.dp(14))
         addView(label("Explore", type.small, true))
-        KNOWN_ROUTES.forEach { route ->
-            addView(button(route.replaceFirstChar { it.titlecase(Locale.getDefault()) }, type.body) {
-                onNavigate(route)
-            }, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)).apply {
-                topMargin = context.dp(8)
+        addView(twoColumnGrid(KNOWN_ROUTES) { route ->
+            button(route.replaceFirstChar { it.titlecase(Locale.getDefault()) }, type.small) { onNavigate(route) }
+        }, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+            topMargin = context.dp(8)
+        })
+    }
+
+    private fun twoColumnGrid(
+        values: List<String>,
+        factory: (String) -> View,
+    ): LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        values.chunked(2).forEachIndexed { rowIndex, row ->
+            val line = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+            row.forEachIndexed { columnIndex, value ->
+                line.addView(factory(value), LinearLayout.LayoutParams(0, context.dp(56), 1f).apply {
+                    if (columnIndex > 0) marginStart = context.dp(8)
+                })
+            }
+            if (row.size == 1) line.addView(View(context), LinearLayout.LayoutParams(0, context.dp(56), 1f).apply { marginStart = context.dp(8) })
+            addView(line, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)).apply {
+                if (rowIndex > 0) topMargin = context.dp(8)
             })
         }
     }
 
-    private fun signInCard(type: Typography): View = card().apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(context.dp(18), context.dp(16), context.dp(18), context.dp(16))
-        addView(label("Home Assistant sign-in required", type.body, true))
-        addView(button("Sign in", type.body) { onSignIn() }, LinearLayout.LayoutParams(
-            LayoutParams.WRAP_CONTENT,
-            context.dp(56),
-        ).apply { topMargin = context.dp(12) })
-    }
+    private fun modeButton(label: String, size: Float, selected: Boolean, enabled: Boolean, action: () -> Unit): TextView =
+        button(label, size, enabled, action).apply {
+            if (selected) {
+                background = GradientDrawable().apply {
+                    cornerRadius = context.dp(14).toFloat()
+                    setColor(style.ink)
+                }
+                setTextColor(style.surface)
+            }
+        }
 
     private fun changeTarget(climate: TouchClimate, direction: Int) {
         val initial = draftTarget ?: climate.targetTemperature ?: climate.currentTemperature ?: return
