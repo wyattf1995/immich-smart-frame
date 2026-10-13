@@ -75,6 +75,16 @@ any existing configuration. A success returns `provisioned-restart-required`.
 Provision before the first Activity launch. It never copies OAuth or companion
 credentials from another package.
 
+An optional `weather_location_label` string identifies the city or place in the
+Weather header. It is display text, not a change to the configured weather entity
+or forecast coordinates. Initial provisioning accepts up to 256 input characters;
+configuration collapses whitespace and retains at most 80, and the header displays
+up to 28 with an ellipsis. Existing frames retain their configuration when the app
+is updated. The one-time provisioning receiver deliberately does not overwrite an
+existing configuration; an authenticated configuration migration must preserve
+all other fields and OAuth state. Weather typography is approximately 20% larger
+than the original shared Weather renderer.
+
 The source integrates a 12-photo/24-MiB private offline reserve, uncropped fallback
 with a small blurred backdrop, monotonic remote settings, quiet-hours brightness,
 idle return, and bounded companion callbacks. Companion polling remains disabled
