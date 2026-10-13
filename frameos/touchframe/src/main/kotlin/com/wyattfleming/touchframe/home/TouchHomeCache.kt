@@ -24,7 +24,7 @@ class TouchHomeCache(private val preferences: SharedPreferences) {
 internal object TouchHomeCacheCodec {
     private const val SCHEMA = 1
     private const val MAX_BYTES = 256 * 1024
-    private const val MAX_EVENTS = 5
+    private const val MAX_EVENTS = 80
     private const val MAX_TEXT = 1_024
     private const val MAX_MODES = 8
 
@@ -37,12 +37,12 @@ internal object TouchHomeCacheCodec {
     fun encode(model: TouchHomeModel, fingerprint: String): String? = runCatching {
         require(fingerprint.length == 64)
         require(model.weatherText.length <= MAX_TEXT && model.temperatureText.length <= MAX_TEXT)
-        require(model.events.size <= MAX_EVENTS)
+        val boundedEvents = model.events.sortedBy(TouchCalendarEvent::startEpochMillis).take(MAX_EVENTS)
         val root = JSONObject().put("schema", SCHEMA).put("fingerprint", fingerprint)
             .put("weather", model.weatherText).put("temperature", model.temperatureText)
             .put("updated", model.lastUpdatedEpochMillis ?: JSONObject.NULL)
         root.put("events", JSONArray().apply {
-            model.events.forEach { event ->
+            boundedEvents.forEach { event ->
                 require(event.title.length <= MAX_TEXT)
                 put(JSONObject().put("title", event.title).put("start", event.startEpochMillis)
                     .put("end", event.endEpochMillis ?: JSONObject.NULL).put("allDay", event.allDay))
