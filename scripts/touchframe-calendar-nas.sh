@@ -138,7 +138,7 @@ for base in roots:
         files.append(item)
         for key in totals:
             totals[key]+=item[key]
-if totals['tests'] != 247 or not files or totals['failures'] or totals['errors'] or totals['skipped']:
+if totals['tests'] != 249 or not files or totals['failures'] or totals['errors'] or totals['skipped']:
     raise SystemExit(f'unexpected JUnit summary: files={len(files)} totals={totals}')
 out.write_text(json.dumps({'schema':1,'files':files,'totals':totals},indent=2,sort_keys=True)+'\n')
 PY
