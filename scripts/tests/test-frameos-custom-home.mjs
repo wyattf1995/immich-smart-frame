@@ -239,4 +239,20 @@ delete weatherHass.states['weather.forecast_home'];weatherHandle.refresh();
 assert.match(weatherRoot.innerHTML,/fch-weather-temp">80°F</,'generic weather.home remains compatible');
 delete weatherHass.states['weather.home'];weatherHandle.refresh();
 assert.doesNotMatch(weatherRoot.innerHTML,/99°F/,'never choose an unrelated household weather entity');
+
 weatherHandle.destroy();
+
+// A reconnect that returns the same state object must replace the unavailable
+// surface. This guards the model-key reset used by the clock-only fast path.
+const reconnectRoot = makeInteractiveRoot();
+let reconnectHass = null;
+const reconnectHandle = api.mount(reconnectRoot, {
+  getHass: () => reconnectHass,
+  now: () => new Date(2026, 9, 12, 9),
+});
+assert.match(reconnectRoot.innerHTML, /Home Assistant is reconnecting/, "an unavailable Home starts with an honest reconnecting surface");
+reconnectHass = liveHass;
+reconnectHandle.refresh();
+assert.doesNotMatch(reconnectRoot.innerHTML, /Home Assistant is reconnecting/, "the same Home state mounts after an unavailable render");
+assert.match(reconnectRoot.innerHTML, /Entryway climate/, "reconnection restores the interactive Home surface");
+reconnectHandle.destroy();
