@@ -17,6 +17,12 @@ class TouchSettingsReturnPlanTest {
     }
 
     @Test
+    fun `task recovery selects only the hosting activity task`() {
+        assertTrue(TouchSettingsReturnPlan.isOwningTask(candidateTaskId = 41, activityTaskId = 41))
+        assertFalse(TouchSettingsReturnPlan.isOwningTask(candidateTaskId = 42, activityTaskId = 41))
+    }
+
+    @Test
     fun `return dispatch retains overlay until the host resumes`() {
         assertFalse(TouchSettingsReturnPlan.dismissOverlayAfterReturnDispatch())
     }
