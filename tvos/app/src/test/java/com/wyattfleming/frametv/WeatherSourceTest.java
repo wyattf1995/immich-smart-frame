@@ -9,15 +9,15 @@ import org.junit.Test;
 import java.io.File;
 
 public class WeatherSourceTest {
-    @Test public void rejects forecast arrays that exceed the native presentation budget() {
+    @Test public void rejectsForecastArraysThatExceedNativePresentationBudget() {
         assertThrows(JSONException.class, () -> WeatherSource.parseForecast(forecastWithHours(169)));
     }
 
-    @Test public void rejects mismatched required hourly arrays() {
+    @Test public void rejectsMismatchedRequiredHourlyArrays() {
         assertThrows(JSONException.class, () -> WeatherSource.parseForecast("{\"current\":{},\"hourly\":{\"time\":[1],\"temperature_2m\":[]},\"daily\":{\"time\":[1],\"temperature_2m_max\":[1],\"temperature_2m_min\":[1]}}"));
     }
 
-    @Test public void constructs network forecast before returning to the main handler() {
+    @Test public void constructsNetworkForecastBeforeReturningToMainHandler() {
         String source = new File("src/main/java/com/wyattfleming/frametv/WeatherSource.java").getPath();
         String text;
         try (java.util.Scanner scanner = new java.util.Scanner(new File(source))) {
