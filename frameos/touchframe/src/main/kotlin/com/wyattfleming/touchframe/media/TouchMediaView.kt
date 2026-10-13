@@ -75,6 +75,10 @@ class TouchMediaView(
     private var label: String = "Media"
     private var active = false
     private var closed = false
+    private var sessionGeneration = 0L
+    private var loadGeneration = 0L
+    private val renderDeadline = TouchMediaRenderDeadline()
+    private var renderDeadlineTask: Runnable? = null
 
     init {
         setBackgroundColor(Color.BLACK)
@@ -154,12 +158,20 @@ class TouchMediaView(
             current.setActive(active)
         }
         offlinePhotos.setActive(active && photosProfile != null)
+        if (active) {
+            armRenderDeadline(renderDeadline.foregrounded())
+        } else {
+            renderDeadline.hidden()
+            cancelRenderDeadlineTask()
+        }
     }
 
     /** Idempotent lifecycle teardown; it cancels the session's pending network work. */
     fun close() {
         if (closed) return
         closed = true
+        renderDeadline.close()
+        cancelRenderDeadlineTask()
         retryButton.visibility = View.GONE
         offlinePhotos.close()
         if (ownsPhotoStore) offlineStore.close()
@@ -194,6 +206,8 @@ class TouchMediaView(
      * Later active crashes remain visible and require the explicit Retry action.
      */
     private fun reopenAndLoad(url: String) {
+        renderDeadline.sessionReplaced()
+        cancelRenderDeadlineTask()
         val replaced = session
         replaced?.let(offlinePhotos::detach)
         // Gecko can synchronously emit teardown callbacks. Clear the identity
@@ -212,6 +226,8 @@ class TouchMediaView(
         geckoView.visibility = View.VISIBLE
         loadingCover.visibility = View.VISIBLE
         onStatus?.invoke(null)
+        val load = TouchMediaRenderDeadline.LoadToken(++loadGeneration, sessionGeneration)
+        armRenderDeadline(renderDeadline.beginLoading(load, active))
         session?.loadUri(url)
     }
 
@@ -270,6 +286,7 @@ class TouchMediaView(
             override fun onKill(session: GeckoSession) = reportContentProcessClosed(session)
         }
         next.open(runtime)
+        sessionGeneration += 1
         next.setActive(active)
         next.setFocused(active)
         session = next
@@ -279,6 +296,8 @@ class TouchMediaView(
 
     private fun reportReady(source: GeckoSession) {
         if (!isCurrentSession(source)) return
+        renderDeadline.ready()
+        cancelRenderDeadlineTask()
         geckoView.visibility = View.VISIBLE
         loadingCover.visibility = View.GONE
         retryButton.visibility = View.GONE
@@ -287,6 +306,8 @@ class TouchMediaView(
 
     private fun reportFailure(source: GeckoSession, message: String) {
         if (!isCurrentSession(source)) return
+        renderDeadline.failed()
+        cancelRenderDeadlineTask()
         // Gecko's failed document surface is white on this API level. Keep the
         // shell's intentional black media background visible behind Retry.
         geckoView.visibility = View.INVISIBLE
@@ -298,6 +319,8 @@ class TouchMediaView(
 
     private fun reportContentProcessClosed(source: GeckoSession? = session) {
         if (source == null || !isCurrentSession(source)) return
+        renderDeadline.failed()
+        cancelRenderDeadlineTask()
         loadState.markContentProcessClosed(whileHidden = !active)
         geckoView.visibility = View.INVISIBLE
         loadingCover.visibility = View.VISIBLE
@@ -306,9 +329,33 @@ class TouchMediaView(
         onStatus?.invoke(context.getString(R.string.touch_media_load_failed, label))
     }
 
+    private fun armRenderDeadline(token: TouchMediaRenderDeadline.DeadlineToken?) {
+        cancelRenderDeadlineTask()
+        token ?: return
+        val task = Runnable {
+            if (!renderDeadline.expire(token)) return@Runnable
+            renderDeadlineTask = null
+            val current = session
+            if (current != null && token.load.sessionGeneration == sessionGeneration && isCurrentSession(current)) {
+                reportFailure(current, context.getString(R.string.touch_media_render_timeout))
+            }
+        }
+        renderDeadlineTask = task
+        postDelayed(task, RENDER_DEADLINE_MILLIS)
+    }
+
+    private fun cancelRenderDeadlineTask() {
+        renderDeadlineTask?.let(::removeCallbacks)
+        renderDeadlineTask = null
+    }
+
     private fun isCurrentSession(candidate: GeckoSession): Boolean = !closed && session === candidate
 
     private fun Context.dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private companion object {
+        const val RENDER_DEADLINE_MILLIS = 30_000L
+    }
 }
 
 /** Pure load/retry decisions, kept free of Gecko and Android for focused tests. */
@@ -349,5 +396,64 @@ internal class TouchMediaLoadState {
         contentProcessClosed = false
         hiddenReturnRecoveryAvailable = false
         return RetryRequest(url, reopen)
+    }
+}
+
+
+/**
+ * Pure foreground-only render deadline state. Each ticket carries the
+ * configured load generation, retained Gecko session generation, and a new
+ * foreground-wait generation. A canceled pre-hide callback therefore cannot
+ * consume the fresh wait armed for a later return.
+ */
+internal class TouchMediaRenderDeadline {
+    data class LoadToken(val loadGeneration: Long, val sessionGeneration: Long)
+    data class DeadlineToken(val load: LoadToken, val foregroundWaitGeneration: Long)
+
+    private var loading: LoadToken? = null
+    private var scheduled: DeadlineToken? = null
+    private var foreground = false
+    private var foregroundWaitGeneration = 0L
+
+    fun beginLoading(token: LoadToken, foreground: Boolean): DeadlineToken? {
+        loading = token
+        this.foreground = foreground
+        scheduled = if (foreground) newForegroundWait(token) else null
+        return scheduled
+    }
+
+    /** A hidden, still-loading retained session gets a fresh foreground wait. */
+    fun foregrounded(): DeadlineToken? {
+        foreground = true
+        scheduled = loading?.let(::newForegroundWait)
+        return scheduled
+    }
+
+    fun hidden() {
+        foreground = false
+        scheduled = null
+    }
+
+    fun ready() = finish()
+
+    fun failed() = finish()
+
+    fun sessionReplaced() = finish()
+
+    fun close() = finish()
+
+    /** Returns true exactly once for the currently foreground scheduled load. */
+    fun expire(token: DeadlineToken): Boolean {
+        if (!foreground || scheduled != token || loading != token.load) return false
+        finish()
+        return true
+    }
+
+    private fun newForegroundWait(load: LoadToken): DeadlineToken =
+        DeadlineToken(load, ++foregroundWaitGeneration)
+
+    private fun finish() {
+        loading = null
+        scheduled = null
     }
 }

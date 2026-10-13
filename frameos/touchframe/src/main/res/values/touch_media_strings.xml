@@ -17,5 +17,6 @@
     <string name="touch_media_retry">Retry</string>
     <string name="touch_media_link_unavailable">This media link is unavailable</string>
     <string name="touch_media_load_failed">Unable to load %1$s</string>
+    <string name="touch_media_render_timeout">This media is taking too long to appear. Try again.</string>
     <string name="touch_media_downloads_unavailable">Downloads are unavailable</string>
 </resources>
