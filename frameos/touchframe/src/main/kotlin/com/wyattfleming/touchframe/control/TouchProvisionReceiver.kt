@@ -20,6 +20,7 @@ class TouchProvisionReceiver : BroadcastReceiver() {
             photosUrl = intent.getStringExtra(TouchProvisionContract.EXTRA_PHOTOS_URL),
             homeAssistantUrl = intent.getStringExtra(TouchProvisionContract.EXTRA_HOME_ASSISTANT_URL),
             weatherEntityId = intent.getStringExtra(TouchProvisionContract.EXTRA_WEATHER_ENTITY_ID),
+            weatherLocationLabel = intent.getStringExtra(TouchProvisionContract.EXTRA_WEATHER_LOCATION_LABEL),
             artUrl = intent.getStringExtra(TouchProvisionContract.EXTRA_ART_URL),
             birdsUrl = intent.getStringExtra(TouchProvisionContract.EXTRA_BIRDS_URL),
             climateEntityId = intent.getStringExtra(TouchProvisionContract.EXTRA_CLIMATE_ENTITY_ID),

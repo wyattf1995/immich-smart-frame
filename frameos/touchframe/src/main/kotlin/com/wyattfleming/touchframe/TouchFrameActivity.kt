@@ -148,6 +148,7 @@ class TouchFrameActivity : Activity() {
         }, ::signIn, { mode -> changeClimate { it.changeClimateMode(mode) } },
             { value -> changeClimate { it.changeClimateTarget(value) } })
         weather = WeatherContentView(this).apply {
+            locationLabel = configuration?.weatherLocationLabel
             presentation = WeatherPresentation(emptyMessage = "Sign in to Home Assistant for weather", authenticationRequired = true)
             setOnPrimaryActionListener(::signIn)
             visibility = View.GONE
