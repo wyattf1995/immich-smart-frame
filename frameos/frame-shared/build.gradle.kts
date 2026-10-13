@@ -45,6 +45,7 @@ android {
                 "com/wyattfleming/frameos/auth/**",
                 "com/wyattfleming/frameos/weather/**",
                 "com/wyattfleming/frameos/security/FrameUrlPolicyTest.kt",
+                "com/wyattfleming/frameos/control/FrameCompanionEventStoreTest.kt",
             )
         }
     }
