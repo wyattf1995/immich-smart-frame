@@ -1902,6 +1902,8 @@
         let audioStream = null;
         let refreshDebounce = null;
         let attributionRetry = null;
+        let attributionRequest = null;
+        let rangeRequest = null;
         let audioFreshnessTimer = null;
         let disposed = false;
         let activeGeneration = 0;
@@ -1959,6 +1961,7 @@
 
         function setSpeciesPeriod(period) {
           if (!SPECIES_PERIODS.includes(period)) return;
+          cancelRangeRequest(isRangePeriod(period) ? period : null);
           state.speciesPeriod = period;
           const cachedRange = isRangePeriod(period) ? state.rangeSummaries[period] : null;
           state.summary = isRangePeriod(period) ? (cachedRange || []) : state.dailySummary;
@@ -2015,9 +2018,14 @@
           return "offline";
         }
 
-        async function fetchJson(path) {
+        async function fetchJson(path, signal = null) {
           if (disposed) throw new Error("Page is no longer active");
           const controller = new AbortController();
+          const abort = () => controller.abort();
+          if (signal) {
+            if (signal.aborted) abort();
+            else signal.addEventListener("abort", abort, { once: true });
+          }
           activeFetchControllers.add(controller);
           const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
           try {
@@ -2029,6 +2037,7 @@
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return await response.json();
           } finally {
+            if (signal) signal.removeEventListener("abort", abort);
             window.clearTimeout(timeout);
             activeFetchControllers.delete(controller);
           }
@@ -2393,25 +2402,29 @@
           loadAttribution(scientificName);
         }
 
-        async function loadAttribution(scientificName) {
-          if (!scientificName || disposed || document.hidden) return;
+        function loadAttribution(scientificName) {
+          if (!scientificName || disposed || document.hidden) return Promise.resolve();
           if (state.attributionSpecies === scientificName && state.attribution) {
             renderAttribution(state.attribution);
-            return;
+            return Promise.resolve();
           }
+          if (attributionRequest?.species === scientificName) return attributionRequest.promise;
           state.attributionSpecies = scientificName;
           state.attribution = null;
           window.clearTimeout(attributionRetry);
-          try {
-            const info = await fetchJson(`/api/v2/media/species-image/info?name=${encodeURIComponent(scientificName)}`);
-            if (state.attributionSpecies !== scientificName) return;
+          const request = fetchJson(`/api/v2/media/species-image/info?name=${encodeURIComponent(scientificName)}`).then((info) => {
+            if (attributionRequest?.promise !== request || state.attributionSpecies !== scientificName) return;
             state.attribution = info;
             renderAttribution(info);
-          } catch (_error) {
-            if (disposed || document.hidden || state.attributionSpecies !== scientificName) return;
+          }).catch(() => {
+            if (attributionRequest?.promise !== request || disposed || document.hidden || state.attributionSpecies !== scientificName) return;
             els.heroCredit.textContent = "Species photo resolving via BirdNET-Go";
             attributionRetry = window.setTimeout(() => loadAttribution(scientificName), IMAGE_RETRY_MS);
-          }
+          }).finally(() => {
+            if (attributionRequest?.promise === request) attributionRequest = null;
+          });
+          attributionRequest = { species: scientificName, promise: request };
+          return request;
         }
 
         function renderAttribution(info) {
@@ -2704,27 +2717,40 @@
           return hourly;
         }
 
-        async function refreshRange(period = state.speciesPeriod) {
-          if (disposed || document.hidden || !isRangePeriod(period)) return;
+        function cancelRangeRequest(keepPeriod = null) {
+          if (!rangeRequest || rangeRequest.period === keepPeriod) return;
+          const previous = rangeRequest;
+          rangeRequest = null;
+          previous.controller.abort();
+        }
+
+        function refreshRange(period = state.speciesPeriod) {
+          if (disposed || document.hidden || !isRangePeriod(period)) return Promise.resolve();
           const requestedPeriod = period;
+          if (rangeRequest?.period === requestedPeriod) return rangeRequest.promise;
+          cancelRangeRequest();
+          const controller = new AbortController();
           const generation = activeGeneration;
           const { start, end } = periodRange(requestedPeriod);
-          try {
-            const result = await fetchJson(`/api/v2/analytics/species/summary?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`);
-            if (disposed || document.hidden || generation !== activeGeneration) return;
+          const request = fetchJson(`/api/v2/analytics/species/summary?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`, controller.signal).then((result) => {
+            if (rangeRequest?.promise !== request || disposed || document.hidden || generation !== activeGeneration) return;
             state.rangeSummaries[requestedPeriod] = summaryItems(result);
             if (state.speciesPeriod !== requestedPeriod) return;
             state.rangeLoadingPeriod = "";
             state.summary = state.rangeSummaries[requestedPeriod];
             state.renderKeys.species = "";
             render();
-          } catch (_error) {
-            if (disposed || document.hidden || generation !== activeGeneration) return;
+          }).catch(() => {
+            if (rangeRequest?.promise !== request || disposed || document.hidden || generation !== activeGeneration) return;
             if (state.speciesPeriod !== requestedPeriod) return;
             state.rangeLoadingPeriod = "";
             state.renderKeys.species = "";
             render();
-          }
+          }).finally(() => {
+            if (rangeRequest?.promise === request) rangeRequest = null;
+          });
+          rangeRequest = { period: requestedPeriod, controller, promise: request };
+          return request;
         }
 
         async function refreshFast() {
@@ -2905,6 +2931,7 @@
         function pausePageActivity() {
           activeGeneration += 1;
           stopLiveStreams();
+          cancelRangeRequest();
           abortActiveFetches();
           window.clearTimeout(refreshDebounce);
           window.clearTimeout(attributionRetry);
