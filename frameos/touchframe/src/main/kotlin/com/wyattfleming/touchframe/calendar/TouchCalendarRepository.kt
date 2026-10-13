@@ -70,9 +70,19 @@ class TouchCalendarRepository(
     }
 
     /** Main-safe generation fence: cancelling Futures is nonblocking and never disconnects a socket. */
-    fun invalidate() { cancelOperation().forEach { it.cancel(true) } }
-    fun cancel() { cleanup(cancelOperation()) }
-    override fun close() { synchronized(lock) { closed = true }; cancel(); executor.shutdownNow() }
+    fun invalidate() { invalidateOperation().forEach { it.cancel(true) } }
+
+    /** Worker-only closeout: wait for serialized transport cleanup before returning. */
+    fun cancel() {
+        invalidate()
+        synchronized(loadLock) { cleanup(cancelOperation()) }
+    }
+
+    override fun close() {
+        synchronized(lock) { closed = true }
+        cancel()
+        executor.shutdownNow()
+    }
 
     private fun request(id: String, range: TouchCalendarRange, headers: Map<String, String>, deadline: WeatherRequestDeadline): CalendarResponse = try {
         val start = range.start.atStartOfDay(zoneId).toOffsetDateTime().toString()
@@ -97,6 +107,12 @@ class TouchCalendarRepository(
             if (active === operation) active = null
             if (!accepted || operation.cancelled) cleanupLocked(operation) else emptyList()
         }; cleanup(cleanup)
+    }
+    private fun invalidateOperation(): List<Future<*>> = synchronized(lock) {
+        val invalidated = active ?: return@synchronized emptyList()
+        invalidated.cancelled = true
+        // Retain the Futures. finishOperation runs under loadLock and owns socket cleanup.
+        invalidated.futures.toList()
     }
     private fun cancelOperation(): List<Future<*>> = synchronized(lock) { val current = active; active = null; cleanupLocked(current) }
     private fun cleanupLocked(operation: Operation?): List<Future<*>> = operation?.let { it.cancelled = true; it.futures.toList().also { operation.futures.clear() } }.orEmpty()
