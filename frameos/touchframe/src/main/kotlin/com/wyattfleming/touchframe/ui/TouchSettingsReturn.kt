@@ -9,6 +9,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import com.wyattfleming.touchframe.R
 import com.wyattfleming.touchframe.TouchFrameActivity
 
 /** The return control exists only while this app explicitly opens Android Settings. */
@@ -21,7 +22,7 @@ class TouchSettingsReturn(private val context: Context) {
         return try {
             if (button == null) {
                 val control = Button(context).apply {
-                    text = "Return to FrameOS Touch"
+                    text = context.getString(R.string.touch_return_to_app)
                     contentDescription = text
                     textSize = 20f
                     minHeight = (56 * resources.displayMetrics.density).toInt()
@@ -54,11 +55,13 @@ class TouchSettingsReturn(private val context: Context) {
                     val right = insets.systemWindowInsetRight
                     @Suppress("DEPRECATION")
                     val bottom = insets.systemWindowInsetBottom
-                    val cutout = if (Build.VERSION.SDK_INT >= 28) insets.displayCutout else null
-                    val gestures = if (Build.VERSION.SDK_INT >= 29) insets.mandatorySystemGestureInsets else null
+                    val cutoutRight = if (Build.VERSION.SDK_INT >= 28) insets.displayCutout?.safeInsetRight ?: 0 else 0
+                    val cutoutBottom = if (Build.VERSION.SDK_INT >= 28) insets.displayCutout?.safeInsetBottom ?: 0 else 0
+                    val gestureRight = if (Build.VERSION.SDK_INT >= 29) insets.mandatorySystemGestureInsets.right else 0
+                    val gestureBottom = if (Build.VERSION.SDK_INT >= 29) insets.mandatorySystemGestureInsets.bottom else 0
                     val margin = (16 * context.resources.displayMetrics.density).toInt()
-                    val x = margin + maxOf(right, cutout?.safeInsetRight ?: 0, gestures?.right ?: 0)
-                    val y = margin + maxOf(bottom, cutout?.safeInsetBottom ?: 0, gestures?.bottom ?: 0)
+                    val x = margin + maxOf(right, cutoutRight, gestureRight)
+                    val y = margin + maxOf(bottom, cutoutBottom, gestureBottom)
                     if (params.x != x || params.y != y) {
                         params.x = x
                         params.y = y

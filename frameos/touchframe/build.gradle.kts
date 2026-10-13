@@ -47,6 +47,9 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
 dependencies {
     compileOnly("androidx.annotation:annotation:1.11.0")
     implementation(project(":frame-shared"))
+    // Keep the shared API23 Java11 NIO compatibility pin until a separately
+    // validated dependency migration; lint must not silently force an upgrade.
+    //noinspection GradleDependency
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20260814")

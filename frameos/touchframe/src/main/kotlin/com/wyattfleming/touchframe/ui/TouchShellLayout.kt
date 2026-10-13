@@ -117,7 +117,16 @@ class TouchShellLayout(
         return false
     }
 
-    override fun onTouchEvent(event: MotionEvent): Boolean = menuVisible || super.onTouchEvent(event)
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!menuVisible) return super.onTouchEvent(event)
+        if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
+        return true
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
+    }
 
     private fun applyChrome() {
         val palette = Palette.forNight(night)

@@ -1,5 +1,6 @@
 package com.wyattfleming.touchframe
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.pm.PackageManager
@@ -117,8 +118,16 @@ class TouchFrameActivity : Activity() {
         }
     }
 
+    private var unregisterPlatformBack: (() -> Unit)? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= 33) {
+            val dispatcher = onBackInvokedDispatcher
+            val callback = android.window.OnBackInvokedCallback { handleBack() }
+            dispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
+            unregisterPlatformBack = { dispatcher.unregisterOnBackInvokedCallback(callback) }
+        }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         immersive()
         configuration = TouchConfigurationStore(this).read()
@@ -217,6 +226,8 @@ class TouchFrameActivity : Activity() {
     }
 
     override fun onDestroy() {
+        unregisterPlatformBack?.invoke()
+        unregisterPlatformBack = null
         settingsReturn.remove()
         closeAuthorization(restoreDestination = false)
         tasks.close()
@@ -496,7 +507,7 @@ class TouchFrameActivity : Activity() {
         }, { closeAuthorization(); message("Sign-in could not be completed") })
         container.addView(surface, fill())
         container.addView(Button(this).apply {
-            text = "Cancel sign-in"
+            text = getString(R.string.touch_cancel_sign_in)
             minHeight = dp(56)
             setOnClickListener { pending.consume(); closeAuthorization() }
         }, FrameLayout.LayoutParams(-2, dp(56), Gravity.TOP or Gravity.END))
@@ -724,8 +735,13 @@ class TouchFrameActivity : Activity() {
         }
     }
 
-    @Suppress("DEPRECATION")
-    override fun onBackPressed() {
+    // API33+ gestures use the lifecycle-owned platform callback registered above.
+    // The legacy override remains necessary for these API23/API27 physical frames.
+    @SuppressLint("GestureBackNavigation")
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    override fun onBackPressed() = handleBack()
+
+    private fun handleBack() {
         if (authorization != null) closeAuthorization() else navigate(TouchDestination.HOME)
     }
 

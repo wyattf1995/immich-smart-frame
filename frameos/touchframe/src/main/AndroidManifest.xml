@@ -4,9 +4,15 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
 
+    <!-- Gecko bundles ExoPlayer NotificationUtil. This declaration does not
+         request notification access; Touch does not post or request notifications. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".TouchFrameApplication"
         android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/touch_data_extraction_rules"
         android:icon="@drawable/ic_touchframe"
         android:label="@string/app_name"
         android:supportsRtl="true"
