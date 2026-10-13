@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.widget.FrameLayout
 import android.widget.ImageView
 import com.wyattfleming.frameos.photos.FrameOfflineReserve
 import com.wyattfleming.frameos.photos.FramePhotoBridge
@@ -27,11 +28,16 @@ internal class TouchOfflinePhotos(
         Thread(runnable, "touchframe-offline-photos").apply { isDaemon = true }
     },
 ) : AutoCloseable {
-    val view = ImageView(context).apply {
-        visibility = View.GONE
+    private val backdrop = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+    private val foreground = ImageView(context).apply {
         scaleType = ImageView.ScaleType.FIT_CENTER
-        setBackgroundColor(Color.BLACK)
         contentDescription = "Recent photo while Photos reconnects"
+    }
+    val view = FrameLayout(context).apply {
+        visibility = View.GONE
+        setBackgroundColor(Color.BLACK)
+        addView(backdrop, FrameLayout.LayoutParams(-1, -1))
+        addView(foreground, FrameLayout.LayoutParams(-1, -1))
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -43,6 +49,7 @@ internal class TouchOfflinePhotos(
     @Volatile private var fallbackGeneration = 0L
     @Volatile private var session: GeckoSession? = null
     private var bitmap: Bitmap? = null
+    private var blurredBitmap: Bitmap? = null
 
     fun attach(runtime: GeckoRuntime, target: GeckoSession, photosUrl: String, profile: String, active: Boolean) {
         detachCurrent()
@@ -52,10 +59,13 @@ internal class TouchOfflinePhotos(
         lifecycle.setActive(active)
         worker.execute {
             if (closed || session !== target) return@execute
+            // attach() activates the reserve scope before it configures trusted capture.
+            // A detach may race this worker task; leave that stale bridge detached.
             bridge.attach(runtime, target, photosUrl, profile) { ready ->
                 if (closed || session !== target || !ready) return@attach
                 bridge.setCaptureEnabled(photosActive, photosPaused = false)
             }
+            if (closed || session !== target) bridge.detach(target)
         }
     }
 
@@ -84,16 +94,22 @@ internal class TouchOfflinePhotos(
         worker.execute {
             val entry = reserve.latest() ?: return@execute
             val decoded = runCatching { BitmapFactory.decodeFile(entry.file.path) }.getOrNull() ?: return@execute
+            val blurred = blurBackdrop(decoded)
             main.post {
                 if (closed || !photosActive || generation != fallbackGeneration || !lifecycle.canUseFallback(attached, lifecycleGeneration)) {
                     decoded.recycle()
+                    blurred?.recycle()
                     return@post
                 }
                 val previous = bitmap
                 bitmap = decoded
-                view.setImageBitmap(decoded)
+                val previousBlurred = blurredBitmap
+                blurredBitmap = blurred
+                backdrop.setImageBitmap(blurred)
+                foreground.setImageBitmap(decoded)
                 view.visibility = View.VISIBLE
                 previous?.recycle()
+                previousBlurred?.recycle()
             }
         }
     }
@@ -102,9 +118,12 @@ internal class TouchOfflinePhotos(
         fallbackGeneration += 1L
         if (view.visibility != View.VISIBLE && bitmap == null) return
         view.visibility = View.GONE
-        view.setImageDrawable(null)
+        foreground.setImageDrawable(null)
+        backdrop.setImageDrawable(null)
         bitmap?.recycle()
+        blurredBitmap?.recycle()
         bitmap = null
+        blurredBitmap = null
     }
 
     fun setPaused(paused: Boolean): Boolean = bridge.setPlaybackPaused(paused)
@@ -130,6 +149,40 @@ internal class TouchOfflinePhotos(
         fallbackGeneration += 1L
         hideFallback()
     }
+
+
+    /** Worker-only: blur a bounded copy before ImageView center-crops the backdrop. */
+    private fun blurBackdrop(source: Bitmap): Bitmap? = runCatching {
+        val plan = TouchOfflineBlurPlan.forForeground(source.width, source.height)
+        val small = if (plan.backdropWidth == source.width && plan.backdropHeight == source.height) {
+            source.copy(source.config ?: Bitmap.Config.ARGB_8888, true)
+        } else {
+            Bitmap.createScaledBitmap(source, plan.backdropWidth, plan.backdropHeight, true)
+        }
+        // Never mutate source: it remains the foreground's uncropped FIT_CENTER bitmap.
+        val width = small.width
+        val height = small.height
+        val pixels = IntArray(width * height)
+        small.getPixels(pixels, 0, width, 0, 0, width, height)
+        val temp = pixels.copyOf()
+        fun pass(input: IntArray, output: IntArray, horizontal: Boolean) {
+            for (y in 0 until height) for (x in 0 until width) {
+                var a = 0; var r = 0; var g = 0; var b = 0; var count = 0
+                for (offset in -3..3) {
+                    val xx = if (horizontal) (x + offset).coerceIn(0, width - 1) else x
+                    val yy = if (horizontal) y else (y + offset).coerceIn(0, height - 1)
+                    val value = input[yy * width + xx]
+                    a += value ushr 24; r += (value shr 16) and 0xff
+                    g += (value shr 8) and 0xff; b += value and 0xff; count++
+                }
+                output[y * width + x] =
+                    ((a / count) shl 24) or ((r / count) shl 16) or ((g / count) shl 8) or (b / count)
+            }
+        }
+        repeat(2) { pass(temp, pixels, true); pass(pixels, temp, false) }
+        small.setPixels(temp, 0, width, 0, 0, width, height)
+        small
+    }.getOrNull()
 
     private fun onObserved(photo: FramePhotoBridge.PhotoObserved) {
         main.post {
@@ -164,4 +217,28 @@ internal class TouchOfflinePhotoLifecycle {
         active && attachment === session && generation == expectedGeneration
 
     fun currentGeneration(): Long = generation
+}
+
+/** A bounded backdrop copy never changes the foreground bitmap's intended dimensions. */
+internal object TouchOfflineBlurPlan {
+    const val MAX_BACKDROP_EDGE = 128
+
+    data class Plan(
+        val foregroundWidth: Int,
+        val foregroundHeight: Int,
+        val backdropWidth: Int,
+        val backdropHeight: Int,
+    )
+
+    fun forForeground(width: Int, height: Int): Plan {
+        require(width > 0 && height > 0) { "bitmap dimensions must be positive" }
+        val largest = maxOf(width, height)
+        val scale = minOf(1f, MAX_BACKDROP_EDGE.toFloat() / largest)
+        return Plan(
+            foregroundWidth = width,
+            foregroundHeight = height,
+            backdropWidth = (width * scale).toInt().coerceAtLeast(1),
+            backdropHeight = (height * scale).toInt().coerceAtLeast(1),
+        )
+    }
 }
