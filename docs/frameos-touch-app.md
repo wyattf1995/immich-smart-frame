@@ -11,7 +11,9 @@ not the Lenovo activity or its mode/gesture state machine.
 - Home is a native, responsive dashboard. Its clock, navigation, and last known
   data render immediately; a network refresh never replaces it with a loading page.
 - The navigation rail exposes Home, Photos, Art, Weather, Cameras, Calendar, and
-  full Android Settings. Controls are readable on 1920×1080 and 1280×800 frames.
+  full Android Settings. Layouts target 1920×1080 and 1280×800 frames; actual
+  readability and reachability still require device acceptance. Home remains
+  reachable when companion settings reorder or disable other destinations.
 - Photos and Art fill the screen. Artwork stays uncropped with blurred margins.
   An inward swipe in the left 48dp opens the menu; its scrim dismisses the menu.
 - Android Settings opens directly and gets an explicit Return to FrameOS Touch
@@ -55,6 +57,30 @@ Measure tap-to-first-usable-content separately from background data freshness.
 
 API references: [Home Assistant REST API](https://developers.home-assistant.io/docs/api/rest/)
 and [authentication API](https://developers.home-assistant.io/docs/auth_api/).
+
+## First-install boundary
+
+The preview has no HOME intent filter or boot takeover enabled. Install it beside
+B7 only after the build gates pass, keeping Frameo's default HOME unchanged. Initial
+configuration uses the `com.wyattfleming.touchframe.PROVISION` broadcast to
+`.control.TouchProvisionReceiver`, protected by Android's DUMP permission. It accepts
+bounded non-secret configuration and durably commits it on a worker; it refuses
+any existing configuration. A success returns `provisioned-restart-required`.
+Provision before the first Activity launch. It never copies OAuth or companion
+credentials from another package.
+
+The source integrates a 12-photo/24-MiB private offline reserve, uncropped fallback
+with a small blurred backdrop, monotonic remote settings, quiet-hours brightness,
+idle return, and bounded companion callbacks. Companion polling remains disabled
+until a reviewed takeover provides this package's own credentials and enables it;
+never run old and new pollers with the same device identity at once. Events use
+durable at-most-once claims; a lifecycle interruption after a claim may suppress
+that event rather than showing it twice. Photos pause/hold is session state.
+
+Camera mode currently provides authenticated snapshots, not live video. Birds,
+boot recovery, companion provisioning/takeover and physical UI acceptance remain
+open parity gates before replacing the old app. API37 local-network permission
+handling is source-only until a compatible runtime test is available.
 
 No new Touch APK has been built, signed, installed, or accepted yet. The earlier
 performance-remediation branches are retained; source changes are not deployment
