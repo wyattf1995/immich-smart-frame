@@ -31,6 +31,23 @@ class TouchMediaLoadStateTest {
     }
 
     @Test
+    fun hiddenContentCrashRecoversExactlyOnceWhenTheUserReturns() {
+        val state = TouchMediaLoadState()
+        val art = "https://photos.example/art"
+        assertEquals(TouchMediaLoadState.Decision.LOAD, state.showUrl(art))
+        state.markContentProcessClosed(whileHidden = true)
+
+        assertEquals(TouchMediaLoadState.Decision.RECOVER_RETAINED_SESSION, state.showUrl(art))
+        assertEquals(TouchMediaLoadState.Decision.ALREADY_LOADED, state.showUrl(art))
+
+        // The recovery session is foregrounded before it loads. A later crash
+        // must remain user-controlled instead of starting an automatic loop.
+        state.markContentProcessClosed()
+        assertEquals(TouchMediaLoadState.Decision.RETRY_REQUIRED, state.showUrl(art))
+        assertTrue(state.retry()?.reopenSession == true)
+    }
+
+    @Test
     fun retryWithoutAConfiguredUrlDoesNothingAndOriginPolicyRejectsEscape() {
         assertNull(TouchMediaLoadState().retry())
         val policy = FrameUrlPolicy()

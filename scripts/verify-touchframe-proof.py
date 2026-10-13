@@ -93,7 +93,7 @@ def static_contract() -> dict[str, object]:
         "bounded request workers": "MAX_REQUEST_WORKERS = 2",
         "cancel operation generation gate": "!acceptOperation(operation)",
         "calendar event cap": "MAX_EVENTS_PER_CALENDAR = 200",
-        "same-url crash retry": "if (configuredUrl == url) return if (contentProcessClosed)",
+        "hidden crash has one return recovery": "if (hiddenReturnRecoveryAvailable) {",
         "Camera palette accessible accent": "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
         "pause lifecycle gate": "if (closed || !resumed) return\n            resumed = false",
         "Photos-active fallback gate": "active = value && attachment != null",
@@ -142,16 +142,16 @@ source_hashes = {name: hashlib.sha256(value).hexdigest() for name, value in sour
 test_hashes = {str(test.relative_to(root)): digest(test) for _, (_, test, _) in suites.items()}
 expected_tests = sum(test_count(test) for _, (_, test, _) in suites.items())
 command = [
-    "./gradlew", "--no-daemon", "--max-workers=2", ":touchframe:testDebugUnitTest",
+    "./gradlew", "--no-daemon", "--max-workers=2", "--rerun-tasks", ":touchframe:testDebugUnitTest",
     *[arg for _, (_, _, klass) in suites.items() for arg in ("--tests", klass)],
 ]
 bridge_command = [
-    "./gradlew", "--no-daemon", "--max-workers=2", ":frame-shared:testDebugUnitTest",
+    "./gradlew", "--no-daemon", "--max-workers=2", "--rerun-tasks", ":frame-shared:testDebugUnitTest",
     "--tests", bridge_class,
 ]
 repository_climate_case = "failed refresh makes previously confirmed climate read-only"
 repository_case_command = [
-    "./gradlew", "--no-daemon", "--max-workers=2", ":touchframe:testDebugUnitTest",
+    "./gradlew", "--no-daemon", "--max-workers=2", "--rerun-tasks", ":touchframe:testDebugUnitTest",
     "--tests", f"{suites['repository'][2]}.{repository_climate_case}",
 ]
 
@@ -370,10 +370,10 @@ try:
         {repository_climate_case},
     )
     media_red = mutate(
-        "media-crash-retry-red", "media",
-        "return if (contentProcessClosed) Decision.RETRY_REQUIRED else Decision.LOAD",
-        "return Decision.LOAD",
-        {"contentCrashRequiresExplicitRetryAndUsesTheMostRecentConfiguredUrl"},
+        "media-hidden-return-recovery-red", "media",
+        "if (hiddenReturnRecoveryAvailable) {",
+        "if (false) {",
+        {"hiddenContentCrashRecoversExactlyOnceWhenTheUserReturns"},
     )
     camera_palette_red = mutate(
         "camera-palette-contrast-red", "camera_palette",
