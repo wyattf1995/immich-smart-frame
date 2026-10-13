@@ -56,7 +56,7 @@ source_hash = sha256(source)
 test_hash = sha256(test)
 checks = [
     ("touch-home-startup-source-red", "if (touchNavigationEnabled && !touchscreenSettings.startWithPhotos) {", "if (touchNavigationEnabled) {", "touch startup opens authenticated Home unless Photos startup is configured"),
-    ("touch-home-rail-source-red", "it.setModes(TouchNavigationRailPolicy.ordered(availableModes()))", "it.setModes(availableModes())", "rail presents the existing Home mode and Settings without a native Today destination"),
+    ("touch-home-rail-source-red", "it.setModes(TouchNavigationRailPolicy.ordered(availableModes()))", "it.setModes(availableModes())", "rail presents existing Home and Android Settings return without a native Today destination"),
     ("touch-home-back-lifecycle-source-red", "unregisterHomeBack?.invoke()\n        unregisterHomeBack = if", "unregisterHomeBack = if", "Back and Home controls route to the existing Home mode"),
 ]
 results: dict[str, object] = {}
@@ -81,5 +81,5 @@ for label, before, after, failed_name in checks:
 
 if sha256(test) != test_hash:
     raise RuntimeError("contract test changed during proof")
-(out / "touch-dashboard-integration-proof.json").write_text(json.dumps({"passed": True, "recipe": "touchscreen startup, Home-first rail, and lifecycle-managed Back use the existing authenticated Home mode", "original_source_sha256": source_hash, "restored_source_sha256": sha256(source), "unchanged_test_sha256": test_hash, "checks": results}, indent=2) + "\n", encoding="utf-8")
+(out / "touch-dashboard-integration-proof.json").write_text(json.dumps({"passed": True, "recipe": "touchscreen startup, Home-first rail, Android Settings return, and lifecycle-managed Back use the existing authenticated Home mode", "original_source_sha256": source_hash, "restored_source_sha256": sha256(source), "unchanged_test_sha256": test_hash, "checks": results}, indent=2) + "\n", encoding="utf-8")
 print("touch Home integration red / exact restore green verified", flush=True)
