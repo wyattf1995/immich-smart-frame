@@ -39,6 +39,12 @@ Home Assistant supplies authenticated data and service calls; it is not the
 frontend for the native Home, Weather, or Calendar screens. The browser surface
 is reserved for its documented media uses and the short-lived sign-in flow.
 
+Entity IDs in the existing defaults and legacy examples are installation-specific
+configuration conventions, not a discovery mechanism or a universal Home
+Assistant schema. Provision explicit climate, calendar and camera entity IDs for
+each installation. A design change must preserve persisted configuration and must
+not assume that the example room names identify available entities.
+
 ## Design target
 
 The intended result is a calm wall-frame interface: warm neutral surfaces,
@@ -110,8 +116,10 @@ hardware acceptance gate.
 
 ## Evidence boundary
 
-A prior small-frame verification covered Calendar and Weather on an earlier
-source revision. The combined Touch candidate at `9cde0afd` is newer and has
-not thereby gained installation or device-acceptance status. Keep candidate
-source, compiled artifacts, signed artifacts, and device evidence distinct in
-future design and release notes.
+A prior small-frame verification covered Calendar and Weather on source
+`e7403b4f`. The combined Touch candidate at `9cde0afd` is newer and has not
+thereby gained installation or device-acceptance status. Keep candidate source,
+compiled artifacts, signed artifacts, and device evidence distinct in future
+design and release notes. Household screenshots, authentication, device
+identifiers and operational receipts stay in the private handoff; use synthetic
+events, artwork and camera placeholders for public design examples.

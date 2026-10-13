@@ -102,6 +102,12 @@ runtime verification, boot recovery, companion provisioning/takeover and physica
 open parity gates before replacing the old app. API37 local-network permission
 handling is source-only until a compatible runtime test is available.
 
-No new Touch APK has been built, signed, installed, or accepted yet. The earlier
-performance-remediation branches are retained; source changes are not deployment
-claims. Shared backend and curation fixes remain in scope for this new application.
+As of October 13, 2026, earlier Touch candidates have been built, QA-signed and
+installed on specific small and large test frames. The small-frame Week calendar
+and Weather layout have scoped device verification. Those results do not accept
+every subsequent source revision, either device family, or the open parity gates
+above. Source publication is separate from an APK release or household rollout.
+Shared backend and curation fixes remain in scope for this application.
+
+See the [design handoff](frameos-touch-design-handoff.md) for source seams,
+interaction constraints and the distinction between native controls and media.
