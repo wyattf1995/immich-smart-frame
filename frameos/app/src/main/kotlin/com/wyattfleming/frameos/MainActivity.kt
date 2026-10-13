@@ -1398,13 +1398,15 @@ class MainActivity : Activity() {
             }
             handler.post {
                 companionPollInFlight = false
+                val credentialsStillCurrent = FrameCompanionCredentialsStore(this).read() == credentials
                 if (
                     generation != companionPollGeneration ||
                     !activityResumed ||
                     isFinishing ||
                     isDestroyed ||
-                    FrameCompanionCredentialsStore(this).read() != credentials
+                    !credentialsStillCurrent
                 ) {
+                    if (!credentialsStillCurrent) invalidateCompanionPoll()
                     scheduleCompanionPoll()
                     return@post
                 }
