@@ -29,6 +29,16 @@ class TouchThemeTest {
             assertReadable("$name alert", p.alertInk, p.alert)
             assertReadable("$name disabled on mat", p.disabledInk, p.mat)
             assertReadable("$name disabled on wall", p.disabledInk, p.wall)
+            assertReadable("$name ink on today", p.ink, p.todayFill)
+            assertReadable("$name today label", p.accentInk, p.todayFill)
+        }
+    }
+
+    @Test
+    fun `today stands apart from both past days on the wall and upcoming panels`() {
+        listOf(TouchPalette.DAY, TouchPalette.NIGHT).forEach { p ->
+            assertTrue(p.todayFill != p.wall && p.todayFill != p.mat)
+            assertReadable("today outline on wall", p.accentStroke, p.wall, 3.0)
         }
     }
 
