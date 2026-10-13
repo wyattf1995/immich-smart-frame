@@ -51,7 +51,6 @@ class TouchHomeView private constructor(
     private var model: TouchHomeModel? = null
     private var nowMillis: Long = System.currentTimeMillis()
     private var style = TouchDashboardStyle.forHour(hourAt(nowMillis))
-    private var draftEntityId: String? = null
     private var draftMode: String? = null
     private var draftTarget: Double? = null
     private var draftDirty = false
@@ -219,14 +218,14 @@ class TouchHomeView private constructor(
             type.small,
             false,
         ))
-        val modes = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+        val modes = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         climate.modes.distinct().forEach { candidate ->
             modes.addView(button(candidate.replaceFirstChar { it.titlecase(Locale.getDefault()) }, type.small) {
                 draftMode = candidate
                 draftDirty = true
                 rebuild()
-            }, LinearLayout.LayoutParams(0, context.dp(56), 1f).apply {
-                marginEnd = context.dp(8)
+            }, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)).apply {
+                if (childCount > 0) topMargin = context.dp(8)
             })
         }
         addView(modes, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
@@ -290,7 +289,6 @@ class TouchHomeView private constructor(
     }
 
     private fun clearDraft(climate: TouchClimate?) {
-        draftEntityId = climate?.entityId
         draftMode = climate?.mode
         draftTarget = climate?.targetTemperature
         draftDirty = false
@@ -326,6 +324,10 @@ class TouchHomeView private constructor(
 
     private fun divider(): View = View(context).apply {
         setBackgroundColor(style.outline)
+        layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(1)).apply {
+            topMargin = context.dp(8)
+            bottomMargin = context.dp(8)
+        }
     }
 
     private fun isLargeLandscape(): Boolean {
