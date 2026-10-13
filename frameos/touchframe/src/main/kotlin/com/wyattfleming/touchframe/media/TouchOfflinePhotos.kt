@@ -76,7 +76,11 @@ internal class TouchOfflinePhotos(
                 // Gecko extension creation stays on the UI thread after worker scope activation.
                 bridge.attachPrepared(runtime, target) { ready ->
                     if (closed || session !== target || !attachmentGate.isCurrent(expectedAttachment) || !ready) return@attachPrepared
-                    bridge.setCaptureEnabled(photosActive, photosPaused = false)
+                    worker.execute {
+                        if (!closed && session === target && attachmentGate.isCurrent(expectedAttachment)) {
+                            bridge.setCaptureEnabled(photosActive, photosPaused = false)
+                        }
+                    }
                 }
             }
         }
@@ -85,7 +89,13 @@ internal class TouchOfflinePhotos(
     fun setActive(active: Boolean) {
         photosActive = active && !closed && session != null
         lifecycle.setActive(photosActive)
-        bridge.setCaptureEnabled(photosActive, photosPaused = false)
+        val attached = session
+        val expectedAttachment = attachmentGate.current()
+        if (attached != null) worker.execute {
+            if (!closed && session === attached && attachmentGate.isCurrent(expectedAttachment)) {
+                bridge.setCaptureEnabled(photosActive, photosPaused = false)
+            }
+        }
         if (!photosActive) hideFallback()
     }
 
@@ -213,6 +223,7 @@ internal class TouchOfflineAttachmentGate {
 
     fun begin(): Long = generation.incrementAndGet()
     fun invalidate(): Long = generation.incrementAndGet()
+    fun current(): Long = generation.get()
     fun isCurrent(expected: Long): Boolean = generation.get() == expected
 }
 
