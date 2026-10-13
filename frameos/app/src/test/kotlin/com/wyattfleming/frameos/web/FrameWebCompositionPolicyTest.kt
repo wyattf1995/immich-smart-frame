@@ -18,12 +18,14 @@ class FrameWebCompositionPolicyTest {
     }
 
     @Test
-    fun `Birds does not cold start Calendar behind its disposable dashboard`() {
-        val plan = FrameWebCompositionPolicy.forMode(FrameMode.BIRDS)
+    fun `isolated Art and Birds do not cold start Calendar behind disposable content`() {
+        listOf(FrameMode.ART, FrameMode.BIRDS).forEach { mode ->
+            val plan = FrameWebCompositionPolicy.forMode(mode)
 
-        assertEquals(FrameWebForeground.PRIMARY, plan.foreground)
-        assertTrue(plan.retainHomeAssistantSurface)
-        assertFalse(plan.warmCalendarInBackground)
+            assertEquals(FrameWebForeground.PRIMARY, plan.foreground)
+            assertTrue(plan.retainHomeAssistantSurface)
+            assertFalse(plan.warmCalendarInBackground)
+        }
     }
 
     @Test
@@ -50,6 +52,10 @@ class FrameWebCompositionPolicyTest {
         assertEquals(
             FrameWebForeground.PRIMARY,
             FrameWebCompositionPolicy.forMode(FrameMode.BIRDS).foreground,
+        )
+        assertEquals(
+            FrameWebForeground.PRIMARY,
+            FrameWebCompositionPolicy.forMode(FrameMode.ART).foreground,
         )
         assertEquals(
             FrameWebForeground.NATIVE_WEATHER,

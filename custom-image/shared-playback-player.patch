@@ -1,0 +1,446 @@
+diff --git a/frontend/src/ts/shared-playback.ts b/frontend/src/ts/shared-playback.ts
+new file mode 100644
+index 0000000..ce856f0
+--- /dev/null
++++ b/frontend/src/ts/shared-playback.ts
+@@ -0,0 +1,440 @@
++import DOMPurify from "dompurify";
++
++export type SharedSlide = {
++    id: string;
++    assetId: string;
++    startsAt: number;
++    url: string;
++};
++
++export type SharedPlaybackState = {
++    sessionId: string;
++    version: number;
++    serverNow: number;
++    paused: boolean;
++    loading: boolean;
++    current: SharedSlide | null;
++    next: SharedSlide | null;
++};
++
++export type SharedPlaybackAction = "next" | "previous" | "pause" | "resume";
++
++export type PreparedSlide = { id: string };
++
++export type SharedPlaybackPorts = {
++    now(): number;
++    setTimer(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>;
++    clearTimer(timer: ReturnType<typeof setTimeout>): void;
++    fetchState(signal: AbortSignal): Promise<SharedPlaybackState>;
++    sendCommand(
++        action: SharedPlaybackAction,
++        expectedVersion: number,
++        sessionId: string,
++        signal: AbortSignal,
++    ): Promise<SharedPlaybackState>;
++    prepare(slide: SharedSlide, signal: AbortSignal): Promise<PreparedSlide>;
++    render(prepared: PreparedSlide): void;
++    status(message: "connected" | "offline" | "error"): void;
++    paused(paused: boolean): void;
++};
++
++const POLL_MS = 1_000;
++const RETRY_MAX_MS = 15_000;
++const REQUEST_TIMEOUT_MS = 8_000;
++
++function validState(value: SharedPlaybackState): boolean {
++    return Boolean(
++        value && typeof value.sessionId === "string" && value.sessionId.length <= 128 &&
++        Number.isFinite(value.version) && Number.isFinite(value.serverNow) &&
++        typeof value.paused === "boolean" && typeof value.loading === "boolean" &&
++        [value.current, value.next].every((slide) => slide === null || (
++            typeof slide.id === "string" && slide.id.length > 0 && slide.id.length <= 256 &&
++            typeof slide.assetId === "string" && slide.assetId.length > 0 &&
++            Number.isFinite(slide.startsAt) && typeof slide.url === "string" && slide.url.length <= 4096
++        )),
++    );
++}
++
++/** A server-authoritative player. It intentionally never rotates from a local queue. */
++export class SharedPlaybackController {
++    private pollTimer: ReturnType<typeof setTimeout> | undefined;
++    private displayTimer: ReturnType<typeof setTimeout> | undefined;
++    private readonly requests = new Set<AbortController>();
++    private generation = 0;
++    private visible = true;
++    private disposed = false;
++    private retryMs = POLL_MS;
++    private state: SharedPlaybackState | undefined;
++    private offsetMs = 0;
++    private readonly prepared = new Map<string, PreparedSlide>();
++    private renderedId: string | undefined;
++    private commandInFlight = false;
++    private requestedState = 0;
++    private acceptedState = 0;
++    private revision = 0;
++    private readonly preparing = new Map<string, Promise<PreparedSlide>>();
++
++    constructor(private readonly ports: SharedPlaybackPorts) {}
++
++    start(): void {
++        if (this.disposed || !this.visible || this.pollTimer) return;
++        this.poll();
++    }
++
++    setVisible(visible: boolean): void {
++        if (this.disposed || this.visible === visible) return;
++        this.visible = visible;
++        this.generation++;
++        this.cancelWork();
++        if (visible) this.start();
++    }
++
++    dispose(): void {
++        if (this.disposed) return;
++        this.disposed = true;
++        this.visible = false;
++        this.generation++;
++        this.cancelWork();
++        this.prepared.clear();
++    }
++
++    command(action: SharedPlaybackAction): void {
++        if (this.disposed || !this.visible || this.commandInFlight || !this.state) return;
++        this.commandInFlight = true;
++        const generation = this.generation;
++        const expectedVersion = this.state.version;
++        const sessionId = this.state.sessionId;
++        const requestId = ++this.requestedState;
++        this.withTimeout((signal) => this.ports.sendCommand(action, expectedVersion, sessionId, signal))
++            .then((state) => this.accept(state, generation, requestId))
++            .catch(() => {
++                if (this.active(generation)) this.pollSoon(0);
++            })
++            .then(() => { this.commandInFlight = false; });
++    }
++
++    currentId(): string | undefined { return this.state?.current?.id; }
++    currentSessionId(): string | undefined { return this.state?.sessionId; }
++    isPaused(): boolean { return this.state?.paused ?? false; }
++
++    private poll(): void {
++        if (this.disposed || !this.visible) return;
++        this.pollTimer = undefined;
++        const generation = this.generation;
++        const requestId = ++this.requestedState;
++        const sentAt = this.ports.now();
++        this.withTimeout((signal) => this.ports.fetchState(signal))
++            .then((state) => {
++                const receivedAt = this.ports.now();
++                if (!this.active(generation) || !validState(state)) return;
++                this.accept(state, generation, requestId, state.serverNow - ((sentAt + receivedAt) / 2));
++            })
++            .catch(() => {
++                if (!this.active(generation)) return;
++                this.ports.status("offline");
++                if (this.displayTimer) this.ports.clearTimer(this.displayTimer);
++                this.displayTimer = undefined;
++                this.pollSoon(this.retryMs);
++                this.retryMs = Math.min(RETRY_MAX_MS, this.retryMs * 2);
++            });
++    }
++
++    private accept(state: SharedPlaybackState, generation: number, requestId: number, offset?: number): void {
++        if (!this.active(generation) || !validState(state)) return;
++        if (requestId < this.acceptedState) return;
++        if (
++            this.state && state.sessionId === this.state.sessionId &&
++            state.version < this.state.version
++        ) return;
++        this.acceptedState = requestId;
++        if (offset !== undefined) this.offsetMs = offset;
++        this.retryMs = POLL_MS;
++        this.ports.status("connected");
++        const revision = ++this.revision;
++        const sessionChanged = this.state && this.state.sessionId !== state.sessionId;
++        this.state = state;
++        this.ports.paused(state.paused);
++        if (sessionChanged) {
++            this.generation++;
++            generation = this.generation;
++            this.prepared.clear();
++            this.preparing.clear();
++            this.renderedId = undefined;
++            this.cancelWork();
++        }
++        const wanted = [state.current, state.next].filter((slide): slide is SharedSlide => slide !== null);
++        const wantedIds = new Set(wanted.map((slide) => slide.id));
++        for (const id of this.prepared.keys()) if (!wantedIds.has(id)) this.prepared.delete(id);
++        const current = state.current;
++        if (current) this.prepare(current, generation).then(() => {
++            this.showCurrent(state, generation, revision);
++        }).catch(() => {
++            if (this.active(generation) && revision === this.revision) this.ports.status("error");
++        });
++        if (state.next) this.prepare(state.next, generation).then(() => {
++            // A slow next must not delay the current, but must arm its deadline once decoded.
++            this.showCurrent(state, generation, revision);
++        }).catch(() => {
++            if (this.active(generation) && revision === this.revision) this.ports.status("error");
++        });
++        this.pollSoon(POLL_MS);
++    }
++
++    private prepare(slide: SharedSlide, generation: number): Promise<PreparedSlide> {
++        const cached = this.prepared.get(slide.id);
++        if (cached) return Promise.resolve(cached);
++        const running = this.preparing.get(slide.id);
++        if (running) return running;
++        let runningPrepare!: Promise<PreparedSlide>;
++        runningPrepare = this.withTimeout((signal) => this.ports.prepare(slide, signal)).then(
++            (prepared) => {
++                if (this.active(generation) && this.preparing.get(slide.id) === runningPrepare) {
++                    this.prepared.set(slide.id, prepared);
++                }
++                if (this.preparing.get(slide.id) === runningPrepare) this.preparing.delete(slide.id);
++                return prepared;
++            },
++            (error) => {
++                if (this.preparing.get(slide.id) === runningPrepare) this.preparing.delete(slide.id);
++                throw error;
++            },
++        );
++        this.preparing.set(slide.id, runningPrepare);
++        return runningPrepare;
++    }
++
++    private showCurrent(state: SharedPlaybackState, generation: number, revision: number): void {
++        if (!this.active(generation) || revision !== this.revision || this.state !== state) return;
++        const current = state.current;
++        if (!current) return;
++        const now = this.ports.now() + this.offsetMs;
++        const dueNext = !state.paused && state.next && state.next.startsAt <= now
++            ? this.prepared.get(state.next.id) : undefined;
++        if (dueNext) {
++            if (this.renderedId !== dueNext.id) {
++                this.ports.render(dueNext);
++                this.renderedId = dueNext.id;
++            }
++            return;
++        }
++        const prepared = this.prepared.get(current.id);
++        if (!prepared) return;
++        const delay = Math.max(0, current.startsAt - now);
++        if (delay > 0) {
++            if (this.displayTimer) this.ports.clearTimer(this.displayTimer);
++            this.displayTimer = this.ports.setTimer(() => this.showCurrent(state, generation, revision), delay);
++            return;
++        }
++        if (this.renderedId !== current.id) {
++            this.ports.render(prepared);
++            this.renderedId = current.id;
++        }
++        const next = state.next;
++        if (!state.paused && next && this.prepared.has(next.id)) {
++            const nextDelay = Math.max(0, next.startsAt - (this.ports.now() + this.offsetMs));
++            if (this.displayTimer) this.ports.clearTimer(this.displayTimer);
++            this.displayTimer = this.ports.setTimer(() => {
++                if (!this.active(generation) || revision !== this.revision || this.state !== state) return;
++                const nextPrepared = this.prepared.get(next.id);
++                if (nextPrepared && this.renderedId !== next.id) {
++                    this.ports.render(nextPrepared);
++                    this.renderedId = next.id;
++                }
++            }, nextDelay);
++        }
++    }
++
++    private pollSoon(delay: number): void { this.schedule(() => this.poll(), delay); }
++
++    private schedule(callback: () => void, delay: number): void {
++        if (this.pollTimer) this.ports.clearTimer(this.pollTimer);
++        this.pollTimer = this.ports.setTimer(callback, Math.max(0, delay));
++    }
++
++    private cancelWork(): void {
++        if (this.pollTimer) this.ports.clearTimer(this.pollTimer);
++        if (this.displayTimer) this.ports.clearTimer(this.displayTimer);
++        this.pollTimer = undefined;
++        this.displayTimer = undefined;
++        for (const request of this.requests) request.abort();
++        this.requests.clear();
++    }
++
++    private active(generation: number): boolean {
++        return !this.disposed && this.visible && generation === this.generation;
++    }
++
++    private withTimeout<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
++        const request = new AbortController();
++        this.requests.add(request);
++        const timeout = this.ports.setTimer(() => request.abort(), REQUEST_TIMEOUT_MS);
++        const cleanup = () => {
++            this.requests.delete(request);
++            this.ports.clearTimer(timeout);
++        };
++        return work(request.signal).then(
++            (value) => { cleanup(); return value; },
++            (error) => { cleanup(); throw error; },
++        );
++    }
++}
++
++type DomPreparedSlide = PreparedSlide & { frame: HTMLElement; history?: HTMLFormElement };
++export type StartSharedPlaybackOptions = { group?: string; root?: HTMLElement; document?: Document };
++
++function sameOriginPath(raw: string, base: string): string | undefined {
++    try {
++        const url = new URL(raw, base);
++        return url.origin === new URL(base).origin && !url.username && !url.password && !url.hash && /^\/(?!\/)/.test(url.pathname) ? url.toString() : undefined;
++    } catch { return undefined; }
++}
++
++function sanitizeFrame(html: string, document: Document, origin = window.location.origin): DomPreparedSlide | undefined {
++    const clean = DOMPurify.sanitize(html, { FORBID_TAGS: ["script", "iframe", "object", "embed"] });
++    const holder = document.createElement("div");
++    holder.innerHTML = clean;
++    for (const node of holder.querySelectorAll("*")) {
++        for (const attribute of Array.from(node.attributes)) {
++            if (/^(on|hx-|data-hx-)/i.test(attribute.name)) node.removeAttribute(attribute.name);
++            if (attribute.name === "style") node.setAttribute("style", attribute.value.replace(/url\([^)]*\)/gi, "none"));
++            if ((attribute.name === "src" || attribute.name === "href") && node instanceof HTMLImageElement) {
++                const value = attribute.value;
++                if (!value.startsWith("data:image/jpeg") && !sameOriginPath(value, origin)) node.removeAttribute(attribute.name);
++            }
++        }
++    }
++    const frame = holder.matches(".frame") ? holder : holder.querySelector<HTMLElement>(".frame");
++    if (!frame) return undefined;
++    const history = holder.querySelector<HTMLFormElement>("#kiosk-history")?.cloneNode(true) as HTMLFormElement | undefined;
++    return { id: "", frame: frame.cloneNode(true) as HTMLElement, history };
++}
++
++async function decodeFrame(frame: HTMLElement, signal: AbortSignal): Promise<void> {
++    await Promise.all(Array.from(frame.querySelectorAll("img")).map(async (image) => {
++        if (signal.aborted) throw new DOMException("aborted", "AbortError");
++        if (typeof image.decode === "function") {
++            try { await image.decode(); if (image.naturalWidth > 0) return; } catch { /* load event below */ }
++        }
++        if (image.complete && image.naturalWidth > 0) return;
++        await new Promise<void>((resolve, reject) => {
++            const done = () => { signal.removeEventListener("abort", abort); clearTimeout(timeout); };
++            const abort = () => { done(); reject(new DOMException("aborted", "AbortError")); };
++            const timeout = window.setTimeout(() => { done(); reject(new Error("image decode timed out")); }, REQUEST_TIMEOUT_MS);
++            image.addEventListener("load", () => { done(); image.naturalWidth > 0 ? resolve() : reject(new Error("image decode failed")); }, { once: true });
++            image.addEventListener("error", () => { done(); reject(new Error("image decode failed")); }, { once: true });
++            signal.addEventListener("abort", abort, { once: true });
++        });
++    }));
++}
++
++/** Starts the browser adapter. Supplying no group is intentionally a no-op. */
++export function startSharedPlayback(options: StartSharedPlaybackOptions = {}): () => void {
++    const document = options.document ?? window.document;
++    const group = options.group ?? new URL(window.location.href).searchParams.get("sync_group") ?? undefined;
++    const root = options.root ?? document.querySelector<HTMLElement>("#kiosk") ?? undefined;
++    if (!group || !root) return () => undefined;
++    const origin = window.location.origin;
++    const endpoint = `/api/playback/${encodeURIComponent(group)}`;
++    const readBounded = async (response: Response, limit: number): Promise<string> => {
++        if (!response.body) throw new Error("response has no body");
++        const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let total = 0;
++        while (true) {
++            const next = await reader.read(); if (next.done) break;
++            total += next.value.byteLength;
++            if (total > limit) { await reader.cancel(); throw new Error("response too large"); }
++            chunks.push(next.value);
++        }
++        const result = new Uint8Array(total); let offset = 0;
++        for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
++        return new TextDecoder().decode(result);
++    };
++    const fetchJSON = async (url: string, init: RequestInit, acceptConflict = false): Promise<SharedPlaybackState> => {
++        const response = await fetch(url, { ...init, credentials: "same-origin" });
++        const length = Number(response.headers.get("content-length") ?? 0);
++        if ((!response.ok && !(acceptConflict && response.status === 409)) || length > 65_536) throw new Error(`playback request failed: ${response.status}`);
++        const body = await readBounded(response, 65_536);
++        return JSON.parse(body) as SharedPlaybackState;
++    };
++    const controller = new SharedPlaybackController({
++        now: () => Date.now(), setTimer: (fn, delay) => window.setTimeout(fn, delay), clearTimer: window.clearTimeout,
++        fetchState: (signal) => fetchJSON(endpoint, { signal }),
++        sendCommand: (action, expectedVersion, sessionId, signal) => fetchJSON(`${endpoint}/control`, {
++            method: "POST", signal, headers: { "content-type": "application/json" },
++            body: JSON.stringify({ action, expectedVersion, sessionId }),
++        }, true),
++        prepare: async (slide, signal) => {
++            const raw = sameOriginPath(slide.url, origin);
++            if (!raw) throw new Error("unsafe slide URL");
++            const url = new URL(raw);
++            if (!url.pathname.startsWith(`${endpoint}/`)) throw new Error("unexpected slide endpoint");
++            url.searchParams.set("client_width", `${Math.min(3840, Math.max(1, Math.round(window.innerWidth)))}`);
++            url.searchParams.set("client_height", `${Math.min(2160, Math.max(1, Math.round(window.innerHeight)))}`);
++            const frameId = root.dataset.frameId;
++            if (frameId && /^[A-Za-z0-9_-]{1,128}$/.test(frameId)) url.searchParams.set("frame_id", frameId);
++            const response = await fetch(url.toString(), { signal, credentials: "same-origin" });
++            if (!response.ok) throw new Error("slide request failed");
++            const html = await readBounded(response, 12 * 1024 * 1024);
++            const prepared = sanitizeFrame(html, document, origin);
++            if (!prepared) throw new Error("slide has no frame");
++            await decodeFrame(prepared.frame, signal);
++            return { ...prepared, id: slide.id };
++        },
++        render: (prepared) => {
++            const frame = (prepared as DomPreparedSlide).frame;
++            const history = (prepared as DomPreparedSlide).history;
++            root.replaceChildren(frame);
++            const currentHistory = document.querySelector<HTMLFormElement>("#kiosk-history");
++            if (history && currentHistory) currentHistory.replaceWith(history);
++            root.dataset.sharedPlaybackSession = controller.currentSessionId() ?? "";
++            root.dataset.sharedPlaybackSlide = prepared.id;
++            root.dataset.sharedPlaybackPaused = `${controller.isPaused()}`;
++            root.dispatchEvent(new CustomEvent("frame:shared-photo-settled", {
++                bubbles: true,
++                detail: { sharedPlaybackPaused: controller.isPaused() },
++            }));
++        },
++        status: (status) => root.dataset.sharedPlaybackStatus = status,
++        paused: (paused) => {
++            document.body.classList.toggle("polling-paused", paused);
++            root.dataset.sharedPlaybackSession = controller.currentSessionId() ?? "";
++            const current = controller.currentId();
++            if (current) root.dataset.sharedPlaybackSlide = current;
++            else delete root.dataset.sharedPlaybackSlide;
++            root.dataset.sharedPlaybackPaused = `${paused}`;
++            root.dispatchEvent(new CustomEvent("frame:shared-playback-state", {
++                bubbles: true,
++                detail: { sharedPlaybackPaused: paused },
++            }));
++        },
++    });
++    const command = (action: SharedPlaybackAction) => controller.command(action);
++    const onNext = () => command("next"); const onPrevious = () => command("previous");
++    const onPlayPause = () => command(controller.isPaused() ? "resume" : "pause");
++    document.querySelector(".navigation--next-asset")?.addEventListener("click", onNext);
++    document.querySelector(".navigation--prev-asset")?.addEventListener("click", onPrevious);
++    document.querySelector(".navigation--play-pause")?.addEventListener("click", onPlayPause);
++    const onKey = (event: KeyboardEvent) => {
++        if ((event.target as HTMLElement | null)?.matches("input,textarea,select,[contenteditable]")) return;
++        const action = event.type === "keydown" && event.key.toLowerCase() === "p" ? (event.shiftKey ? "resume" : "pause") :
++            event.type === "keyup" && event.key === "ArrowRight" ? "next" : event.type === "keyup" && event.key === "ArrowLeft" ? "previous" :
++            event.type === "keyup" && event.key === " " ? (controller.isPaused() ? "resume" : "pause") : undefined;
++        if (action) { event.preventDefault(); command(action); }
++    };
++    const onVisibility = () => controller.setVisible(document.visibilityState === "visible");
++    document.addEventListener("keydown", onKey); document.addEventListener("keyup", onKey); document.addEventListener("visibilitychange", onVisibility);
++    const onPageHide = () => controller.setVisible(false);
++    const onPageShow = () => controller.setVisible(true);
++    controller.setVisible(document.visibilityState === "visible");
++    window.addEventListener("pagehide", onPageHide);
++    window.addEventListener("pageshow", onPageShow);
++    controller.start();
++    return () => {
++        controller.dispose(); document.querySelector(".navigation--next-asset")?.removeEventListener("click", onNext);
++        document.querySelector(".navigation--prev-asset")?.removeEventListener("click", onPrevious);
++        document.querySelector(".navigation--play-pause")?.removeEventListener("click", onPlayPause);
++        document.removeEventListener("keydown", onKey); document.removeEventListener("keyup", onKey); document.removeEventListener("visibilitychange", onVisibility);
++        window.removeEventListener("pagehide", onPageHide); window.removeEventListener("pageshow", onPageShow);
++    };
++}
++
++export { sameOriginPath, sanitizeFrame };

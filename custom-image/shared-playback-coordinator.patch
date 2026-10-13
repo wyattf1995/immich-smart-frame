@@ -1,0 +1,625 @@
+diff --git a/internal/playback/coordinator.go b/internal/playback/coordinator.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..741d2ab7e80f2222819812a1688584dd81758b52
+--- /dev/null
++++ b/internal/playback/coordinator.go
+@@ -0,0 +1,619 @@
++// Package playback coordinates optional, server-authoritative photo playback
++// groups. It contains no renderer or device-preference state: routes choose and
++// render assets around this small, bounded state machine.
++package playback
++
++import (
++	"context"
++	"crypto/rand"
++	"encoding/hex"
++	"errors"
++	"fmt"
++	"sort"
++	"sync"
++	"time"
++)
++
++var (
++	ErrUnknownGroup    = errors.New("unknown playback group")
++	ErrVersionConflict = errors.New("playback state version conflict")
++	ErrNotReady        = errors.New("playback slide is not ready")
++	ErrNoPrevious      = errors.New("playback group has no previous slide")
++	ErrClosed          = errors.New("playback coordinator is closed")
++)
++
++const defaultPreloadLead = 3 * time.Second
++
++// Clock makes time-based state transitions deterministic in tests.
++type Clock interface {
++	Now() time.Time
++	After(time.Duration) <-chan time.Time
++}
++
++type systemClock struct{}
++
++func (systemClock) Now() time.Time                             { return time.Now().UTC() }
++func (systemClock) After(delay time.Duration) <-chan time.Time { return time.After(delay) }
++
++// GroupConfig is fixed at New time. SelectionKey is opaque to this package and
++// lets a route loader choose the already-configured, shared selection policy.
++type GroupConfig struct {
++	ID           string
++	SelectionKey string
++	Duration     time.Duration
++	PreloadLead  time.Duration
++	IdleTimeout  time.Duration
++	RetryDelay   time.Duration
++	RetryLimit   int
++	HistoryLimit int
++}
++
++// Asset deliberately contains only an Immich identity and its selected-user
++// routing hint. selectedUser is private, so it cannot escape through JSON.
++type Asset struct {
++	ID string `json:"assetId"`
++
++	selectedUser string
++}
++
++func NewAsset(id, selectedUser string) Asset { return Asset{ID: id, selectedUser: selectedUser} }
++func (a Asset) SelectedUser() string         { return a.selectedUser }
++
++// LoadRequest is passed to the server-owned loader, never derived from a
++// viewer's cancellation context.
++type LoadRequest struct {
++	Group           GroupConfig
++	ExcludeAssetIDs []string
++}
++
++// Loader selects one complete asset identity under the frozen group policy.
++// It must respect context cancellation so Close can join coordinator tasks.
++type Loader func(context.Context, LoadRequest) (Asset, error)
++
++// Options bounds active session state and controls the injected clock.
++type Options struct {
++	Clock               Clock
++	MaxConfiguredGroups int
++}
++
++// Slide is safe to expose to a client. Asset identity is looked up separately.
++type Slide struct {
++	ID       string    `json:"id"`
++	AssetID  string    `json:"assetId"`
++	StartsAt time.Time `json:"startsAt"`
++}
++
++// State is a snapshot. Epoch changes on a new coordinator/session so clients
++// never mistake a restarted process's version for their old session.
++type State struct {
++	Epoch     string    `json:"epoch"`
++	Version   uint64    `json:"version"`
++	Current   *Slide    `json:"current,omitempty"`
++	Next      *Slide    `json:"next,omitempty"`
++	Paused    bool      `json:"paused"`
++	Loading   bool      `json:"loading"`
++	ServerNow time.Time `json:"serverNow"`
++}
++
++type Action string
++
++const (
++	Next     Action = "next"
++	Previous Action = "previous"
++	Pause    Action = "pause"
++	Resume   Action = "resume"
++)
++
++// Command changes shared state only when its epoch and version match a snapshot.
++type Command struct {
++	Action          Action
++	ExpectedEpoch   string
++	ExpectedVersion uint64
++}
++
++type Coordinator struct {
++	ctx    context.Context
++	cancel context.CancelFunc
++	clock  Clock
++	loader Loader
++
++	mu       sync.Mutex
++	groups   map[string]GroupConfig
++	sessions map[string]*session
++	closed   bool
++	wg       sync.WaitGroup
++}
++
++type session struct {
++	coordinator *Coordinator
++	config      GroupConfig
++	epoch       string
++
++	mu           sync.Mutex
++	retired      bool
++	version      uint64
++	serial       uint64
++	current      *storedSlide
++	next         *storedSlide
++	history      []Asset
++	paused       bool
++	loading      bool
++	lastRead     time.Time
++	demand       uint64
++	attempts     int
++	retryAt      time.Time
++	failedDemand uint64
++	touch        chan struct{}
++}
++
++type storedSlide struct {
++	slide Slide
++	asset Asset
++}
++
++// New creates a coordinator for a finite allowlist of configured groups.
++func New(groupConfigs []GroupConfig, loader Loader, options Options) (*Coordinator, error) {
++	if loader == nil {
++		return nil, errors.New("playback loader is required")
++	}
++	maxGroups := options.MaxConfiguredGroups
++	if maxGroups <= 0 {
++		maxGroups = 16
++	}
++	if len(groupConfigs) > maxGroups {
++		return nil, fmt.Errorf("playback groups exceed configured limit %d", maxGroups)
++	}
++	groups := make(map[string]GroupConfig, len(groupConfigs))
++	for _, raw := range groupConfigs {
++		config, err := normalizeConfig(raw)
++		if err != nil {
++			return nil, err
++		}
++		if _, duplicate := groups[config.ID]; duplicate {
++			return nil, fmt.Errorf("duplicate playback group %q", config.ID)
++		}
++		groups[config.ID] = config
++	}
++	clock := options.Clock
++	if clock == nil {
++		clock = systemClock{}
++	}
++	ctx, cancel := context.WithCancel(context.Background())
++	return &Coordinator{
++		ctx: ctx, cancel: cancel, clock: clock, loader: loader,
++		groups: groups, sessions: make(map[string]*session),
++	}, nil
++}
++
++func normalizeConfig(config GroupConfig) (GroupConfig, error) {
++	if config.ID == "" {
++		return GroupConfig{}, errors.New("playback group id is required")
++	}
++	if config.Duration <= 0 {
++		return GroupConfig{}, fmt.Errorf("playback group %q duration must be positive", config.ID)
++	}
++	if config.PreloadLead <= 0 {
++		config.PreloadLead = defaultPreloadLead
++	}
++	if config.PreloadLead >= config.Duration {
++		return GroupConfig{}, fmt.Errorf("playback group %q preload lead must be shorter than duration", config.ID)
++	}
++	if config.IdleTimeout <= 0 {
++		config.IdleTimeout = 2 * config.Duration
++	}
++	if config.IdleTimeout < config.Duration {
++		return GroupConfig{}, fmt.Errorf("playback group %q idle timeout must be at least one duration", config.ID)
++	}
++	if config.RetryDelay <= 0 {
++		config.RetryDelay = time.Second
++	}
++	if config.RetryLimit <= 0 {
++		config.RetryLimit = 3
++	}
++	if config.HistoryLimit <= 0 {
++		config.HistoryLimit = 12
++	}
++	return config, nil
++}
++
++// State records a viewer read, starts a session only for that configured group,
++// and returns its current server snapshot.
++func (c *Coordinator) State(groupID string) (State, error) {
++	s, err := c.sessionFor(groupID)
++	if err != nil {
++		return State{}, err
++	}
++	return s.read(), nil
++}
++
++// Command applies a compare-and-swap operation to a configured group's state.
++func (c *Coordinator) Command(groupID string, command Command) (State, error) {
++	s, err := c.sessionFor(groupID)
++	if err != nil {
++		return State{}, err
++	}
++	return s.command(command)
++}
++
++// AssetForSlide returns only a requested current or prepared slide's asset.
++// It never exposes a selected user in State's wire representation.
++func (c *Coordinator) AssetForSlide(groupID, slideID string) (Asset, bool, error) {
++	s, err := c.sessionFor(groupID)
++	if err != nil {
++		return Asset{}, false, err
++	}
++	s.markRead()
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	if s.current != nil && s.current.slide.ID == slideID {
++		return s.current.asset, true, nil
++	}
++	if s.next != nil && s.next.slide.ID == slideID {
++		return s.next.asset, true, nil
++	}
++	return Asset{}, false, nil
++}
++
++// Close cancels group loaders and waits for every coordinator task to exit.
++func (c *Coordinator) Close() {
++	c.mu.Lock()
++	if c.closed {
++		c.mu.Unlock()
++		return
++	}
++	c.closed = true
++	c.cancel()
++	for _, s := range c.sessions {
++		s.signal()
++	}
++	c.mu.Unlock()
++	c.wg.Wait()
++}
++
++func (c *Coordinator) sessionFor(groupID string) (*session, error) {
++	for {
++		c.mu.Lock()
++		if c.closed {
++			c.mu.Unlock()
++			return nil, ErrClosed
++		}
++		config, known := c.groups[groupID]
++		if !known {
++			c.mu.Unlock()
++			return nil, ErrUnknownGroup
++		}
++		s := c.sessions[groupID]
++		if s == nil {
++			s = &session{coordinator: c, config: config, epoch: randomEpoch(), version: 1, touch: make(chan struct{}, 1)}
++			c.sessions[groupID] = s
++			c.wg.Add(1)
++			go func() {
++				defer c.wg.Done()
++				s.run()
++			}()
++		}
++		c.mu.Unlock()
++
++		s.mu.Lock()
++		if !s.retired {
++			s.markReadLocked()
++			s.mu.Unlock()
++			return s, nil
++		}
++		s.mu.Unlock()
++	}
++}
++
++func (s *session) read() State {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	s.markReadLocked()
++	return s.snapshotLocked()
++}
++
++func (s *session) markRead() {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	s.markReadLocked()
++}
++
++func (s *session) markReadLocked() {
++	s.lastRead = s.coordinator.clock.Now()
++	s.demand++
++	s.signal()
++}
++
++func (s *session) command(command Command) (State, error) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	s.markReadLocked()
++	if command.ExpectedEpoch != s.epoch || command.ExpectedVersion != s.version {
++		return s.snapshotLocked(), ErrVersionConflict
++	}
++	now := s.coordinator.clock.Now()
++	s.advanceDueLocked(now)
++	if command.ExpectedEpoch != s.epoch || command.ExpectedVersion != s.version {
++		return s.snapshotLocked(), ErrVersionConflict
++	}
++
++	switch command.Action {
++	case Pause:
++		if !s.paused {
++			s.paused = true
++			s.version++
++		}
++	case Resume:
++		if s.paused {
++			s.paused = false
++			s.resetStartsLocked(now)
++			s.version++
++		}
++	case Next:
++		if !s.promoteNextLocked(now, true) {
++			return s.snapshotLocked(), ErrNotReady
++		}
++	case Previous:
++		if !s.showPreviousLocked(now) {
++			return s.snapshotLocked(), ErrNoPrevious
++		}
++	default:
++		return s.snapshotLocked(), fmt.Errorf("unknown playback command %q", command.Action)
++	}
++	s.signal()
++	return s.snapshotLocked(), nil
++}
++
++func (s *session) run() {
++	for {
++		if s.coordinator.ctx.Err() != nil {
++			return
++		}
++		now := s.coordinator.clock.Now()
++		kind, request, wait := s.plan(now)
++		if kind != loadNone {
++			asset, err := s.coordinator.loader(s.coordinator.ctx, request)
++			s.finishLoad(kind, asset, err)
++			continue
++		}
++		if wait < 0 {
++			if s.retireIfIdle() {
++				return
++			}
++			continue
++		}
++		select {
++		case <-s.coordinator.ctx.Done():
++			return
++		case <-s.touch:
++		case <-s.coordinator.clock.After(wait):
++		}
++	}
++}
++
++type loadKind uint8
++
++const (
++	loadNone loadKind = iota
++	loadCurrent
++	loadNext
++)
++
++func (s *session) plan(now time.Time) (loadKind, LoadRequest, time.Duration) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	if s.retired {
++		return loadNone, LoadRequest{}, -1
++	}
++	if !s.lastRead.IsZero() && now.Sub(s.lastRead) >= s.config.IdleTimeout {
++		return loadNone, LoadRequest{}, -1
++	}
++	if !s.paused {
++		s.advanceDueLocked(now)
++	}
++	kind := loadNone
++	if s.current == nil {
++		kind = loadCurrent
++	} else if s.next == nil {
++		kind = loadNext
++	}
++	if kind != loadNone && !s.loading {
++		if s.failedDemand != s.demand {
++			s.attempts = 0
++			s.failedDemand = s.demand
++		}
++		if s.attempts < s.config.RetryLimit && !now.Before(s.retryAt) {
++			s.loading = true
++			s.version++
++			return kind, LoadRequest{Group: s.config, ExcludeAssetIDs: s.excludeAssetIDsLocked()}, 0
++		}
++	}
++	return loadNone, LoadRequest{}, s.nextWaitLocked(now)
++}
++
++func (s *session) finishLoad(kind loadKind, asset Asset, err error) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	s.loading = false
++	if err != nil || asset.ID == "" || s.currentOrPreparedContainsAssetLocked(asset.ID) {
++		s.attempts++
++		s.retryAt = s.coordinator.clock.Now().Add(s.config.RetryDelay)
++		s.version++
++		s.signal()
++		return
++	}
++	now := s.coordinator.clock.Now()
++	if kind == loadCurrent && s.current == nil {
++		s.current = s.newStoredSlideLocked(asset, now.Add(s.config.PreloadLead))
++		s.attempts = 0
++		s.retryAt = time.Time{}
++		s.version++
++	} else if kind == loadNext && s.current != nil && s.next == nil {
++		start := s.current.slide.StartsAt.Add(s.config.Duration)
++		if start.Before(now.Add(s.config.PreloadLead)) {
++			start = now.Add(s.config.PreloadLead)
++		}
++		s.next = s.newStoredSlideLocked(asset, start)
++		s.attempts = 0
++		s.retryAt = time.Time{}
++		s.version++
++	}
++	s.signal()
++}
++
++func (s *session) nextWaitLocked(now time.Time) time.Duration {
++	idleWait := s.config.IdleTimeout
++	if !s.lastRead.IsZero() {
++		idleWait = s.config.IdleTimeout - now.Sub(s.lastRead)
++	}
++	if idleWait <= 0 {
++		return 0
++	}
++	wait := idleWait
++	if s.current == nil || s.next == nil {
++		if s.attempts < s.config.RetryLimit {
++			untilRetry := s.retryAt.Sub(now)
++			if untilRetry <= 0 {
++				untilRetry = s.config.RetryDelay
++			}
++			if untilRetry < wait {
++				wait = untilRetry
++			}
++		}
++	} else if !s.paused {
++		untilAdvance := s.next.slide.StartsAt.Sub(now)
++		if untilAdvance < wait {
++			wait = max(untilAdvance, 0)
++		}
++	}
++	return wait
++}
++
++func (s *session) advanceDueLocked(now time.Time) bool {
++	if s.paused || s.next == nil || now.Before(s.next.slide.StartsAt) {
++		return false
++	}
++	return s.promoteNextLocked(now, false)
++}
++
++func (s *session) promoteNextLocked(now time.Time, explicit bool) bool {
++	if s.next == nil {
++		return false
++	}
++	if s.current != nil {
++		s.pushHistoryLocked(s.current.asset)
++	}
++	s.current = s.next
++	if explicit {
++		s.current.slide.StartsAt = now.Add(s.config.PreloadLead)
++	}
++	s.next = nil
++	s.attempts = 0
++	s.version++
++	return true
++}
++
++func (s *session) showPreviousLocked(now time.Time) bool {
++	if s.current == nil || len(s.history) == 0 {
++		return false
++	}
++	index := len(s.history) - 1
++	previous := s.history[index]
++	s.history = s.history[:index]
++	current := s.current.asset
++	s.current = s.newStoredSlideLocked(previous, now.Add(s.config.PreloadLead))
++	s.next = s.newStoredSlideLocked(current, s.current.slide.StartsAt.Add(s.config.Duration))
++	s.version++
++	return true
++}
++
++func (s *session) resetStartsLocked(now time.Time) {
++	if s.current == nil {
++		return
++	}
++	s.current.slide.StartsAt = now.Add(s.config.PreloadLead)
++	if s.next != nil {
++		s.next.slide.StartsAt = s.current.slide.StartsAt.Add(s.config.Duration)
++	}
++}
++
++func (s *session) pushHistoryLocked(asset Asset) {
++	s.history = append(s.history, asset)
++	if overflow := len(s.history) - s.config.HistoryLimit; overflow > 0 {
++		copy(s.history, s.history[overflow:])
++		s.history = s.history[:s.config.HistoryLimit]
++	}
++}
++
++func (s *session) newStoredSlideLocked(asset Asset, startsAt time.Time) *storedSlide {
++	s.serial++
++	return &storedSlide{slide: Slide{ID: fmt.Sprintf("%s-%d", s.epoch, s.serial), AssetID: asset.ID, StartsAt: startsAt}, asset: asset}
++}
++
++func (s *session) excludeAssetIDsLocked() []string {
++	ids := make([]string, 0, 2+len(s.history))
++	if s.current != nil {
++		ids = append(ids, s.current.asset.ID)
++	}
++	if s.next != nil {
++		ids = append(ids, s.next.asset.ID)
++	}
++	for _, asset := range s.history {
++		ids = append(ids, asset.ID)
++	}
++	sort.Strings(ids)
++	return ids
++}
++
++func (s *session) currentOrPreparedContainsAssetLocked(id string) bool {
++	if s.current != nil && s.current.asset.ID == id {
++		return true
++	}
++	if s.next != nil && s.next.asset.ID == id {
++		return true
++	}
++	return false
++}
++
++func (s *session) snapshotLocked() State {
++	state := State{Epoch: s.epoch, Version: s.version, Paused: s.paused, Loading: s.loading, ServerNow: s.coordinator.clock.Now()}
++	if s.current != nil {
++		current := s.current.slide
++		state.Current = &current
++	}
++	if s.next != nil {
++		next := s.next.slide
++		state.Next = &next
++	}
++	return state
++}
++
++func (s *session) signal() {
++	select {
++	case s.touch <- struct{}{}:
++	default:
++	}
++}
++
++func (s *session) retireIfIdle() bool {
++	s.mu.Lock()
++	if s.retired || s.coordinator.clock.Now().Sub(s.lastRead) < s.config.IdleTimeout {
++		s.mu.Unlock()
++		return false
++	}
++	s.retired = true
++	s.mu.Unlock()
++	s.coordinator.mu.Lock()
++	if s.coordinator.sessions[s.config.ID] == s {
++		delete(s.coordinator.sessions, s.config.ID)
++	}
++	s.coordinator.mu.Unlock()
++	return true
++}
++
++func randomEpoch() string {
++	var bytes [16]byte
++	if _, err := rand.Read(bytes[:]); err == nil {
++		return hex.EncodeToString(bytes[:])
++	}
++	return fmt.Sprintf("%d", time.Now().UnixNano())
++}

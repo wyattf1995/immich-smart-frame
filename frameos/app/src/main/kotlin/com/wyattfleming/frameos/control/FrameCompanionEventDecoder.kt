@@ -5,8 +5,10 @@ import org.json.JSONObject
 data class FrameCompanionEvent(val id: String, val text: String)
 
 object FrameCompanionEventDecoder {
-    fun decode(payload: String, nowMillis: Long): FrameCompanionEvent? = runCatching {
-        val events = JSONObject(payload).optJSONArray("events") ?: return null
+    fun decode(payload: String, nowMillis: Long): FrameCompanionEvent? = runCatching { decode(JSONObject(payload), nowMillis) }.getOrNull()
+
+    internal fun decode(root: JSONObject, nowMillis: Long): FrameCompanionEvent? = runCatching {
+        val events = root.optJSONArray("events") ?: return null
         require(events.length() == 1)
         val event = events.getJSONObject(0)
         val id = event.getString("id")

@@ -1,0 +1,175 @@
+diff --git a/frontend/tests/shared-playback.test.ts b/frontend/tests/shared-playback.test.ts
+new file mode 100644
+index 0000000..0f879cf
+--- /dev/null
++++ b/frontend/tests/shared-playback.test.ts
+@@ -0,0 +1,169 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++
++import {
++    SharedPlaybackController,
++    type SharedPlaybackAction,
++    type SharedPlaybackPorts,
++    type SharedPlaybackState,
++} from "../src/ts/shared-playback.ts";
++
++const slide = (id: string, startsAt = 0) => ({ id, assetId: `asset-${id}`, startsAt, url: `/slide/${id}` });
++const state = (overrides: Partial<SharedPlaybackState> = {}): SharedPlaybackState => ({
++    sessionId: "one", version: 1, serverNow: 1_000, paused: false, loading: false,
++    // Production state advertises the next transition in the future. Due-next
++    // behavior is exercised explicitly below so current-slide assertions remain meaningful.
++    current: slide("a"), next: slide("b", 2_000), ...overrides,
++});
++
++async function settle(): Promise<void> {
++    for (let i = 0; i < 8; i++) await Promise.resolve();
++}
++
++function harness(states: Array<SharedPlaybackState | Error>) {
++    let now = 1_000;
++    let nextTimer = 1;
++    const timers = new Map<number, () => void>();
++    const rendered: string[] = [];
++    const prepared: string[] = [];
++    const statuses: string[] = [];
++    const commands: Array<{ action: SharedPlaybackAction; version: number; sessionId: string }> = [];
++    let commandResult: SharedPlaybackState | Error = state({ version: 2 });
++    const ports: SharedPlaybackPorts = {
++        now: () => now,
++        setTimer: (fn, delay) => {
++            const id = nextTimer++;
++            if (delay < 8_000) timers.set(id, fn);
++            return id as unknown as ReturnType<typeof setTimeout>;
++        },
++        clearTimer: (id) => timers.delete(id as unknown as number),
++        fetchState: async () => {
++            const result = states.shift() ?? new Error("offline");
++            if (result instanceof Error) throw result;
++            return result;
++        },
++        sendCommand: async (action, version, sessionId) => {
++            commands.push({ action, version, sessionId });
++            if (commandResult instanceof Error) throw commandResult;
++            return commandResult;
++        },
++        prepare: async (value) => { prepared.push(value.id); return { id: value.id }; },
++        render: (value) => rendered.push(value.id),
++        status: (value) => statuses.push(value),
++        paused: () => undefined,
++    };
++    return {
++        controller: new SharedPlaybackController(ports), commands, prepared, rendered, statuses, timers,
++        setNow: (value: number) => { now = value; },
++        setCommandResult: (value: SharedPlaybackState | Error) => { commandResult = value; },
++        runNextTimer: () => { const item = timers.entries().next().value; if (item) { timers.delete(item[0]); item[1](); } },
++    };
++}
++
++test("two clocks converge on server scheduled transitions and late join shows current", async () => {
++    const first = state({ serverNow: 5_000, current: slide("a", 4_000), next: slide("b", 6_000) });
++    const second = state({ version: 2, serverNow: 6_000, current: slide("b", 6_000), next: slide("c", 7_000) });
++    const left = harness([first, second]);
++    const right = harness([first, second]);
++    left.setNow(1_000); right.setNow(8_000); // different local clocks, same server state
++    left.controller.start(); right.controller.start(); await settle();
++    assert.deepEqual(left.rendered, ["a"]);
++    assert.deepEqual(right.rendered, ["a"], "late join renders authoritative current immediately");
++    left.runNextTimer(); right.runNextTimer(); await settle();
++    assert.deepEqual(left.rendered, ["a", "b"]);
++    assert.deepEqual(right.rendered, ["a", "b"]);
++});
++
++test("offline keeps the last image and reconnect resumes authoritative polling", async () => {
++    const h = harness([state(), new Error("offline"), state({ version: 2, current: slide("b"), next: slide("c", 2_000) })]);
++    h.controller.start(); await settle();
++    h.runNextTimer(); await settle(); // offline poll
++    assert.deepEqual(h.rendered, ["a"]);
++    assert.equal(h.statuses.at(-1), "offline");
++    h.runNextTimer(); await settle();
++    assert.deepEqual(h.rendered, ["a", "b"]);
++    assert.equal(h.statuses.at(-1), "connected");
++});
++
++test("loading the next photo does not hide an already authoritative current photo", async () => {
++    const h = harness([state({ loading: true })]);
++    h.controller.start(); await settle();
++    assert.deepEqual(h.rendered, ["a"]);
++});
++
++test("a failing next prefetch does not delay the decoded current photo", async () => {
++    const rendered: string[] = [];
++    const controller = new SharedPlaybackController({
++        now: () => 1_000,
++        setTimer: () => 1 as unknown as ReturnType<typeof setTimeout>, clearTimer: () => undefined,
++        fetchState: async () => state(), sendCommand: async () => state(),
++        prepare: async (value) => {
++            if (value.id === "b") throw new Error("next unavailable");
++            return { id: value.id };
++        },
++        render: (value) => rendered.push(value.id), status: () => undefined, paused: () => undefined,
++    });
++    controller.start(); await settle();
++    assert.deepEqual(rendered, ["a"]);
++});
++
++test("a repeated snapshot cannot rewind a displayed due next slide", async () => {
++    const due = state({ current: slide("a", 0), next: slide("b", 0) });
++    const h = harness([due, due]);
++    h.controller.start(); await settle();
++    assert.deepEqual(h.rendered, ["b"]);
++    h.runNextTimer(); await settle();
++    assert.deepEqual(h.rendered, ["b"]);
++});
++
++test("stale fetches, hidden pages, and disposal cannot render newer work", async () => {
++    let resolveState!: (value: SharedPlaybackState) => void;
++    const h = harness([]);
++    const ports = (h.controller as unknown); // retain the controller construction coverage above
++    assert.ok(ports);
++    let rendered = 0;
++    const controller = new SharedPlaybackController({
++        now: () => 0, setTimer: () => 1 as unknown as ReturnType<typeof setTimeout>, clearTimer: () => undefined,
++        fetchState: () => new Promise((resolve) => { resolveState = resolve; }),
++        sendCommand: async () => state(), prepare: async (value) => ({ id: value.id }),
++        render: () => { rendered++; }, status: () => undefined, paused: () => undefined,
++    });
++    controller.start(); controller.setVisible(false); resolveState(state()); await settle();
++    assert.equal(rendered, 0);
++    controller.setVisible(true); controller.dispose(); await settle();
++    assert.equal(rendered, 0);
++});
++
++test("a late lower-version poll cannot replace a command response", async () => {
++    const timers: Array<() => void> = [];
++    const rendered: string[] = [];
++    let resolvePoll!: (value: SharedPlaybackState) => void;
++    let calls = 0;
++    const controller = new SharedPlaybackController({
++        now: () => 1_000,
++        setTimer: (callback, delay) => { if (delay < 8_000) timers.push(callback); return 1 as unknown as ReturnType<typeof setTimeout>; },
++        clearTimer: () => undefined,
++        fetchState: () => {
++            calls++;
++            return calls === 1 ? Promise.resolve(state()) : new Promise((resolve) => { resolvePoll = resolve; });
++        },
++        sendCommand: async () => state({ version: 2, current: slide("b"), next: slide("c", 2_000) }),
++        prepare: async (value) => ({ id: value.id }), render: (value) => rendered.push(value.id),
++        status: () => undefined, paused: () => undefined,
++    });
++    controller.start(); await settle();
++    timers.shift()?.(); await settle(); // begin a second, deliberately late poll
++    controller.command("next"); await settle();
++    resolvePoll(state({ version: 1, current: slide("a"), next: slide("b", 2_000) })); await settle();
++    assert.deepEqual(rendered, ["a", "b"]);
++});
++
++test("duplicate commands use one compare-and-swap version and session resets decode cache", async () => {
++    const h = harness([state(), state({ sessionId: "two", version: 1, current: slide("x"), next: slide("y", 2_000) })]);
++    h.controller.start(); await settle();
++    h.controller.command("next"); h.controller.command("next"); await settle();
++    assert.deepEqual(h.commands, [{ action: "next", version: 1, sessionId: "one" }]);
++    h.runNextTimer(); await settle();
++    assert.deepEqual(h.prepared, ["a", "b", "x", "y"]);
++    assert.deepEqual(h.rendered, ["a", "x"]);
++});

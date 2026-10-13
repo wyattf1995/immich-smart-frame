@@ -10,7 +10,12 @@ import java.nio.charset.StandardCharsets
 class FrameCompanionClient(private val endpoint: FrameRemoteEndpoint, private val bearerToken: String) {
     init { require(bearerToken.isNotBlank()) }
 
-    fun poll(deviceId: String, status: FrameRemoteStatus, acknowledgements: List<FrameRemoteAck>): FrameCompanionPollResult {
+    fun poll(
+        deviceId: String,
+        status: FrameRemoteStatus,
+        acknowledgements: List<FrameRemoteAck>,
+        knownSnapshotRevision: String? = null,
+    ): FrameCompanionPollResult {
         require(FrameRemoteControlPolicy.acceptsDeviceId(deviceId))
         val connection = URI(endpoint.pollUrl).toURL().openConnection() as HttpURLConnection
         return try {
@@ -21,13 +26,13 @@ class FrameCompanionClient(private val endpoint: FrameRemoteEndpoint, private va
             connection.setRequestProperty("Authorization", "Bearer $bearerToken")
             connection.setRequestProperty("Content-Type", "application/json")
             connection.doOutput = true
-            connection.outputStream.use { it.write(payload(deviceId, status, acknowledgements).toByteArray(StandardCharsets.UTF_8)) }
+            connection.outputStream.use { it.write(payload(deviceId, status, acknowledgements, knownSnapshotRevision).toByteArray(StandardCharsets.UTF_8)) }
             if (connection.responseCode !in 200..299) return FrameCompanionPollResult.Offline
             FrameCompanionResponseReader.read(connection.inputStream)?.let(FrameCompanionPollResult::Success) ?: FrameCompanionPollResult.Offline
         } catch (_: Exception) { FrameCompanionPollResult.Offline } finally { connection.disconnect() }
     }
 
-    private fun payload(deviceId: String, status: FrameRemoteStatus, acks: List<FrameRemoteAck>): String = JSONObject()
+    private fun payload(deviceId: String, status: FrameRemoteStatus, acks: List<FrameRemoteAck>, knownSnapshotRevision: String?): String = JSONObject()
         .put("schema", 1).put("deviceId", deviceId)
         .put("status", JSONObject().put("mode", status.mode.name.lowercase()).put("photosPaused", status.photosPaused)
             .put("lastPaintAt", status.lastPaintAt).put("lastWeatherAt", status.lastWeatherAt)
@@ -36,6 +41,7 @@ class FrameCompanionClient(private val endpoint: FrameRemoteEndpoint, private va
             .put("currentAssetId", status.currentAssetId).put("lastPhotoAt", status.lastPhotoAt)
             .put("profile", status.profile).put("offlineAssets", status.offlineAssets).put("offlineBytes", status.offlineBytes))
         .put("acks", JSONArray().apply { acks.forEach { put(JSONObject().put("id", it.id).put("status", it.status).put("message", it.message)) } })
+        .apply { FrameCompanionSnapshotRevision.forRequest(knownSnapshotRevision)?.let { put("knownSnapshotRevision", it) } }
         .toString()
 }
 

@@ -6,14 +6,54 @@ import android.content.Intent
 import com.wyattfleming.frameos.config.FrameConfiguration
 import com.wyattfleming.frameos.config.FrameConfigurationPatch
 import com.wyattfleming.frameos.config.FrameConfigurationStore
+import com.wyattfleming.frameos.config.FrameTouchscreenSettingsStore
+import com.wyattfleming.frameos.config.FramePhotosSyncGroupUrl
 import com.wyattfleming.frameos.weather.SharedPreferencesWeatherCache
 
 class FrameControlReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != FrameControlContract.ACTION_CONTROL) return
 
+        // This receiver is DUMP-protected. Keep hardware opt-ins independent of companion policy.
+        if (intent.hasExtra(FrameControlContract.EXTRA_TOUCH_DASHBOARD_ENABLED) ||
+            intent.hasExtra(FrameControlContract.EXTRA_DETACH_HIDDEN_HOME) ||
+            intent.hasExtra(FrameControlContract.EXTRA_START_WITH_PHOTOS)) {
+            val store = FrameTouchscreenSettingsStore(context)
+            val current = store.read()
+            store.write(current.copy(
+                dashboardEnabled = intent.getBooleanExtra(FrameControlContract.EXTRA_TOUCH_DASHBOARD_ENABLED, current.dashboardEnabled),
+                detachHiddenHome = intent.getBooleanExtra(FrameControlContract.EXTRA_DETACH_HIDDEN_HOME, current.detachHiddenHome),
+                startWithPhotos = intent.getBooleanExtra(FrameControlContract.EXTRA_START_WITH_PHOTOS, current.startWithPhotos),
+            ))
+        }
+
         val configurationStore = FrameConfigurationStore(context)
         val existingConfiguration = configurationStore.read()
+        when (val syncGroupCommand = FrameControlContract.photosSyncGroupCommand(
+            hasSyncGroup = intent.hasExtra(FrameControlContract.EXTRA_PHOTOS_SYNC_GROUP),
+            syncGroup = intent.getStringExtra(FrameControlContract.EXTRA_PHOTOS_SYNC_GROUP),
+            querySyncGroup = intent.getBooleanExtra(FrameControlContract.EXTRA_QUERY_PHOTOS_SYNC_GROUP, false),
+        )) {
+            is FrameControlContract.PhotosSyncGroupCommand.Set -> {
+                val existing = existingConfiguration ?: return resultFailure("not-configured")
+                when (val result = FrameConfigurationPatch.withPhotosSyncGroup(existing, syncGroupCommand.group)) {
+                    is FrameConfigurationPatch.SyncGroupResult.Updated -> {
+                        if (result.configuration != existing) configurationStore.write(result.configuration)
+                        return resultSuccess("updated")
+                    }
+                    is FrameConfigurationPatch.SyncGroupResult.Invalid -> return resultFailure(result.reason)
+                }
+            }
+            FrameControlContract.PhotosSyncGroupCommand.Query -> {
+                val existing = existingConfiguration ?: return resultFailure("not-configured")
+                return when (val result = FramePhotosSyncGroupUrl.configuredGroup(existing.photosUrl)) {
+                    is FramePhotosSyncGroupUrl.ReadResult.Valid -> resultSuccess(result.group.orEmpty())
+                    is FramePhotosSyncGroupUrl.ReadResult.Invalid -> resultFailure(result.reason)
+                }
+            }
+            FrameControlContract.PhotosSyncGroupCommand.Invalid -> return resultFailure("invalid-request")
+            null -> Unit
+        }
         if (existingConfiguration == null) {
             val configuration = FrameConfiguration.from(
                 photosUrl = intent.getStringExtra(FrameControlContract.EXTRA_PHOTOS_URL).orEmpty(),
@@ -25,16 +65,30 @@ class FrameControlReceiver : BroadcastReceiver() {
                 homeAssistantFallbackUrl = intent
                     .getStringExtra(FrameControlContract.EXTRA_HOME_ASSISTANT_FALLBACK_URL),
                 birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
+                artUrl = intent.getStringExtra(FrameControlContract.EXTRA_ART_URL),
             )
             if (configuration != null) {
                 SharedPreferencesWeatherCache(context).clear()
                 configurationStore.write(configuration)
             }
-        } else if (intent.hasExtra(FrameControlContract.EXTRA_BIRDS_URL)) {
-            FrameConfigurationPatch.withBirdsUrl(
-                existing = existingConfiguration,
-                birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
-            )?.let(configurationStore::write)
+        } else if (
+            intent.hasExtra(FrameControlContract.EXTRA_BIRDS_URL) ||
+            intent.hasExtra(FrameControlContract.EXTRA_ART_URL)
+        ) {
+            var updated = existingConfiguration
+            if (intent.hasExtra(FrameControlContract.EXTRA_BIRDS_URL)) {
+                updated = FrameConfigurationPatch.withBirdsUrl(
+                    existing = updated,
+                    birdsUrl = intent.getStringExtra(FrameControlContract.EXTRA_BIRDS_URL),
+                ) ?: updated
+            }
+            if (intent.hasExtra(FrameControlContract.EXTRA_ART_URL)) {
+                updated = FrameConfigurationPatch.withArtUrl(
+                    existing = updated,
+                    artUrl = intent.getStringExtra(FrameControlContract.EXTRA_ART_URL),
+                ) ?: updated
+            }
+            if (updated != existingConfiguration) configurationStore.write(updated)
         }
         if (intent.hasExtra(FrameControlContract.EXTRA_COMPANION_URL)) {
             val credentialsWritten = FrameCompanionCredentialsStore(context).write(
@@ -61,5 +115,17 @@ class FrameControlReceiver : BroadcastReceiver() {
 
     private companion object {
         const val DEFAULT_WEATHER_ENTITY_ID = "weather.home"
+        const val RESULT_OK = -1
+        const val RESULT_INVALID = 1
+    }
+
+    private fun resultSuccess(data: String) {
+        setResultCode(RESULT_OK)
+        setResultData(data)
+    }
+
+    private fun resultFailure(reason: String) {
+        setResultCode(RESULT_INVALID)
+        setResultData(reason)
     }
 }

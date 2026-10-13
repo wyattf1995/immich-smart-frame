@@ -15,7 +15,7 @@ interface CancellableHomeAssistantHttpTransport : HomeAssistantHttpTransport {
 }
 
 class UrlConnectionHomeAssistantTransport(
-    private val connectionFactory: (URI) -> HttpURLConnection = { uri -> uri.toURL().openConnection() as HttpURLConnection },
+    private val connectionFactory: (URI) -> HttpURLConnection = LegacyIsrgRootTls.ConnectionFactory(),
     private val cancellationRegistry: HomeAssistantHttpCancellationRegistry = HomeAssistantHttpCancellationRegistry(),
 ) : CancellableHomeAssistantHttpTransport {
 

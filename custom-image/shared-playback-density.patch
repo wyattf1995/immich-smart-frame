@@ -1,0 +1,18 @@
+diff --git a/frontend/src/ts/shared-playback.ts b/frontend/src/ts/shared-playback.ts
+index 23309740..86307c14 100644
+--- a/frontend/src/ts/shared-playback.ts
++++ b/frontend/src/ts/shared-playback.ts
+@@ -367,8 +367,11 @@ export function startSharedPlayback(options: StartSharedPlaybackOptions = {}): (
+             if (!raw) throw new Error("unsafe slide URL");
+             const url = new URL(raw);
+             if (!url.pathname.startsWith(`${endpoint}/`)) throw new Error("unexpected slide endpoint");
+-            url.searchParams.set("client_width", `${Math.min(3840, Math.max(1, Math.round(window.innerWidth)))}`);
+-            url.searchParams.set("client_height", `${Math.min(2160, Math.max(1, Math.round(window.innerHeight)))}`);
++            // WebView uses CSS pixels; match the normal player's physical-pixel
++            // requests so high-density TVs do not enlarge quarter-resolution photos.
++            const pixelRatio = window.devicePixelRatio || 1;
++            url.searchParams.set("client_width", `${Math.min(3840, Math.max(1, Math.round(window.innerWidth * pixelRatio)))}`);
++            url.searchParams.set("client_height", `${Math.min(2160, Math.max(1, Math.round(window.innerHeight * pixelRatio)))}`);
+             const frameId = root.dataset.frameId;
+             if (frameId && /^[A-Za-z0-9_-]{1,128}$/.test(frameId)) url.searchParams.set("frame_id", frameId);
+             const response = await fetch(url.toString(), { signal, credentials: "same-origin" });

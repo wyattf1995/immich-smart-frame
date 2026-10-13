@@ -1,0 +1,570 @@
+diff --git a/config.schema.json b/config.schema.json
+index f71e8cc..cd187b2 100644
+--- a/config.schema.json
++++ b/config.schema.json
+@@ -669,6 +669,23 @@
+         "watch_config": {
+           "type": "boolean"
+         },
++        "sync_groups": {
++          "type": "object",
++          "maxProperties": 8,
++          "additionalProperties": false,
++          "patternProperties": {
++            "^[a-z0-9][a-z0-9_-]{0,47}$": {
++              "type": "object",
++              "additionalProperties": false,
++              "required": ["curation_profile", "duration"],
++              "properties": {
++                "curation_profile": {"type": "string", "minLength": 1},
++                "duration": {"type": "integer", "minimum": 10, "maximum": 3600}
++              }
++            }
++          },
++          "description": "Opt-in shared photo sessions; changes require a server restart. Clients keep distinct frame IDs."
++        },
+         "require_ai_caption": {
+           "type": "boolean",
+           "default": false,
+diff --git a/frontend/src/ts/kiosk.ts b/frontend/src/ts/kiosk.ts
+index f740d0a..040b234 100644
+--- a/frontend/src/ts/kiosk.ts
++++ b/frontend/src/ts/kiosk.ts
+@@ -32,6 +32,7 @@ import {
+     videoHandler,
+ } from "./polling";
+ import { sleepMode } from "./sleep";
++import { startSharedPlayback } from "./shared-playback";
+ import { preventSleep } from "./wakelock";
+ import { weatherRotationPosition } from "./weather";
+ 
+@@ -66,6 +67,7 @@ type KioskData = {
+     langCode: string;
+     params: Record<string, unknown>;
+     duration: number;
++    syncGroup?: string;
+     disableNavigation: boolean;
+     disableScreensaver: boolean;
+     showDate: boolean;
+@@ -208,6 +210,15 @@ async function init(): Promise<void> {
+         fullScreenButtonSeperator && htmx.remove(fullScreenButtonSeperator);
+     }
+ 
++    if (kioskData.syncGroup && kiosk) {
++        startSharedPlayback({ group: kioskData.syncGroup, root: kiosk });
++        fullscreenButton?.addEventListener("click", handleFullscreenClick);
++        addFullscreenEventListener(fullscreenButton);
++        menuInteraction?.addEventListener("click", () => menu?.classList.toggle("navigation-hidden"));
++        if (kioskData.burnInInterval > 0 && kioskData.burnInDuration > 0) burnInCycle();
++        return;
++    }
++
+     if (pollInterval) {
+         initPolling(pollInterval, kiosk, menu);
+     } else {
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 76fd917..0004489 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -93,7 +93,16 @@ type Redirect struct {
+ 	Type string `yaml:"type" mapstructure:"type"`
+ }
+ 
++// SyncGroupSettings defines one server-owned photo selection policy. A client
++// may join by ID but cannot override its selection profile or interval.
++type SyncGroupSettings struct {
++	CurationProfile string `json:"curationProfile" yaml:"curation_profile" mapstructure:"curation_profile"`
++	Duration        int    `json:"duration" yaml:"duration" mapstructure:"duration"`
++}
++
+ type KioskSettings struct {
++	SyncGroups map[string]SyncGroupSettings `json:"syncGroups" yaml:"sync_groups" mapstructure:"sync_groups" default:"{}"`
++
+ 	// RedirectsMap provides O(1) lookup of redirect URLs by their friendly name
+ 	RedirectsMap map[string]Redirect `json:"-" yaml:"-"`
+ 
+@@ -740,6 +749,9 @@ func (c *Config) Load() error {
+ 	if err := c.checkCuration(); err != nil {
+ 		return err
+ 	}
++	if err := c.ValidateSyncGroups(); err != nil {
++		return err
++	}
+ 	c.checkAlbumOrder()
+ 	c.checkExcludedAlbums()
+ 	c.checkTags()
+diff --git a/internal/config/config_shared_playback.go b/internal/config/config_shared_playback.go
+new file mode 100644
+index 0000000..f5d243e
+--- /dev/null
++++ b/internal/config/config_shared_playback.go
+@@ -0,0 +1,40 @@
++package config
++
++import (
++	"fmt"
++	"regexp"
++	"strings"
++)
++
++var syncGroupID = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,47}$`)
++
++// ValidateSyncGroups fails closed even when general schema validation is off.
++// Groups are server configured, not allocated from arbitrary client input.
++func (c *Config) ValidateSyncGroups() error {
++	if len(c.Kiosk.SyncGroups) > 8 {
++		return fmt.Errorf("kiosk.sync_groups supports at most 8 groups")
++	}
++	for id, group := range c.Kiosk.SyncGroups {
++		if !syncGroupID.MatchString(id) {
++			return fmt.Errorf("invalid shared playback group ID")
++		}
++		if group.Duration < 10 || group.Duration > 3600 {
++			return fmt.Errorf("shared playback duration must be 10..3600 seconds")
++		}
++		profile := strings.TrimSpace(group.CurationProfile)
++		if profile == "" {
++			return fmt.Errorf("shared playback group requires a curation_profile")
++		}
++		found := false
++		for name := range c.Curation.Profiles {
++			if strings.EqualFold(name, profile) {
++				found = true
++				break
++			}
++		}
++		if !found {
++			return fmt.Errorf("shared playback group references an unknown curation_profile")
++		}
++	}
++	return nil
++}
+diff --git a/internal/routes/routes_home.go b/internal/routes/routes_home.go
+index daf1172..b4bfddb 100644
+--- a/internal/routes/routes_home.go
++++ b/internal/routes/routes_home.go
+@@ -37,6 +37,21 @@ func Home(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 		}
+ 
+ 		requestConfig := requestData.RequestConfig
++		if groups, exists := c.QueryParams()["sync_group"]; exists {
++			if len(groups) != 1 || groups[0] == "" {
++				return echo.NewHTTPError(http.StatusBadRequest, "one shared playback group is required")
++			}
++			group := groups[0]
++			if _, ok := requestConfig.Kiosk.SyncGroups[group]; !ok {
++				return echo.NewHTTPError(http.StatusNotFound, "shared playback group is not configured")
++			}
++			// Shared playback owns image timing and controls; these independent
++			// slideshow overlays have no shared-mode implementation.
++			requestConfig.ShowMoreInfo = false
++			requestConfig.ShowProgressBar = false
++		}
++
++
+ 		requestID := requestData.RequestID
+ 
+ 		log.Debug(
+diff --git a/internal/routes/routes_shared_playback.go b/internal/routes/routes_shared_playback.go
+new file mode 100644
+index 0000000..5e27d5f
+--- /dev/null
++++ b/internal/routes/routes_shared_playback.go
+@@ -0,0 +1,168 @@
++package routes
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"io"
++	"mime"
++	"net/http"
++	"net/url"
++	"strings"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/playback"
++	"github.com/labstack/echo/v5"
++)
++
++// SharedPlayback owns only configured groups. Selection settings are frozen at
++// startup; changing group membership/profile/duration requires a restart.
++type SharedPlayback struct {
++	coordinator *playback.Coordinator
++	base        *config.Config
++	common      *common.Common
++}
++
++func NewSharedPlayback(base *config.Config, com *common.Common) (*SharedPlayback, error) {
++	frozen := base.Snapshot()
++	if err := frozen.ValidateSyncGroups(); err != nil {
++		return nil, err
++	}
++	groups := make([]playback.GroupConfig, 0, len(frozen.Kiosk.SyncGroups))
++	for id, policy := range frozen.Kiosk.SyncGroups {
++		groups = append(groups, playback.GroupConfig{ID: id, SelectionKey: policy.CurationProfile,
++			Duration: time.Duration(policy.Duration) * time.Second, PreloadLead: 3 * time.Second,
++			IdleTimeout: 2 * time.Duration(policy.Duration) * time.Second, RetryDelay: 5 * time.Second, RetryLimit: 3, HistoryLimit: 12})
++	}
++	coordinator, err := playback.New(groups, func(ctx context.Context, request playback.LoadRequest) (playback.Asset, error) {
++		bounded, cancel := foregroundAssetContext(ctx, com.Context(), frozen.Kiosk.HTTPTimeout)
++		defer cancel()
++		return loadSharedPhoto(bounded, frozen, request)
++	}, playback.Options{MaxConfiguredGroups: 8})
++	if err != nil {
++		return nil, err
++	}
++	return &SharedPlayback{coordinator: coordinator, base: base, common: com}, nil
++}
++
++func (s *SharedPlayback) Close() { s.coordinator.Close() }
++
++func (s *SharedPlayback) Register(e *echo.Echo) {
++	e.GET("/api/playback/:group", s.State)
++	e.POST("/api/playback/:group/control", s.Control)
++	e.GET("/api/playback/:group/slide/:slide", s.Slide)
++}
++
++type sharedSlideResponse struct {
++	ID       string `json:"id"`
++	AssetID  string `json:"assetId"`
++	StartsAt int64  `json:"startsAt"`
++	URL      string `json:"url"`
++}
++type sharedStateResponse struct {
++	SessionID string               `json:"sessionId"`
++	Version   uint64               `json:"version"`
++	ServerNow int64                `json:"serverNow"`
++	Paused    bool                 `json:"paused"`
++	Loading   bool                 `json:"loading"`
++	Current   *sharedSlideResponse `json:"current"`
++	Next      *sharedSlideResponse `json:"next"`
++}
++
++func sharedStateWire(group string, state playback.State) sharedStateResponse {
++	slide := func(value *playback.Slide) *sharedSlideResponse {
++		if value == nil {
++			return nil
++		}
++		return &sharedSlideResponse{ID: value.ID, AssetID: value.AssetID, StartsAt: value.StartsAt.UnixMilli(),
++			URL: "/api/playback/" + url.PathEscape(group) + "/slide/" + url.PathEscape(value.ID)}
++	}
++	return sharedStateResponse{SessionID: state.Epoch, Version: state.Version, ServerNow: state.ServerNow.UnixMilli(),
++		Paused: state.Paused, Loading: state.Loading, Current: slide(state.Current), Next: slide(state.Next)}
++}
++
++func sharedNoStore(c *echo.Context) {
++	c.Response().Header().Set("Cache-Control", "private, no-store")
++	c.Response().Header().Set("X-Content-Type-Options", "nosniff")
++}
++
++func (s *SharedPlayback) State(c *echo.Context) error {
++	sharedNoStore(c)
++	state, err := s.coordinator.State(c.Param("group"))
++	if err != nil {
++		return sharedPlaybackError(err)
++	}
++	return c.JSON(http.StatusOK, sharedStateWire(c.Param("group"), state))
++}
++
++func sameOriginPlaybackControl(r *http.Request) bool {
++	origin, err := url.Parse(r.Header.Get("Origin"))
++	if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") || origin.Host != r.Host ||
++		origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || (origin.Path != "" && origin.Path != "/") {
++		return false
++	}
++	site := r.Header.Get("Sec-Fetch-Site")
++	return site == "" || site == "same-origin" || site == "none"
++}
++
++func (s *SharedPlayback) Control(c *echo.Context) error {
++	sharedNoStore(c)
++	if !sameOriginPlaybackControl(c.Request()) {
++		return echo.NewHTTPError(http.StatusForbidden, "same-origin playback control required")
++	}
++	media, _, err := mime.ParseMediaType(c.Request().Header.Get("Content-Type"))
++	if err != nil || media != "application/json" {
++		return echo.NewHTTPError(http.StatusUnsupportedMediaType, "JSON control required")
++	}
++	body, err := io.ReadAll(io.LimitReader(c.Request().Body, 1025))
++	if err != nil || len(body) > 1024 {
++		return echo.NewHTTPError(http.StatusBadRequest, "invalid playback command")
++	}
++	var command struct {
++		Action          playback.Action `json:"action"`
++		SessionID       string          `json:"sessionId"`
++		ExpectedVersion uint64          `json:"expectedVersion"`
++	}
++	decoder := json.NewDecoder(strings.NewReader(string(body)))
++	decoder.DisallowUnknownFields()
++	if err := decoder.Decode(&command); err != nil {
++		return echo.NewHTTPError(http.StatusBadRequest, "invalid playback command")
++	}
++	if decoder.Decode(new(any)) != io.EOF || command.SessionID == "" {
++		return echo.NewHTTPError(http.StatusBadRequest, "invalid playback command")
++	}
++	switch command.Action {
++	case playback.Next, playback.Previous, playback.Pause, playback.Resume:
++	default:
++		return echo.NewHTTPError(http.StatusBadRequest, "unknown playback action")
++	}
++	state, err := s.coordinator.Command(c.Param("group"), playback.Command{Action: command.Action, ExpectedEpoch: command.SessionID, ExpectedVersion: command.ExpectedVersion})
++	if errors.Is(err, playback.ErrVersionConflict) || errors.Is(err, playback.ErrNotReady) || errors.Is(err, playback.ErrNoPrevious) {
++		return c.JSON(http.StatusConflict, sharedStateWire(c.Param("group"), state))
++	}
++	if err != nil {
++		return sharedPlaybackError(err)
++	}
++	return c.JSON(http.StatusOK, sharedStateWire(c.Param("group"), state))
++}
++
++func (s *SharedPlayback) Slide(c *echo.Context) error {
++	sharedNoStore(c)
++	asset, found, err := s.coordinator.AssetForSlide(c.Param("group"), c.Param("slide"))
++	if err != nil {
++		return sharedPlaybackError(err)
++	}
++	if !found {
++		return echo.NewHTTPError(http.StatusNotFound, "shared slide is no longer available")
++	}
++	return renderSharedPhoto(c, s.base, s.common, c.Param("group"), asset)
++}
++
++func sharedPlaybackError(err error) error {
++	if errors.Is(err, playback.ErrUnknownGroup) {
++		return echo.NewHTTPError(http.StatusNotFound, "shared playback group is not configured")
++	}
++	return echo.NewHTTPError(http.StatusServiceUnavailable, "shared playback temporarily unavailable")
++}
+diff --git a/internal/routes/routes_shared_playback_assets.go b/internal/routes/routes_shared_playback_assets.go
+new file mode 100644
+index 0000000..d061899
+--- /dev/null
++++ b/internal/routes/routes_shared_playback_assets.go
+@@ -0,0 +1,107 @@
++package routes
++
++import (
++	"context"
++	"fmt"
++	"net/http"
++	"strconv"
++	"strings"
++
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/damongolding/immich-kiosk/internal/playback"
++	imageComponent "github.com/damongolding/immich-kiosk/internal/templates/components/image"
++	"github.com/damongolding/immich-kiosk/internal/utils"
++	"github.com/labstack/echo/v5"
++)
++
++// Shared selection uses the configured group profile, never the first viewer's
++// physical-device preferences. Existing buckets and Immich classification gates
++// remain authoritative. Only identifiers leave this function; no image is decoded.
++func loadSharedPhoto(ctx context.Context, base config.Config, request playback.LoadRequest) (playback.Asset, error) {
++	cfg := base.Snapshot()
++	cfg.CurationProfile = request.Group.SelectionKey
++	cfg.ShowVideos = false
++	cfg.LivePhotos = false
++	cfg.ShowAnimatedGifs = false
++	identity := "sync:" + request.Group.ID
++	asset := immich.New(ctx, cfg)
++	buckets, err := gatherAssetBuckets(&asset, cfg, identity, identity)
++	if err != nil {
++		return playback.Asset{}, err
++	}
++	excluded := make(map[string]bool, len(request.ExcludeAssetIDs))
++	for _, id := range request.ExcludeAssetIDs {
++		excluded[id] = true
++	}
++	for attempt := range maxProcessAssetRetries {
++		if err := ctx.Err(); err != nil {
++			return playback.Asset{}, err
++		}
++		candidate := utils.PickRandomImageType(cfg.Kiosk.AssetWeighting || cfg.CurationProfile != "", buckets)
++		candidate.ID, _ = asset.ApplyUserFromAssetID(candidate.ID)
++		if err = retrieveImage(&asset, candidate, cfg.ExcludedAlbums, identity, identity, false); err != nil {
++			continue
++		}
++		if asset.Type != immich.ImageType {
++			continue
++		}
++		// A small library may repeat only after the bounded attempt budget.
++		if excluded[asset.ID] && attempt < finalSelectionAttempt {
++			continue
++		}
++		return playback.NewAsset(asset.ID, asset.SelectedUser()), nil
++	}
++	return playback.Asset{}, fmt.Errorf("shared photo selection exhausted its bounded candidate attempts")
++}
++
++// Render a known group slide at the requesting display's bounded dimensions.
++// Revalidation prevents an asset newly excluded by classification from leaking
++// back through prepared/history state. Rendering never selects another photo.
++func renderSharedPhoto(c *echo.Context, base *config.Config, com *common.Common, group string, asset playback.Asset) error {
++	// Viewport dimensions are this endpoint's required transport fields, even
++	// when general URL configuration overrides are disabled on the server.
++	widths, heights := c.QueryParams()["client_width"], c.QueryParams()["client_height"]
++	if len(widths) != 1 || len(heights) != 1 {
++		return echo.NewHTTPError(http.StatusBadRequest, "one pair of display dimensions is required")
++	}
++	width, widthErr := strconv.Atoi(widths[0])
++	height, heightErr := strconv.Atoi(heights[0])
++	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 || int64(width) > maxRenderedOutputPixels/int64(height) {
++		return echo.NewHTTPError(http.StatusBadRequest, "valid display dimensions are required")
++	}
++	request, err := InitializeRequestData(c, base)
++	if err != nil || request == nil {
++		return err
++	}
++	cfg := request.RequestConfig
++	cfg.ClientData.Width, cfg.ClientData.Height = width, height
++	cfg.SelectedUser = asset.SelectedUser()
++	cfg.ShowVideos = false
++	cfg.LivePhotos = false
++	cfg.ShowAnimatedGifs = false
++	cfg.UseOriginalImage = false
++	cfg.OptimizeImages = true
++	cfg.History = nil
++	// Shared images are still JPEGs, including GIF source assets. This keeps
++	// native offline capture and scheduled image decoding deterministic.
++	cfg.ShowMoreInfo = false
++	if err := validateOptimizedClientDimensions(cfg); err != nil {
++		return echo.NewHTTPError(http.StatusBadRequest, "valid display dimensions are required")
++	}
++	ctx, cancel := foregroundAssetContext(c.Request().Context(), com.Context(), cfg.Kiosk.HTTPTimeout)
++	defer cancel()
++	view := common.ViewData{Config: cfg, KioskVersion: KioskVersion, RequestID: request.RequestID,
++		DeviceID: framePreferenceDevice(c.QueryParam("frame_id"), request.DeviceID), Assets: make([]common.ViewImageData, 1)}
++	if err := getHistoryAsset(ctx, cfg, request.RequestID, "sync:"+group, asset.SelectedUser(), &view, 0, asset.ID)(); err != nil {
++		return echo.NewHTTPError(http.StatusServiceUnavailable, "shared photo temporarily unavailable")
++	}
++	if view.Assets[0].ImmichAsset.Type != immich.ImageType || !strings.HasPrefix(view.Assets[0].ImageData, "data:image/jpeg;base64,") {
++		return echo.NewHTTPError(http.StatusServiceUnavailable, "shared photo temporarily unavailable")
++	}
++	// Image's upstream GIF branch would turn a JPEG back into a raw-image URL.
++	// Render the admitted, already-decoded still instead.
++	view.Assets[0].ImmichAsset.OriginalMimeType = "image/jpeg"
++	return Render(c, http.StatusOK, imageComponent.Image(view, com.Secret()))
++}
+diff --git a/internal/templates/partials/menu.templ b/internal/templates/partials/menu.templ
+index 310c3be..dc971d8 100644
+--- a/internal/templates/partials/menu.templ
++++ b/internal/templates/partials/menu.templ
+@@ -74,7 +74,11 @@ templ Menu(viewData common.ViewData, queries url.Values, secret string) {
+ 		t := i18n.T()
+ 		hasCustomNavigation := viewData.Webhooks.ContainsEvent(webhooks.UserNavigationCustom.String())
+ 	}}
+-	<nav id={ "navigation-interaction-area" }>
++	<nav id={ "navigation-interaction-area" }
++		if queries.Get("sync_group") != "" {
++			hx-disable="true"
++		}
++	>
+ 		<div
+ 			id="navigation-interaction-area--previous-asset"
+ 			hx-post="/asset/previous"
+diff --git a/internal/templates/views/views_home.templ b/internal/templates/views/views_home.templ
+index 8787ed2..6af8a2c 100644
+--- a/internal/templates/views/views_home.templ
++++ b/internal/templates/views/views_home.templ
+@@ -30,15 +30,21 @@ templ Home(viewData common.ViewData, secret string) {
+ 			@partials.KioskContainer(viewData, secret) {
+ 				<main
+ 					id="kiosk"
+-					if viewData.UseOfflineMode && viewData.OfflineMode.Enabled {
+-						hx-post="/asset/offline"
++					if viewData.Queries.Get("sync_group") != "" {
++						hx-disable="true"
++						data-shared-playback-group={ viewData.Queries.Get("sync_group") }
++						data-frame-id={ viewData.Queries.Get("frame_id") }
+ 					} else {
+-						hx-post="/asset/new"
++						if viewData.UseOfflineMode && viewData.OfflineMode.Enabled {
++							hx-post="/asset/offline"
++						} else {
++							hx-post="/asset/new"
++						}
++						hx-include=".kiosk-history--entry"
++						hx-trigger={ triggers(viewData.Config) }
++						hx-on::before-send="kiosk.setRequestLock(event)"
++						hx-on::after-swap="kiosk.releaseRequestLock(), kiosk.cleanupFrames()"
+ 					}
+-					hx-include=".kiosk-history--entry"
+-					hx-trigger={ triggers(viewData.Config) }
+-					hx-on::before-send="kiosk.setRequestLock(event)"
+-					hx-on::after-swap="kiosk.releaseRequestLock(), kiosk.cleanupFrames()"
+ 				>
+ 					@partials.SpinnerRotate()
+ 				</main>
+@@ -94,6 +100,7 @@ templ Home(viewData common.ViewData, secret string) {
+ 					"version":            viewData.KioskVersion,
+ 					"params":             queriesToJson(viewData.Queries),
+ 					"duration":           viewData.Duration,
++					"syncGroup":          viewData.Queries.Get("sync_group"),
+ 					"disableNavigation":  viewData.DisableNavigation,
+ 					"disableScreensaver": viewData.DisableScreensaver,
+ 					"showDate":           viewData.ShowDate,
+diff --git a/main.go b/main.go
+index a5a77cb..f9e865a 100644
+--- a/main.go
++++ b/main.go
+@@ -222,6 +222,13 @@ func main() {
+ 
+ 	e.GET("/image/:imageID", routes.ImageWithID(baseConfig, c), AssetCacheMiddlewareWithConfig(baseConfig))
+ 
++	sharedPlayback, sharedErr := routes.NewSharedPlayback(baseConfig, c)
++	if sharedErr != nil {
++		log.Fatal("invalid shared playback configuration", "err", sharedErr)
++	}
++	defer sharedPlayback.Close()
++	sharedPlayback.Register(e)
++
+ 	e.POST("/asset/new", routes.NewAsset(baseConfig, c))
+ 
+ 	e.POST("/asset/offline", routes.OfflineMode(baseConfig, c))
+diff --git a/frontend/src/ts/shared-playback.ts b/frontend/src/ts/shared-playback.ts
+index ce856f0..2330974 100644
+--- a/frontend/src/ts/shared-playback.ts
++++ b/frontend/src/ts/shared-playback.ts
+@@ -356,7 +356,7 @@ export function startSharedPlayback(options: StartSharedPlaybackOptions = {}): (
+         return JSON.parse(body) as SharedPlaybackState;
+     };
+     const controller = new SharedPlaybackController({
+-        now: () => Date.now(), setTimer: (fn, delay) => window.setTimeout(fn, delay), clearTimer: window.clearTimeout,
++        now: () => Date.now(), setTimer: (fn, delay) => window.setTimeout(fn, delay), clearTimer: (timer) => window.clearTimeout(timer),
+         fetchState: (signal) => fetchJSON(endpoint, { signal }),
+         sendCommand: (action, expectedVersion, sessionId, signal) => fetchJSON(`${endpoint}/control`, {
+             method: "POST", signal, headers: { "content-type": "application/json" },
+@@ -390,20 +390,20 @@ export function startSharedPlayback(options: StartSharedPlaybackOptions = {}): (
+             root.dataset.sharedPlaybackPaused = `${controller.isPaused()}`;
+             root.dispatchEvent(new CustomEvent("frame:shared-photo-settled", {
+                 bubbles: true,
+-                detail: { sharedPlaybackPaused: controller.isPaused() },
++                detail: JSON.stringify({ sharedPlaybackPaused: controller.isPaused() }),
+             }));
+         },
+         status: (status) => root.dataset.sharedPlaybackStatus = status,
+         paused: (paused) => {
+             document.body.classList.toggle("polling-paused", paused);
+-            root.dataset.sharedPlaybackSession = controller.currentSessionId() ?? "";
+-            const current = controller.currentId();
+-            if (current) root.dataset.sharedPlaybackSlide = current;
+-            else delete root.dataset.sharedPlaybackSlide;
++            const previousSession = root.dataset.sharedPlaybackSession;
++            const session = controller.currentSessionId() ?? "";
++            if (previousSession && previousSession !== session) delete root.dataset.sharedPlaybackSlide;
++            root.dataset.sharedPlaybackSession = session;
+             root.dataset.sharedPlaybackPaused = `${paused}`;
+             root.dispatchEvent(new CustomEvent("frame:shared-playback-state", {
+                 bubbles: true,
+-                detail: { sharedPlaybackPaused: paused },
++                detail: JSON.stringify({ sharedPlaybackPaused: paused }),
+             }));
+         },
+     });

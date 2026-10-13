@@ -1,0 +1,52 @@
+{
+  "status": "passed",
+  "sourceSha256": "29760ee17b82a99e6e1ac2a4d2acc044e4aea3a59dfc5e6a33a58300cdbc4eb6",
+  "testSha256": "b4dd7a24882ea3faac6e65eba4c5cfb6e345fdf5570e182eef13991a5e9e89ba",
+  "proofs": [
+    {
+      "name": "photo-policy-revision",
+      "test": "test_settings_and_each_preference_mutation_invalidate",
+      "greenBefore": 0,
+      "red": 1,
+      "greenAfter": 0,
+      "sourceRestored": true,
+      "testUnchanged": true
+    },
+    {
+      "name": "malformed-revision",
+      "test": "test_old_clients_bad_revisions_cross_device_and_restart_receive_full_policy",
+      "greenBefore": 0,
+      "red": 1,
+      "greenAfter": 0,
+      "sourceRestored": true,
+      "testUnchanged": true
+    },
+    {
+      "name": "scoped-poll-expiry",
+      "test": "test_poll_never_calls_global_maintenance_and_uses_device_expiry_index",
+      "greenBefore": 0,
+      "red": 1,
+      "greenAfter": 0,
+      "sourceRestored": true,
+      "testUnchanged": true
+    },
+    {
+      "name": "reader-concurrency",
+      "test": "test_readers_do_not_acquire_writer_lock",
+      "greenBefore": 0,
+      "red": 1,
+      "greenAfter": 0,
+      "sourceRestored": true,
+      "testUnchanged": true
+    },
+    {
+      "name": "streaming-export",
+      "test": "test_export_peak_memory_is_bounded_and_failure_is_atomic",
+      "greenBefore": 0,
+      "red": 1,
+      "greenAfter": 0,
+      "sourceRestored": true,
+      "testUnchanged": true
+    }
+  ]
+}

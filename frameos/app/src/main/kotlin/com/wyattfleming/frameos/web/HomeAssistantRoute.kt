@@ -8,13 +8,14 @@ object HomeAssistantRoute {
         require(VERSION_PATTERN.matches(version)) { "Unsafe wall-panel version" }
         val configured = URI(homeAssistantUrl)
         require(configured.isAbsolute && configured.host != null) { "An absolute Home Assistant URL is required" }
+        val touchscreenRoute = configured.rawPath == TOUCHSCREEN_ROUTE || configured.rawPath == "$TOUCHSCREEN_ROUTE/"
         return URI(
             configured.scheme,
             null,
             configured.host,
             configured.port,
-            WRAPPER_PATH,
-            "v=$version",
+            if (touchscreenRoute) TOUCHSCREEN_WRAPPER_PATH else WRAPPER_PATH,
+            "v=${if (touchscreenRoute) TOUCHSCREEN_WRAPPER_VERSION else version}",
             null,
         ).toASCIIString()
     }
@@ -26,6 +27,7 @@ object HomeAssistantRoute {
             FrameMode.CAMERAS -> "cameras"
             FrameMode.CALENDAR -> "calendar"
             FrameMode.BIRDS -> return null
+            FrameMode.ART -> return null
             FrameMode.PHOTOS -> return null
         }
 
@@ -33,5 +35,8 @@ object HomeAssistantRoute {
     }
 
     private const val WRAPPER_PATH = "/local/frameos-panel.html"
+    private const val TOUCHSCREEN_ROUTE = "/frameos-touchscreen"
+    private const val TOUCHSCREEN_WRAPPER_PATH = "/local/frameos-touchscreen-panel.html"
+    private const val TOUCHSCREEN_WRAPPER_VERSION = "c804cfc1eb59"
     private val VERSION_PATTERN = Regex("[A-Za-z0-9._-]+")
 }

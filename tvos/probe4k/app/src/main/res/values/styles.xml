@@ -1,0 +1,8 @@
+<resources>
+    <style name="ProbeTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:colorAccent">#D8D8D8</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+</resources>
