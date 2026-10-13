@@ -47,3 +47,32 @@ test('Undo removes only the current cached row and refills without a reload', ()
   assert.match(remove, /renderPreferences\(focusAsset\)/);
   assert.doesNotMatch(remove, /api\(/);
 });
+
+const cacheGuardSource = script.match(/function preferenceCacheIsCurrent\([^\n]+\nfunction invalidatePreferences\([^\n]+/)?.[0];
+assert.ok(cacheGuardSource, 'preference cache ownership helpers must remain source-owned');
+function cacheGuard(selected, preferencesDevice, preferencesRequest, preferencesLoading) {
+  const sandbox = { selected, preferencesDevice, preferencesRequest, preferencesLoading };
+  vm.runInNewContext(`${cacheGuardSource}; globalThis.snapshot=()=>({selected,preferencesDevice,preferencesRequest,preferencesLoading}); globalThis.invalidate=invalidatePreferences`, sandbox);
+  return sandbox;
+}
+
+test('feedback invalidates an in-flight preference GET before applying Undo', () => {
+  const cache = cacheGuard('frame-one', 'frame-one', 12, true);
+  const requestBeforeFeedback = cache.snapshot().preferencesRequest;
+  assert.equal(cache.invalidate('frame-one'), true);
+  assert.deepEqual(JSON.parse(JSON.stringify(cache.snapshot())), {
+    selected: 'frame-one', preferencesDevice: 'frame-one', preferencesRequest: 13, preferencesLoading: false,
+  });
+  assert.equal(requestBeforeFeedback === cache.snapshot().preferencesRequest && 'frame-one' === cache.snapshot().selected, false,
+    'the pre-feedback GET cannot publish after the accepted POST advances the request token');
+});
+
+test('a late POST from another selected frame cannot invalidate current cached preferences', () => {
+  const cache = cacheGuard('frame-two', 'frame-two', 29, true);
+  assert.equal(cache.invalidate('frame-one'), false);
+  assert.deepEqual(JSON.parse(JSON.stringify(cache.snapshot())), {
+    selected: 'frame-two', preferencesDevice: 'frame-two', preferencesRequest: 29, preferencesLoading: true,
+  });
+  assert.match(script, /const focusDevice=selected;requestAnimationFrame\(\(\)=>\{if\(!preferenceCacheIsCurrent\(focusDevice\)\)return;/,
+    'a queued Undo focus action must stop after a device switch');
+});
