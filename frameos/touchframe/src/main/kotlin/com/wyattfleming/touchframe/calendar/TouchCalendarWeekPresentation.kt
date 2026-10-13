@@ -60,12 +60,14 @@ object TouchCalendarWeekPresentation {
         }
     }
 
-    fun detailsPage(events: List<TouchCalendarEvent>, requestedPage: Int): DetailsPage {
+    /** [pageSize] lets a short screen show only whole rows; it never exceeds [DETAILS_PER_PAGE]. */
+    fun detailsPage(events: List<TouchCalendarEvent>, requestedPage: Int, pageSize: Int = DETAILS_PER_PAGE): DetailsPage {
         if (events.isEmpty()) return DetailsPage(emptyList(), 0, 0, 0, 0, 0)
-        val pageCount = (events.size + DETAILS_PER_PAGE - 1) / DETAILS_PER_PAGE
+        val size = pageSize.coerceIn(1, DETAILS_PER_PAGE)
+        val pageCount = (events.size + size - 1) / size
         val page = requestedPage.coerceIn(0, pageCount - 1)
-        val firstIndex = page * DETAILS_PER_PAGE
-        val pageEvents = events.subList(firstIndex, minOf(firstIndex + DETAILS_PER_PAGE, events.size))
+        val firstIndex = page * size
+        val pageEvents = events.subList(firstIndex, minOf(firstIndex + size, events.size))
         return DetailsPage(
             events = pageEvents,
             page = page,

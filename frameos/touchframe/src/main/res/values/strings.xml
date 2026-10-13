@@ -1,4 +1,6 @@
 <resources>
     <string name="app_name">FrameOS Touch</string>
     <string name="return_to_navigation">Close navigation menu</string>
+    <string name="touch_edge_hint">Swipe in from this edge for the menu</string>
+    <string name="touch_menu_close_hint">Tap the picture to close the menu</string>
 </resources>

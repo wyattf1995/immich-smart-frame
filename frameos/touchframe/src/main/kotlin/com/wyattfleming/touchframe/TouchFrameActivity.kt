@@ -13,9 +13,7 @@ import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.Toast
 import com.wyattfleming.frameos.auth.*
 import com.wyattfleming.frameos.config.FrameExperienceSettings
 import com.wyattfleming.frameos.config.FrameExperienceStore
@@ -96,6 +94,7 @@ class TouchFrameActivity : Activity() {
     private var authorizationContainer: View? = null
     private var pendingAuthorization: SharedPreferencesPendingOAuthStateStore? = null
     private var lanPromptShown = false
+    private var lanDialog: AlertDialog? = null
     private val runtime get() = (application as TouchFrameApplication).runtime
     private val clock = object : Runnable {
         override fun run() {
@@ -103,8 +102,7 @@ class TouchFrameActivity : Activity() {
             val now = System.currentTimeMillis()
             home.tick(now)
             updateDisplayBehavior(now)
-            val hour = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).hour
-            val isNight = hour < 7 || hour >= 19
+            val isNight = TouchDayNight.isNight(Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).hour)
             shell.setNight(isNight)
             calendar.setNight(isNight)
             cameras?.setNight(isNight)
@@ -140,13 +138,25 @@ class TouchFrameActivity : Activity() {
         configuration?.let { photoStore.activateScope(it.photosUrl, photoProfile(it)) }
         settingsReturn = TouchSettingsReturn(this)
         root = FrameLayout(this)
-        shell = TouchShellLayout(this, ::navigate) {
-            if (!settingsReturn.open()) message("Enable the FrameOS Touch return button before opening Android Settings")
+        shell = TouchShellLayout(this, { next ->
+            navigate(next)
+            if (next.isImmersiveMedia && destination == next) maybeShowEdgeHint()
+        }) {
+            if (!settingsReturn.open()) message("Turn on the FrameOS Touch return button before opening Android Settings.", TouchShellLayout.NoticeTone.ERROR)
         }
         home = TouchHomeView(this, { route ->
-            TouchDestination.entries.firstOrNull { it.name.equals(route, true) }?.let(::navigate)
-        }, ::signIn, { mode -> changeClimate { it.changeClimateMode(mode) } },
-            { value -> changeClimate { it.changeClimateTarget(value) } })
+            TouchDestination.entries.firstOrNull { it.name.equals(route, true) }?.let { next ->
+                // Home's Coming up always opens the current week, whatever week was browsed last.
+                if (next == TouchDestination.CALENDAR) java.time.LocalDate.now().let { today ->
+                    calendarState = calendarState.copy(anchor = today, selectedDate = today)
+                }
+                navigate(next)
+            }
+        }, ::signIn, { mode -> changeClimate(targetCommand = false) { it.changeClimateMode(mode) } },
+            { value -> changeClimate(targetCommand = true) { it.changeClimateTarget(value) } }).apply {
+            setWeatherLocation(configuration?.weatherLocationLabel)
+            onRetry = ::refreshHome
+        }
         weather = WeatherContentView(this).apply {
             locationLabel = configuration?.weatherLocationLabel
             presentation = WeatherPresentation(emptyMessage = "Sign in to Home Assistant for weather", authenticationRequired = true)
@@ -170,7 +180,7 @@ class TouchFrameActivity : Activity() {
         applyDestinationOrder()
         home.render(model)
         calendar.render(calendarState)
-        if (configuration == null) message("This frame needs its connection configuration")
+        if (configuration == null) message("This frame needs its connection settings before Home, Calendar and Cameras can load.", TouchShellLayout.NoticeTone.ERROR)
     }
 
     private fun initializeData() {
@@ -273,10 +283,10 @@ class TouchFrameActivity : Activity() {
 
     private fun navigate(next: TouchDestination) {
         if (next.usesWebMedia && webMediaUrl(next) == null) {
-            message("${next.label} is not configured")
+            message("${next.label} isn\u2019t set up on this frame.", TouchShellLayout.NoticeTone.ERROR)
             return
         }
-        if (next == TouchDestination.CAMERAS && configuration == null) { message("Cameras are not configured"); return }
+        if (next == TouchDestination.CAMERAS && configuration == null) { message("Cameras aren\u2019t set up on this frame.", TouchShellLayout.NoticeTone.ERROR); return }
         if ((next.usesWebMedia || next == TouchDestination.CAMERAS) && !networkAllowed()) {
             requestLocalNetwork()
             return
@@ -301,7 +311,7 @@ class TouchFrameActivity : Activity() {
             TouchDestination.CALENDAR -> requestCalendar(calendarState.mode, calendarState.anchor, calendarState.selectedDate, true)
             TouchDestination.WEATHER -> refreshWeather()
             TouchDestination.PHOTOS, TouchDestination.ART, TouchDestination.BIRDS -> {
-                val url = webMediaUrl(next) ?: run { message("${next.label} is not configured"); return }
+                val url = webMediaUrl(next) ?: run { message("${next.label} isn\u2019t set up on this frame.", TouchShellLayout.NoticeTone.ERROR); return }
                 if (!networkAllowed()) { requestLocalNetwork(); return }
                 val surface = media ?: TouchMediaView(this, runtime, photoStore = photoStore).also {
                     media = it
@@ -337,8 +347,7 @@ class TouchFrameActivity : Activity() {
                     shell.content.addView(it, fill())
                 }
                 view.visibility = View.VISIBLE
-                val hour = Instant.ofEpochMilli(System.currentTimeMillis()).atZone(ZoneId.systemDefault()).hour
-                view.setNight(hour < 7 || hour >= 19)
+                view.setNight(TouchDayNight.isNight(Instant.ofEpochMilli(System.currentTimeMillis()).atZone(ZoneId.systemDefault()).hour))
                 view.setActive(resumed)
             }
         }
@@ -363,8 +372,8 @@ class TouchFrameActivity : Activity() {
             if (!isCurrent()) return@submit
             if (cached != null) main.post {
                 if (!isCurrent()) return@post
-                model = cached
-                home.render(cached)
+                model = cached.copy(connection = TouchConnection.REFRESHING)
+                home.render(model)
                 if (destination == TouchDestination.CALENDAR) calendar.render(calendarState)
             }
             val fallback = cached ?: previous
@@ -427,11 +436,11 @@ class TouchFrameActivity : Activity() {
         }
     }
 
-    private fun changeClimate(command: (TouchHomeRepository) -> Boolean) {
+    private fun changeClimate(targetCommand: Boolean, command: (TouchHomeRepository) -> Boolean) {
         val source = repository ?: return
         if (!resumed || climateInFlight || !networkAllowed()) return
         climateInFlight = true
-        home.setClimateBusy(true, "Applying…")
+        home.setClimateBusy(true)
         val previous = model
         tasks.submit(worker) { isCurrent ->
             if (!isCurrent()) return@submit
@@ -441,8 +450,9 @@ class TouchFrameActivity : Activity() {
                 if (!isCurrent()) return@post
                 climateInFlight = false
                 if (next != null) { model = next; home.render(next) }
-                home.setClimateBusy(false, if (accepted && next?.connection == TouchConnection.CONNECTED)
-                    "Updated" else "Could not confirm the change. Please retry.")
+                val confirmed = accepted && next?.connection == TouchConnection.CONNECTED
+                // A mode change never discards a pending setpoint draft; only a target command settles it.
+                if (targetCommand || !confirmed) home.onClimateCommandFinished(confirmed) else home.setClimateBusy(false)
             }
         }
     }
@@ -494,35 +504,54 @@ class TouchFrameActivity : Activity() {
         pendingAuthorization = pending
         val request = HomeAssistantOAuthEndpoint.fromDisplayUrl(config.homeAssistantUrl).authorizationRequest(callback, state)
         val verifier = OAuthCallbackVerifier(pending, callback)
-        val container = FrameLayout(this).apply { setBackgroundColor(PAPER) }
+        val palette = TouchPalette.forNight(TouchDayNight.isNight(Instant.now().atZone(ZoneId.systemDefault()).hour))
+        val kit = TouchKit(this, palette, TouchScale.forContentHeightDp(resources.configuration.screenHeightDp.toFloat()))
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setBackgroundColor(palette.wall)
+        }
         val surface = FrameOAuthWebSurface(this, runtime, request.url, config.homeAssistantUrl, callback, { url ->
             val code = verifier.verify(url)
             closeAuthorization(restoreDestination = false)
-            if (code == null) { message("Sign-in could not be verified"); navigate(destination) }
+            if (code == null) {
+                message("Sign-in couldn\u2019t be verified.", TouchShellLayout.NoticeTone.ERROR, "Try again", ::signIn)
+                navigate(destination)
+            }
             else {
                 tasks.submit(authorizationWorker) { isCurrent ->
                     val deadline = WeatherRequestDeadline(timeoutMillis = 12_000L)
                     val success = synchronized(tokenLock) { isCurrent() && client.exchangeAuthorizationCode(code.code, deadline) }
                     main.post {
                         if (!isCurrent()) return@post
-                        message(if (success) "Connected to Home Assistant" else "Sign-in could not be completed")
+                        if (success) message("Connected to Home Assistant")
+                        else message("Sign-in couldn\u2019t be completed.", TouchShellLayout.NoticeTone.ERROR, "Try again", ::signIn)
                         navigate(destination)
                     }
                 }
             }
-        }, { closeAuthorization(); message("Sign-in could not be completed") })
-        container.addView(surface, fill())
-        container.addView(Button(this).apply {
-            text = getString(R.string.touch_cancel_sign_in)
-            minHeight = dp(56)
-            setOnClickListener { pending.consume(); closeAuthorization() }
-        }, FrameLayout.LayoutParams(-2, dp(56), Gravity.TOP or Gravity.END))
+        }, { closeAuthorization(); message("Sign-in couldn\u2019t be completed.", TouchShellLayout.NoticeTone.ERROR, "Try again", ::signIn) })
+        container.addView(android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(palette.moulding)
+            setPadding(kit.dp(32), 0, kit.dp(12), 0)
+            addView(android.widget.LinearLayout(this@TouchFrameActivity).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                addView(kit.text(getString(R.string.touch_sign_in_title), kit.scale.headline, TouchFonts.Face.DISPLAY_BOLD, palette.mouldingInk))
+                addView(kit.text(getString(R.string.touch_sign_in_subtitle), kit.scale.caption, color = palette.mouldingMuted))
+            }, android.widget.LinearLayout.LayoutParams(0, -2, 1f))
+            addView(kit.button(getString(R.string.touch_cancel_sign_in), TouchKit.Emphasis.QUIET, quietInk = palette.mouldingInk) {
+                pending.consume()
+                closeAuthorization()
+            })
+        }, android.widget.LinearLayout.LayoutParams(-1, kit.dp(88)))
+        container.addView(surface, android.widget.LinearLayout.LayoutParams(-1, 0, 1f))
         authorization = surface
         authorizationContainer = container
         media?.setVisibleActive(false)
         cameras?.setActive(false)
         root.addView(container, fill())
-        runCatching { surface.start() }.onFailure { closeAuthorization(); message("Sign-in is unavailable") }
+        runCatching { surface.start() }.onFailure { closeAuthorization(); message("Sign-in isn\u2019t available right now.", TouchShellLayout.NoticeTone.ERROR) }
     }
 
     private fun closeAuthorization(restoreDestination: Boolean = true) {
@@ -554,8 +583,8 @@ class TouchFrameActivity : Activity() {
             photosPaused = false
             media?.setPhotosPaused(false)
         }
-        if (authorization == null && destination != TouchDestination.ART && destination != TouchDestination.PHOTOS &&
-            configuration != null && SystemClock.elapsedRealtime() - lastInteractionMillis >= experience.idleReturnSeconds * 1_000L) {
+        if (TouchIdleReturnPolicy.shouldReturnToPhotos(destination, authorization != null, configuration != null, networkAllowed(),
+                SystemClock.elapsedRealtime() - lastInteractionMillis, experience.idleReturnSeconds)) {
             lastInteractionMillis = SystemClock.elapsedRealtime()
             navigate(TouchDestination.PHOTOS)
         }
@@ -723,9 +752,9 @@ class TouchFrameActivity : Activity() {
     private fun networkAllowed(): Boolean = Build.VERSION.SDK_INT < 37 || checkSelfPermission(LAN_PERMISSION) == PackageManager.PERMISSION_GRANTED
 
     private fun requestLocalNetwork() {
-        if (Build.VERSION.SDK_INT < 37 || networkAllowed()) return
+        if (Build.VERSION.SDK_INT < 37 || networkAllowed() || lanDialog?.isShowing == true) return
         lanPromptShown = true
-        AlertDialog.Builder(this).setTitle("Connect to your home")
+        lanDialog = AlertDialog.Builder(this).setTitle("Connect to your home")
             .setMessage("FrameOS Touch needs local network access to reach your frame services and Home Assistant.")
             .setPositiveButton("Allow") { _, _ -> requestPermissions(arrayOf(LAN_PERMISSION), LAN_REQUEST) }
             .setNegativeButton("Later", null).show()
@@ -737,7 +766,7 @@ class TouchFrameActivity : Activity() {
             if (networkAllowed()) {
                 companion.setEnabled(runtimePreferences.getBoolean("companion_enabled", false))
                 navigate(destination)
-            } else message("Local network access is off. You can enable it in Android Settings.")
+            } else message("Local network access is off. Turn it on in Android Settings to load Home, Calendar and Cameras.", TouchShellLayout.NoticeTone.ERROR)
         }
     }
 
@@ -758,12 +787,24 @@ class TouchFrameActivity : Activity() {
             View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
     }
 
-    private fun message(value: String) { Toast.makeText(this, value, Toast.LENGTH_LONG).show() }
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+    private fun message(
+        value: String,
+        tone: TouchShellLayout.NoticeTone = TouchShellLayout.NoticeTone.INFO,
+        actionLabel: String? = null,
+        action: (() -> Unit)? = null,
+    ) = shell.showNotice(value, tone, actionLabel, action)
+
+    /** Shown after a tap into Photos or Art, for the first few times on this frame. */
+    private fun maybeShowEdgeHint() {
+        val shown = runtimePreferences.getInt(EDGE_HINT_COUNT, 0)
+        if (shown >= EDGE_HINT_LIMIT) return
+        runtimePreferences.edit().putInt(EDGE_HINT_COUNT, shown + 1).apply()
+        shell.showEdgeHint()
+    }
     private fun fill() = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
     private companion object {
-        const val PAPER = 0xFFF5F2E9.toInt()
-        const val INK = 0xFF12242B.toInt()
+        const val EDGE_HINT_COUNT = "edge_hint_count"
+        const val EDGE_HINT_LIMIT = 3
         const val LAN_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
         const val LAN_REQUEST = 101
     }

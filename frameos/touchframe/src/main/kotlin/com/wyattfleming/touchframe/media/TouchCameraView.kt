@@ -3,21 +3,19 @@ package com.wyattfleming.touchframe.media
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.BitmapFactory
-import android.content.res.ColorStateList
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.StateListDrawable
-import android.text.TextUtils
 import android.os.Handler
 import android.os.Looper
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.TextView
 import com.wyattfleming.frameos.weather.LegacyIsrgRootTls
 import com.wyattfleming.touchframe.R
+import com.wyattfleming.touchframe.ui.TouchFonts
+import com.wyattfleming.touchframe.ui.TouchKit
+import com.wyattfleming.touchframe.ui.TouchPalette
+import com.wyattfleming.touchframe.ui.TouchScale
 import com.wyattfleming.frameos.weather.WeatherRequestDeadline
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
@@ -49,65 +47,49 @@ class TouchCameraView(
     }
     private val main = Handler(Looper.getMainLooper())
     private var night = false
-    private lateinit var content: LinearLayout
-    private lateinit var cameras: LinearLayout
-    private val cameraButtons = linkedMapOf<String, TextView>()
+    private val cameraIds = cameraIds
+    private val cameraButtons = linkedMapOf<String, LinearLayout>()
     private val image = ImageView(context).apply {
         scaleType = ImageView.ScaleType.FIT_CENTER
         contentDescription = context.getString(R.string.touch_camera_snapshot_description)
     }
-    private val status = TextView(context).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+    private val mat = FrameLayout(context)
+    private val emptyState = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER
-        includeFontPadding = false
     }
-    private val refresh = TextView(context).apply {
-        text = context.getString(R.string.touch_camera_refresh)
-        gravity = Gravity.CENTER
-        minimumHeight = context.dp(56)
-        isClickable = true
-        isFocusable = true
-        setOnClickListener { requestRefresh() }
+    private val caption = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.BOTTOM
     }
-    private val signIn = TextView(context).apply {
-        text = context.getString(R.string.touch_camera_sign_in)
-        gravity = Gravity.CENTER
-        minimumHeight = context.dp(56)
-        isClickable = true
-        isFocusable = true
-        visibility = View.GONE
-        setOnClickListener { onSignIn?.invoke() }
+    private val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private var imageCamera: String? = null
+    private var imageAtMillis: Long? = null
+    private var stageState: Stage = Stage.Loading
+
+    /** What the snapshot area shows; network results are published into it on the main thread. */
+    private sealed class Stage {
+        object Loading : Stage()
+        object Image : Stage()
+        object SignIn : Stage()
+        data class Unavailable(val atMillis: Long) : Stage()
     }
-    private var selected = cameraIds.first()
+
+    @Volatile private var selected = cameraIds.first()
     @Volatile private var connection: HttpURLConnection? = null
     private var periodic: java.util.concurrent.ScheduledFuture<*>? = null
 
     init {
-        content = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(context.dp(16), context.dp(16), context.dp(16), context.dp(16))
-        }
-        cameras = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        cameraIds.forEach { id ->
-            val button = button(TouchCameraLabels.forEntityId(id)) { selectCamera(id) }
-            cameraButtons[id] = button
-            cameras.addView(button, LinearLayout.LayoutParams(0, context.dp(56), 1f))
-        }
-        content.addView(cameras)
-        content.addView(image, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
-        content.addView(status, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
-        content.addView(refresh, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)))
-        content.addView(signIn, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dp(56)))
-        addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        status.text = context.getString(R.string.touch_camera_unavailable)
-        applyPalette()
+        mat.addView(image, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        mat.addView(emptyState, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        rebuild()
     }
 
     /** Called by the activity clock so camera controls match the shell's day/night palette. */
     fun setNight(value: Boolean) {
         if (night == value) return
         night = value
-        applyPalette()
+        rebuild()
     }
 
     fun setActive(active: Boolean) {
@@ -117,7 +99,7 @@ class TouchCameraView(
             periodic = null
             disconnectFromUi()
         } else if (periodic == null) {
-            periodic = watchdog.scheduleWithFixedDelay({ requestRefresh() }, 5, 5, TimeUnit.SECONDS)
+            periodic = watchdog.scheduleWithFixedDelay({ requestPeriodicRefresh() }, 5, 5, TimeUnit.SECONDS)
         }
     }
 
@@ -138,6 +120,11 @@ class TouchCameraView(
         disconnectFromUi()
     }
 
+    /** A periodic tick never preempts a fetch in flight; slow snapshots would otherwise never finish. */
+    private fun requestPeriodicRefresh() {
+        if (refreshGate.requestPeriodic(selected)) startWorkerIfNeeded()
+    }
+
     private fun startWorkerIfNeeded() {
         runCatching { worker.execute(::drainRefreshes) }
     }
@@ -156,8 +143,8 @@ class TouchCameraView(
         val token = tokenProvider(deadline)
         // Token acquisition is caller-owned but no request may proceed after lifecycle cancellation.
         if (!refreshGate.isCurrent(request)) return
-        if (token.isNullOrBlank()) return publish(request, null, context.getString(R.string.touch_camera_sign_in_required), signInRequired = true)
-        if (deadline.isExpired()) return publish(request, null, context.getString(R.string.touch_camera_unavailable), signInRequired = false)
+        if (token.isNullOrBlank()) return publish(request, null, SIGN_IN_REQUIRED, signInRequired = true)
+        if (deadline.isExpired()) return publish(request, null, UNAVAILABLE, signInRequired = false)
         val url = policy.snapshotUrl(request.camera) ?: return
         var current: HttpURLConnection? = null
         var timeout: java.util.concurrent.ScheduledFuture<*>? = null
@@ -178,14 +165,14 @@ class TouchCameraView(
             opened.setRequestProperty("Authorization", "Bearer $token")
             if (!refreshGate.isCurrent(request)) return
             val code = opened.responseCode
-            if (code == 401 || code == 403) return publish(request, null, context.getString(R.string.touch_camera_sign_in_required), signInRequired = true)
-            if (code !in 200..299 || deadline.isExpired()) return publish(request, null, context.getString(R.string.touch_camera_unavailable), signInRequired = false)
+            if (code == 401 || code == 403) return publish(request, null, SIGN_IN_REQUIRED, signInRequired = true)
+            if (code !in 200..299 || deadline.isExpired()) return publish(request, null, UNAVAILABLE, signInRequired = false)
             val bytes = opened.inputStream.use { boundedBytes(it, deadline, request) }
             if (!refreshGate.isCurrent(request)) return
-            val bitmap = decodeSnapshot(bytes) ?: return publish(request, null, context.getString(R.string.touch_camera_unavailable), signInRequired = false)
+            val bitmap = decodeSnapshot(bytes) ?: return publish(request, null, UNAVAILABLE, signInRequired = false)
             publish(request, bitmap, null, signInRequired = false)
         } catch (_: Exception) {
-            if (refreshGate.isCurrent(request)) publish(request, null, context.getString(R.string.touch_camera_unavailable), signInRequired = false)
+            if (refreshGate.isCurrent(request)) publish(request, null, UNAVAILABLE, signInRequired = false)
         } finally {
             timeout?.cancel(false)
             // This worker owns its request identity, so cleanup never targets a newer connection.
@@ -202,16 +189,23 @@ class TouchCameraView(
     ) {
         main.post {
             if (!refreshGate.isCurrent(request)) return@post
-            if (bitmap != null) {
-                image.setImageBitmap(bitmap)
-                status.text = context.getString(R.string.touch_camera_updated, java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date()))
-                signIn.visibility = View.GONE
-            } else if (message != null) {
-                status.text = message
-                signIn.visibility = if (signInRequired) View.VISIBLE else View.GONE
+            val now = System.currentTimeMillis()
+            when {
+                bitmap != null -> {
+                    image.setImageBitmap(bitmap)
+                    imageCamera = request.camera
+                    imageAtMillis = now
+                    stageState = Stage.Image
+                }
+                signInRequired -> stageState = Stage.SignIn
+                // A failed refresh keeps a snapshot already showing for this camera and says how old it is.
+                message != null -> if (imageCamera != request.camera) stageState = Stage.Unavailable(now) else lastFailureMillis = now
             }
+            renderStage()
         }
     }
+
+    private var lastFailureMillis: Long? = null
 
     private fun boundedBytes(
         input: java.io.InputStream,
@@ -265,64 +259,144 @@ class TouchCameraView(
     }
 
     private fun selectCamera(camera: String) {
+        if (camera == selected) return requestRefresh()
         selected = camera
-        applyPalette()
+        image.setImageDrawable(null)
+        imageCamera = null
+        imageAtMillis = null
+        lastFailureMillis = null
+        stageState = Stage.Loading
+        rebuild()
         requestRefresh()
     }
 
-    private fun button(text: String, action: () -> Unit) = TextView(context).apply {
-        this.text = text
-        gravity = Gravity.CENTER
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
-        includeFontPadding = false
-        maxLines = 2
-        ellipsize = TextUtils.TruncateAt.END
+    private fun kit() = TouchKit(context, TouchPalette.forNight(night), TouchScale.forContentHeightDp(
+        if (height > 0) height / resources.displayMetrics.density else resources.configuration.screenHeightDp.toFloat()))
+
+    override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight)
+        if (oldHeight > 0 && TouchScale.forContentHeightDp(height / resources.displayMetrics.density) !=
+            TouchScale.forContentHeightDp(oldHeight / resources.displayMetrics.density)) post { rebuild() }
+    }
+
+    /** Builds the stage, caption and camera list; network state lands in [renderStage]. */
+    private fun rebuild() {
+        val kit = kit()
+        val palette = TouchCameraPalette.forNight(night)
+        val p = kit.palette
+        removeAllViews()
+        (mat.parent as? android.view.ViewGroup)?.removeView(mat)
+        (caption.parent as? android.view.ViewGroup)?.removeView(caption)
+        (list.parent as? android.view.ViewGroup)?.removeView(list)
+        setBackgroundColor(palette.surface)
+        mat.background = kit.rounded(palette.panel, kit.scale.radius, p.line)
+        val inset = kit.dp(16)
+        mat.setPadding(inset, inset, inset, inset)
+        image.setBackgroundColor(p.letterbox)
+        val stage = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(mat, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(caption, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { topMargin = kit.dp(16) })
+        }
+        list.removeAllViews()
+        cameraButtons.clear()
+        val wall = kit.scale == TouchScale.WALL
+        cameraIds.forEach { id ->
+            val button = cameraButton(kit, palette, id, id == selected)
+            cameraButtons[id] = button
+            list.addView(button, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, kit.dp(if (wall) 88 else 76)).apply {
+                if (list.childCount > 0) topMargin = kit.dp(12)
+            })
+        }
+        list.addView(View(context), LinearLayout.LayoutParams(0, 0, 1f))
+        list.addView(kit.button(context.getString(R.string.touch_camera_refresh), iconRes = R.drawable.ic_touch_refresh) { requestRefresh() }.apply {
+            tag = REFRESH_TAG
+        }, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, kit.dp(kit.scale.target)))
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val pad = kit.dp(kit.scale.pad)
+            setPadding(pad, (pad * 0.8f).toInt(), pad, (pad * 0.7f).toInt())
+            addView(stage, LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+            addView(list, LinearLayout.LayoutParams(kit.dp(if (wall) 340 else 270), LayoutParams.MATCH_PARENT).apply { marginStart = kit.dp(kit.scale.gap) })
+        }
+        addView(row, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        renderStage()
+    }
+
+    private fun cameraButton(kit: TouchKit, palette: TouchCameraPalette, id: String, isSelected: Boolean) = LinearLayout(context).apply {
+        val p = kit.palette
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(kit.dp(20), 0, kit.dp(16), 0)
         isClickable = true
         isFocusable = true
-        minimumHeight = context.dp(56)
-        setOnClickListener { action() }
+        this.isSelected = isSelected
+        val label = TouchCameraLabels.forEntityId(id)
+        contentDescription = label
+        val ink = if (isSelected) palette.accentInk else palette.ink
+        val base = if (isSelected) kit.rounded(palette.accent, kit.scale.radiusSmall, p.accentStroke, 2)
+            else kit.rounded(p.matRaised, kit.scale.radiusSmall, p.stroke, 2)
+        background = kit.pressable(base, kit.scale.radiusSmall)
+        addView(kit.icon(R.drawable.ic_touch_cameras, ink, 30))
+        addView(kit.text(label, kit.scale.body, TouchFonts.Face.TEXT_BOLD, ink, maxLines = 2).apply {
+            importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = kit.dp(14) })
+        setOnClickListener { selectCamera(id) }
     }
 
-    private fun applyPalette() {
-        val palette = TouchCameraPalette.forNight(night)
-        setBackgroundColor(palette.surface)
-        content.setBackgroundColor(palette.surface)
-        cameras.setBackgroundColor(palette.surface)
-        image.setBackgroundColor(palette.panel)
-        status.setTextColor(palette.ink)
-        cameraButtons.forEach { (id, button) ->
-            button.isSelected = id == selected
-            styleControl(button, palette, selected = button.isSelected, action = false)
+    /** Applies the current stage without rebuilding the controls (snapshots arrive every few seconds). */
+    private fun renderStage() {
+        val kit = kit()
+        val p = kit.palette
+        val name = TouchCameraLabels.forEntityId(selected)
+        val showImage = stageState == Stage.Image && imageCamera == selected
+        image.visibility = if (showImage) View.VISIBLE else View.INVISIBLE
+        emptyState.visibility = if (showImage) View.GONE else View.VISIBLE
+        list.findViewWithTag<View>(REFRESH_TAG)?.visibility = if (showImage) View.VISIBLE else View.GONE
+        emptyState.removeAllViews()
+        when (val state = stageState) {
+            Stage.Image -> Unit
+            Stage.Loading -> emptyState.addView(kit.text(context.getString(R.string.touch_camera_loading, name), kit.scale.body, color = p.inkMuted))
+            Stage.SignIn -> fillEmpty(kit, context.getString(R.string.touch_camera_sign_in_required),
+                context.getString(R.string.touch_camera_sign_in_detail), context.getString(R.string.touch_camera_sign_in), TouchKit.Emphasis.PRIMARY) { onSignIn?.invoke() }
+            is Stage.Unavailable -> fillEmpty(kit, context.getString(R.string.touch_camera_unavailable, name),
+                context.getString(R.string.touch_camera_unavailable_detail, timeText(state.atMillis)), context.getString(R.string.touch_camera_try_again),
+                TouchKit.Emphasis.SECONDARY) { requestRefresh() }
         }
-        styleControl(refresh, palette, selected = true, action = true)
-        styleControl(signIn, palette, selected = true, action = true)
-    }
-
-    private fun styleControl(view: TextView, palette: TouchCameraPalette, selected: Boolean, action: Boolean) {
-        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
-        view.includeFontPadding = false
-        view.setTextColor(ColorStateList(
-            arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
-            intArrayOf(palette.disabledInk, if (selected || action) palette.accentInk else palette.ink),
-        ))
-        view.background = StateListDrawable().apply {
-            addState(intArrayOf(-android.R.attr.state_enabled), rounded(palette.disabledSurface))
-            addState(intArrayOf(), rounded(if (selected || action) palette.accent else palette.panel))
+        caption.removeAllViews()
+        caption.addView(kit.text(name, kit.scale.title, TouchFonts.Face.DISPLAY_BOLD, maxLines = 1))
+        val detail = when {
+            !showImage -> null
+            lastFailureMillis != null && (imageAtMillis ?: 0L) < lastFailureMillis!! ->
+                context.getString(R.string.touch_camera_stale, timeText(imageAtMillis ?: 0L))
+            else -> imageAtMillis?.let { context.getString(R.string.touch_camera_updated, timeText(it)) }
         }
-        view.setPadding(context.dp(12), 0, context.dp(12), 0)
+        detail?.let {
+            caption.addView(kit.text(it, kit.scale.label, color = if (lastFailureMillis != null && (imageAtMillis ?: 0L) < lastFailureMillis!!) p.pendingInk else p.inkMuted),
+                LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { marginStart = kit.dp(16) })
+        }
     }
 
-    private fun rounded(color: Int) = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        cornerRadius = context.dp(12).toFloat()
-        setColor(color)
+    private fun fillEmpty(kit: TouchKit, title: String, detail: String, action: String, emphasis: TouchKit.Emphasis, onAction: () -> Unit) {
+        val p = kit.palette
+        emptyState.addView(kit.icon(R.drawable.ic_touch_cameras, p.inkMuted, 64))
+        emptyState.addView(kit.text(title, kit.scale.headline, TouchFonts.Face.DISPLAY_BOLD).apply { gravity = Gravity.CENTER },
+            LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { topMargin = kit.dp(16) })
+        emptyState.addView(kit.text(detail, kit.scale.body, color = p.inkMuted).apply { gravity = Gravity.CENTER; maxWidth = kit.dp(620) },
+            LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { topMargin = kit.dp(10) })
+        emptyState.addView(kit.button(action, emphasis, iconRes = if (emphasis == TouchKit.Emphasis.SECONDARY) R.drawable.ic_touch_refresh else null) { onAction() },
+            LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, kit.dp(kit.scale.target)).apply { topMargin = kit.dp(20) })
     }
 
-    private fun Context.dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+    private fun timeText(millis: Long): String = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(millis))
 
     private companion object {
         const val MAX_BYTES = 8 * 1024 * 1024
         const val TOTAL_TIMEOUT_MILLIS = 8_000L
+        const val REFRESH_TAG = "touch-camera-refresh"
+        // Worker-side outcome markers; the main thread chooses the visible wording.
+        const val SIGN_IN_REQUIRED = "sign-in-required"
+        const val UNAVAILABLE = "unavailable"
     }
 }
 
@@ -373,6 +447,13 @@ internal class TouchCameraRefreshGate {
         return scheduleIfIdle()
     }
 
+    /** Like [request] but a no-op while any fetch is in flight, so the in-flight request stays current. */
+    @Synchronized
+    fun requestPeriodic(camera: String): Boolean {
+        if (closed || !active || inFlight) return false
+        return request(camera)
+    }
+
     @Synchronized
     fun next(): Request? {
         if (closed || !active) {
@@ -415,7 +496,7 @@ internal class TouchCameraPolicy(origin: String, cameraIds: List<String>) {
     }
 }
 
-/** Explicit API23-safe colors keep Camera controls readable on either shell palette. */
+/** Camera colors are a projection of the shared [TouchPalette], so Cameras never drifts from the shell. */
 internal data class TouchCameraPalette(
     val surface: Int,
     val panel: Int,
@@ -426,32 +507,14 @@ internal data class TouchCameraPalette(
     val disabledInk: Int,
 ) {
     companion object {
-        fun contrastRatio(foreground: Int, background: Int): Double {
-            fun channel(value: Int): Double {
-                val normalized = value / 255.0
-                return if (normalized <= 0.04045) normalized / 12.92 else Math.pow((normalized + 0.055) / 1.055, 2.4)
-            }
-            fun luminance(color: Int): Double =
-                0.2126 * channel((color shr 16) and 0xff) +
-                    0.7152 * channel((color shr 8) and 0xff) +
-                    0.0722 * channel(color and 0xff)
-            val first = luminance(foreground)
-            val second = luminance(background)
-            return (maxOf(first, second) + 0.05) / (minOf(first, second) + 0.05)
-        }
+        fun contrastRatio(foreground: Int, background: Int): Double = TouchPalette.contrastRatio(foreground, background)
 
-        fun forNight(night: Boolean): TouchCameraPalette = if (night) {
-            TouchCameraPalette(
-                surface = 0xFF101722.toInt(), panel = 0xFF172536.toInt(), ink = 0xFFF1EDE4.toInt(),
-                accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),
-                disabledSurface = 0xFF27313C.toInt(), disabledInk = 0xFFA9B2B8.toInt(),
-            )
-        } else {
-            TouchCameraPalette(
-                surface = 0xFFF1EDE4.toInt(), panel = 0xFFE3E6DF.toInt(), ink = 0xFF182630.toInt(),
-                // Day controls need dark ink over teal; this is a proof-specific unique marker.
-                accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),
-                disabledSurface = 0xFFD7D5CE.toInt(), disabledInk = 0xFF48555B.toInt(),
+        fun forNight(night: Boolean): TouchCameraPalette {
+            val theme = TouchPalette.forNight(night)
+            return TouchCameraPalette(
+                surface = theme.wall, panel = theme.mat, ink = theme.ink,
+                accent = theme.accent, accentInk = theme.onAccent,
+                disabledSurface = theme.wall, disabledInk = theme.disabledInk,
             )
         }
     }
