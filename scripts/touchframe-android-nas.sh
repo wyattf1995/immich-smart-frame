@@ -114,7 +114,7 @@ run_step touchframe-shared-tests-preflight bash -c "cd '$frameos_dir' && ./gradl
 run_step touchframe-tests-preflight bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:testDebugUnitTest"
 run_step touchframe-startup-source-proof python3 "$root_dir/scripts/verify-touch-startup-proof.py" "$root_dir"
 run_step touchframe-climate-source-proof python3 "$root_dir/scripts/verify-touch-climate-proof.py" "$root_dir"
-run_step touchframe-live-camera-source-proof python3 "$root_dir/scripts/verify-touch-live-camera-proof.py"
+run_step touchframe-live-camera-source-proof python3 "$root_dir/scripts/verify-touch-live-camera-proof.py" "$root_dir" --run-jvm --report-dir "$root_dir/reports/touch-live-camera"
 run_step touchframe-source-proof python3 "$root_dir/scripts/verify-touchframe-proof.py" "$root_dir"
 run_step weather-header-source-proof python3 "$root_dir/scripts/verify-weather-header-layout-proof.py" "$root_dir"
 run_step touchframe-design-source-proof python3 "$root_dir/scripts/verify-touchframe-design-proof.py" "$root_dir"
