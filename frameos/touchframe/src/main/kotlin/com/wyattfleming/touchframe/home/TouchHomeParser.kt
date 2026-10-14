@@ -55,11 +55,11 @@ class TouchHomeParser {
         val stepIsValid = step == null || step > 0.0
         val supportedFeatures = attributes.optLong("supported_features")
         val target = attributes.optNumber("temperature")
-        val canSetTarget = supportedFeatures != null && (supportedFeatures and TARGET_TEMPERATURE_FEATURE) != 0L &&
-            target != null && boundsAreValid && stepIsValid
         val low = attributes.optNumber("target_temp_low")
         val high = attributes.optNumber("target_temp_high")
         val rangeIsValid = low != null && high != null && low <= high
+        val canSetTarget = supportedFeatures != null && (supportedFeatures and TARGET_TEMPERATURE_FEATURE) != 0L &&
+            target != null && boundsAreValid && stepIsValid && !rangeIsValid && mode != "heat_cool"
         return TouchClimate(
             entityId = expectedEntityId,
             currentTemperature = attributes.optNumber("current_temperature"),
