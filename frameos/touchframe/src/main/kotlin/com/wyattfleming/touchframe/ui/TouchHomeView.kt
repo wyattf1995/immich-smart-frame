@@ -699,7 +699,7 @@ class TouchHomeView private constructor(
         addView(columnHeader(kit, "To do", count, *trailing.toTypedArray()), LinearLayout.LayoutParams(MATCH, WRAP))
         when {
             todo.state == TouchTodoState.NOT_CHOSEN -> addView(stateBlock(kit, "Choose the lists to show here",
-                "Lists come from Home Assistant. Connect Todoist there, then pick which lists this frame shows.",
+                "Lists come from Home Assistant\u2019s to-do lists, such as Todoist or Google Tasks. Pick which ones this frame shows.",
                 "Choose lists") { todoActions?.chooseLists() })
             todo.state == TouchTodoState.SIGN_IN_REQUIRED -> addView(stateBlock(kit, "Sign in to see your lists",
                 "Your to-do lists come from Home Assistant.", "Sign in", onSignIn))
@@ -709,7 +709,7 @@ class TouchHomeView private constructor(
             !ready -> addView(stateBlock(kit, "Lists aren’t available right now",
                 "Home Assistant didn’t answer. They’ll come back when the frame reconnects.", "Try again") { onRetry?.invoke() })
             firstList == null -> Unit
-            visible.isEmpty() -> addView(stateBlock(kit, "Nothing left to do", "Add a task in Todoist on your phone, or tap Add.", null, null))
+            visible.isEmpty() -> addView(stateBlock(kit, "Nothing left to do", "Add a task on your phone, or tap Add.", null, null))
             else -> {
                 val shown = if (visible.size > rowBudget) visible.take((rowBudget - 1).coerceAtLeast(1)) else visible
                 val rows = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
@@ -954,7 +954,7 @@ class TouchHomeView private constructor(
             found.state != TouchTodoState.READY -> stateBlock(kit, "Couldn’t reach Home Assistant",
                 "Check the frame’s Wi‑Fi, then try again.", "Try again") { showListPicker(null); todoActions?.chooseLists() }
             found.lists.isEmpty() -> stateBlock(kit, "Home Assistant has no to-do lists yet",
-                "Add the Todoist integration in Home Assistant (Settings, Devices & services). Its projects appear here as lists.", null, null)
+                "Add a to-do integration in Home Assistant, such as Todoist or Google Tasks (Settings, Devices & services). Its lists appear here.", null, null)
             else -> ScrollView(context).apply {
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
