@@ -7,7 +7,6 @@
     <string name="touch_calendar_sign_in">Sign in to see your calendar</string>
 
     <string name="touch_camera_snapshot_description">Camera snapshot</string>
-    <string name="touch_camera_refresh">Refresh now</string>
     <string name="touch_camera_snapshot">View snapshot</string>
     <string name="touch_camera_live_title">Watch %1$s live</string>
     <string name="touch_camera_live_detail">Live video starts only when you ask for it.</string>
