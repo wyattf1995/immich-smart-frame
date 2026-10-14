@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
 import java.time.ZoneId
+import kotlin.math.abs
 
 class TouchOceanPresentationTest {
     private val conditions = TouchOceanFixtures.conditions()
@@ -88,6 +89,23 @@ class TouchOceanPresentationTest {
         for (x in listOf(0.0, 37.5, 120.0, 333.3)) {
             assertEquals(TouchOceanWaves.y(x, 10.0, 250.0, 0.4), TouchOceanWaves.y(x + 250.0, 10.0, 250.0, 0.4), 1e-9)
         }
+    }
+
+    @Test
+    fun `wind streaks keep their spacing so neighbouring rows never stack into a menu-like glyph`() {
+        // Build 10 drifted rows 12 dp apart at 0.7x, 0.9x and 1.1x the wind; on the frame they bunched into a ≡.
+        for (span in listOf(2080.0, 1400.0)) {
+            for (step in 0..14_400) {
+                val seconds = step * 0.25
+                val xs = (0 until 7).map { TouchOceanWaves.streakX(it, seconds, span, spacing = 397.0, speed = 50.0, direction = 1) }
+                xs.zipWithNext().forEach { (a, b) ->
+                    val gap = abs(a - b).let { minOf(it, span - it) }
+                    assertTrue("rows only $gap apart at $seconds s on a $span span", gap >= 200.0)
+                }
+            }
+        }
+        assertEquals(50.0, TouchOceanWaves.streakX(0, 1.0, 2080.0, 397.0, 50.0, 1), 1e-9)
+        assertEquals(2030.0, TouchOceanWaves.streakX(0, 1.0, 2080.0, 397.0, 50.0, -1), 1e-9)
     }
 
     @Test

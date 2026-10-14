@@ -37,6 +37,13 @@ class TouchOceanSceneSourceTest {
     }
 
     @Test
+    fun `wind streaks are placed only by the shared drift so their spacing holds`() {
+        val perFrame = body("private fun place(", "private fun size(")
+        assertTrue(perFrame.contains("TouchOceanWaves.streakX("))
+        assertFalse("streak rows must not drift at their own speeds", perFrame.contains("index % 3"))
+    }
+
+    @Test
     fun `the swell bands are cached textures`() {
         assertTrue(source.contains("listOf(back, middle, front).forEach { it.setLayerType(LAYER_TYPE_HARDWARE, null) }"))
     }
