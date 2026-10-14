@@ -1,0 +1,9 @@
+{
+  "manifest_version": 2,
+  "name": "FrameOS live camera",
+  "version": "1.0.0",
+  "browser_specific_settings": { "gecko": { "id": "frame-live-camera@wyattfleming.com" } },
+  "background": { "scripts": ["background.js"] },
+  "permissions": ["nativeMessaging", "geckoViewAddons", "https://*/*", "http://*/*"],
+  "content_security_policy": "script-src 'self'; object-src 'self'; connect-src https: wss:"
+}
