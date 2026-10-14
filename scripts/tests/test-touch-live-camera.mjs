@@ -210,4 +210,30 @@ assert.deepEqual(receiverStatuses, ["native-grant"], "a timer receiver failure i
 receiverContext.FrameLiveCamera.active.close();
 assert.equal(receiverSocket?.closed, true, "closing live video closes its signaling socket");
 assert.equal(receiverClears, 2, "closing live video clears both deadlines through the Window receiver");
+// Certificate generation occurs after the authenticated client-config response. Its
+// failure remains an offer-stage failure, matching Gecko's former implicit path.
+const certificateFailureStatuses = [];
+class RejectingCertificatePeer extends FakePeer {
+  static async generateCertificate() { throw new Error("certificate unavailable"); }
+}
+const certificateFailure = new context.FrameLiveCamera.LiveCameraSession({
+  browserApi: { runtime: { sendNativeMessage: async (_app, value) => {
+    if (value.type === "live-status") certificateFailureStatuses.push(value.state);
+    return { accepted: true };
+  } } },
+  WebSocketImpl: FakeSocket, RTCPeerConnectionImpl: RejectingCertificatePeer,
+  MediaStreamImpl: context.MediaStream, RTCIceCandidateImpl: context.RTCIceCandidate,
+  video, locationHref: context.location.href, timers: context,
+});
+certificateFailure.capability = "abcdefghijklmnop";
+certificateFailure.entity = "camera.entryway";
+certificateFailure.request = async command => {
+  assert.equal(command.type, "camera/webrtc/get_client_config", "the rejection follows the authenticated client-config request");
+  return { configuration: { iceServers: [{ urls: "stun:certificate-failure" }] } };
+};
+await certificateFailure.onMessage({ data: JSON.stringify({ type: "auth_ok" }) }, () => "", () => {});
+assert.equal(certificateFailure.closed, true, "certificate rejection tears down the live session");
+assert.equal(certificateFailureStatuses.includes("failed-offer"), true, "certificate rejection remains an offer-stage failure");
+assert.equal(certificateFailureStatuses.includes("failed-config"), false, "certificate rejection is not mislabeled as a client-config failure");
+
 console.log("touch live camera protocol: PASS");
