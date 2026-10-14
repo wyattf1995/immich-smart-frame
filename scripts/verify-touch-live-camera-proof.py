@@ -135,6 +135,7 @@ def main() -> None:
     verify_static_contract(root)
     # Keep all source mutations deterministic even when the JVM lane is not run locally.
     require_unique_mutation_target(page, "this.handleOfferEvent(message.event)")
+    require_unique_mutation_target(page, 'this.milestone("socket")')
     require_unique_mutation_target(policy, "visible && !consumed && active?.let")
     require_unique_mutation_target(camera_view, "@Synchronized fun selectOrPrepareLive() {\n        snapshotRequested = false")
     require_unique_mutation_target(camera_view, "status == TouchLiveCameraBridge.Status.FAILED")
@@ -153,7 +154,25 @@ def main() -> None:
         page.write_bytes(original_page)
     green = run([node, str(root / "scripts/tests/test-touch-live-camera.mjs")], root, report_dir / "node-green.log")
     require(green, "Node restored protocol guard")
-    receipt["node"] = {"extension_baseline": extension_baseline.returncode, "baseline": baseline.returncode, "red": red.returncode, "green": green.returncode}
+    original_page = mutate_once(page, 'this.milestone("socket")', 'this.milestone("auth")')
+    try:
+        milestone_red = run([node, str(root / "scripts/tests/test-touch-live-camera.mjs")], root, report_dir / "node-milestone-red.log")
+        if milestone_red.returncode == 0:
+            raise RuntimeError("Node milestone guard stayed green after socket milestone mutation")
+        if "an opened signaling socket emits only its bounded milestone" not in milestone_red.stdout:
+            raise RuntimeError("Node milestone mutation did not fail the intended bounded-diagnostic assertion")
+    finally:
+        page.write_bytes(original_page)
+    milestone_green = run([node, str(root / "scripts/tests/test-touch-live-camera.mjs")], root, report_dir / "node-milestone-green.log")
+    require(milestone_green, "Node restored milestone guard")
+    receipt["node"] = {
+        "extension_baseline": extension_baseline.returncode,
+        "baseline": baseline.returncode,
+        "red": red.returncode,
+        "green": green.returncode,
+        "milestone_red": milestone_red.returncode,
+        "milestone_green": milestone_green.returncode,
+    }
 
     if args.run_jvm:
         frame = root / "frameos"
