@@ -10,8 +10,8 @@ FrameOS Touch has two deliberate rendering boundaries:
 
 | Surface | Implementation | Design consequence |
 | --- | --- | --- |
-| Home, Weather, Calendar, Cameras, navigation rail, and Settings return | Native Android Views | These are the primary touch controls. Keep them immediate, readable, and usable with last-known data while a bounded refresh runs. |
-| Photos, Art, and optional Birds | A retained Gecko surface | Photos and Art are immersive and reveal navigation by edge gesture. Birds keeps the rail visible and appears only when configured. Preserve each destination's media/session behavior. |
+| Home, Weather, Calendar, Cameras, top navigation, and Settings return | Native Android Views | These are the primary touch controls. Keep them immediate, readable, and usable with last-known data while a bounded refresh runs. |
+| Photos, Art, and optional Birds | A retained Gecko surface | Photos and Art are immersive and reveal top navigation by edge gesture. Birds keeps top navigation visible and appears only when configured. Preserve each destination's media/session behavior. |
 
 Do not redesign the old Lenovo-oriented FrameOS activity through this work. It
 is a separate product with its own release and interaction model. The Touch app
@@ -27,11 +27,11 @@ navigation wait for the network.
 
 | Area | Primary source | Notes for design work |
 | --- | --- | --- |
-| Native Home | [`TouchHomeView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchHomeView.kt) | Direct climate controls and compact household summaries are native controls, not an embedded HA dashboard. |
+| Native Home | [`TouchHomeView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchHomeView.kt) | Direct climate controls and compact household summaries are native controls, not an embedded HA dashboard. The UI remains read-only when Home Assistant does not advertise a safe single target. |
 | Weather | [`WeatherContentView`](../frameos/app/src/main/kotlin/com/wyattfleming/frameos/ui/WeatherContentView.kt) | Native current conditions and forecast; its optional place label is configured display text, never GPS collection. |
 | Calendar | [`TouchCalendarView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarView.kt) and [`TouchCalendarWeekPresentation`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarWeekPresentation.kt) | Week is events-only: seven dates, timed/all-day events, three previews per day, and a locally paged selected-day agenda. Agenda and Month remain available. Tasks are out of scope. |
-| Cameras | [`TouchCameraView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchCameraView.kt) | Authenticated snapshots are the current product surface; do not imply live video controls. |
-| Rail and immersive menu | [`TouchShellLayout`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayout.kt) and [`TouchDestination`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchDestination.kt) | Native destinations retain the rail. Photos and Art use the full viewport; a deliberate edge gesture reveals their menu. |
+| Cameras | [`TouchCameraView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchCameraView.kt) | The source implements an explicit one-camera live surface with a packaged local page and one-shot capability; authenticated snapshots remain its fallback. Physical-frame live acceptance is still required. |
+| Top navigation and immersive menu | [`TouchShellLayout`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayout.kt) and [`TouchDestination`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchDestination.kt) | Native destinations retain top navigation. Photos and Art use the full viewport; a deliberate left-edge gesture reveals the bar. |
 | Settings return | [`TouchSettingsReturn`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchSettingsReturn.kt) | Android Settings is an intentional escape hatch with a return path; do not hide it behind a new custom settings screen. |
 | Photos, Art, and optional Birds media | [`TouchMediaView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt) and [`TouchOfflinePhotos`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt) | Photos has a scoped offline reserve. Art and Birds never read that reserve; Art must show art-specific unavailable state rather than family-photo fallback. |
 
@@ -58,8 +58,8 @@ visual quality:
 
 - Make direct controls visibly actionable, with generous targets and useful
   selected, pending, offline, and error states.
-- Keep the primary native rail simple and consistent. Avoid a second in-content
-  navigation rail.
+- Keep the primary native top navigation simple and consistent. Avoid a second
+  in-content navigation system.
 - Preserve **Photos as the default experience**. Art is an easy-to-reach,
   separate mode for artwork, not a replacement photo feed.
 - Treat the Week calendar as a visual overview first. All seven weekdays need
@@ -100,16 +100,16 @@ rotation only where the existing product supports them.
 ## Acceptance for a design proposal
 
 A design proposal is ready for implementation review when it supplies native
-layouts for Home, Weather, Week/Agenda/Month Calendar, Cameras, the rail, and
-immersive Photos/Art transitions; documents day/night and loading/offline
+layouts for Home, Weather, Week/Agenda/Month Calendar, Cameras, top navigation,
+and immersive Photos/Art transitions; documents day/night and loading/offline
 states; and identifies the target source seams above. It should also show:
 
 1. a readable 1280×800 reference layout and a 1920×1080 layout without
    assuming either is a universal device guarantee;
 2. direct-touch climate and calendar interactions, including a busy-day
    calendar page and empty/offline states;
-3. an edge-menu path from Photos and Art back to the rail, while keeping media
-   full-screen by default; and
+3. an edge-menu path from Photos and Art back to top navigation, while keeping
+   media full-screen by default; and
 4. no changes to OAuth, configuration persistence, offline photo scoping, or
    Home Assistant service allowlists unless separately reviewed.
 
@@ -130,7 +130,7 @@ control boundary to 3:1.
 - **Navigation:** a top bar (the graphite moulding `#27302C` along the frame's top
   edge, 68dp on the 1280 panel, 80dp on the 1920 frame) with horizontally scrolling
   icon+label tabs, the current time on every screen except Home, and Settings at the
-  right. Wyatt chose it over the left rail on October 13 to give content the width.
+  right. This top-bar layout preserves the available content width.
   Photos and Art stay full screen; the left-edge swipe drops the bar down over them.
 - **Day:** stone wall `#E4E1D9`, mat panels `#F6F4EF`, ink `#1D2321`, gallery-green
   accent `#2E5E50`, control stroke `#827C70`.
