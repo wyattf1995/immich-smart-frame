@@ -10,6 +10,7 @@ enum class TouchDestination(
     ART("Art", "◈"),
     BIRDS("Birds", "♢"),
     WEATHER("Weather", "☀"),
+    OCEAN("Ocean", "≈"),
     CAMERAS("Cameras", "◉"),
     CALENDAR("Calendar", "▣"),
     ;
@@ -33,8 +34,20 @@ internal object TouchDestinationOrder {
         add(TouchDestination.ART)
         if (birdsConfigured) add(TouchDestination.BIRDS)
         add(TouchDestination.WEATHER)
+        add(TouchDestination.OCEAN)
         add(TouchDestination.CALENDAR)
         add(TouchDestination.CAMERAS)
+    }
+
+    /**
+     * Ocean is local to Touch: the companion's mode list predates it, so a remote order never names it. Keep it
+     * right after Weather (or last when Weather is off) instead of letting a remote order hide it.
+     */
+    fun withOcean(order: List<TouchDestination>): List<TouchDestination> {
+        if (TouchDestination.OCEAN in order) return order
+        val weather = order.indexOf(TouchDestination.WEATHER)
+        return if (weather < 0) order + TouchDestination.OCEAN
+        else order.subList(0, weather + 1) + TouchDestination.OCEAN + order.subList(weather + 1, order.size)
     }
 
     fun normalize(remoteOrder: List<TouchDestination>): List<TouchDestination> = buildList {

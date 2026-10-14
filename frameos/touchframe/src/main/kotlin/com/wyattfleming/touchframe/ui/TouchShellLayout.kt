@@ -382,6 +382,7 @@ class TouchShellLayout(
             TouchDestination.ART -> R.drawable.ic_touch_art
             TouchDestination.BIRDS -> R.drawable.ic_touch_birds
             TouchDestination.WEATHER -> R.drawable.ic_touch_weather
+            TouchDestination.OCEAN -> R.drawable.ic_touch_ocean
             TouchDestination.CAMERAS -> R.drawable.ic_touch_cameras
             TouchDestination.CALENDAR -> R.drawable.ic_touch_calendar
         }

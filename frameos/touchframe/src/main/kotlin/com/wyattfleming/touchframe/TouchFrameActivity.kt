@@ -34,6 +34,7 @@ import com.wyattfleming.touchframe.home.*
 import com.wyattfleming.touchframe.media.TouchCameraView
 import com.wyattfleming.touchframe.media.TouchMediaView
 import com.wyattfleming.touchframe.media.TouchOfflinePhotoStore
+import com.wyattfleming.touchframe.ocean.*
 import com.wyattfleming.touchframe.ui.*
 import java.security.SecureRandom
 import java.time.Instant
@@ -48,6 +49,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 class TouchFrameActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private val worker = TouchTaskScope.newSingleWorker()
+    // Ebbward is on the internet; its timeouts never queue Home Assistant loads behind them.
+    private val oceanWorker = TouchTaskScope.newSingleWorker()
     private val authorizationWorker = Executors.newSingleThreadExecutor()
     private val tokenLock = Any()
     private val tasks = TouchTaskScope()
@@ -87,6 +90,10 @@ class TouchFrameActivity : Activity() {
     private lateinit var home: TouchHomeView
     private lateinit var weather: WeatherContentView
     private lateinit var calendar: TouchCalendarView
+    private lateinit var ocean: TouchOceanView
+    private var oceanState = TouchOceanState()
+    private var oceanInFlight = false
+    private val oceanRepository by lazy { TouchOceanRepository(java.io.File(filesDir, "touch-ocean/conditions.json")) }
     private var calendarState = TouchCalendarState(TouchCalendarWeekPresentation.DEFAULT_MODE, java.time.LocalDate.now(), java.time.LocalDate.now(), TouchCalendarRange.forMode(TouchCalendarWeekPresentation.DEFAULT_MODE, java.time.LocalDate.now()), emptyList(), TouchCalendarConnection.OFFLINE, null)
     private lateinit var settingsReturn: TouchSettingsReturn
     private var media: TouchMediaView? = null
@@ -109,6 +116,8 @@ class TouchFrameActivity : Activity() {
                 java.time.format.DateTimeFormatter.ofPattern(if (android.text.format.DateFormat.is24HourFormat(this@TouchFrameActivity)) "H:mm" else "h:mm a", Locale.getDefault())))
             calendar.setNight(isNight)
             if (destination == TouchDestination.CALENDAR) calendar.tick(now)
+            ocean.setNight(isNight)
+            if (destination == TouchDestination.OCEAN) ocean.tick()
             cameras?.setNight(isNight)
             main.postDelayed(this, 1_000L)
         }
@@ -118,6 +127,7 @@ class TouchFrameActivity : Activity() {
             TouchDestination.HOME -> refreshHome()
             TouchDestination.CALENDAR -> requestCalendar(calendarState.mode, calendarState.anchor, calendarState.selectedDate, true)
             TouchDestination.WEATHER -> refreshWeather()
+            TouchDestination.OCEAN -> refreshOcean()
             else -> Unit
         }
     }
@@ -168,9 +178,11 @@ class TouchFrameActivity : Activity() {
             visibility = View.GONE
         }
         calendar = TouchCalendarView(this, ::requestCalendar, ::signIn).apply { visibility = View.GONE }
+        ocean = TouchOceanView(this) { refreshOcean(force = true) }.apply { visibility = View.GONE }
         shell.content.addView(home, fill())
         shell.content.addView(weather, fill())
         shell.content.addView(calendar, fill())
+        shell.content.addView(ocean, fill())
         root.addView(shell, fill())
         setContentView(root)
         companion = TouchCompanionController.create(
@@ -248,6 +260,8 @@ class TouchFrameActivity : Activity() {
         calendarTask?.cancel(true)
         calendarTask = null
         weatherInFlight = false
+        oceanInFlight = false
+        ocean.setActive(false)
         climateInFlight = false
         home.setClimateBusy(false)
         releaseData()
@@ -269,6 +283,7 @@ class TouchFrameActivity : Activity() {
         photoStore.close()
         cameras?.close()
         worker.shutdownNow()
+        oceanWorker.shutdownNow()
         authorizationWorker.shutdownNow()
         cancellationWorker.shutdown()
         main.removeCallbacksAndMessages(null)
@@ -321,6 +336,8 @@ class TouchFrameActivity : Activity() {
         home.visibility = if (next == TouchDestination.HOME) View.VISIBLE else View.GONE
         weather.visibility = if (next == TouchDestination.WEATHER) View.VISIBLE else View.GONE
         calendar.visibility = if (next == TouchDestination.CALENDAR) View.VISIBLE else View.GONE
+        ocean.visibility = if (next == TouchDestination.OCEAN) View.VISIBLE else View.GONE
+        ocean.setActive(resumed && next == TouchDestination.OCEAN)
         cameras?.visibility = if (next == TouchDestination.CAMERAS) View.VISIBLE else View.GONE
         cameras?.setActive(resumed && networkAllowed() && next == TouchDestination.CAMERAS)
         media?.setVisibleActive(resumed && networkAllowed() && next.usesWebMedia)
@@ -329,6 +346,7 @@ class TouchFrameActivity : Activity() {
             TouchDestination.HOME -> refreshHome()
             TouchDestination.CALENDAR -> requestCalendar(calendarState.mode, calendarState.anchor, calendarState.selectedDate, true)
             TouchDestination.WEATHER -> refreshWeather()
+            TouchDestination.OCEAN -> refreshOcean()
             TouchDestination.PHOTOS, TouchDestination.ART, TouchDestination.BIRDS -> {
                 val url = webMediaUrl(next) ?: run { message("${next.label} isn\u2019t set up on this frame.", TouchShellLayout.NoticeTone.ERROR); return }
                 if (!networkAllowed()) { requestLocalNetwork(); return }
@@ -511,6 +529,47 @@ class TouchFrameActivity : Activity() {
         }
     }
 
+    /** Public Ebbward conditions; no Home Assistant sign-in. Fresh data is reused for ten minutes. */
+    private fun refreshOcean(force: Boolean = false) {
+        if (!resumed || oceanInFlight) return
+        val now = System.currentTimeMillis()
+        val fresh = oceanState.connection == TouchOceanConnection.LIVE &&
+            oceanState.fetchedAtMillis?.let { now - it in 0 until OCEAN_REFRESH_MILLIS } == true
+        if (fresh && !force) {
+            ocean.render(oceanState)
+            scheduleOceanRefresh(OCEAN_REFRESH_MILLIS - (now - (oceanState.fetchedAtMillis ?: now)))
+            return
+        }
+        oceanInFlight = true
+        oceanState = oceanState.copy(loading = true)
+        ocean.render(oceanState)
+        tasks.submit(oceanWorker) { isCurrent ->
+            if (!isCurrent()) return@submit
+            val load = runCatching { oceanRepository.load(TouchOceanRepository.DEFAULT_SPOT, OCEAN_TIMEOUT_MILLIS) }
+                .getOrElse { TouchOceanLoad(null, TouchOceanConnection.OFFLINE) }
+            main.post {
+                if (!isCurrent()) return@post
+                oceanInFlight = false
+                val live = load.connection == TouchOceanConnection.LIVE
+                oceanState = TouchOceanState(
+                    conditions = load.conditions ?: oceanState.conditions,
+                    connection = load.connection,
+                    loading = false,
+                    fetchedAtMillis = if (live) System.currentTimeMillis() else oceanState.fetchedAtMillis,
+                )
+                ocean.render(oceanState)
+                // Offline: try again sooner, the way Weather does.
+                scheduleOceanRefresh(if (live) OCEAN_REFRESH_MILLIS else 60_000L)
+            }
+        }
+    }
+
+    private fun scheduleOceanRefresh(delayMillis: Long) {
+        if (destination != TouchDestination.OCEAN) return
+        main.removeCallbacks(refresh)
+        main.postDelayed(refresh, delayMillis.coerceAtLeast(1_000L))
+    }
+
     private fun signIn() {
         val config = configuration ?: return
         val client = oauth ?: return
@@ -618,7 +677,8 @@ class TouchFrameActivity : Activity() {
         if (!resumed) return null
         val reserve = photoStore.publishedStatus()
         return FrameRemoteStatus(
-            mode = FrameMode.valueOf(destination.name), photosPaused = photosPaused,
+            // The companion protocol has no Ocean mode yet; Ocean reports as the other conditions screen.
+            mode = FrameMode.entries.firstOrNull { it.name == destination.name } ?: FrameMode.WEATHER, photosPaused = photosPaused,
             lastPaintAt = null, lastWeatherAt = lastWeatherAt,
             recoveryCount = 0, lastError = lastMediaError, offline = media?.offlineVisible == true,
             appVersion = "touch-0.1.0", currentAssetId = currentAssetId, lastPhotoAt = lastPhotoAt,
@@ -702,7 +762,7 @@ class TouchFrameActivity : Activity() {
         } else {
             TouchDestinationOrder.defaults(birdsConfigured)
         }
-        val destinations = TouchDestinationOrder.available(requested, birdsConfigured)
+        val destinations = TouchDestinationOrder.withOcean(TouchDestinationOrder.available(requested, birdsConfigured))
         home.setDestinations(destinations)
         shell.setDestinations(destinations)
     }
@@ -826,6 +886,8 @@ class TouchFrameActivity : Activity() {
     private fun fill() = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
     private companion object {
         const val EDGE_HINT_COUNT = "edge_hint_count"
+        const val OCEAN_REFRESH_MILLIS = 10 * 60_000L
+        const val OCEAN_TIMEOUT_MILLIS = 15_000
         const val EDGE_HINT_LIMIT = 3
         const val LAN_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
         const val LAN_REQUEST = 101
