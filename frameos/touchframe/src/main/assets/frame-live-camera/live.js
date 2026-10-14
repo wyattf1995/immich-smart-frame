@@ -106,6 +106,6 @@ class LiveCameraSession {
 
 globalThis.FrameLiveCamera = { LiveCameraSession };
 if (typeof browser !== "undefined" && typeof location !== "undefined") {
-  const active = new LiveCameraSession({ browserApi: browser, WebSocketImpl: WebSocket, RTCPeerConnectionImpl: RTCPeerConnection, MediaStreamImpl: MediaStream, RTCIceCandidateImpl: RTCIceCandidate, video: document.querySelector("video"), locationHref: location.href, timers: { setTimeout, clearTimeout } });
+  const active = new LiveCameraSession({ browserApi: browser, WebSocketImpl: WebSocket, RTCPeerConnectionImpl: RTCPeerConnection, MediaStreamImpl: MediaStream, RTCIceCandidateImpl: RTCIceCandidate, video: document.querySelector("video"), locationHref: location.href, timers: { setTimeout: (...args) => window.setTimeout(...args), clearTimeout: id => window.clearTimeout(id) } });
   globalThis.FrameLiveCamera.active = active; window.addEventListener("pagehide", () => active.close(false), { once: true }); active.start().catch(() => active.close(true, "failed-native-grant"));
 }
