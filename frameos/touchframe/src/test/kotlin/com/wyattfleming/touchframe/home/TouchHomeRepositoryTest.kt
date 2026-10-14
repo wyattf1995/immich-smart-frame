@@ -150,12 +150,58 @@ class TouchHomeRepositoryTest {
 
     @Test
     fun `optional server step still yields a connected climate card`() {
-        val transport = FakeTransport(climateBody = """{"entity_id":"climate.entryway_entryway","state":"heat","attributes":{"current_temperature":70,"temperature":71,"temperature_unit":"°F","hvac_modes":["heat"],"min_temp":50,"max_temp":85}}""")
+        val transport = FakeTransport(climateBody = """{"entity_id":"climate.entryway_entryway","state":"heat","attributes":{"current_temperature":70,"temperature":71,"temperature_unit":"°F","supported_features":1,"hvac_modes":["heat"],"min_temp":50,"max_temp":85}}""")
         TouchHomeRepository(config, { _ -> "token" }, transport).use { repository ->
             val model = repository.refresh(null)
             assertEquals(TouchConnection.CONNECTED, model.connection)
             assertEquals(null, model.climate?.step)
             assertTrue(repository.changeClimateTarget(72.25))
+        }
+    }
+
+    @Test
+    fun `old HA climate unit falls back to config once and retains target guard`() {
+        val transport = FakeTransport(climateBody = """{"entity_id":"climate.entryway_entryway","state":"heat","attributes":{"current_temperature":70,"temperature":71,"supported_features":1,"hvac_modes":["heat"],"min_temp":50,"max_temp":85}}""")
+        TouchHomeRepository(config, { _ -> "token" }, transport).use { repository ->
+            val first = repository.refresh(null)
+            val second = repository.refresh(first)
+
+            assertEquals(TouchConnection.CONNECTED, first.connection)
+            assertEquals("°F", first.climate?.unit)
+            assertTrue(first.climate?.canSetTarget == true)
+            assertEquals(TouchConnection.CONNECTED, second.connection)
+            assertEquals(1, transport.requests.count { it.url.endsWith("/api/config") })
+        }
+    }
+
+    @Test
+    fun `range-only climate never posts a single target command`() {
+        val transport = FakeTransport(climateBody = """{"entity_id":"climate.entryway_entryway","state":"heat_cool","attributes":{"current_temperature":70,"target_temp_low":68,"target_temp_high":75,"temperature_unit":"°F","supported_features":2,"hvac_modes":["heat_cool"],"min_temp":50,"max_temp":85}}""")
+        TouchHomeRepository(config, { _ -> "token" }, transport).use { repository ->
+            val model = repository.refresh(null)
+            val reads = transport.requests.size
+
+            assertEquals(TouchConnection.CONNECTED, model.connection)
+            assertTrue(model.climate?.canSetTarget == false)
+            assertTrue(!repository.changeClimateTarget(72.0))
+            assertEquals(reads, transport.requests.size)
+        }
+    }
+
+    @Test
+    fun `observed off thermostat stays connected and cannot post a made up target`() {
+        val transport = FakeTransport(climateBody = """{"entity_id":"climate.entryway_entryway","state":"off","attributes":{"min_temp":50,"max_temp":90,"current_temperature":71,"temperature":null,"target_temp_low":null,"target_temp_high":null,"hvac_modes":["heat","cool","heat_cool","off"],"supported_features":411,"hvac_action":"off"}}""")
+        TouchHomeRepository(config, { _ -> "token" }, transport).use { repository ->
+            val model = repository.refresh(null)
+            val reads = transport.requests.size
+
+            assertEquals(TouchConnection.CONNECTED, model.connection)
+            assertEquals("°F", model.climate?.unit)
+            assertEquals(null, model.climate?.targetTemperature)
+            assertTrue(model.climate?.canSetTarget == false)
+            assertTrue(model.climate?.canSetMode == true)
+            assertTrue(!repository.changeClimateTarget(72.0))
+            assertEquals(reads, transport.requests.size)
         }
     }
 
@@ -180,7 +226,7 @@ class TouchHomeRepositoryTest {
     private class FakeTransport(
         var status: Int = 200,
         private val calendarBodies: Map<String, String> = emptyMap(),
-        private val climateBody: String = """{"entity_id":"climate.entryway_entryway","state":"heat","attributes":{"current_temperature":70,"temperature":71,"temperature_unit":"°F","hvac_modes":["off","heat"],"min_temp":50,"max_temp":85,"target_temp_step":1}}""",
+        private val climateBody: String = """{"entity_id":"climate.entryway_entryway","state":"heat","attributes":{"current_temperature":70,"temperature":71,"temperature_unit":"°F","supported_features":1,"hvac_modes":["off","heat"],"min_temp":50,"max_temp":85,"target_temp_step":1}}""",
     ) : HomeAssistantHttpTransport {
         val requests = CopyOnWriteArrayList<HomeAssistantHttpRequest>()
         override fun execute(request: HomeAssistantHttpRequest): HomeAssistantHttpResponse {
@@ -189,6 +235,7 @@ class TouchHomeRepositoryTest {
             return when {
                 request.url.contains("weather.home") -> HomeAssistantHttpResponse(200, """{"state":"sunny","attributes":{"temperature":72,"temperature_unit":"°F"}}""")
                 request.url.contains("climate.entryway_entryway") -> HomeAssistantHttpResponse(200, climateBody)
+                request.url.endsWith("/api/config") -> HomeAssistantHttpResponse(200, """{"unit_system":{"temperature":"°F"}}""")
                 else -> HomeAssistantHttpResponse(200, calendarBodies.entries.firstOrNull { request.url.contains("/api/calendars/${it.key}") }?.value ?: "[]")
             }
         }

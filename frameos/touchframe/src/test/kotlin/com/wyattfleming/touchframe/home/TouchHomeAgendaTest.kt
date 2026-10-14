@@ -105,6 +105,7 @@ class TouchHomeAgendaTest {
     private fun climate(target: Double?, entity: String = "climate.hall", step: Double? = 1.0) = TouchClimate(
         entityId = entity, currentTemperature = 71.0, targetTemperature = target, unit = "°F", mode = "heat",
         modes = listOf("heat", "off"), minTemperature = 50.0, maxTemperature = 90.0, step = step,
+        canSetTarget = true, canSetMode = true,
     )
 
     @Test

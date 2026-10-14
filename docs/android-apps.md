@@ -85,11 +85,14 @@ runner [`scripts/touchframe-android-nas.sh`](../scripts/touchframe-android-nas.s
 also executes source-only negative/restored-green proofs and retains source,
 SDK and JUnit identities. It builds but does not sign or deploy.
 
-Touch has independent OAuth and companion provisioning. The preview does not
-take over HOME or boot. Keep the working app and vendor launcher available;
-do not enable old and new companion pollers with one shared device identity.
-Camera snapshots are not a promise of live video. Complete the guide's physical
-touch, offline, Settings-return and boot-recovery gates before replacement.
+Touch has independent OAuth and companion provisioning. The source declares an
+ordinary user-selectable Android HOME entry point: explicit HOME starts Photos,
+while ordinary app launch starts native Home. This does not establish launcher or
+boot acceptance; keep the working app and vendor launcher available, and do not
+enable old and new companion pollers with one shared device identity. Camera source
+includes an explicit one-camera live view with authenticated snapshot fallback.
+Complete the guide's physical touch, offline, Settings-return, live-camera, and
+boot-recovery gates before replacement.
 
 ## Internal sharing and maintenance
 

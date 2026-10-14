@@ -112,6 +112,9 @@ run_step touchframe-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-da
 # replace JUnit XML inventory used by the final retained summary.
 run_step touchframe-shared-tests-preflight bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :frame-shared:testDebugUnitTest"
 run_step touchframe-tests-preflight bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:testDebugUnitTest"
+run_step touchframe-startup-source-proof python3 "$root_dir/scripts/verify-touch-startup-proof.py" "$root_dir"
+run_step touchframe-climate-source-proof python3 "$root_dir/scripts/verify-touch-climate-proof.py" "$root_dir"
+run_step touchframe-live-camera-source-proof python3 "$root_dir/scripts/verify-touch-live-camera-proof.py" "$root_dir" --run-jvm --report-dir "$root_dir/reports/touch-live-camera"
 run_step touchframe-source-proof python3 "$root_dir/scripts/verify-touchframe-proof.py" "$root_dir"
 run_step weather-header-source-proof python3 "$root_dir/scripts/verify-weather-header-layout-proof.py" "$root_dir"
 run_step touchframe-design-source-proof python3 "$root_dir/scripts/verify-touchframe-design-proof.py" "$root_dir"
@@ -161,7 +164,7 @@ PY
 python3 - "$root_dir" "$report_zip" <<'PY'
 import sys,zipfile
 from pathlib import Path
-root,out=map(Path,sys.argv[1:]); include=[root/'reports/frameos-weather-header',root/'reports/touchframe-design',root/'reports/touchframe-android',root/'frameos/touchframe/build/reports',root/'frameos/touchframe/build/test-results',root/'frameos/frame-shared/build/reports',root/'frameos/frame-shared/build/test-results']
+root,out=map(Path,sys.argv[1:]); include=[root/'reports/frameos-weather-header',root/'reports/touchframe-design',root/'reports/touchframe-android',root/'reports/touch-climate',root/'reports/touch-live-camera',root/'frameos/touchframe/build/reports',root/'frameos/touchframe/build/test-results',root/'frameos/frame-shared/build/reports',root/'frameos/frame-shared/build/test-results']
 with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
  for base in include:
   if base.exists():

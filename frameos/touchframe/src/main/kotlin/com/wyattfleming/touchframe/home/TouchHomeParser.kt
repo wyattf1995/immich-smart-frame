@@ -19,29 +19,61 @@ class TouchHomeParser {
         return state to text
     }
 
-    /** Missing or malformed bounds produce no controllable climate card; step is optional in HA. */
-    fun parseClimate(expectedEntityId: String, body: String): TouchClimate? {
+    /**
+     * Old Home Assistant releases may omit the entity temperature unit and expose it only through
+     * `/api/config`'s unit system. The caller may provide that bounded fallback only for this case.
+     */
+    fun requiresConfigTemperatureUnit(expectedEntityId: String, body: String): Boolean {
+        val root = JSONObject(body)
+        require(root.optString("entity_id") == expectedEntityId) { "Unexpected climate entity" }
+        val attributes = root.optJSONObject("attributes") ?: JSONObject()
+        return attributes.optString("temperature_unit").trim().isEmpty()
+    }
+
+    fun parseConfigTemperatureUnit(body: String): String? =
+        recognizedTemperatureUnit(JSONObject(body).optJSONObject("unit_system")?.optString("temperature"))
+
+    /**
+     * A state can always be displayed when it reports a recognized unit. Commands remain disabled
+     * unless the state explicitly advertises the corresponding capability and safe inputs.
+     */
+    fun parseClimate(expectedEntityId: String, body: String, fallbackTemperatureUnit: String? = null): TouchClimate? {
         val root = JSONObject(body)
         require(root.optString("entity_id") == expectedEntityId) { "Unexpected climate entity" }
         val attributes = root.optJSONObject("attributes") ?: JSONObject()
         val modes = attributes.optJSONArray("hvac_modes")?.strings(MAX_MODES).orEmpty()
         val mode = root.optString("state").trim().takeIf(String::isNotBlank)
             ?: throw IllegalArgumentException("Climate mode missing")
-        val unit = attributes.optString("temperature_unit").trim().takeIf(String::isNotBlank) ?: return null
-        val minimum = attributes.optNumber("min_temp") ?: return null
-        val maximum = attributes.optNumber("max_temp") ?: return null
+        val attributeUnit = attributes.optString("temperature_unit").trim()
+        val unit = (recognizedTemperatureUnit(attributeUnit) ?: if (attributeUnit.isEmpty()) {
+            recognizedTemperatureUnit(fallbackTemperatureUnit)
+        } else null) ?: return null
+        val minimum = attributes.optNumber("min_temp")
+        val maximum = attributes.optNumber("max_temp")
         val step = attributes.optNumber("target_temp_step")
-        if (minimum > maximum || (step != null && step <= 0.0)) return null
+        val boundsAreValid = minimum != null && maximum != null && minimum <= maximum
+        val stepIsValid = step == null || step > 0.0
+        val supportedFeatures = attributes.optLong("supported_features")
+        val target = attributes.optNumber("temperature")
+        val low = attributes.optNumber("target_temp_low")
+        val high = attributes.optNumber("target_temp_high")
+        val rangeIsValid = low != null && high != null && low <= high
+        val canSetTarget = supportedFeatures != null && (supportedFeatures and TARGET_TEMPERATURE_FEATURE) != 0L &&
+            target != null && boundsAreValid && stepIsValid && !rangeIsValid && mode != "heat_cool"
         return TouchClimate(
             entityId = expectedEntityId,
             currentTemperature = attributes.optNumber("current_temperature"),
-            targetTemperature = attributes.optNumber("temperature"),
+            targetTemperature = target,
+            targetTemperatureLow = if (rangeIsValid) low else null,
+            targetTemperatureHigh = if (rangeIsValid) high else null,
             unit = unit,
             mode = mode,
             modes = modes,
-            minTemperature = minimum,
-            maxTemperature = maximum,
-            step = step,
+            minTemperature = if (boundsAreValid) minimum else null,
+            maxTemperature = if (boundsAreValid) maximum else null,
+            step = step.takeIf { stepIsValid },
+            canSetTarget = canSetTarget,
+            canSetMode = modes.isNotEmpty() && mode in modes,
         )
     }
 
@@ -85,6 +117,19 @@ class TouchHomeParser {
         else -> null
     }
 
+    private fun JSONObject.optLong(key: String): Long? = when (val value = opt(key)) {
+        is Byte, is Short, is Int, is Long -> (value as Number).toLong()
+        is Float, is Double -> value.toDouble().takeIf { it.isFinite() && it == it.toLong().toDouble() }?.toLong()
+        is String -> value.trim().toLongOrNull()
+        else -> null
+    }
+
+    private fun recognizedTemperatureUnit(value: String?): String? = when (value?.trim()) {
+        "°C", "C" -> "°C"
+        "°F", "F" -> "°F"
+        else -> null
+    }
+
     private fun JSONArray.strings(max: Int): List<String> = buildList {
         for (index in 0 until minOf(length(), max)) {
             optString(index).trim().takeIf(String::isNotBlank)?.let(::add)
@@ -97,6 +142,7 @@ class TouchHomeParser {
     private companion object {
         const val MAX_MODES = 16
         const val MAX_EVENTS_PER_CALENDAR = 200
+        const val TARGET_TEMPERATURE_FEATURE = 1L
         val CALENDAR_ENTITY = Regex("calendar\\.[a-z0-9_]+")
     }
 }

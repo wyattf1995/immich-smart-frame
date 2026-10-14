@@ -1,5 +1,9 @@
 # FrameOS Touch source validation — October 13, 2026
 
+> **Newer checkpoint:** [October 14 source validation](frameos-touch-validation-20261014.md)
+> records a later source revision and its own artifacts and checks. This historical
+> record remains unchanged for the source it describes.
+
 Verified October 13, 2026, from retained build outputs and their original-job
 export, archive, and closed-lifecycle receipts.
 

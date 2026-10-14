@@ -10,14 +10,17 @@ not the Lenovo activity or its mode/gesture state machine.
 
 - Home is a native, responsive dashboard. Its clock, navigation, and last known
   data render immediately; a network refresh never replaces it with a loading page.
-- The navigation rail exposes Home, Photos, Art, Weather, Cameras, Calendar, and
-  full Android Settings. Layouts target 1920×1080 and 1280×800 frames; actual
-  readability and reachability still require device acceptance. Home remains
-  reachable when companion settings reorder or disable other destinations.
-- A configured Birds feed appears in Home and the rail. It shares the retained
-  web surface, keeps navigation visible, and is absent when no feed is configured.
+- A persistent top navigation bar exposes Home, Photos, Art, Weather, Calendar,
+  Cameras, and Android Settings. It uses the native day/night palette and scrolls
+  tabs rather than truncating them. Home remains the local anchor when companion
+  settings reorder or disable other destinations. Layouts target 1920×1080 and
+  1280×800; device readability and reachability remain acceptance work.
+- A configured Birds feed appears in Home and the top navigation. It shares the
+  retained web surface, keeps navigation visible, and is absent when no feed is
+  configured.
 - Photos and Art fill the screen. Artwork stays uncropped with blurred margins.
-  An inward swipe in the left 48dp opens the menu; its scrim dismisses the menu.
+  An inward swipe from the left edge reveals the top navigation over immersive
+  media; its scrim dismisses the menu.
 - Android Settings opens directly and gets an explicit Return to FrameOS Touch
   overlay. Failure to establish that return route keeps the user in the app.
 - Home, Calendar, climate controls, and Weather use the authenticated Home
@@ -38,7 +41,12 @@ not the Lenovo activity or its mode/gesture state machine.
 Home's API requests address a small configured set of entities, not `/api/states`.
 Calendar windows, result counts, HTTP bytes, deadlines, and concurrency are bounded.
 Refresh work belongs to a lifecycle generation; old responses cannot update a new
-screen or credentials. UI navigation does not wait for a network response.
+screen or credentials. UI navigation does not wait for a network response. For older
+Home Assistant climate entities that omit `temperature_unit`, Touch reads the
+recognized C/F unit from the bounded `/api/config` response and caches it for the
+repository lifetime. Climate controls remain read-only unless the entity supplies a
+safe single target, valid bounds, and an applicable non-range mode; range and
+`heat_cool` states never receive a synthesized single-temperature command.
 
 Authentication uses the existing same-origin OAuth verifier, encrypted Android
 Keystore store, bounded HTTPS transport, and short-lived embedded sign-in view.
@@ -70,8 +78,10 @@ and [authentication API](https://developers.home-assistant.io/docs/auth_api/).
 
 ## First-install boundary
 
-The preview has no HOME intent filter or boot takeover enabled. Install it beside
-B7 only after the build gates pass, keeping Frameo's default HOME unchanged. Initial
+The source declares a user-selectable Android HOME entry point. When Android sends
+an explicit HOME intent, Touch starts the ambient Photos destination; normal app
+launch still starts at native Home. This is implemented source behavior, not proof
+that it is suitable as the default launcher on either frame family. Initial
 configuration uses the `com.wyattfleming.touchframe.PROVISION` broadcast to
 `.control.TouchProvisionReceiver`, protected by Android's DUMP permission. It accepts
 bounded non-secret configuration and durably commits it on a worker; it refuses
@@ -97,10 +107,14 @@ never run old and new pollers with the same device identity at once. Events use
 durable at-most-once claims; a lifecycle interruption after a claim may suppress
 that event rather than showing it twice. Photos pause/hold is session state.
 
-Camera mode currently provides authenticated snapshots, not live video. Birds
-runtime verification, boot recovery, companion provisioning/takeover and physical UI acceptance remain
-open parity gates before replacing the old app. API37 local-network permission
-handling is source-only until a compatible runtime test is available.
+Camera mode implements an explicit, one-camera live view backed by a packaged local
+page and a one-shot native capability; it only connects to the configured Home
+Assistant websocket and releases the session when the view is hidden. Authenticated
+snapshots remain the fallback. This architecture is implemented in source but has
+not completed physical-frame camera acceptance. Birds runtime verification, boot
+recovery, companion provisioning/takeover, and physical UI acceptance remain open
+parity gates before replacing the old app. API37 local-network permission handling
+is source-only until a compatible runtime test is available.
 
 As of October 13, 2026, earlier Touch candidates have been built, QA-signed and
 installed on specific small and large test frames. The small-frame Week calendar
