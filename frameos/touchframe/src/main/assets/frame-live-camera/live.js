@@ -41,8 +41,11 @@ class LiveCameraSession {
     if (message.type === "auth_invalid") return this.close(true, "failed-auth");
     if (message.type === "auth_ok") {
       this.milestone("config");
-      try { return await this.configurePeer(await this.request({ type: "camera/webrtc/get_client_config", entity_id: this.entity })); }
-      catch (_) { return this.close(true, "failed-config"); }
+      try {
+        const config = await this.request({ type: "camera/webrtc/get_client_config", entity_id: this.entity });
+        this.milestone("config-response");
+        return await this.configurePeer(config);
+      } catch (_) { return this.close(true, "failed-config"); }
     }
     if (message.type === "result") return this.resolveRequest(message);
     if (message.type === "event" && message.id === this.offerSubscriptionId) return this.handleOfferEvent(message.event);
@@ -52,6 +55,7 @@ class LiveCameraSession {
   async configurePeer(config) {
     if (this.closed || !config?.configuration) return this.close(true, "failed-config");
     this.peer = new this.RTCPeerConnection(config.configuration);
+    this.milestone("peer-created");
     if (config.dataChannel) this.peer.createDataChannel(config.dataChannel);
     this.remoteStream = new this.MediaStream();
     this.peer.ontrack = event => { if (!this.closed && event.track) { this.remoteStream.addTrack(event.track); this.video.srcObject = this.remoteStream; } };
@@ -66,8 +70,10 @@ class LiveCameraSession {
     if (!peer || this.closed) return;
     const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
     if (this.closed || this.peer !== peer) return;
+    this.milestone("offer-created");
     await peer.setLocalDescription(offer);
     if (this.closed || this.peer !== peer) return;
+    this.milestone("local-description");
     this.offerSubscriptionId = this.nextRequestId(); this.send({ type: "camera/webrtc/offer", id: this.offerSubscriptionId, entity_id: this.entity, offer: peer.localDescription.sdp }); this.milestone("offer");
   }
   async handleOfferEvent(event) {

@@ -63,11 +63,15 @@ socket.emit({ type: "result", id: configId, success: true, result: { configurati
 await new Promise(resolve => setImmediate(resolve));
 const peer = FakePeer.instances[0];
 assert.equal(peer.dataChannel, "nest");
-assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "config"), true, "client configuration emits a bounded milestone");
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "config"), true, "the client-config request emits a bounded milestone");
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "config-response"), true, "a resolved client configuration emits a bounded milestone");
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "peer-created"), true, "peer construction emits a bounded milestone");
 assert.deepEqual(peer.transceivers.map(({ kind }) => kind), ["audio", "video"]);
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "offer-created"), true, "offer creation emits a bounded milestone");
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "local-description"), true, "local description assignment emits a bounded milestone");
 const offer = socket.sent.find(value => value.type === "camera/webrtc/offer");
 assert.ok(offer);
-assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "offer"), true, "offer creation emits a bounded milestone");
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "offer"), true, "offer transmission emits a bounded milestone");
 socket.emit({ type: "event", id: offer.id, event: { type: "candidate", candidate: { candidate: "remote", sdpMid: "0" } } });
 await new Promise(resolve => setImmediate(resolve));
 socket.emit({ type: "event", id: offer.id, event: { type: "session", session_id: "session-1" } });
