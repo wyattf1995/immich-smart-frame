@@ -116,6 +116,8 @@ def main() -> None:
     }
 
     verify_static_contract(root)
+    extension_baseline = run([node, str(root / "scripts/tests/test-touch-live-extension-page.mjs")], root, report_dir / "extension-baseline.log")
+    require(extension_baseline, "packaged extension-page binding guard")
     baseline = run([node, str(root / "scripts/tests/test-touch-live-camera.mjs")], root, report_dir / "node-baseline.log")
     require(baseline, "Node baseline protocol guard")
     original_page = mutate_once(page, "this.handleOfferEvent(message.event)", "this.handleOfferEvent(message.event.data)")
@@ -127,7 +129,7 @@ def main() -> None:
         page.write_bytes(original_page)
     green = run([node, str(root / "scripts/tests/test-touch-live-camera.mjs")], root, report_dir / "node-green.log")
     require(green, "Node restored protocol guard")
-    receipt["node"] = {"baseline": baseline.returncode, "red": red.returncode, "green": green.returncode}
+    receipt["node"] = {"extension_baseline": extension_baseline.returncode, "baseline": baseline.returncode, "red": red.returncode, "green": green.returncode}
 
     if args.run_jvm:
         frame = root / "frameos"
