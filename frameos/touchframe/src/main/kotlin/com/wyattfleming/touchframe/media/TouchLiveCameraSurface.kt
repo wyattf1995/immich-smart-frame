@@ -82,8 +82,13 @@ internal class TouchLiveCameraSurface(
         closed = true
         requestedCamera = null
         bridge.close()
-        geckoView.releaseSession()
+        // GeckoSession.close() explicitly destroys the compositor Surface. Keep
+        // the view attached until that completes, then release the display and
+        // invalidate before TouchCameraView removes this child.
         session.close()
+        geckoView.releaseSession()
+        geckoView.invalidate()
+        invalidate()
     }
 
     private fun allowedUri(value: String): Boolean {
