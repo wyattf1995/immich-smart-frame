@@ -44,6 +44,10 @@ CLASSES = {
     "ocean-scene": ("com.wyattfleming.touchframe.ocean.TouchOceanSceneSourceTest", tests / "ocean/TouchOceanSceneSourceTest.kt"),
     "ocean-view": ("com.wyattfleming.touchframe.ocean.TouchOceanViewSourceTest", tests / "ocean/TouchOceanViewSourceTest.kt"),
     "manifest": ("com.wyattfleming.touchframe.TouchFrameActivityManifestTest", tests / "TouchFrameActivityManifestTest.kt"),
+    "todo": ("com.wyattfleming.touchframe.home.TouchTodoTest", tests / "home/TouchTodoTest.kt"),
+    "todo-repo": ("com.wyattfleming.touchframe.home.TouchTodoRepositoryTest", tests / "home/TouchTodoRepositoryTest.kt"),
+    "home-todo": ("com.wyattfleming.touchframe.ui.TouchHomeTodoSourceTest", tests / "ui/TouchHomeTodoSourceTest.kt"),
+    "ocean-glance": ("com.wyattfleming.touchframe.ocean.TouchOceanGlanceTest", tests / "ocean/TouchOceanGlanceTest.kt"),
 }
 
 MUTATIONS = [
@@ -133,6 +137,28 @@ MUTATIONS = [
     ("activity-restart-in-place-red", module / "src/main/AndroidManifest.xml",
      'android:stateNotNeeded="true"', 'android:stateNotNeeded="false"', "manifest",
      {"Android restarts Touch in place when its process is killed on screen"}),
+    ("todo-overdue-red", main / "home/TouchTodo.kt",
+     'date.isBefore(today) -> Due("Overdue", Tone.LATE)', 'false -> Due("Overdue", Tone.LATE)', "todo",
+     {"overdue items are labelled Overdue and today's items Today"}),
+    ("todo-groceries-exclusive-red", main / "home/TouchTodo.kt",
+     "it.entityId != grocery?.entityId", 'it.entityId != "todo.none"', "todo",
+     {"a list chosen as groceries is never also a task list"}),
+    ("todo-preview-count-red", main / "home/TouchTodo.kt",
+     '" and ${items.size - names} more"', '" and more"', "todo",
+     {"the groceries line names the first items and counts the rest"}),
+    ("todo-missing-list-red", main / "home/TouchTodoRepository.kt",
+     "response.statusCode == 400 -> TouchTodoLoad(", "response.statusCode == 499 -> TouchTodoLoad(", "todo-repo",
+     {"refresh failures map to sign-in, missing list or offline and never throw"}),
+    ("todo-undo-delay-red", main / "ui/TouchHomeView.kt",
+     "postDelayed(send, UNDO_MILLIS)", "post(send)", "home-todo",
+     {"a checked item is sent to Home Assistant only after the Undo delay"}),
+    ("photo-rgb565-red", main / "media/TouchPhotoOfDay.kt",
+     "inPreferredConfig = Bitmap.Config.RGB_565", "inPreferredConfig = Bitmap.Config.ARGB_8888", "home-todo",
+     {"the photo of the day is sampled to the panel and stored at two bytes a pixel"}),
+    ("ocean-glance-next-tide-red", main / "ocean/TouchOceanGlance.kt",
+     "it.epochMillis > nowMillis", "it.epochMillis > 0L", "ocean-glance",
+     {"Home's ocean glance names the spot, its water and the next tide",
+      "with every listed tide in the past the glance says nothing about tides"}),
 ]
 
 
