@@ -41,8 +41,9 @@ const context = {
   MediaStream: class { constructor() { this.tracks = []; } addTrack(track) { this.tracks.push(track); } getTracks() { return this.tracks; } },
   RTCIceCandidate: class { constructor(value) { Object.assign(this, value); } },
   setTimeout(callback) { const id = ++nextTimer; timers.set(id, callback); return id; },
-  clearTimeout(id) { timers.delete(id); }, window: { addEventListener() {} }, globalThis: {},
+  clearTimeout(id) { timers.delete(id); }, addEventListener() {}, globalThis: {},
 };
+context.window = context;
 context.globalThis = context;
 vm.createContext(context);
 vm.runInContext(source, context);
@@ -106,4 +107,50 @@ delayed.close();
 resolveNative({ accepted: true, entity_id: "camera.entryway", origin: "wss://ha.example/api/websocket", access_token: "secret" });
 await delayedStart;
 assert.equal(FakeSocket.instances.length, beforeDelayedSocket, "a revoked native response cannot open a socket");
+
+// Window timer methods may require their Window receiver. The extension bootstrap
+// must not detach them into a plain object before LiveCameraSession invokes them.
+const receiverStatuses = [];
+let receiverTimers = 0;
+let receiverSocket;
+const timerWindow = {
+  setTimeout() {
+    assert.equal(this, timerWindow, "the bootstrap keeps the Window timer receiver");
+    receiverTimers += 1;
+    return receiverTimers;
+  },
+  clearTimeout() {
+    assert.equal(this, timerWindow, "the bootstrap keeps the Window clear-timer receiver");
+  },
+  addEventListener() {},
+};
+class ReceiverSocket {
+  static OPEN = 1;
+  constructor() { this.readyState = 0; receiverSocket = this; }
+  close() { this.closed = true; }
+}
+const receiverContext = {
+  URL, JSON, Promise,
+  browser: { runtime: { sendNativeMessage: async (_app, value) => {
+    if (value.type === "start-live") {
+      return { accepted: true, entity_id: "camera.entryway", origin: "wss://ha.example/api/websocket", access_token: "secret" };
+    }
+    receiverStatuses.push(value.state);
+    return { accepted: true };
+  } } },
+  location: { href: "moz-extension://id/live.html#capability=abcdefghijklmnop&entity=camera.entryway" },
+  document: { querySelector: () => ({ addEventListener() {}, removeAttribute() {}, load() {} }) },
+  WebSocket: ReceiverSocket, RTCPeerConnection: FakePeer,
+  MediaStream: context.MediaStream, RTCIceCandidate: context.RTCIceCandidate,
+  // These are intentionally the same receiver-sensitive Window operations.
+  setTimeout: timerWindow.setTimeout, clearTimeout: timerWindow.clearTimeout,
+  window: timerWindow, globalThis: {},
+};
+receiverContext.globalThis = receiverContext;
+vm.createContext(receiverContext);
+vm.runInContext(source, receiverContext);
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(receiverSocket?.closed, undefined, "a receiver-sensitive timer does not abort the live bootstrap");
+assert.equal(receiverTimers, 2, "both live deadlines are scheduled through the Window receiver");
+assert.deepEqual(receiverStatuses, ["native-grant"], "a timer receiver failure is never mislabeled as a native-grant failure");
 console.log("touch live camera protocol: PASS");

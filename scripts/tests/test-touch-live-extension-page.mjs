@@ -25,7 +25,7 @@ assert.match(bridge, /installed\.metaData\.baseUrl/);
 assert.match(bridge, /resolveLivePage\(installed\.metaData\.baseUrl\)/);
 assert.doesNotMatch(bridge, /PAGE_ANNOUNCEMENT|acceptPageAnnouncement/);
 assert.doesNotMatch(manifest, /"background"/);
-assert.match(manifest, /"version": "1\.0\.1"/, "the built-in extension version advances so Gecko updates installed assets");
+assert.match(manifest, /"version": "1\.0\.2"/, "the built-in extension version advances so Gecko updates installed assets");
 assert.match(bridge, /sender\.webExtension\.id != EXTENSION_ID/);
 assert.match(bridge, /sender\.url\.isNotBlank\(\) && stripFragment\(sender\.url\) != expected/);
 assert.match(bridge, /worker\.shutdown\(\)/, "close keeps an accepted task runnable to reject its GeckoResult");
