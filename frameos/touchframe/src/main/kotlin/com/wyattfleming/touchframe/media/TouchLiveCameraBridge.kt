@@ -2,6 +2,7 @@ package com.wyattfleming.touchframe.media
 
 import android.os.Handler
 import android.os.Looper
+import android.util.Base64
 import android.util.Log
 import com.wyattfleming.frameos.weather.WeatherRequestDeadline
 import org.json.JSONObject
@@ -12,7 +13,6 @@ import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.WebExtension
 import java.net.URI
 import java.security.SecureRandom
-import java.util.Base64
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -206,7 +206,7 @@ internal class TouchLiveCameraBridge(
     }
 
     private fun nonce(): String = ByteArray(24).also(random::nextBytes).let {
-        Base64.getUrlEncoder().withoutPadding().encodeToString(it)
+        Base64.encodeToString(it, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
     }
 
     private fun stripFragment(value: String): String = runCatching {
