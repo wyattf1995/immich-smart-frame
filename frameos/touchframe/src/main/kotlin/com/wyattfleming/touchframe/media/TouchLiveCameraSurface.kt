@@ -1,5 +1,6 @@
 package com.wyattfleming.touchframe.media
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
@@ -14,6 +15,8 @@ import org.mozilla.geckoview.GeckoView
 import java.net.URI
 
 /** A short-lived, single-camera Gecko surface. It never loads a remote document. */
+// Constructed with the runtime and token dependencies by TouchCameraView; never inflated from XML or an editor.
+@SuppressLint("ViewConstructor")
 internal class TouchLiveCameraSurface(
     context: Context,
     runtime: GeckoRuntime,
