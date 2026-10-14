@@ -66,7 +66,14 @@ internal class TouchOceanView(context: Context, private val onRetry: () -> Unit)
         rebuild()
     }
 
-    fun setActive(value: Boolean) = scene.setActive(value)
+    /**
+     * While the scene moves, the text and chart above it are one cached texture: each scene update redraws the whole
+     * window, and without the layer every one re-issues the overlay's ~100 text and chart draws. Released when hidden.
+     */
+    fun setActive(value: Boolean) {
+        scene.setActive(value)
+        overlay.setLayerType(if (value) LAYER_TYPE_HARDWARE else LAYER_TYPE_NONE, null)
+    }
 
     /** Called every second by the activity clock; the screen is re-derived once per five-minute slot at most. */
     fun tick() {
