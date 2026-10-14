@@ -17,6 +17,7 @@ import com.wyattfleming.touchframe.ui.TouchKit
 import com.wyattfleming.touchframe.ui.TouchPalette
 import com.wyattfleming.touchframe.ui.TouchScale
 import com.wyattfleming.frameos.weather.WeatherRequestDeadline
+import org.mozilla.geckoview.GeckoRuntime
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URI
@@ -31,6 +32,7 @@ class TouchCameraView(
     origin: String,
     cameraIds: List<String>,
     private val tokenProvider: (WeatherRequestDeadline) -> String?,
+    private val runtime: GeckoRuntime? = null,
 ) : FrameLayout(context) {
     var onSignIn: (() -> Unit)? = null
     private val policy = TouchCameraPolicy(origin, cameraIds)
@@ -66,10 +68,14 @@ class TouchCameraView(
     private var imageCamera: String? = null
     private var listSignedOut = false
     private var imageAtMillis: Long? = null
-    private var stageState: Stage = Stage.Loading
+    private var stageState: Stage = Stage.LiveReady
+    private var cameraVisible = false
+    private var liveSurface: TouchLiveCameraSurface? = null
 
     /** What the snapshot area shows; network results are published into it on the main thread. */
     private sealed class Stage {
+        object LiveReady : Stage()
+        object Live : Stage()
         object Loading : Stage()
         object Image : Stage()
         object SignIn : Stage()
@@ -94,13 +100,14 @@ class TouchCameraView(
     }
 
     fun setActive(active: Boolean) {
-        if (refreshGate.setActive(active, selected)) startWorkerIfNeeded()
+        cameraVisible = active
         if (!active) {
+            refreshGate.setActive(false, selected)
             periodic?.cancel(true)
             periodic = null
             disconnectFromUi()
-        } else if (periodic == null) {
-            periodic = watchdog.scheduleWithFixedDelay({ requestPeriodicRefresh() }, 5, 5, TimeUnit.SECONDS)
+            liveSurface?.hideLive()
+            if (stageState == Stage.Live) stageState = Stage.LiveReady
         }
     }
 
@@ -109,6 +116,8 @@ class TouchCameraView(
         periodic?.cancel(true)
         periodic = null
         disconnectFromUi()
+        liveSurface?.close()
+        liveSurface = null
         worker.shutdownNow()
         watchdog.shutdownNow()
         // Shutdown allows the just-queued identity-checked disconnect to run.
@@ -117,7 +126,10 @@ class TouchCameraView(
     }
 
     private fun requestRefresh() {
-        if (refreshGate.request(selected)) startWorkerIfNeeded()
+        if (!cameraVisible) return
+        liveSurface?.hideLive()
+        if (stageState == Stage.Live) stageState = Stage.Loading
+        if (refreshGate.setActive(true, selected) || refreshGate.request(selected)) startWorkerIfNeeded()
         disconnectFromUi()
     }
 
@@ -261,12 +273,14 @@ class TouchCameraView(
 
     private fun selectCamera(camera: String) {
         if (camera == selected) return requestRefresh()
+        refreshGate.setActive(false, selected)
+        liveSurface?.hideLive()
         selected = camera
         image.setImageDrawable(null)
         imageCamera = null
         imageAtMillis = null
         lastFailureMillis = null
-        stageState = Stage.Loading
+        stageState = Stage.LiveReady
         rebuild()
         requestRefresh()
     }
@@ -312,7 +326,7 @@ class TouchCameraView(
             })
         }
         list.addView(View(context), LinearLayout.LayoutParams(0, 0, 1f))
-        list.addView(kit.button(context.getString(R.string.touch_camera_refresh), iconRes = R.drawable.ic_touch_refresh) { requestRefresh() }.apply {
+        list.addView(kit.button(context.getString(R.string.touch_camera_snapshot), TouchKit.Emphasis.SECONDARY, iconRes = R.drawable.ic_touch_refresh) { requestRefresh() }.apply {
             tag = REFRESH_TAG
         }, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, kit.dp(kit.scale.target)))
         val row = LinearLayout(context).apply {
@@ -363,10 +377,14 @@ class TouchCameraView(
         val name = TouchCameraLabels.forEntityId(selected)
         val showImage = stageState == Stage.Image && imageCamera == selected
         image.visibility = if (showImage) View.VISIBLE else View.INVISIBLE
-        emptyState.visibility = if (showImage) View.GONE else View.VISIBLE
-        list.findViewWithTag<View>(REFRESH_TAG)?.visibility = if (showImage) View.VISIBLE else View.GONE
+        val showLive = stageState == Stage.Live
+        emptyState.visibility = if (showImage || showLive) View.GONE else View.VISIBLE
+        list.findViewWithTag<View>(REFRESH_TAG)?.visibility = if (showLive) View.GONE else View.VISIBLE
         emptyState.removeAllViews()
         when (val state = stageState) {
+            Stage.LiveReady -> fillEmpty(kit, context.getString(R.string.touch_camera_live_title, name),
+                context.getString(R.string.touch_camera_live_detail), context.getString(R.string.touch_camera_watch_live), TouchKit.Emphasis.PRIMARY) { watchLive() }
+            Stage.Live -> Unit
             Stage.Image -> Unit
             Stage.Loading -> emptyState.addView(kit.text(context.getString(R.string.touch_camera_loading, name), kit.scale.body, color = p.inkMuted))
             Stage.SignIn -> fillEmpty(kit, context.getString(R.string.touch_camera_sign_in_required),
@@ -388,6 +406,32 @@ class TouchCameraView(
                 LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { marginStart = kit.dp(16) })
         }
     }
+
+    /** The native panel asks for video only after an explicit tap; snapshots remain an optional fallback. */
+    private fun watchLive() {
+        val engine = runtime ?: run {
+            stageState = Stage.Unavailable(System.currentTimeMillis())
+            renderStage()
+            return
+        }
+        val surface = liveSurface ?: TouchLiveCameraSurface(context, engine, policyOrigin(), cameraIds, tokenProvider) { status ->
+            main.post {
+                if (status == TouchLiveCameraBridge.Status.FAILED && stageState == Stage.Live) {
+                    stageState = Stage.LiveReady
+                    renderStage()
+                }
+            }
+        }.also { created ->
+            liveSurface = created
+            mat.addView(created, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        }
+        stageState = Stage.Live
+        surface.start(selected)
+        renderStage()
+    }
+
+    private fun policyOrigin(): String = policy.snapshotUrl(selected)?.let { "${it.scheme}://${it.authority}" }
+        ?: throw IllegalStateException("Configured camera origin is unavailable")
 
     private fun fillEmpty(kit: TouchKit, title: String, detail: String, action: String, emphasis: TouchKit.Emphasis, onAction: () -> Unit) {
         val p = kit.palette
