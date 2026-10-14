@@ -11,6 +11,7 @@ manifest = (root / "frameos/touchframe/src/main/assets/frame-live-camera/manifes
 page = (root / "frameos/touchframe/src/main/assets/frame-live-camera/live.js").read_text()
 
 required = {
+    "bridge_extension_base_url": "resolveLivePage(installed.metaData.baseUrl)",
     "bridge_session_gate": "senderSession === activeSession && sender.isTopLevel",
     "bridge_single_use": "capability.consume(",
     "bridge_visibility_gate": "capability.isCurrent(current.generation, current.entityId, current.nonce, visible)",
@@ -45,5 +46,5 @@ node = shutil.which("node")
 if node is None:
     raise SystemExit("node is required for the live WebRTC protocol proof")
 subprocess.run([node, str(root / "scripts/tests/test-touch-live-camera.mjs")], check=True)
-subprocess.run([node, str(root / "scripts/tests/test-touch-live-extension-announcement.mjs")], check=True)
+subprocess.run([node, str(root / "scripts/tests/test-touch-live-extension-page.mjs")], check=True)
 print("touch live camera source proof: PASS")
