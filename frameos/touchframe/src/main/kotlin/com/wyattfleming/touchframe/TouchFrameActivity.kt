@@ -3,6 +3,7 @@ package com.wyattfleming.touchframe
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
@@ -184,6 +185,21 @@ class TouchFrameActivity : Activity() {
         home.render(model)
         calendar.render(calendarState)
         if (configuration == null) message("This frame needs its connection settings before Home, Calendar and Cameras can load.", TouchShellLayout.NoticeTone.ERROR)
+        handleStartupIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleStartupIntent(intent)
+    }
+
+    /** Android's user-selected HOME entry point always resumes the ambient Photos view. */
+    private fun handleStartupIntent(intent: Intent) {
+        val startup = TouchStartupPolicy.destinationFor(intent.action, intent.categories ?: emptySet()) ?: return
+        // A system HOME request ends a transient sign-in sheet, then follows normal navigation.
+        closeAuthorization(restoreDestination = false)
+        navigate(startup)
     }
 
     private fun initializeData() {
