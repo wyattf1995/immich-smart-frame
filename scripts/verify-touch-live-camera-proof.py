@@ -74,11 +74,16 @@ def verify_static_contract(root: Path) -> None:
             raise RuntimeError(f"forbidden page token/storage/logging pattern: {forbidden}")
 
 
-def mutate_once(path: Path, before: str, after: str) -> bytes:
-    original = path.read_bytes()
-    source = original.decode()
+def require_unique_mutation_target(path: Path, before: str) -> None:
+    source = path.read_text()
     if source.count(before) != 1:
         raise RuntimeError(f"expected exactly one mutation target in {path}")
+
+
+def mutate_once(path: Path, before: str, after: str) -> bytes:
+    require_unique_mutation_target(path, before)
+    original = path.read_bytes()
+    source = original.decode()
     path.write_text(source.replace(before, after, 1))
     return original
 
@@ -125,6 +130,10 @@ def main() -> None:
     }
 
     verify_static_contract(root)
+    # Keep all source mutations deterministic even when the JVM lane is not run locally.
+    require_unique_mutation_target(page, "this.handleOfferEvent(message.event)")
+    require_unique_mutation_target(policy, "visible && !consumed && active?.let")
+    require_unique_mutation_target(camera_view, "@Synchronized fun selectOrPrepareLive() {\n        snapshotRequested = false")
     extension_baseline = run([node, str(root / "scripts/tests/test-touch-live-extension-page.mjs")], root, report_dir / "extension-baseline.log")
     require(extension_baseline, "packaged extension-page binding guard")
     baseline = run([node, str(root / "scripts/tests/test-touch-live-camera.mjs")], root, report_dir / "node-baseline.log")
@@ -164,7 +173,11 @@ def main() -> None:
         green_xml = read_junit_result(result_dir, CAPABILITY_TEST_CLASS, CAPABILITY_TEST_CASE, report_dir / "jvm-capability-green.xml")
         if green_xml["failures"] or green_xml["errors"] or green_xml["skipped"]:
             raise RuntimeError("JVM restored capability guard is not fully green")
-        original_camera_view = mutate_once(camera_view, "snapshotRequested = false", "snapshotRequested = true")
+        original_camera_view = mutate_once(
+            camera_view,
+            "@Synchronized fun selectOrPrepareLive() {\n        snapshotRequested = false",
+            "@Synchronized fun selectOrPrepareLive() {\n        snapshotRequested = true",
+        )
         try:
             mode_red = run(jvm_command(), frame, report_dir / "jvm-mode-red.log")
             if mode_red.returncode == 0:
