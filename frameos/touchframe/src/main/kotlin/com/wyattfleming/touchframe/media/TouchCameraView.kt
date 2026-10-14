@@ -71,6 +71,7 @@ class TouchCameraView(
     private var stageState: Stage = Stage.LiveReady
     private var cameraVisible = false
     private var liveSurface: TouchLiveCameraSurface? = null
+    private val liveStatusGate = TouchCameraLiveStatusGate()
 
     /** What the snapshot area shows; network results are published into it on the main thread. */
     private sealed class Stage {
@@ -430,19 +431,20 @@ class TouchCameraView(
         // image and make the live state misleading.
         refreshGate.setActive(false, selected)
         disconnectFromUi()
-        var created: TouchLiveCameraSurface? = null
-        val surface = liveSurface ?: TouchLiveCameraSurface(context, engine, policyOrigin(), cameraIds, tokenProvider) { status ->
-            main.post {
-                if (created !== liveSurface) return@post
-                if (status == TouchLiveCameraBridge.Status.FAILED && stageState == Stage.Live) {
+        val surface = liveSurface ?: run {
+            val generation = liveStatusGate.activate()
+            TouchLiveCameraSurface(context, engine, policyOrigin(), cameraIds, tokenProvider) { status ->
+                // TouchLiveCameraSurface dispatches this on the main thread. Do
+                // not queue a second callback behind the failed Gecko surface:
+                // remove it before restoring the native live-ready controls.
+                if (liveStatusGate.shouldRestore(generation, status) && stageState == Stage.Live) {
                     stageState = Stage.LiveReady
                     releaseLive()
                     renderStage()
                 }
             }
         }.also { newSurface ->
-            created = newSurface
-            this@TouchCameraView.liveSurface = newSurface
+            liveSurface = newSurface
             mat.addView(newSurface, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         }
         stageState = Stage.Live
@@ -455,6 +457,7 @@ class TouchCameraView(
 
     /** A live camera owns a peer/socket/session; hiding it is never a passive View visibility change. */
     private fun releaseLive() {
+        liveStatusGate.release()
         val surface = liveSurface ?: return
         liveSurface = null
         (surface.parent as? android.view.ViewGroup)?.removeView(surface)
@@ -582,6 +585,21 @@ internal class TouchCameraModeGate {
     }
 
     @Synchronized fun snapshotMayStart(): Boolean = snapshotRequested
+}
+
+/** Rejects status callbacks from an already-released or replaced live surface. */
+internal class TouchCameraLiveStatusGate {
+    private var generation = 0L
+    private var activeGeneration: Long? = null
+
+    @Synchronized fun activate(): Long = (++generation).also { activeGeneration = it }
+
+    @Synchronized fun release() {
+        activeGeneration = null
+    }
+
+    @Synchronized fun shouldRestore(surfaceGeneration: Long, status: TouchLiveCameraBridge.Status): Boolean =
+        activeGeneration == surfaceGeneration && status == TouchLiveCameraBridge.Status.FAILED
 }
 
 internal class TouchCameraPolicy(origin: String, cameraIds: List<String>) {
