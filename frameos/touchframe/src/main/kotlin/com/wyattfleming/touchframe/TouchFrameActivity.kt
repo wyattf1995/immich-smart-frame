@@ -34,6 +34,7 @@ import com.wyattfleming.touchframe.home.*
 import com.wyattfleming.touchframe.media.TouchCameraView
 import com.wyattfleming.touchframe.media.TouchMediaView
 import com.wyattfleming.touchframe.media.TouchOfflinePhotoStore
+import com.wyattfleming.touchframe.media.TouchPhotoOfDay
 import com.wyattfleming.touchframe.ocean.*
 import com.wyattfleming.touchframe.ui.*
 import java.security.SecureRandom
@@ -92,6 +93,13 @@ class TouchFrameActivity : Activity() {
     private lateinit var calendar: TouchCalendarView
     private lateinit var ocean: TouchOceanView
     private var oceanState = TouchOceanState()
+    private var todoRepository: TouchTodoRepository? = null
+    private val todoPreferences by lazy { getSharedPreferences("touch_todo", MODE_PRIVATE) }
+    private var todoBoard = TouchTodoBoard.notChosen()
+    private var todoInFlight = false
+    private var todoRefreshQueued = false
+    private var photoDay: Long? = null
+    private var photoInFlight = false
     private var oceanInFlight = false
     private val oceanRepository by lazy { TouchOceanRepository(java.io.File(filesDir, "touch-ocean/conditions.json")) }
     private var calendarState = TouchCalendarState(TouchCalendarWeekPresentation.DEFAULT_MODE, java.time.LocalDate.now(), java.time.LocalDate.now(), TouchCalendarRange.forMode(TouchCalendarWeekPresentation.DEFAULT_MODE, java.time.LocalDate.now()), emptyList(), TouchCalendarConnection.OFFLINE, null)
@@ -124,7 +132,7 @@ class TouchFrameActivity : Activity() {
     }
     private val refresh = Runnable {
         when (destination) {
-            TouchDestination.HOME -> refreshHome()
+            TouchDestination.HOME -> { refreshHome(); refreshHomeGlances() }
             TouchDestination.CALENDAR -> requestCalendar(calendarState.mode, calendarState.anchor, calendarState.selectedDate, true)
             TouchDestination.WEATHER -> refreshWeather()
             TouchDestination.OCEAN -> refreshOcean()
@@ -170,6 +178,12 @@ class TouchFrameActivity : Activity() {
             { value -> changeClimate(targetCommand = true) { it.changeClimateTarget(value) } }).apply {
             setWeatherLocation(configuration?.weatherLocationLabel)
             onRetry = ::refreshHome
+            todoActions = object : TouchHomeTodoActions {
+                override fun chooseLists() = discoverTodoLists()
+                override fun saveLists(selection: TouchTodoSelection) = saveTodoSelection(selection)
+                override fun complete(item: TouchTodoItem) = completeTodo(item)
+                override fun add(list: TouchTodoListRef, summary: String) = addTodo(list, summary)
+            }
         }
         weather = WeatherContentView(this).apply {
             locationLabel = configuration?.weatherLocationLabel
@@ -195,6 +209,8 @@ class TouchFrameActivity : Activity() {
         )
         applyDestinationOrder()
         home.render(model)
+        todoSelection().let { if (it.chosen) todoBoard = TouchTodoBoard(it, emptyMap(), TouchTodoState.LOADING, null) }
+        home.renderTodo(todoBoard)
         calendar.render(calendarState)
         if (configuration == null) message("This frame needs its connection settings before Home, Calendar and Cameras can load.", TouchShellLayout.NoticeTone.ERROR)
         handleStartupIntent(intent)
@@ -224,6 +240,9 @@ class TouchFrameActivity : Activity() {
         )
         oauth = client
         repository = TouchHomeRepository(config, TouchHomeTokenProvider { deadline ->
+            synchronized(tokenLock) { if (Thread.currentThread().isInterrupted) null else client.validAccessToken(deadline) }
+        })
+        todoRepository = TouchTodoRepository(config.homeAssistantOrigin, TouchHomeTokenProvider { deadline ->
             synchronized(tokenLock) { if (Thread.currentThread().isInterrupted) null else client.validAccessToken(deadline) }
         })
         calendarRepository = TouchCalendarRepository(config, TouchCalendarTokenProvider { deadline ->
@@ -257,6 +276,8 @@ class TouchFrameActivity : Activity() {
         main.removeCallbacks(clock)
         main.removeCallbacks(refresh)
         refreshInFlight = false
+        todoInFlight = false
+        photoInFlight = false
         calendarTask?.cancel(true)
         calendarTask = null
         weatherInFlight = false
@@ -300,15 +321,18 @@ class TouchFrameActivity : Activity() {
         // Cancellation may disconnect a socket. Keep that work away from touch dispatch and
         // capture these exact instances so a resumed activity's new clients are unaffected.
         val oldRepository = repository
+        val oldTodoRepository = todoRepository
         val oldCalendarRepository = calendarRepository
         val oldWeather = weatherRemote
         val oldOAuth = oauth
         repository = null
+        todoRepository = null
         calendarRepository = null
         weatherRemote = null
         oauth = null
         cancellationWorker.execute {
             oldRepository?.close()
+            oldTodoRepository?.cancel()
             oldCalendarRepository?.close()
             oldWeather?.cancel()
             oldOAuth?.cancelInFlight()
@@ -342,8 +366,9 @@ class TouchFrameActivity : Activity() {
         cameras?.setActive(resumed && networkAllowed() && next == TouchDestination.CAMERAS)
         media?.setVisibleActive(resumed && networkAllowed() && next.usesWebMedia)
         main.removeCallbacks(refresh)
+        if (next != TouchDestination.HOME) home.closeSheet()
         when (next) {
-            TouchDestination.HOME -> refreshHome()
+            TouchDestination.HOME -> { refreshHome(); refreshHomeGlances() }
             TouchDestination.CALENDAR -> requestCalendar(calendarState.mode, calendarState.anchor, calendarState.selectedDate, true)
             TouchDestination.WEATHER -> refreshWeather()
             TouchDestination.OCEAN -> refreshOcean()
@@ -537,12 +562,14 @@ class TouchFrameActivity : Activity() {
             oceanState.fetchedAtMillis?.let { now - it in 0 until OCEAN_REFRESH_MILLIS } == true
         if (fresh && !force) {
             ocean.render(oceanState)
+            showOceanGlance()
             scheduleOceanRefresh(OCEAN_REFRESH_MILLIS - (now - (oceanState.fetchedAtMillis ?: now)))
             return
         }
         oceanInFlight = true
         oceanState = oceanState.copy(loading = true)
         ocean.render(oceanState)
+        showOceanGlance()
         tasks.submit(oceanWorker) { isCurrent ->
             if (!isCurrent()) return@submit
             val load = runCatching { oceanRepository.load(TouchOceanRepository.DEFAULT_SPOT, OCEAN_TIMEOUT_MILLIS) }
@@ -558,6 +585,7 @@ class TouchFrameActivity : Activity() {
                     fetchedAtMillis = if (live) System.currentTimeMillis() else oceanState.fetchedAtMillis,
                 )
                 ocean.render(oceanState)
+                showOceanGlance()
                 // Offline: try again sooner, the way Weather does.
                 scheduleOceanRefresh(if (live) OCEAN_REFRESH_MILLIS else 60_000L)
             }
@@ -568,6 +596,150 @@ class TouchFrameActivity : Activity() {
         if (destination != TouchDestination.OCEAN) return
         main.removeCallbacks(refresh)
         main.postDelayed(refresh, delayMillis.coerceAtLeast(1_000L))
+    }
+
+    /** Home's other inputs: the chosen to-do lists, the day's photo and the ocean glance (fresh for ten minutes). */
+    private fun refreshHomeGlances() {
+        refreshTodo()
+        loadPhotoOfDay()
+        refreshOcean()
+    }
+
+    private fun todoSelection(): TouchTodoSelection = TouchTodoSelection.decode(todoPreferences.getString(TODO_SELECTION, null))
+
+    private fun refreshTodo() {
+        val source = todoRepository ?: return
+        if (!resumed || !networkAllowed()) return
+        if (todoInFlight) { todoRefreshQueued = true; return }
+        val selection = todoSelection()
+        if (!selection.chosen) {
+            todoBoard = TouchTodoBoard.notChosen()
+            home.renderTodo(todoBoard)
+            return
+        }
+        if (todoBoard.selection != selection) {
+            todoBoard = TouchTodoBoard(selection, emptyMap(), TouchTodoState.LOADING, null)
+            home.renderTodo(todoBoard)
+        }
+        todoInFlight = true
+        todoRefreshQueued = false
+        tasks.submit(worker) { isCurrent ->
+            if (!isCurrent()) return@submit
+            val load = runCatching { source.load(selection) }.getOrElse { TouchTodoLoad(emptyMap(), TouchTodoState.OFFLINE) }
+            main.post {
+                if (!isCurrent()) return@post
+                todoInFlight = false
+                if (todoSelection() == selection) {
+                    todoBoard = when (load.state) {
+                        TouchTodoState.READY -> TouchTodoBoard(selection, load.items, TouchTodoState.READY, System.currentTimeMillis())
+                        // Offline keeps the last lists on screen; the column says they may be stale.
+                        TouchTodoState.OFFLINE -> todoBoard.copy(state = TouchTodoState.OFFLINE)
+                        else -> TouchTodoBoard(selection, emptyMap(), load.state, null)
+                    }
+                    home.renderTodo(todoBoard)
+                }
+                if (todoRefreshQueued || todoSelection() != selection) refreshTodo()
+            }
+        }
+    }
+
+    private fun discoverTodoLists() {
+        val source = todoRepository ?: return
+        if (!resumed) return
+        if (!networkAllowed()) { requestLocalNetwork(); return }
+        home.showListPicker(null)
+        tasks.submit(worker) { isCurrent ->
+            if (!isCurrent()) return@submit
+            val found = runCatching { source.discover() }.getOrElse { TouchTodoDiscovery(emptyList(), TouchTodoState.OFFLINE) }
+            main.post { if (isCurrent()) home.updateListPicker(found) }
+        }
+    }
+
+    private fun saveTodoSelection(selection: TouchTodoSelection) {
+        todoPreferences.edit().putString(TODO_SELECTION, selection.encode()).apply()
+        todoBoard = if (selection.chosen) TouchTodoBoard(selection, emptyMap(), TouchTodoState.LOADING, null) else TouchTodoBoard.notChosen()
+        home.renderTodo(todoBoard)
+        refreshTodo()
+    }
+
+    private fun completeTodo(item: TouchTodoItem) {
+        val source = todoRepository
+        if (source == null || !resumed || !networkAllowed()) {
+            home.onTodoCompleteFailed(item)
+            return
+        }
+        tasks.submit(worker) { isCurrent ->
+            val done = isCurrent() && runCatching { source.complete(item) }.getOrDefault(false)
+            main.post {
+                if (!isCurrent()) return@post
+                if (done) refreshTodo()
+                else {
+                    home.onTodoCompleteFailed(item)
+                    message("Couldn\u2019t mark \u201c${item.summary}\u201d done. Home Assistant didn\u2019t confirm it.", TouchShellLayout.NoticeTone.ERROR)
+                }
+            }
+        }
+    }
+
+    private fun addTodo(list: TouchTodoListRef, summary: String) {
+        val source = todoRepository ?: return
+        if (!resumed || !networkAllowed()) return
+        tasks.submit(worker) { isCurrent ->
+            val added = isCurrent() && runCatching { source.add(list.entityId, summary) }.getOrDefault(false)
+            main.post {
+                if (!isCurrent()) return@post
+                if (added) {
+                    message("Added to ${list.name}")
+                    refreshTodo()
+                } else {
+                    message("Couldn\u2019t add \u201c$summary\u201d. Check the frame\u2019s connection.", TouchShellLayout.NoticeTone.ERROR, "Try again") { addTodo(list, summary) }
+                }
+            }
+        }
+    }
+
+    /** One photo a day from the slideshow's saved JPEGs, decoded off the main thread at panel size. */
+    private fun loadPhotoOfDay() {
+        if (!resumed || photoInFlight) return
+        val day = java.time.LocalDate.now().toEpochDay()
+        if (photoDay == day) return
+        val measured = home.photoTargetSize()
+        val wall = TouchScale.forScreen(resources.configuration) == TouchScale.WALL
+        val (width, height) = if (measured.first > 0 && measured.second > 0) measured else if (wall) 700 to 1000 else 392 to 732
+        photoInFlight = true
+        tasks.submit(worker) { isCurrent ->
+            val bitmap = if (!isCurrent()) null else runCatching {
+                val entries = photoStore.reserve.entries()
+                TouchPhotoOfDay.pick(entries.map { it.assetId }, day)
+                    ?.let { id -> entries.firstOrNull { it.assetId == id } }
+                    ?.let { TouchPhotoOfDay.decode(it.file, width, height) }
+            }.getOrNull()
+            main.post {
+                photoInFlight = false
+                if (!isCurrent()) { bitmap?.recycle(); return@post }
+                // No saved photos yet: the panel stays plain and the next refresh tries again.
+                if (bitmap != null) {
+                    photoDay = day
+                    home.setPhoto(bitmap)
+                }
+            }
+        }
+    }
+
+    private fun showOceanGlance() {
+        val glance = oceanState.conditions?.let {
+            TouchOceanGlance.from(it, System.currentTimeMillis(), ZoneId.systemDefault(), android.text.format.DateFormat.is24HourFormat(this))
+        }
+        home.setOcean(glance, oceanInFlight)
+    }
+
+    /** The photo is the one large bitmap Home holds; it goes first when Android asks for memory back. */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW && destination != TouchDestination.HOME) {
+            home.setPhoto(null)
+            photoDay = null
+        }
     }
 
     private fun signIn() {
@@ -859,7 +1031,9 @@ class TouchFrameActivity : Activity() {
     override fun onBackPressed() = handleBack()
 
     private fun handleBack() {
-        if (authorization != null) closeAuthorization() else navigate(TouchDestination.HOME)
+        if (authorization != null) closeAuthorization()
+        else if (destination == TouchDestination.HOME && home.closeSheet()) Unit
+        else navigate(TouchDestination.HOME)
     }
 
     @Suppress("DEPRECATION")
@@ -886,6 +1060,7 @@ class TouchFrameActivity : Activity() {
     private fun fill() = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
     private companion object {
         const val EDGE_HINT_COUNT = "edge_hint_count"
+        const val TODO_SELECTION = "selection"
         const val OCEAN_REFRESH_MILLIS = 10 * 60_000L
         const val OCEAN_TIMEOUT_MILLIS = 15_000
         const val EDGE_HINT_LIMIT = 3
