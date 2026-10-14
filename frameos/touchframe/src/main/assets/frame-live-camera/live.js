@@ -49,7 +49,7 @@ class LiveCameraSession {
     this.peer.ontrack = event => { if (!this.closed && event.track) { this.remoteStream.addTrack(event.track); this.video.srcObject = this.remoteStream; } };
     this.video.addEventListener("playing", () => { if (!this.closed && !this.playing) { this.playing = true; this.timers.clearTimeout(this.startupTimer); this.status("playing"); } }, { once: true });
     this.peer.onicecandidate = event => { if (!event.candidate?.candidate) return; if (this.sessionId) this.sendCandidate(event.candidate); else this.pendingCandidates.push(event.candidate); };
-    this.peer.oniceconnectionstatechange = () => { if (this.peer?.iceConnectionState === "failed") this.peer.restartIce?.(); };
+    this.peer.oniceconnectionstatechange = () => { if (this.peer?.iceConnectionState === "failed") this.close(true); };
     this.peer.addTransceiver("audio", { direction: "recvonly" }); this.peer.addTransceiver("video", { direction: "recvonly" });
     await this.beginNegotiation();
   }

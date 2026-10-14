@@ -2,6 +2,7 @@ package com.wyattfleming.touchframe.media
 
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import com.wyattfleming.frameos.weather.WeatherRequestDeadline
 import org.json.JSONObject
 import org.mozilla.gecko.util.GeckoBundle
@@ -55,7 +56,7 @@ internal class TouchLiveCameraBridge(
                 extension = installed
                 val page = resolveLivePage(installed.metaData.baseUrl)
                     ?: run {
-                        onStatus(Status.FAILED)
+                        reportStatus(Status.FAILED)
                         return@post
                     }
                 extensionPageUrl = page
@@ -64,11 +65,11 @@ internal class TouchLiveCameraBridge(
                 // packaged extension page. There is no background handshake.
                 installed.setMessageDelegate(delegate, NATIVE_APP)
                 session.webExtensionController.setMessageDelegate(installed, delegate, NATIVE_APP)
-                onStatus(Status.READY)
+                reportStatus(Status.READY)
                 onPageReady(page)
             }
         }, {
-            main.post { if (!closed && activeSession === session) onStatus(Status.FAILED) }
+            main.post { if (!closed && activeSession === session) reportStatus(Status.FAILED) }
         })
         return true
     }
@@ -80,7 +81,7 @@ internal class TouchLiveCameraBridge(
         if (closed || !visible || !policy.allowsCamera(camera)) return false
         capability.revoke()
         val next = capability.begin(camera, nonce())
-        onStatus(Status.CONNECTING)
+        reportStatus(Status.CONNECTING)
         session.loadUri("$page#capability=${next.nonce}&entity=${next.entityId}")
         return true
     }
@@ -90,7 +91,7 @@ internal class TouchLiveCameraBridge(
         visible = nextVisible && !closed
         if (!visible) {
             capability.revoke()
-            onStatus(Status.STOPPED)
+            reportStatus(Status.STOPPED)
         }
     }
 
@@ -110,8 +111,11 @@ internal class TouchLiveCameraBridge(
         extension = null
         extensionPageUrl = null
         pageReady = null
-        worker.shutdownNow()
-        onStatus(Status.STOPPED)
+        // Keep an already accepted token task runnable long enough to complete
+        // its GeckoResult with rejection after close; shutdownNow could discard
+        // that task and leave the page promise unresolved.
+        worker.shutdown()
+        reportStatus(Status.STOPPED)
     }
 
     private val delegate = object : WebExtension.MessageDelegate {
@@ -135,20 +139,28 @@ internal class TouchLiveCameraBridge(
             )
         ) return GeckoResult.fromValue(response(false))
         val result = GeckoResult<Any>()
-        worker.execute {
-            val deadline = WeatherRequestDeadline(timeoutMillis = START_TIMEOUT_MILLIS)
-            val token = tokenProvider(deadline)
-            // The token is held only in this worker stack and the returned bundle.
-            if (closed || deadline.isExpired() || token.isNullOrBlank() || !capability.isCurrent(current.generation, current.entityId, current.nonce, visible)) {
-                result.complete(response(false))
-            } else {
-                result.complete(GeckoBundle(4).apply {
-                    putBoolean("accepted", true)
-                    putString("entity_id", current.entityId)
-                    putString("origin", policy.websocketUrl.toString())
-                    putString("access_token", token)
-                })
+        try {
+            worker.execute {
+                try {
+                    val deadline = WeatherRequestDeadline(timeoutMillis = START_TIMEOUT_MILLIS)
+                    val token = tokenProvider(deadline)
+                    // The token is held only in this worker stack and the returned bundle.
+                    if (closed || deadline.isExpired() || token.isNullOrBlank() || !capability.isCurrent(current.generation, current.entityId, current.nonce, visible)) {
+                        result.complete(response(false))
+                    } else {
+                        result.complete(GeckoBundle(4).apply {
+                            putBoolean("accepted", true)
+                            putString("entity_id", current.entityId)
+                            putString("origin", policy.websocketUrl.toString())
+                            putString("access_token", token)
+                        })
+                    }
+                } catch (_: Throwable) {
+                    result.complete(response(false))
+                }
             }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            result.complete(response(false))
         }
         return result
     }
@@ -157,8 +169,8 @@ internal class TouchLiveCameraBridge(
         val current = capability.current() ?: return response(false)
         if (!trustedLivePage(sender) || message.optString("entity_id") != current.entityId || message.optString("capability") != current.nonce) return response(false)
         when (message.optString("state")) {
-            "playing" -> onStatus(Status.PLAYING)
-            "failed" -> onStatus(Status.FAILED)
+            "playing" -> reportStatus(Status.PLAYING)
+            "failed" -> reportStatus(Status.FAILED)
             else -> return response(false)
         }
         return response(true)
@@ -187,6 +199,12 @@ internal class TouchLiveCameraBridge(
         return page.takeIf(policy::isTrustedPageUrl)
     }
 
+    /** Safe device-QA breadcrumb: enum only, never a URL, token, SDP, or remote payload. */
+    private fun reportStatus(status: Status) {
+        Log.d(LOG_TAG, "state=${status.name}")
+        onStatus(status)
+    }
+
     private fun nonce(): String = ByteArray(24).also(random::nextBytes).let {
         Base64.getUrlEncoder().withoutPadding().encodeToString(it)
     }
@@ -204,5 +222,6 @@ internal class TouchLiveCameraBridge(
         const val START_REQUEST = "start-live"
         const val STATUS_EVENT = "live-status"
         const val START_TIMEOUT_MILLIS = 12_000L
+        const val LOG_TAG = "TouchLiveCamera"
     }
 }
