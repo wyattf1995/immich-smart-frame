@@ -31,11 +31,15 @@
                 <action android:name="com.wyattfleming.touchframe.PROVISION" />
             </intent-filter>
         </receiver>
+        <!-- stateNotNeeded keeps Touch's place when the low-memory killer takes it on
+             screen, so Android starts it again the way it restarts a Home app instead
+             of resuming whatever task sits behind it. Touch keeps no instance state. -->
         <activity
             android:name=".TouchFrameActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize"
             android:exported="true"
-            android:launchMode="singleTask">
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
