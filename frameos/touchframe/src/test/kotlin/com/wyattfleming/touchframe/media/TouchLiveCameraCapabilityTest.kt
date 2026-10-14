@@ -44,4 +44,13 @@ class TouchLiveCameraCapabilityTest {
         gate.revoke()
         assertNull(gate.current())
     }
+
+    @Test fun consumedCapabilityRemainsIdentifiableOnlyUntilRevoked() {
+        val gate = TouchLiveCameraCapabilityGate()
+        val issued = gate.begin("camera.entryway", "nonce")
+        assertTrue(gate.consume(issued.generation, issued.entityId, issued.nonce, visible = true))
+        assertTrue(gate.isCurrent(issued.generation, issued.entityId, issued.nonce, visible = true))
+        gate.revoke()
+        assertFalse(gate.isCurrent(issued.generation, issued.entityId, issued.nonce, visible = true))
+    }
 }

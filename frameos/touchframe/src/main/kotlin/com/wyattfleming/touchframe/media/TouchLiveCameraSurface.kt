@@ -1,6 +1,8 @@
 package com.wyattfleming.touchframe.media
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.widget.FrameLayout
 import org.mozilla.geckoview.AllowOrDeny
@@ -22,15 +24,17 @@ internal class TouchLiveCameraSurface(
 ) : FrameLayout(context), AutoCloseable {
     private val geckoView = GeckoView(context).apply { setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW) }
     private val session = GeckoSession(GeckoSessionSettings().apply {
-        setUsePrivateMode(true)
         setDisplayMode(GeckoSessionSettings.DISPLAY_MODE_FULLSCREEN)
     })
     private var expectedPage: String? = null
     private var requestedCamera: String? = null
     private var closed = false
+    private val main = Handler(Looper.getMainLooper())
     private val bridge = TouchLiveCameraBridge(origin, cameraIds, tokenProvider) { status ->
-        onStatus(status)
-        if (status == TouchLiveCameraBridge.Status.FAILED) visibility = View.GONE
+        main.post {
+            onStatus(status)
+            if (status == TouchLiveCameraBridge.Status.FAILED) visibility = View.GONE
+        }
     }
 
     init {
@@ -64,9 +68,7 @@ internal class TouchLiveCameraSurface(
     }
 
     fun hideLive() {
-        requestedCamera = null
-        bridge.stop()
-        visibility = View.GONE
+        close()
     }
 
     override fun close() {

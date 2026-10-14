@@ -106,7 +106,7 @@ class TouchCameraView(
             periodic?.cancel(true)
             periodic = null
             disconnectFromUi()
-            liveSurface?.hideLive()
+            releaseLive()
             if (stageState == Stage.Live) stageState = Stage.LiveReady
         }
     }
@@ -116,8 +116,7 @@ class TouchCameraView(
         periodic?.cancel(true)
         periodic = null
         disconnectFromUi()
-        liveSurface?.close()
-        liveSurface = null
+        releaseLive()
         worker.shutdownNow()
         watchdog.shutdownNow()
         // Shutdown allows the just-queued identity-checked disconnect to run.
@@ -127,7 +126,7 @@ class TouchCameraView(
 
     private fun requestRefresh() {
         if (!cameraVisible) return
-        liveSurface?.hideLive()
+        releaseLive()
         if (stageState == Stage.Live) stageState = Stage.Loading
         if (refreshGate.setActive(true, selected) || refreshGate.request(selected)) startWorkerIfNeeded()
         disconnectFromUi()
@@ -274,7 +273,7 @@ class TouchCameraView(
     private fun selectCamera(camera: String) {
         if (camera == selected) return requestRefresh()
         refreshGate.setActive(false, selected)
-        liveSurface?.hideLive()
+        releaseLive()
         selected = camera
         image.setImageDrawable(null)
         imageCamera = null
@@ -418,6 +417,7 @@ class TouchCameraView(
             main.post {
                 if (status == TouchLiveCameraBridge.Status.FAILED && stageState == Stage.Live) {
                     stageState = Stage.LiveReady
+                    releaseLive()
                     renderStage()
                 }
             }
@@ -432,6 +432,14 @@ class TouchCameraView(
 
     private fun policyOrigin(): String = policy.snapshotUrl(selected)?.let { "${it.scheme}://${it.authority}" }
         ?: throw IllegalStateException("Configured camera origin is unavailable")
+
+    /** A live camera owns a peer/socket/session; hiding it is never a passive View visibility change. */
+    private fun releaseLive() {
+        val surface = liveSurface ?: return
+        liveSurface = null
+        (surface.parent as? android.view.ViewGroup)?.removeView(surface)
+        surface.close()
+    }
 
     private fun fillEmpty(kit: TouchKit, title: String, detail: String, action: String, emphasis: TouchKit.Emphasis, onAction: () -> Unit) {
         val p = kit.palette
