@@ -173,7 +173,7 @@ internal class TouchLiveCameraBridge(
      */
     private fun trustedLivePage(sender: WebExtension.MessageSender): Boolean {
         val expected = extensionPageUrl ?: return false
-        if (sender.webExtension?.id != EXTENSION_ID || extension == null || activeSession == null || !policy.isTrustedPageUrl(expected)) return false
+        if (sender.webExtension.id != EXTENSION_ID || extension == null || activeSession == null || !policy.isTrustedPageUrl(expected)) return false
         val senderSession = sender.session
         if (senderSession == null) {
             if (sender.url.isNotBlank() && stripFragment(sender.url) != expected) return false
