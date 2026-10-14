@@ -39,4 +39,6 @@ const selectCamera = cameraView.slice(cameraView.indexOf("private fun selectCame
 assert.match(selectCamera, /modeGate\.selectOrPrepareLive\(\)/, "camera selection resets optional snapshot intent");
 assert.doesNotMatch(selectCamera, /requestRefresh\(/, "selection never starts a snapshot fetch");
 assert.match(cameraView, /private fun requestRefresh\(\) \{\s*if \(!modeGate\.snapshotMayStart\(\)\) return/, "snapshot transport requires explicit intent");
+assert.match(cameraView, /liveStatusGate\.shouldRestore\(generation, status\)/, "current failed live surface restores native controls directly");
+assert.doesNotMatch(selectCamera, /main\.post/, "selection recovery does not leave stale callbacks queued behind Gecko teardown");
 console.log("touch live extension packaged-page binding: PASS");
