@@ -56,3 +56,16 @@ internal object TouchDestinationOrder {
         available: List<TouchDestination>,
     ): TouchDestination = current.takeIf { it in available } ?: TouchDestination.HOME
 }
+
+/** When an idle native screen returns to Photos (the default experience). */
+internal object TouchIdleReturnPolicy {
+    fun shouldReturnToPhotos(
+        destination: TouchDestination,
+        authorizationOpen: Boolean,
+        configured: Boolean,
+        networkAllowed: Boolean,
+        idleMillis: Long,
+        idleReturnSeconds: Int,
+    ): Boolean = !authorizationOpen && configured && networkAllowed && !destination.isImmersiveMedia &&
+        idleMillis >= idleReturnSeconds * 1_000L
+}

@@ -3,22 +3,24 @@ package com.wyattfleming.touchframe.ui
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.Space
+import android.widget.HorizontalScrollView
 import android.widget.TextView
+import com.wyattfleming.touchframe.R
 import kotlin.math.abs
 import kotlin.math.pow
 
 /**
- * Owns only persistent shell chrome. The caller owns each destination's content and lifecycle.
- * Media destinations keep the content frame edge-to-edge until a deliberate left-edge gesture
- * reveals this navigation menu.
+ * Owns only persistent shell chrome: a top navigation bar (the frame's moulding along the top
+ * edge) with tabs, the time and Settings. The caller owns each destination's content and
+ * lifecycle. Media destinations keep the content frame edge-to-edge until a deliberate left-edge
+ * gesture drops this bar down over them.
  */
 // Constructed by TouchFrameActivity with callbacks; never inflated from XML.
 @SuppressLint("ViewConstructor")
@@ -31,31 +33,77 @@ class TouchShellLayout(
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
     }
 
-    private val scrim = View(context).apply {
+    private val scrim = FrameLayout(context).apply {
         setBackgroundColor(Color.argb(145, 0, 0, 0))
         contentDescription = context.getString(com.wyattfleming.touchframe.R.string.return_to_navigation)
         isClickable = true
         setOnClickListener { hideMenu() }
     }
-    private val railViewport = ScrollView(context).apply {
+    /** Tabs scroll sideways (with fading edges) rather than truncate or wrap under large fonts or a seventh tab. */
+    private val tabViewport = HorizontalScrollView(context).apply {
         isFillViewport = true
+        isHorizontalScrollBarEnabled = false
+        isHorizontalFadingEdgeEnabled = true
     }
-    private val rail = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private val tabs = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+    }
+    private val clock = TextView(context).apply {
+        includeFontPadding = false
+        gravity = Gravity.CENTER_VERTICAL
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
+    }
+    private val bar = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+    }
+    private var clockText: CharSequence = ""
+    private val noticeHost = FrameLayout(context)
+    private val edgeHint = FrameLayout(context).apply {
+        visibility = View.GONE
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
     private var destination = TouchDestination.HOME
     private var destinations: List<TouchDestination> = TouchDestinationOrder.defaults
     private var night = false
     private var menuVisible = false
+    private var noticeVisible = false
     private val edgeStream = TouchShellEdgeStream()
+    private val hideNotice = Runnable { clearNotice() }
+    private val hideEdgeHint = Runnable { edgeHint.animate().alpha(0f).setDuration(400L).withEndAction { edgeHint.visibility = View.GONE } }
 
     init {
         addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(noticeHost, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START))
+        addView(edgeHint, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.CENTER_VERTICAL))
         addView(scrim, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        addView(railViewport, LayoutParams(dp(80), LayoutParams.MATCH_PARENT, Gravity.START))
-        railViewport.addView(rail, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        addView(bar, LayoutParams(LayoutParams.MATCH_PARENT, dp(barHeightDpFor(resources.configuration.screenWidthDp)), Gravity.TOP))
+        bar.addView(tabViewport, LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+        bar.addView(clock, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))
+        scrim.addView(TextView(context).apply {
+            text = context.getString(R.string.touch_menu_close_hint)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+            typeface = TouchFonts.get(context, TouchFonts.Face.TEXT_MEDIUM)
+            setTextColor(0xFFF6F4EF.toInt())
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(14).toFloat()
+                setColor(0xC7101211.toInt())
+            }
+            setPadding(dp(20), dp(14), dp(20), dp(14))
+            importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        tabViewport.addView(tabs, FrameLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))
         select(TouchDestination.HOME)
     }
 
     fun select(next: TouchDestination) {
+        if (next != destination) {
+            removeCallbacks(hideNotice)
+            noticeHost.removeAllViews()
+            noticeVisible = false
+            if (!next.isImmersiveMedia) hideEdgeHintNow()
+        }
         destination = next
         menuVisible = !next.isImmersiveMedia
         applyChrome()
@@ -77,20 +125,125 @@ class TouchShellLayout(
 
     fun showMenu() {
         if (!destination.isImmersiveMedia) return
+        hideEdgeHintNow()
         menuVisible = true
         applyChrome()
+        // The swipe moves right, so the bar follows it in from the left edge.
+        bar.translationX = -width.toFloat()
+        bar.animate().translationX(0f).setDuration(MENU_SLIDE_MILLIS).start()
     }
 
     fun hideMenu() {
         if (!destination.isImmersiveMedia) return
+        bar.animate().cancel()
+        bar.translationX = 0f
         menuVisible = false
         applyChrome()
+    }
+
+    /** The bar carries the time on every screen except Home, whose clock is the page itself. */
+    fun setClock(text: CharSequence) {
+        if (text == clockText) return
+        clockText = text
+        clock.text = text
     }
 
     fun setNight(isNight: Boolean) {
         if (night == isNight) return
         night = isNight
         applyChrome()
+    }
+
+    enum class NoticeTone { INFO, ERROR }
+
+    /**
+     * Shell-owned replacement for Toasts: readable from across a room, optionally actionable.
+     * Information hides after 6 s; errors stay 30 s or until dismissed so an unattended frame
+     * never keeps a stale error forever. Changing destination clears it.
+     */
+    fun showNotice(message: String, tone: NoticeTone = NoticeTone.INFO, actionLabel: String? = null, action: (() -> Unit)? = null) {
+        removeCallbacks(hideNotice)
+        noticeHost.removeAllViews()
+        val kit = TouchKit(context, TouchPalette.forNight(night), TouchScale.forScreen(resources.configuration))
+        val p = kit.palette
+        val (fill, ink, stroke) = if (tone == NoticeTone.ERROR) Triple(p.alert, p.alertInk, p.alertInk) else Triple(p.notice, p.noticeInk, p.noticeStroke)
+        val notice = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = kit.rounded(fill, kit.scale.radius, stroke, 2)
+            minimumHeight = kit.dp(kit.scale.target + 16)
+            setPadding(kit.dp(24), kit.dp(8), kit.dp(if (tone == NoticeTone.ERROR || actionLabel != null) 8 else 28), kit.dp(8))
+            accessibilityLiveRegion = if (tone == NoticeTone.ERROR) View.ACCESSIBILITY_LIVE_REGION_ASSERTIVE else View.ACCESSIBILITY_LIVE_REGION_POLITE
+            addView(kit.icon(if (tone == NoticeTone.ERROR) R.drawable.ic_touch_alert else R.drawable.ic_touch_check, ink, 30))
+            addView(kit.text(message, kit.scale.body, TouchFonts.Face.TEXT_MEDIUM, ink, maxLines = 2), LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                marginStart = kit.dp(16)
+                marginEnd = kit.dp(16)
+            })
+            if (actionLabel != null && action != null) addView(kit.button(actionLabel, TouchKit.Emphasis.QUIET, quietInk = ink) {
+                clearNotice()
+                action()
+            })
+            if (tone == NoticeTone.ERROR) addView(LinearLayout(context).apply {
+                gravity = Gravity.CENTER
+                minimumWidth = kit.dp(kit.scale.target)
+                minimumHeight = kit.dp(kit.scale.target)
+                isClickable = true
+                isFocusable = true
+                contentDescription = "Dismiss"
+                addView(kit.icon(R.drawable.ic_touch_close, ink, 28))
+                setOnClickListener { clearNotice() }
+            })
+        }
+        noticeHost.addView(notice, FrameLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+        noticeVisible = true
+        applyChrome()
+        postDelayed(hideNotice, if (tone == NoticeTone.ERROR) ERROR_NOTICE_MILLIS else INFO_NOTICE_MILLIS)
+    }
+
+    /** A brief, non-interactive cue that the menu lives behind the left edge of full-screen media. */
+    fun showEdgeHint() {
+        if (!destination.isImmersiveMedia || menuVisible) return
+        val kit = TouchKit(context, TouchPalette.forNight(night), TouchScale.forScreen(resources.configuration))
+        val ink = if (night) kit.palette.ink else 0xFFF6F4EF.toInt()
+        edgeHint.removeAllViews()
+        edgeHint.addView(View(context).apply {
+            background = kit.rounded(if (night) 0x8CB39668.toInt() else 0x99F6F4EF.toInt(), 4)
+        }, FrameLayout.LayoutParams(kit.dp(8), kit.dp(96), Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = kit.dp(10) })
+        edgeHint.addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = kit.rounded(if (night) 0xD1000000.toInt() else 0xC7101211.toInt(), kit.scale.radiusSmall)
+            setPadding(kit.dp(18), kit.dp(14), kit.dp(22), kit.dp(14))
+            addView(kit.icon(R.drawable.ic_touch_chevron_right, ink, 26))
+            addView(kit.text(context.getString(R.string.touch_edge_hint), kit.scale.label, TouchFonts.Face.TEXT_MEDIUM, ink),
+                LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { marginStart = kit.dp(10) })
+        }, FrameLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = kit.dp(34) })
+        removeCallbacks(hideEdgeHint)
+        edgeHint.animate().cancel()
+        edgeHint.alpha = 1f
+        edgeHint.visibility = View.VISIBLE
+        postDelayed(hideEdgeHint, EDGE_HINT_MILLIS)
+    }
+
+    /** Removes the notice and gives its docked strip back to the destination. */
+    private fun clearNotice() {
+        removeCallbacks(hideNotice)
+        noticeHost.removeAllViews()
+        if (!noticeVisible) return
+        noticeVisible = false
+        applyChrome()
+    }
+
+    private fun hideEdgeHintNow() {
+        removeCallbacks(hideEdgeHint)
+        edgeHint.animate().cancel()
+        edgeHint.visibility = View.GONE
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(hideNotice)
+        removeCallbacks(hideEdgeHint)
+        super.onDetachedFromWindow()
     }
 
     /**
@@ -125,87 +278,147 @@ class TouchShellLayout(
 
     private fun applyChrome() {
         val palette = Palette.forNight(night)
+        val barHeight = dp(barHeightDpFor(resources.configuration.screenWidthDp))
+        val large = barHeightDpFor(resources.configuration.screenWidthDp) >= WIDE_BAR_HEIGHT_DP
         setBackgroundColor(palette.background)
-        railViewport.setBackgroundColor(palette.rail)
-        rebuildRail(palette)
+        bar.background = android.graphics.drawable.LayerDrawable(arrayOf(
+            android.graphics.drawable.ColorDrawable(palette.barRule),
+            android.graphics.drawable.ColorDrawable(palette.rail),
+        )).apply { setLayerInset(1, 0, 0, 0, dp(1)) }
+        bar.setPadding(dp(8), 0, dp(8), 0)
+        bar.layoutParams = (bar.layoutParams as LayoutParams).apply { height = barHeight }
+        rebuildTabs(palette, barHeight, large)
+        clock.typeface = TouchFonts.get(context, TouchFonts.Face.DISPLAY)
+        clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (large) 30f else 27f)
+        clock.setTextColor(palette.ink)
+        clock.setPadding(dp(16), 0, dp(16), 0)
+        clock.text = clockText
+        clock.visibility = if (destination == TouchDestination.HOME) View.GONE else View.VISIBLE
 
-        val railWidth = dp(railWidthDpFor(resources.configuration.screenWidthDp))
-        railViewport.layoutParams = (railViewport.layoutParams as LayoutParams).apply { width = railWidth }
-        railViewport.visibility = if (menuVisible) View.VISIBLE else View.GONE
+        bar.visibility = if (menuVisible) View.VISIBLE else View.GONE
         scrim.visibility = if (destination.isImmersiveMedia && menuVisible) View.VISIBLE else View.GONE
+        (scrim.getChildAt(0)?.layoutParams as? LayoutParams)?.topMargin = barHeight + dp(40)
+        (scrim.getChildAt(0) as? TextView)?.setTextColor(if (night) TouchPalette.NIGHT.ink else 0xFFF6F4EF.toInt())
         content.layoutParams = (content.layoutParams as LayoutParams).apply {
-            leftMargin = if (destination.isImmersiveMedia) 0 else railWidth
+            topMargin = if (destination.isImmersiveMedia) 0 else barHeight
+            leftMargin = 0
+            // A docked notice takes a strip under native content instead of covering its controls.
+            bottomMargin = if (noticeVisible && !destination.isImmersiveMedia) noticeStripHeight() else 0
         }
         content.requestLayout()
+        positionOverlays()
     }
 
-    private fun rebuildRail(palette: Palette) {
-        rail.removeAllViews()
-        destinations.forEach { item -> rail.addView(destinationButton(item, palette)) }
-        rail.addView(Space(context), LinearLayout.LayoutParams(0, 0, 1f))
-        rail.addView(settingsButton(palette))
+    /** Docks notices at the start of the content area, inside the strip reserved by [applyChrome]. */
+    private fun positionOverlays() {
+        val scale = TouchScale.forScreen(resources.configuration)
+        noticeHost.layoutParams = (noticeHost.layoutParams as LayoutParams).apply {
+            gravity = Gravity.BOTTOM or Gravity.START
+            leftMargin = dp(scale.pad)
+            bottomMargin = dp(scale.pad / 2)
+        }
     }
 
-    private fun destinationButton(item: TouchDestination, palette: Palette): View {
+    private fun noticeStripHeight(): Int {
+        val scale = TouchScale.forScreen(resources.configuration)
+        return dp(scale.target + 16 + scale.pad / 2)
+    }
+
+    private fun rebuildTabs(palette: Palette, barHeight: Int, large: Boolean) {
+        tabs.removeAllViews()
+        destinations.forEach { item -> tabs.addView(destinationTab(item, palette, barHeight, large)) }
+        while (bar.childCount > 2) bar.removeViewAt(2)
+        // A divider and gap keep Settings (which leaves the app) from reading as one more tab.
+        bar.addView(View(context).apply { setBackgroundColor(palette.settingsStroke ?: palette.muted); alpha = 0.5f },
+            LinearLayout.LayoutParams(dp(1), barHeight - dp(32)).apply { marginEnd = dp(16) })
+        bar.addView(settingsTab(palette, barHeight, large))
+    }
+
+    private fun destinationTab(item: TouchDestination, palette: Palette, barHeight: Int, large: Boolean): View {
         val selected = item == destination
         return LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             isClickable = true
             isFocusable = true
+            isSelected = selected
             contentDescription = item.label
-            minimumHeight = dp(MIN_TARGET_DP)
-            setPadding(dp(4), dp(5), dp(4), dp(5))
-            background = rounded(if (selected) palette.selected else Color.TRANSPARENT)
+            minimumWidth = dp(MIN_TARGET_DP)
+            // The whole bar height is the touch target; the chip is drawn inset inside it. The
+            // background is set before the padding: an InsetDrawable reports padding and would replace it.
+            background = insetChip(if (selected) rounded(palette.selected, palette.selectedStroke) else rounded(Color.TRANSPARENT, null), dp(2))
+            setPadding(dp(if (large) 26 else 20), 0, dp(if (large) 26 else 20), 0)
             setOnClickListener {
                 hideMenu()
                 onNavigate(item)
             }
-            addView(label(item.glyph, 20f, if (selected) palette.selectedInk else palette.muted))
-            addView(label(item.label, if (railWidthDpFor(resources.configuration.screenWidthDp) >= 96) 16f else 14f,
-                if (selected) palette.selectedInk else palette.ink))
+            addView(icon(item.icon, if (selected) palette.selectedInk else palette.muted, large))
+            addView(label(item.label, if (selected) palette.selectedInk else palette.ink, large))
         }.also { view ->
-            view.layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(RAIL_BUTTON_HEIGHT_DP)).apply {
-                setMargins(dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP), dp(RAIL_BUTTON_TOP_MARGIN_DP), dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP), 0)
-            }
+            view.layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, barHeight)
         }
     }
 
-    private fun settingsButton(palette: Palette): View = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        gravity = Gravity.CENTER
+    private fun settingsTab(palette: Palette, barHeight: Int, large: Boolean): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
         isClickable = true
         isFocusable = true
         contentDescription = "Settings"
-        minimumHeight = dp(MIN_TARGET_DP)
-        setPadding(dp(4), dp(5), dp(4), dp(5))
-        background = rounded(palette.settings)
+        minimumWidth = dp(MIN_TARGET_DP)
+        background = insetChip(rounded(palette.settings, palette.settingsStroke), 0)
+        setPadding(dp(20), 0, dp(20), 0)
         setOnClickListener { onSettings() }
-        addView(label("⚙", 20f, palette.settingsInk))
-        addView(label("Settings", if (railWidthDpFor(resources.configuration.screenWidthDp) >= 96) 16f else 14f, palette.settingsInk))
+        addView(icon(R.drawable.ic_touch_settings, palette.settingsInk, large))
+        addView(label("Settings", palette.settingsInk, large))
     }.also { view ->
-        view.layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(RAIL_BUTTON_HEIGHT_DP)).apply {
-            setMargins(
-                dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP),
-                dp(RAIL_BUTTON_TOP_MARGIN_DP),
-                dp(RAIL_BUTTON_HORIZONTAL_MARGIN_DP),
-                dp(SETTINGS_BOTTOM_MARGIN_DP),
-            )
-        }
+        view.layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, barHeight)
     }
 
-    private fun label(value: String, sizeSp: Float, color: Int): TextView = TextView(context).apply {
+    private val TouchDestination.icon: Int
+        get() = when (this) {
+            TouchDestination.HOME -> R.drawable.ic_touch_home
+            TouchDestination.PHOTOS -> R.drawable.ic_touch_photos
+            TouchDestination.ART -> R.drawable.ic_touch_art
+            TouchDestination.BIRDS -> R.drawable.ic_touch_birds
+            TouchDestination.WEATHER -> R.drawable.ic_touch_weather
+            TouchDestination.CAMERAS -> R.drawable.ic_touch_cameras
+            TouchDestination.CALENDAR -> R.drawable.ic_touch_calendar
+        }
+
+    private fun icon(resource: Int, color: Int, large: Boolean): ImageView = ImageView(context).apply {
+        setImageDrawable(context.getDrawable(resource)?.mutate()?.apply { setTint(color) })
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        val size = dp(if (large) 30 else 26)
+        layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = dp(10) }
+    }
+
+    /** Single-line label in one weight, so selection never changes a tab's width. */
+    private fun label(value: String, color: Int, large: Boolean): TextView = TextView(context).apply {
         text = value
         setTextColor(color)
-        setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
-        gravity = Gravity.CENTER
+        typeface = TouchFonts.get(context, TouchFonts.Face.TEXT_MEDIUM)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, if (large) 22f else 19f)
+        includeFontPadding = false
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
         maxLines = 1
     }
 
-    private fun rounded(color: Int) = GradientDrawable().apply {
-        cornerRadius = dp(12).toFloat()
+    /** A full-height touch target whose visible chip is inset; pressing tints the chip, never moves it. */
+    private fun insetChip(chip: android.graphics.drawable.Drawable, horizontalInset: Int): android.graphics.drawable.Drawable {
+        val mask = android.graphics.drawable.InsetDrawable(rounded(Color.WHITE, null), horizontalInset, dp(TAB_INSET_DP), horizontalInset, dp(TAB_INSET_DP))
+        val pressed = TouchPalette.forNight(night).pressed or 0x22000000
+        return android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(if (night) pressed else 0x33FFFFFF),
+            android.graphics.drawable.InsetDrawable(chip, horizontalInset, dp(TAB_INSET_DP), horizontalInset, dp(TAB_INSET_DP)),
+            mask,
+        )
+    }
+
+    private fun rounded(color: Int, stroke: Int?) = android.graphics.drawable.GradientDrawable().apply {
+        cornerRadius = dp(14).toFloat()
         setColor(color)
+        if (stroke != null) setStroke(dp(2), stroke)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
@@ -215,12 +428,15 @@ class TouchShellLayout(
         const val HORIZONTAL_THRESHOLD_DP = 56
         const val VERTICAL_TOLERANCE_DP = 32
         const val MIN_TARGET_DP = 56
-        const val RAIL_BUTTON_HEIGHT_DP = 68
-        private const val RAIL_BUTTON_HORIZONTAL_MARGIN_DP = 6
-        const val RAIL_BUTTON_TOP_MARGIN_DP = 6
-        const val SETTINGS_BOTTOM_MARGIN_DP = 8
+        const val PANEL_BAR_HEIGHT_DP = 68
+        const val WIDE_BAR_HEIGHT_DP = 80
+        private const val TAB_INSET_DP = 6
+        private const val INFO_NOTICE_MILLIS = 6_000L
+        private const val ERROR_NOTICE_MILLIS = 30_000L
+        private const val EDGE_HINT_MILLIS = 4_000L
+        private const val MENU_SLIDE_MILLIS = 200L
 
-        fun railWidthDpFor(screenWidthDp: Int): Int = if (screenWidthDp >= 1400) 96 else 80
+        fun barHeightDpFor(screenWidthDp: Int): Int = if (screenWidthDp >= 1400) WIDE_BAR_HEIGHT_DP else PANEL_BAR_HEIGHT_DP
 
     }
 }
@@ -288,6 +504,7 @@ internal class TouchShellEdgeStream {
     }
 }
 
+/** Rail colors, derived from the shared [TouchPalette] so the rail and screens never drift. */
 internal data class Palette(
     val background: Int,
     val rail: Int,
@@ -295,22 +512,26 @@ internal data class Palette(
     val muted: Int,
     val selected: Int,
     val selectedInk: Int,
+    val selectedStroke: Int?,
     val settings: Int,
     val settingsInk: Int,
+    val settingsStroke: Int?,
+    /** 1dp rule under the bar; gives the black night bar an edge against the black wall. */
+    val barRule: Int,
 ) {
     internal companion object {
-        // #101722 provides AA contrast on both the teal selected state and gold Settings state.
+        // #101722 gives AA contrast on the light mat selection used by day; night uses its own amber outline.
         private const val ACCESSIBLE_RAIL_INK = -15722718
 
-        fun forNight(night: Boolean): Palette = if (night) {
-            Palette(
-                0xFF101722.toInt(), 0xFF172536.toInt(), 0xFFF1EDE4.toInt(), 0xFFA9B2B8.toInt(),
-                0xFF4F9F9A.toInt(), ACCESSIBLE_RAIL_INK, 0xFFD8C390.toInt(), ACCESSIBLE_RAIL_INK,
-            )
-        } else {
-            Palette(
-                0xFFF1EDE4.toInt(), 0xFFE3E6DF.toInt(), 0xFF182630.toInt(), 0xFF56646A.toInt(),
-                0xFF4F9F9A.toInt(), ACCESSIBLE_RAIL_INK, 0xFFD8C390.toInt(), ACCESSIBLE_RAIL_INK,
+        fun forNight(night: Boolean): Palette {
+            val theme = TouchPalette.forNight(night)
+            return Palette(
+                background = theme.wall, rail = theme.moulding, ink = theme.mouldingInk, muted = theme.mouldingMuted,
+                selected = theme.railSelected,
+                selectedInk = if (night) theme.railSelectedInk else ACCESSIBLE_RAIL_INK,
+                selectedStroke = if (night) theme.railSelectedStroke else null,
+                settings = theme.moulding, settingsInk = theme.mouldingInk, settingsStroke = theme.mouldingMuted,
+                barRule = if (night) theme.line else theme.moulding,
             )
         }
 

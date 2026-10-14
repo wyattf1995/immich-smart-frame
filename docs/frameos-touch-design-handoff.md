@@ -118,6 +118,47 @@ Use the existing [Android app build guidance](android-apps.md),
 implementation and validation. Design review is not an APK build, signing, or
 hardware acceptance gate.
 
+## Implemented visual system ("gallery wall", October 2026)
+
+The native screens share one theme in
+[`TouchTheme`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchTheme.kt):
+`TouchPalette` (day and night tokens), `TouchScale` (type and spacing per panel
+class), `TouchFonts` and the `TouchKit` component builders. Change tokens there,
+not in individual views; `TouchThemeTest` holds every text pair to 4.5:1 and every
+control boundary to 3:1.
+
+- **Navigation:** a top bar (the graphite moulding `#27302C` along the frame's top
+  edge, 68dp on the 1280 panel, 80dp on the 1920 frame) with horizontally scrolling
+  icon+label tabs, the current time on every screen except Home, and Settings at the
+  right. Wyatt chose it over the left rail on October 13 to give content the width.
+  Photos and Art stay full screen; the left-edge swipe drops the bar down over them.
+- **Day:** stone wall `#E4E1D9`, mat panels `#F6F4EF`, ink `#1D2321`, gallery-green
+  accent `#2E5E50`, control stroke `#827C70`.
+- **Night (19:00–06:59):** black wall, dim warm amber ink `#B39668` with no
+  blue-white surfaces, and selections drawn as an outline on a dim fill rather than
+  a bright block. Screen brightness stays with the per-frame quiet-hours policy.
+- **Type:** bundled Red Hat Display (clock, temperatures, titles) and Red Hat Text
+  (everything else), SIL OFL 1.1, in `assets/fonts` with the licence. Panel class
+  (1280×800) and wall class (1920×1080) differ only in `TouchScale`.
+- **Icons:** 24dp stroke VectorDrawables `ic_touch_*`, tinted at runtime. Every segment after a moveto is written as an explicit `L`/`l`: Android 6 (API 23, the small frame) draws implicit pairs after `M`/`m` as more movetos, so a shorthand chevron rendered blank there while API 27 drew it (`TouchIconPathTest`).
+- **Segmented controls:** every segment starts at the widest label measured in the bold selected face; zero-width weighted segments in a wrap-content row shrink to the average label width on API 24+ and cut "Agenda"/"Month" on the wall frame (`TouchSegmentedWidthTest`).
+- **States:** offline is a pending-tone banner with Try again; signed out is one
+  explicit call to action; loading uses skeleton shapes; a thermostat change is
+  Not sent yet → Sending… → Set to N° or Couldn't set to N° (an unsent draft
+  reverts after 30 s). Notices replace Toasts, dock in a strip under native
+  content, and last 6 s (information) or 30 s/until dismissed (errors).
+- **Home:** the duplicate Explore grid is gone; the weather glance opens Weather
+  and Coming up opens the current week. Coming up groups by day and counts
+  anything that does not fit ("N more events this week").
+- **Calendar:** whole-row selected-day pages (6 on the 1280 panel, 4 with a banner,
+  the 12 cap elsewhere), "Free" days, and a Month tap opens that week. Past days stay
+  visible but greyed (a grey panel by day, an outlined box by night); today is tinted
+  and outlined; today's Week column says "Today", folds finished events into "N
+  earlier" and marks the current one "Now".
+
+Design rounds, critiques, renders and the rubric are kept outside the repository
+(they include device captures); public examples use synthetic data only.
+
 ## Evidence boundary
 
 A prior small-frame verification covered Calendar and Weather on source

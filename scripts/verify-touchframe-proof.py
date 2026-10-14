@@ -105,7 +105,7 @@ def static_contract() -> dict[str, object]:
         "bounded foreground media render deadline": "armRenderDeadline(renderDeadline.beginLoading(load, active))",
         "media deadline session fence": "token.load.sessionGeneration == sessionGeneration",
         "cross URL media session replacement": "TouchMediaLoadState.Decision.REPLACE_DOCUMENT_SESSION -> {",
-        "Camera palette accessible accent": "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
+        "Camera palette accessible accent": "accent = theme.accent, accentInk = theme.onAccent,",
         "Camera label prefix collapse": "return tokens.take(repeatedPrefixLength) + tokens.drop(repeatedPrefixLength * 2)",
         "pause lifecycle gate": "if (closed || !resumed) return\n            resumed = false",
         "Photos-active fallback gate": "active = value && attachment != null",
@@ -425,9 +425,9 @@ try:
     )
     rail_viewport_red = mutate(
         "rail-scroll-viewport-red", "shell",
-        "railViewport.addView(rail, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))",
-        "addView(rail, LayoutParams(dp(80), LayoutParams.MATCH_PARENT, Gravity.START))",
-        {"short rails attach through a fill viewport"},
+        "tabViewport.addView(tabs, FrameLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))",
+        "bar.addView(tabs, LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))",
+        {"navigation tabs attach through a horizontal fill viewport"},
     )
     shell_contrast_red = mutate(
         "shell-contrast-red", "shell",
@@ -515,8 +515,8 @@ try:
     )
     camera_palette_red = mutate(
         "camera-palette-contrast-red", "camera_palette",
-        "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
-        "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFFF1EDE4.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
+        "accent = theme.accent, accentInk = theme.onAccent,",
+        "accent = theme.accent, accentInk = theme.accent,",
         {"camera controls keep readable foregrounds on each explicit palette"},
     )
     camera_label_red = mutate(
