@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 
 if not __debug__:
     raise RuntimeError("optimized Python is not permitted")
@@ -59,10 +60,18 @@ manifest_text = manifest.read_text()
 activity_text = activity.read_text()
 policy_text = policy.read_text()
 test_hash = digest(test)
+android = "{http://schemas.android.com/apk/res/android}"
+home_filters = []
+for candidate in ET.parse(manifest).getroot().findall(".//activity/intent-filter"):
+    actions = {node.get(android + "name") for node in candidate.findall("action")}
+    categories = {node.get(android + "name") for node in candidate.findall("category")}
+    if "android.intent.action.MAIN" in actions and "android.intent.category.HOME" in categories:
+        home_filters.append(categories)
+if home_filters != [{"android.intent.category.HOME", "android.intent.category.DEFAULT"}]:
+    raise RuntimeError(f"expected one dedicated MAIN/HOME/DEFAULT intent filter, found {home_filters}")
+if activity_text.count("handleStartupIntent(intent)") != 2:
+    raise RuntimeError("startup intent must be handled once on creation and once for a reused task")
 required = {
-    "separate Android HOME filter": '<category android:name="android.intent.category.HOME" />',
-    "HOME filter is DEFAULT-matchable": '<category android:name="android.intent.category.DEFAULT" />',
-    "startup policy is used at creation": "handleStartupIntent(intent)",
     "startup policy handles reused task intents": "override fun onNewIntent(intent: Intent)",
     "reused task intent is recorded": "setIntent(intent)",
     "HOME closes an active sign-in overlay": "closeAuthorization(restoreDestination = false)",
