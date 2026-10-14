@@ -43,6 +43,7 @@ CLASSES = {
     "ocean": ("com.wyattfleming.touchframe.ocean.TouchOceanPresentationTest", tests / "ocean/TouchOceanPresentationTest.kt"),
     "ocean-scene": ("com.wyattfleming.touchframe.ocean.TouchOceanSceneSourceTest", tests / "ocean/TouchOceanSceneSourceTest.kt"),
     "ocean-view": ("com.wyattfleming.touchframe.ocean.TouchOceanViewSourceTest", tests / "ocean/TouchOceanViewSourceTest.kt"),
+    "manifest": ("com.wyattfleming.touchframe.TouchFrameActivityManifestTest", tests / "TouchFrameActivityManifestTest.kt"),
 }
 
 MUTATIONS = [
@@ -129,6 +130,9 @@ MUTATIONS = [
      "overlay.setLayerType(if (value) LAYER_TYPE_HARDWARE else LAYER_TYPE_NONE, null)",
      "overlay.setLayerType(LAYER_TYPE_NONE, null)", "ocean-view",
      {"while the scene moves the text and chart above it are one cached layer released when Ocean is hidden"}),
+    ("activity-restart-in-place-red", module / "src/main/AndroidManifest.xml",
+     'android:stateNotNeeded="true"', 'android:stateNotNeeded="false"', "manifest",
+     {"Android restarts Touch in place when its process is killed on screen"}),
 ]
 
 
