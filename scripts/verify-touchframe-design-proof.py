@@ -39,6 +39,9 @@ CLASSES = {
     "month": ("com.wyattfleming.touchframe.calendar.TouchCalendarMonthLayoutTest", tests / "calendar/TouchCalendarMonthLayoutTest.kt"),
     "icons": ("com.wyattfleming.touchframe.ui.TouchIconPathTest", tests / "ui/TouchIconPathTest.kt"),
     "segment": ("com.wyattfleming.touchframe.ui.TouchSegmentedWidthTest", tests / "ui/TouchSegmentedWidthTest.kt"),
+    "destinations": ("com.wyattfleming.touchframe.ui.TouchDestinationOrderTest", tests / "ui/TouchDestinationOrderTest.kt"),
+    "ocean": ("com.wyattfleming.touchframe.ocean.TouchOceanPresentationTest", tests / "ocean/TouchOceanPresentationTest.kt"),
+    "ocean-scene": ("com.wyattfleming.touchframe.ocean.TouchOceanSceneSourceTest", tests / "ocean/TouchOceanSceneSourceTest.kt"),
 }
 
 MUTATIONS = [
@@ -91,6 +94,21 @@ MUTATIONS = [
      "LinearLayout.LayoutParams(segmentWidth, dp(scale.target - 8), 1f)",
      "LinearLayout.LayoutParams(0, dp(scale.target - 8), 1f)", "segment",
      {"every segment starts at the widest label so a wrap-content control never truncates one"}),
+    ("ocean-scene-redraw-red", main / "ocean/TouchOceanScene.kt",
+     """        fishTail.rotation = sin(2 * PI * seconds * 1000 / TAIL_PERIOD_MILLIS).toFloat() * TAIL_DEGREES
+    }""",
+     """        fishTail.rotation = sin(2 * PI * seconds * 1000 / TAIL_PERIOD_MILLIS).toFloat() * TAIL_DEGREES
+        invalidate()
+    }""", "ocean-scene",
+     {"each frame only moves views and never redraws the swell, sky or fish"}),
+    ("ocean-remote-order-red", main / "ui/TouchDestination.kt",
+     "        if (TouchDestination.OCEAN in order) return order\n        val weather",
+     "        if (true) return order\n        val weather", "destinations",
+     {"Ocean stays right after Weather when a remote order does not name it"}),
+    ("ocean-chart-gauge-red", main / "ocean/TouchOceanPresentation.kt",
+     "            minM = lowest - padding,\n            maxM = highest + padding,",
+     "            minM = minOf(0.0, lowest),\n            maxM = maxOf(1.8288, highest + padding),", "ocean",
+     {"the chart is fitted to its own window so a day's swing fills it"}),
 ]
 
 
