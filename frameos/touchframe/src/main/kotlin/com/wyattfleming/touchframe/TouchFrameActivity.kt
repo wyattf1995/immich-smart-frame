@@ -356,11 +356,11 @@ class TouchFrameActivity : Activity() {
             TouchDestination.CAMERAS -> {
                 val config = configuration ?: return
                 if (!networkAllowed()) { requestLocalNetwork(); return }
-                val view = cameras ?: TouchCameraView(this, config.homeAssistantOrigin, config.cameraEntityIds) { deadline ->
+                val view = cameras ?: TouchCameraView(this, config.homeAssistantOrigin, config.cameraEntityIds, { deadline ->
                     synchronized(tokenLock) {
                         if (Thread.currentThread().isInterrupted) null else oauth?.validAccessToken(deadline)
                     }
-                }.also {
+                }, runtime).also {
                     cameras = it
                     it.onSignIn = ::signIn
                     shell.content.addView(it, fill())
