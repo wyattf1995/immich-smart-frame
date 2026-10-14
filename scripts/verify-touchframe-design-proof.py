@@ -125,6 +125,10 @@ MUTATIONS = [
      "(((index * spacing + direction * seconds * speed) % span) + span) % span",
      "(((index * spacing + direction * seconds * speed * (0.7 + 0.2 * (index % 3))) % span) + span) % span", "ocean",
      {"wind streaks keep their spacing so neighbouring rows never stack into a menu-like glyph"}),
+    ("ocean-overlay-uncached-red", main / "ocean/TouchOceanView.kt",
+     "overlay.setLayerType(if (value) LAYER_TYPE_HARDWARE else LAYER_TYPE_NONE, null)",
+     "overlay.setLayerType(LAYER_TYPE_NONE, null)", "ocean-view",
+     {"while the scene moves the text and chart above it are one cached layer released when Ocean is hidden"}),
 ]
 
 
