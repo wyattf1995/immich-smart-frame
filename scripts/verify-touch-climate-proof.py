@@ -65,7 +65,7 @@ def collect_junit(label: str, expected_failed_cases: set[str], expected_exit: in
     failed = {case.get("name") for case in cases if case.find("failure") is not None}
     errors = [error for case in cases for error in case.findall("error")]
     skipped = [skip for case in cases for skip in case.findall("skipped")]
-    assert len(cases) == 19, len(cases)
+    assert len(cases) == 20, len(cases)
     assert failed == expected_failed_cases, failed
     assert not errors and not skipped, (errors, skipped)
     for case in cases:
@@ -138,6 +138,13 @@ target_null_red = prove_mutation(
         "observed off thermostat stays connected and cannot post a made up target",
     },
 )
+range_target_red = prove_mutation(
+    "parser",
+    'target != null && boundsAreValid && stepIsValid && !rangeIsValid && mode != "heat_cool"',
+    'target != null && boundsAreValid && stepIsValid && (!rangeIsValid || mode == "heat_cool")',
+    "climate-range-target-guard-source-red",
+    {"climate parser keeps dual-feature heat cool ranges read only"},
+)
 green = collect_junit("climate-restored-green", set(), expected_exit=0)
 assert all(digest(path) == source_hashes[name] for name, path in source_files.items())
 assert all(digest(path) == test_hashes[name] for name, path in test_files.items())
@@ -146,7 +153,7 @@ assert all(digest(path) == test_hashes[name] for name, path in test_files.items(
     "target": args.target,
     "source_sha256": source_hashes,
     "unchanged_test_sha256": test_hashes,
-    "negative_mutations": [config_fallback_red, target_null_red],
+    "negative_mutations": [config_fallback_red, target_null_red, range_target_red],
     "restored_green": green,
 }, indent=2) + "\n")
 print("Touch climate fallback/target source-only red / exact restore green verified")
