@@ -155,18 +155,17 @@ def require_jvm_green(results: dict[str, dict[str, object]], description: str) -
 
 def require_exact_jvm_red(
     results: dict[str, dict[str, object]],
-    target_class: str,
-    target_case: str,
+    expected_failures: set[tuple[str, str]],
     description: str,
 ) -> None:
     failures = sum(int(result["failures"]) for result in results.values())
     errors = sum(int(result["errors"]) for result in results.values())
     skipped = sum(int(result["skipped"]) for result in results.values())
-    if failures != 1 or errors or skipped:
-        raise RuntimeError(f"{description}: expected exactly one assertion failure with no errors/skips")
+    if failures != len(expected_failures) or errors or skipped:
+        raise RuntimeError(f"{description}: expected the exact assertion-failure count with no errors/skips")
     for test_class, result in results.items():
         for case, state in result["cases"].items():
-            expected = "failure" if (test_class, case) == (target_class, target_case) else "passed"
+            expected = "failure" if (test_class, case) in expected_failures else "passed"
             if state != expected:
                 raise RuntimeError(f"{description}: unexpected JVM result for {test_class}.{case}")
 
@@ -267,7 +266,7 @@ def main() -> None:
             if red.returncode == 0:
                 raise RuntimeError("JVM single-use guard stayed green after consumed-gate mutation")
             red_xml = read_jvm_results(result_dir, report_dir, "capability-red")
-            require_exact_jvm_red(red_xml, CAPABILITY_TEST_CLASS, CAPABILITY_TEST_CASE, "JVM capability mutation")
+            require_exact_jvm_red(red_xml, {(CAPABILITY_TEST_CLASS, CAPABILITY_TEST_CASE)}, "JVM capability mutation")
         finally:
             policy.write_bytes(original_policy)
         green = run(jvm_command(), frame, report_dir / "jvm-green.log")
@@ -284,7 +283,17 @@ def main() -> None:
             if mode_red.returncode == 0:
                 raise RuntimeError("JVM mode gate stayed green after explicit-snapshot reset mutation")
             mode_red_xml = read_jvm_results(result_dir, report_dir, "mode-red")
-            require_exact_jvm_red(mode_red_xml, MODE_TEST_CLASS, MODE_TEST_CASE, "JVM mode mutation")
+            # The reset mutation is shared by both selection and explicit
+            # snapshot paths. Build6 retained XML proves these exact two
+            # assertions fail while every other selected case remains green.
+            require_exact_jvm_red(
+                mode_red_xml,
+                {
+                    (MODE_TEST_CLASS, "selectionAndLiveFailureNeverStartSnapshotWork"),
+                    (MODE_TEST_CLASS, "onlyExplicitSnapshotActionOpensTheSnapshotGate"),
+                },
+                "JVM mode mutation",
+            )
         finally:
             camera_view.write_bytes(original_camera_view)
         mode_green = run(jvm_command(), frame, report_dir / "jvm-mode-green.log")
@@ -297,7 +306,7 @@ def main() -> None:
             if lifecycle_red.returncode == 0:
                 raise RuntimeError("JVM live lifecycle gate stayed green after failure-state mutation")
             lifecycle_red_xml = read_jvm_results(result_dir, report_dir, "lifecycle-red")
-            require_exact_jvm_red(lifecycle_red_xml, LIFECYCLE_TEST_CLASS, LIFECYCLE_TEST_CASE, "JVM lifecycle mutation")
+            require_exact_jvm_red(lifecycle_red_xml, {(LIFECYCLE_TEST_CLASS, LIFECYCLE_TEST_CASE)}, "JVM lifecycle mutation")
         finally:
             camera_view.write_bytes(original_camera_view)
         lifecycle_green = run(jvm_command(), frame, report_dir / "jvm-lifecycle-green.log")
