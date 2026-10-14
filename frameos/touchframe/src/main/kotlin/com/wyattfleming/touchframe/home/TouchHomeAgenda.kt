@@ -134,14 +134,17 @@ class TouchClimateDraft {
         if (confirmed) reset(climate?.targetTemperature)
     }
 
-    /** Steps from the draft (or setpoint/current) by the advertised increment, bounded to the device range. */
+    /** Steps only a state-advertised single setpoint, never a current temperature or heat/cool range. */
     fun step(climate: TouchClimate, direction: Int): Double? {
-        val initial = target ?: climate.targetTemperature ?: climate.currentTemperature ?: return null
+        if (!climate.canSetTarget) return null
+        val minimum = climate.minTemperature ?: return null
+        val maximum = climate.maxTemperature ?: return null
+        val initial = target ?: climate.targetTemperature ?: return null
         // A missing HA capability uses an explicit local display increment, never a server claim.
         val increment = climate.step ?: if (climate.unit.contains("c", ignoreCase = true)) 0.5 else 1.0
-        val bounded = (initial + direction * increment).coerceIn(climate.minTemperature, climate.maxTemperature)
-        val steps = kotlin.math.round((bounded - climate.minTemperature) / increment)
-        val next = (climate.minTemperature + steps * increment).coerceIn(climate.minTemperature, climate.maxTemperature)
+        val bounded = (initial + direction * increment).coerceIn(minimum, maximum)
+        val steps = kotlin.math.round((bounded - minimum) / increment)
+        val next = (minimum + steps * increment).coerceIn(minimum, maximum)
         target = next
         dirty = next != climate.targetTemperature
         return next

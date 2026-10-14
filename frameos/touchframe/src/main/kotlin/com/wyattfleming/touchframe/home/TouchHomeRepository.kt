@@ -27,6 +27,7 @@ fun interface TouchHomeTokenProvider {
 /**
  * Blocking worker API. Call it from the Activity-owned worker, never the main thread.
  * A refresh makes exactly two state requests plus at most four configured calendar requests.
+ * A bounded config read is added only for legacy climate responses that omit their temperature unit.
  */
 class TouchHomeRepository(
     private val configuration: TouchConfiguration,
@@ -45,6 +46,8 @@ class TouchHomeRepository(
     private var lastConfirmedClimate: TouchClimate? = null
     /** Only a current, successful state read may authorize a climate service call. */
     private var climateConnection: TouchConnection = TouchConnection.OFFLINE
+    /** A valid unit from `/api/config`; only C/F is retained and it is never persisted here. */
+    private var cachedConfigTemperatureUnit: String? = null
     private val cancellableTransport = transport as? CancellableHomeAssistantHttpTransport
 
     fun refresh(previous: TouchHomeModel?): TouchHomeModel {
@@ -74,7 +77,8 @@ class TouchHomeRepository(
                 parser.parseCalendarEvents(calendarId, await(future, deadline), now, zoneId)
             }.sortedBy(TouchCalendarEvent::startEpochMillis).take(MAX_ALL_EVENTS)
             val weatherModel = parser.parseWeather(weatherText)
-            val climateModel = parser.parseClimate(configuration.climateEntityId, climateState)
+            val fallbackTemperatureUnit = configTemperatureUnitIfNeeded(operation, climateState, headers, deadline)
+            val climateModel = parser.parseClimate(configuration.climateEntityId, climateState, fallbackTemperatureUnit)
             val fresh = TouchHomeModel(
                 weatherText = weatherModel.first,
                 temperatureText = weatherModel.second,
@@ -99,7 +103,7 @@ class TouchHomeRepository(
         val climate = synchronized(operationLock) {
             lastConfirmedClimate?.takeIf { climateConnection == TouchConnection.CONNECTED }
         } ?: return false
-        if (climate.entityId != configuration.climateEntityId || mode !in climate.modes) return false
+        if (climate.entityId != configuration.climateEntityId || !climate.canSetMode || mode !in climate.modes) return false
         return postClimateService("set_hvac_mode", JSONObject().put("hvac_mode", mode))
     }
 
@@ -108,10 +112,12 @@ class TouchHomeRepository(
         val climate = synchronized(operationLock) {
             lastConfirmedClimate?.takeIf { climateConnection == TouchConnection.CONNECTED }
         } ?: return false
-        if (!value.isFinite() || climate.entityId != configuration.climateEntityId) return false
-        if (value < climate.minTemperature || value > climate.maxTemperature) return false
+        if (!value.isFinite() || climate.entityId != configuration.climateEntityId || !climate.canSetTarget) return false
+        val minimum = climate.minTemperature ?: return false
+        val maximum = climate.maxTemperature ?: return false
+        if (value < minimum || value > maximum) return false
         climate.step?.let { step ->
-            val steps = (value - climate.minTemperature) / step
+            val steps = (value - minimum) / step
             if (kotlin.math.abs(steps - kotlin.math.round(steps)) > STEP_EPSILON) return false
         }
         return postClimateService("set_temperature", JSONObject().put("temperature", value))
@@ -178,6 +184,37 @@ class TouchHomeRepository(
         val url = "${configuration.homeAssistantOrigin}/api/calendars/$calendarId?start=${encode(start)}&end=${encode(end)}"
         return execute(HomeAssistantHttpRequest("GET", url, headers, timeoutMillis = remaining(deadline))).body
     }
+
+    /** A config failure leaves this card read-only; state/Calendar success stays usable. */
+    private fun configTemperatureUnitIfNeeded(
+        operation: Operation,
+        climateState: String,
+        headers: Map<String, String>,
+        deadline: WeatherRequestDeadline,
+    ): String? {
+        if (!parser.requiresConfigTemperatureUnit(configuration.climateEntityId, climateState)) return null
+        synchronized(operationLock) { cachedConfigTemperatureUnit }?.let { return it }
+        return try {
+            val body = await(submit(operation) { getConfig(headers, deadline) }, deadline)
+            parser.parseConfigTemperatureUnit(body)?.also { unit ->
+                synchronized(operationLock) { cachedConfigTemperatureUnit = unit }
+            }
+        } catch (error: AuthenticationFailure) {
+            throw error
+        } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
+            null
+        }
+    }
+
+    private fun getConfig(headers: Map<String, String>, deadline: WeatherRequestDeadline): String =
+        execute(
+            HomeAssistantHttpRequest(
+                method = "GET",
+                url = "${configuration.homeAssistantOrigin}/api/config",
+                headers = headers,
+                timeoutMillis = remaining(deadline),
+            ),
+        ).body
 
     private fun execute(request: HomeAssistantHttpRequest): HomeAssistantHttpResponse {
         val response = transport.execute(request)
