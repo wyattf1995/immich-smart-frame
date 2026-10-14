@@ -45,4 +45,5 @@ node = shutil.which("node")
 if node is None:
     raise SystemExit("node is required for the live WebRTC protocol proof")
 subprocess.run([node, str(root / "scripts/tests/test-touch-live-camera.mjs")], check=True)
+subprocess.run([node, str(root / "scripts/tests/test-touch-live-extension-announcement.mjs")], check=True)
 print("touch live camera source proof: PASS")
