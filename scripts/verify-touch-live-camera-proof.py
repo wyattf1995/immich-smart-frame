@@ -22,6 +22,29 @@ MODE_TEST_CLASS = "com.wyattfleming.touchframe.media.TouchCameraModeGateTest"
 MODE_TEST_CASE = "selectionAndLiveFailureNeverStartSnapshotWork"
 LIFECYCLE_TEST_CLASS = "com.wyattfleming.touchframe.media.TouchCameraLiveStatusGateTest"
 LIFECYCLE_TEST_CASE = "onlyCurrentFailedLiveSurfaceRestoresNativeControls"
+JVM_EXPECTED_CASES = {
+    CAPABILITY_TEST_CLASS: {
+        "websocketEndpointIsDerivedOnlyFromTheConfiguredOrigin",
+        "packagedPageMustBeTheExactTopLevelExtensionDocument",
+        "nonceMayBeConsumedOnlyOnceWhileItsGenerationIsVisible",
+        "staleNonceWrongEntityAndHiddenSurfaceAreRefused",
+        "consumedCapabilityRemainsIdentifiableOnlyUntilRevoked",
+        "shortNonceCannotCreateACapability",
+    },
+    MODE_TEST_CLASS: {
+        "selectionAndLiveFailureNeverStartSnapshotWork",
+        "onlyExplicitSnapshotActionOpensTheSnapshotGate",
+    },
+    LIFECYCLE_TEST_CLASS: {
+        "onlyCurrentFailedLiveSurfaceRestoresNativeControls",
+        "activeSurfaceStaysEligibleUntilRelease",
+    },
+}
+JVM_XML_STEMS = {
+    CAPABILITY_TEST_CLASS: "capability",
+    MODE_TEST_CLASS: "mode",
+    LIFECYCLE_TEST_CLASS: "lifecycle",
+}
 
 
 def sha256(path: Path) -> str:
@@ -90,19 +113,62 @@ def mutate_once(path: Path, before: str, after: str) -> bytes:
     return original
 
 
-def read_junit_result(result_dir: Path, test_class: str, test_case: str, retained_xml: Path | None = None) -> dict[str, int | bool]:
+def read_junit_result(result_dir: Path, test_class: str, retained_xml: Path | None = None) -> dict[str, object]:
     xml = result_dir / f"TEST-{test_class}.xml"
     if not xml.exists():
         raise RuntimeError("missing named JVM test XML")
     if retained_xml is not None:
         shutil.copy2(xml, retained_xml)
     suite = ET.parse(xml).getroot()
-    target = next((case for case in suite.iter("testcase") if case.attrib.get("name") == test_case), None)
-    if target is None:
-        raise RuntimeError("named JVM capability guard did not execute")
-    result: dict[str, int | bool] = {key: int(suite.attrib.get(key, "0")) for key in ("tests", "failures", "errors", "skipped")}
-    result["target_assertion_failure"] = target.find("failure") is not None
+    expected_cases = JVM_EXPECTED_CASES[test_class]
+    cases = {case.attrib.get("name", ""): case for case in suite.iter("testcase")}
+    if set(cases) != expected_cases:
+        raise RuntimeError(f"JVM suite {test_class} did not run exactly the expected cases")
+    result: dict[str, object] = {key: int(suite.attrib.get(key, "0")) for key in ("tests", "failures", "errors", "skipped")}
+    if result["tests"] != len(expected_cases):
+        raise RuntimeError(f"JVM suite {test_class} did not report the expected test count")
+    result["cases"] = {
+        name: "failure" if case.find("failure") is not None else "error" if case.find("error") is not None else "skipped" if case.find("skipped") is not None else "passed"
+        for name, case in cases.items()
+    }
     return result
+
+
+def read_jvm_results(result_dir: Path, report_dir: Path, phase: str) -> dict[str, dict[str, object]]:
+    return {
+        test_class: read_junit_result(
+            result_dir,
+            test_class,
+            report_dir / f"jvm-{phase}-{JVM_XML_STEMS[test_class]}.xml",
+        )
+        for test_class in JVM_EXPECTED_CASES
+    }
+
+
+def require_jvm_green(results: dict[str, dict[str, object]], description: str) -> None:
+    for test_class, result in results.items():
+        if result["failures"] or result["errors"] or result["skipped"]:
+            raise RuntimeError(f"{description}: {test_class} is not fully green")
+        if any(state != "passed" for state in result["cases"].values()):
+            raise RuntimeError(f"{description}: {test_class} has a non-passing named case")
+
+
+def require_exact_jvm_red(
+    results: dict[str, dict[str, object]],
+    target_class: str,
+    target_case: str,
+    description: str,
+) -> None:
+    failures = sum(int(result["failures"]) for result in results.values())
+    errors = sum(int(result["errors"]) for result in results.values())
+    skipped = sum(int(result["skipped"]) for result in results.values())
+    if failures != 1 or errors or skipped:
+        raise RuntimeError(f"{description}: expected exactly one assertion failure with no errors/skips")
+    for test_class, result in results.items():
+        for case, state in result["cases"].items():
+            expected = "failure" if (test_class, case) == (target_class, target_case) else "passed"
+            if state != expected:
+                raise RuntimeError(f"{description}: unexpected JVM result for {test_class}.{case}")
 
 
 def jvm_command() -> list[str]:
@@ -139,6 +205,7 @@ def main() -> None:
     require_unique_mutation_target(policy, "visible && !consumed && active?.let")
     require_unique_mutation_target(camera_view, "@Synchronized fun selectOrPrepareLive() {\n        snapshotRequested = false")
     require_unique_mutation_target(camera_view, "status == TouchLiveCameraBridge.Status.FAILED")
+    require_unique_mutation_target(camera_view, "liveSurface?.reportStartupTimeout()")
     extension_baseline = run([node, str(root / "scripts/tests/test-touch-live-extension-page.mjs")], root, report_dir / "extension-baseline.log")
     require(extension_baseline, "packaged extension-page binding guard")
     baseline = run([node, str(root / "scripts/tests/test-touch-live-camera.mjs")], root, report_dir / "node-baseline.log")
@@ -165,6 +232,17 @@ def main() -> None:
         page.write_bytes(original_page)
     milestone_green = run([node, str(root / "scripts/tests/test-touch-live-camera.mjs")], root, report_dir / "node-milestone-green.log")
     require(milestone_green, "Node restored milestone guard")
+    original_camera_view = mutate_once(camera_view, "liveSurface?.reportStartupTimeout()", "liveSurface?.reportStartupTimeoutSkipped()")
+    try:
+        timeout_red = run([node, str(root / "scripts/tests/test-touch-live-extension-page.mjs")], root, report_dir / "node-timeout-red.log")
+        if timeout_red.returncode == 0:
+            raise RuntimeError("native startup timeout guard stayed green after breadcrumb mutation")
+        if "only the current native startup deadline reports timeout before teardown" not in timeout_red.stdout:
+            raise RuntimeError("native startup timeout mutation did not fail the intended wiring assertion")
+    finally:
+        camera_view.write_bytes(original_camera_view)
+    timeout_green = run([node, str(root / "scripts/tests/test-touch-live-extension-page.mjs")], root, report_dir / "node-timeout-green.log")
+    require(timeout_green, "Node restored native startup timeout guard")
     receipt["node"] = {
         "extension_baseline": extension_baseline.returncode,
         "baseline": baseline.returncode,
@@ -172,6 +250,8 @@ def main() -> None:
         "green": green.returncode,
         "milestone_red": milestone_red.returncode,
         "milestone_green": milestone_green.returncode,
+        "timeout_red": timeout_red.returncode,
+        "timeout_green": timeout_green.returncode,
     }
 
     if args.run_jvm:
@@ -179,24 +259,21 @@ def main() -> None:
         result_dir = frame / "touchframe/build/test-results/testDebugUnitTest"
         baseline = run(jvm_command(), frame, report_dir / "jvm-baseline.log")
         require(baseline, "JVM capability baseline")
-        baseline_xml = read_junit_result(result_dir, CAPABILITY_TEST_CLASS, CAPABILITY_TEST_CASE, report_dir / "jvm-capability-baseline.xml")
-        mode_baseline_xml = read_junit_result(result_dir, MODE_TEST_CLASS, MODE_TEST_CASE, report_dir / "jvm-mode-baseline.xml")
-        lifecycle_baseline_xml = read_junit_result(result_dir, LIFECYCLE_TEST_CLASS, LIFECYCLE_TEST_CASE, report_dir / "jvm-lifecycle-baseline.xml")
+        baseline_xml = read_jvm_results(result_dir, report_dir, "baseline")
+        require_jvm_green(baseline_xml, "JVM baseline")
         original_policy = mutate_once(policy, "visible && !consumed && active?.let", "visible && active?.let")
         try:
             red = run(jvm_command(), frame, report_dir / "jvm-red.log")
             if red.returncode == 0:
                 raise RuntimeError("JVM single-use guard stayed green after consumed-gate mutation")
-            red_xml = read_junit_result(result_dir, CAPABILITY_TEST_CLASS, CAPABILITY_TEST_CASE, report_dir / "jvm-capability-red.xml")
-            if not red_xml["target_assertion_failure"] or red_xml["errors"] or red_xml["skipped"]:
-                raise RuntimeError("JVM mutation did not record the exact assertion failure without errors/skips")
+            red_xml = read_jvm_results(result_dir, report_dir, "capability-red")
+            require_exact_jvm_red(red_xml, CAPABILITY_TEST_CLASS, CAPABILITY_TEST_CASE, "JVM capability mutation")
         finally:
             policy.write_bytes(original_policy)
         green = run(jvm_command(), frame, report_dir / "jvm-green.log")
         require(green, "JVM restored capability guard")
-        green_xml = read_junit_result(result_dir, CAPABILITY_TEST_CLASS, CAPABILITY_TEST_CASE, report_dir / "jvm-capability-green.xml")
-        if green_xml["failures"] or green_xml["errors"] or green_xml["skipped"]:
-            raise RuntimeError("JVM restored capability guard is not fully green")
+        green_xml = read_jvm_results(result_dir, report_dir, "capability-green")
+        require_jvm_green(green_xml, "JVM restored capability gate")
         original_camera_view = mutate_once(
             camera_view,
             "@Synchronized fun selectOrPrepareLive() {\n        snapshotRequested = false",
@@ -206,32 +283,28 @@ def main() -> None:
             mode_red = run(jvm_command(), frame, report_dir / "jvm-mode-red.log")
             if mode_red.returncode == 0:
                 raise RuntimeError("JVM mode gate stayed green after explicit-snapshot reset mutation")
-            mode_red_xml = read_junit_result(result_dir, MODE_TEST_CLASS, MODE_TEST_CASE, report_dir / "jvm-mode-red.xml")
-            if not mode_red_xml["target_assertion_failure"] or mode_red_xml["errors"] or mode_red_xml["skipped"]:
-                raise RuntimeError("JVM mode mutation did not record the exact assertion failure without errors/skips")
+            mode_red_xml = read_jvm_results(result_dir, report_dir, "mode-red")
+            require_exact_jvm_red(mode_red_xml, MODE_TEST_CLASS, MODE_TEST_CASE, "JVM mode mutation")
         finally:
             camera_view.write_bytes(original_camera_view)
         mode_green = run(jvm_command(), frame, report_dir / "jvm-mode-green.log")
         require(mode_green, "JVM restored mode gate")
-        mode_green_xml = read_junit_result(result_dir, MODE_TEST_CLASS, MODE_TEST_CASE, report_dir / "jvm-mode-green.xml")
-        if mode_green_xml["failures"] or mode_green_xml["errors"] or mode_green_xml["skipped"]:
-            raise RuntimeError("JVM restored mode gate is not fully green")
+        mode_green_xml = read_jvm_results(result_dir, report_dir, "mode-green")
+        require_jvm_green(mode_green_xml, "JVM restored mode gate")
         original_camera_view = mutate_once(camera_view, "status == TouchLiveCameraBridge.Status.FAILED", "status != TouchLiveCameraBridge.Status.FAILED")
         try:
             lifecycle_red = run(jvm_command(), frame, report_dir / "jvm-lifecycle-red.log")
             if lifecycle_red.returncode == 0:
                 raise RuntimeError("JVM live lifecycle gate stayed green after failure-state mutation")
-            lifecycle_red_xml = read_junit_result(result_dir, LIFECYCLE_TEST_CLASS, LIFECYCLE_TEST_CASE, report_dir / "jvm-lifecycle-red.xml")
-            if not lifecycle_red_xml["target_assertion_failure"] or lifecycle_red_xml["errors"] or lifecycle_red_xml["skipped"]:
-                raise RuntimeError("JVM lifecycle mutation did not record the exact assertion failure without errors/skips")
+            lifecycle_red_xml = read_jvm_results(result_dir, report_dir, "lifecycle-red")
+            require_exact_jvm_red(lifecycle_red_xml, LIFECYCLE_TEST_CLASS, LIFECYCLE_TEST_CASE, "JVM lifecycle mutation")
         finally:
             camera_view.write_bytes(original_camera_view)
         lifecycle_green = run(jvm_command(), frame, report_dir / "jvm-lifecycle-green.log")
         require(lifecycle_green, "JVM restored live lifecycle gate")
-        lifecycle_green_xml = read_junit_result(result_dir, LIFECYCLE_TEST_CLASS, LIFECYCLE_TEST_CASE, report_dir / "jvm-lifecycle-green.xml")
-        if lifecycle_green_xml["failures"] or lifecycle_green_xml["errors"] or lifecycle_green_xml["skipped"]:
-            raise RuntimeError("JVM restored live lifecycle gate is not fully green")
-        receipt["jvm"] = {"requested": True, "capability": {"baseline": baseline_xml, "red": red_xml, "green": green_xml}, "mode": {"baseline": mode_baseline_xml, "red": mode_red_xml, "green": mode_green_xml}, "lifecycle": {"baseline": lifecycle_baseline_xml, "red": lifecycle_red_xml, "green": lifecycle_green_xml}}
+        lifecycle_green_xml = read_jvm_results(result_dir, report_dir, "lifecycle-green")
+        require_jvm_green(lifecycle_green_xml, "JVM restored live lifecycle gate")
+        receipt["jvm"] = {"requested": True, "baseline": baseline_xml, "capability": {"red": red_xml, "green": green_xml}, "mode": {"red": mode_red_xml, "green": mode_green_xml}, "lifecycle": {"red": lifecycle_red_xml, "green": lifecycle_green_xml}}
 
     receipt["source_hashes_after"] = {"page": sha256(page), "policy": sha256(policy), "camera_view": sha256(camera_view), "test": sha256(test), "mode_test": sha256(mode_test), "lifecycle_test": sha256(lifecycle_test)}
     if receipt["source_hashes_before"] != receipt["source_hashes_after"]:
