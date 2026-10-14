@@ -16,6 +16,6 @@ assert.match(bridge, /installed\.metaData\.baseUrl/);
 assert.match(bridge, /resolveLivePage\(installed\.metaData\.baseUrl\)/);
 assert.doesNotMatch(bridge, /PAGE_ANNOUNCEMENT|acceptPageAnnouncement/);
 assert.doesNotMatch(manifest, /"background"/);
-assert.match(bridge, /sender\.webExtension\?\.id != EXTENSION_ID/);
+assert.match(bridge, /sender\.webExtension\.id != EXTENSION_ID/);
 assert.match(bridge, /sender\.url\.isNotBlank\(\) && stripFragment\(sender\.url\) != expected/);
 console.log("touch live extension packaged-page binding: PASS");
