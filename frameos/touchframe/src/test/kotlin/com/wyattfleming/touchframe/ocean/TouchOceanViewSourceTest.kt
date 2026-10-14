@@ -57,6 +57,15 @@ class TouchOceanViewSourceTest {
     }
 
     @Test
+    fun `while the scene moves the text and chart above it are one cached layer released when Ocean is hidden`() {
+        // On the 1920x1080 frame every scene update redraws the whole window; without a layer each one re-issues
+        // the overlay's ~100 text and chart draws (build 10: 31% RenderThread CPU at 20 updates a second).
+        val active = source.substring(source.indexOf("fun setActive("), source.indexOf("/** Called every second"))
+        assertTrue(active.contains("overlay.setLayerType(if (value) LAYER_TYPE_HARDWARE else LAYER_TYPE_NONE, null)"))
+        assertTrue(active.contains("scene.setActive(value)"))
+    }
+
+    @Test
     fun `the degree mark hangs from the top of the numeral instead of sitting on its baseline`() {
         val number = source.substring(source.indexOf("val number = kit.text(water"), source.indexOf("\"Water temperature\""))
         assertTrue(number.contains("isBaselineAligned = false"))
