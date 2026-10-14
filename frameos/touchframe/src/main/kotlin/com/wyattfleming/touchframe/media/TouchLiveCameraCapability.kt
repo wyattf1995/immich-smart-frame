@@ -68,6 +68,10 @@ internal class TouchLiveCameraCapabilityGate {
 
     @Synchronized fun current(): Capability? = active
 
+    /** Remains true after the one permitted handoff, until visibility or generation revokes it. */
+    @Synchronized fun isCurrent(generation: Long, entityId: String, nonce: String, visible: Boolean): Boolean =
+        visible && active?.let { it.generation == generation && it.entityId == entityId && it.nonce == nonce } == true
+
     @Synchronized fun revoke() {
         generation += 1
         active = null

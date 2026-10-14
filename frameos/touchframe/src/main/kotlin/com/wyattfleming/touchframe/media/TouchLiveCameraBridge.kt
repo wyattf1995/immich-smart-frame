@@ -40,6 +40,7 @@ internal class TouchLiveCameraBridge(
     private var extension: WebExtension? = null
     private var activeSession: GeckoSession? = null
     private var extensionPageUrl: String? = null
+    private var pageReady: ((String) -> Unit)? = null
     private var visible = false
     private var closed = false
 
@@ -47,6 +48,7 @@ internal class TouchLiveCameraBridge(
     fun attach(runtime: GeckoRuntime, session: GeckoSession, onPageReady: (String) -> Unit): Boolean {
         if (closed || activeSession != null) return false
         activeSession = session
+        pageReady = onPageReady
         runtime.webExtensionController.ensureBuiltIn(EXTENSION_LOCATION, EXTENSION_ID).accept({ installed ->
             main.post {
                 if (closed || activeSession !== session || installed == null) return@post
@@ -99,6 +101,7 @@ internal class TouchLiveCameraBridge(
         activeSession = null
         extension = null
         extensionPageUrl = null
+        pageReady = null
         worker.shutdownNow()
         onStatus(Status.STOPPED)
     }
@@ -122,6 +125,7 @@ internal class TouchLiveCameraBridge(
         if (!policy.isTrustedPageUrl(value)) return response(false)
         extensionPageUrl = value
         onStatus(Status.READY)
+        pageReady?.invoke(value)
         return response(true)
     }
 
@@ -139,7 +143,7 @@ internal class TouchLiveCameraBridge(
             val deadline = WeatherRequestDeadline(timeoutMillis = START_TIMEOUT_MILLIS)
             val token = tokenProvider(deadline)
             // The token is held only in this worker stack and the returned bundle.
-            if (closed || !visible || deadline.isExpired() || token.isNullOrBlank()) {
+            if (closed || deadline.isExpired() || token.isNullOrBlank() || !capability.isCurrent(current.generation, current.entityId, current.nonce, visible)) {
                 result.complete(response(false))
             } else {
                 result.complete(GeckoBundle(4).apply {
@@ -164,10 +168,16 @@ internal class TouchLiveCameraBridge(
         return response(true)
     }
 
-    /** Enforces every sender field GeckoView makes available; missing session is never tolerated for token issuance. */
+    /**
+     * A local extension-page message may be reported as a background sender by
+     * GeckoView. In that case the extension instance plus active native nonce is
+     * the capability boundary. If Gecko supplies a session, it must be this
+     * exact top-level page: a non-null mismatch is never tolerated.
+     */
     private fun trustedLivePage(sender: WebExtension.MessageSender): Boolean {
         val expected = extensionPageUrl ?: return false
-        val senderSession = sender.session ?: return false
+        val senderSession = sender.session
+        if (senderSession == null) return extension != null && activeSession != null && policy.isTrustedPageUrl(expected)
         return senderSession === activeSession && sender.isTopLevel && stripFragment(sender.url) == expected && policy.isTrustedPageUrl(expected)
     }
 
