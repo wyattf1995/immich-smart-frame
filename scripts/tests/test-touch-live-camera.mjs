@@ -67,6 +67,9 @@ socket.emit({ type: "event", id: offer.id, event: { type: "candidate", candidate
 await new Promise(resolve => setImmediate(resolve));
 socket.emit({ type: "event", id: offer.id, event: { type: "session", session_id: "session-1" } });
 await new Promise(resolve => setImmediate(resolve));
+assert.equal(peer.remoteCandidates, undefined, "remote ICE waits for the remote answer");
+socket.emit({ type: "event", id: offer.id, event: { type: "answer", answer: "answer-sdp" } });
+await new Promise(resolve => setImmediate(resolve));
 assert.equal(peer.remoteCandidates[0].candidate, "remote");
 peer.onicecandidate({ candidate: { candidate: "local", toJSON: () => ({ candidate: "local" }) } });
 assert.equal(socket.sent.at(-1).type, "camera/webrtc/candidate");
