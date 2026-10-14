@@ -112,6 +112,7 @@ assert.equal(FakeSocket.instances.length, beforeDelayedSocket, "a revoked native
 // must not detach them into a plain object before LiveCameraSession invokes them.
 const receiverStatuses = [];
 let receiverTimers = 0;
+let receiverClears = 0;
 let receiverSocket;
 const timerWindow = {
   setTimeout() {
@@ -121,6 +122,7 @@ const timerWindow = {
   },
   clearTimeout() {
     assert.equal(this, timerWindow, "the bootstrap keeps the Window clear-timer receiver");
+    receiverClears += 1;
   },
   addEventListener() {},
 };
@@ -153,4 +155,7 @@ await new Promise(resolve => setImmediate(resolve));
 assert.equal(receiverSocket?.closed, undefined, "a receiver-sensitive timer does not abort the live bootstrap");
 assert.equal(receiverTimers, 2, "both live deadlines are scheduled through the Window receiver");
 assert.deepEqual(receiverStatuses, ["native-grant"], "a timer receiver failure is never mislabeled as a native-grant failure");
+receiverContext.FrameLiveCamera.active.close();
+assert.equal(receiverSocket?.closed, true, "closing live video closes its signaling socket");
+assert.equal(receiverClears, 2, "closing live video clears both deadlines through the Window receiver");
 console.log("touch live camera protocol: PASS");
