@@ -27,8 +27,8 @@ artifact sizes and the unsigned signing state.
 - 314 shared/Touch JVM tests across 82 XML reports completed with zero failures,
   errors, or skips.
 - The established Touch source-mutation matrix ran 53 negative checks, and the
-  design proof ran 14 mutations. Each negative run was followed by its restored
-  green check with unchanged guarded tests.
+  design proof ran 14 mutations. Source was restored after each mutation; final
+  restored-green runs passed with the guarding tests unchanged.
 - Supplemental proofs covered the Android HOME startup policy, legacy Home
   Assistant climate-unit fallback and null/range target rejection, the bounded
   weather label, and live-camera capability and mode boundaries. Their retained
