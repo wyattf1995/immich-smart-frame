@@ -413,17 +413,25 @@ class TouchCameraView(
             renderStage()
             return
         }
+        // Snapshot work is an explicit fallback. Letting an old publication win
+        // while the live surface is starting would replace the video with a stale
+        // image and make the live state misleading.
+        refreshGate.setActive(false, selected)
+        disconnectFromUi()
+        var created: TouchLiveCameraSurface? = null
         val surface = liveSurface ?: TouchLiveCameraSurface(context, engine, policyOrigin(), cameraIds, tokenProvider) { status ->
             main.post {
+                if (created !== liveSurface) return@post
                 if (status == TouchLiveCameraBridge.Status.FAILED && stageState == Stage.Live) {
                     stageState = Stage.LiveReady
                     releaseLive()
                     renderStage()
                 }
             }
-        }.also { created ->
-            liveSurface = created
-            mat.addView(created, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        }.also { newSurface ->
+            created = newSurface
+            this@TouchCameraView.liveSurface = newSurface
+            mat.addView(newSurface, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         }
         stageState = Stage.Live
         surface.start(selected)
