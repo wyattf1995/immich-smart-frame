@@ -31,7 +31,7 @@ internal class TouchLiveCameraBridge(
 ) : AutoCloseable {
     /** Safe device diagnostics: these values deliberately exclude remote details. */
     enum class Status {
-        READY, CONNECTING, NATIVE_GRANT, SOCKET, AUTH, CONFIG, OFFER, ANSWER, ICE, PLAYING, FAILED,
+        READY, CONNECTING, NATIVE_GRANT, SOCKET, AUTH, CONFIG, CONFIG_RESPONSE, PEER_CREATED, OFFER_CREATED, LOCAL_DESCRIPTION, OFFER, ANSWER, ICE, PLAYING, FAILED,
         FAILED_NATIVE_GRANT, FAILED_SOCKET, FAILED_AUTH, FAILED_CONFIG, FAILED_OFFER, FAILED_ANSWER, FAILED_ICE, FAILED_TIMEOUT,
         FAILED_ATTACH, STOPPED;
 
@@ -237,6 +237,10 @@ internal class TouchLiveCameraBridge(
             "socket" to Status.SOCKET,
             "auth" to Status.AUTH,
             "config" to Status.CONFIG,
+            "config-response" to Status.CONFIG_RESPONSE,
+            "peer-created" to Status.PEER_CREATED,
+            "offer-created" to Status.OFFER_CREATED,
+            "local-description" to Status.LOCAL_DESCRIPTION,
             "offer" to Status.OFFER,
             "answer" to Status.ANSWER,
             "ice" to Status.ICE,
