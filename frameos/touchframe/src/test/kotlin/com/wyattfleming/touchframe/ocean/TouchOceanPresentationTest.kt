@@ -1,0 +1,111 @@
+package com.wyattfleming.touchframe.ocean
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.time.Instant
+import java.time.ZoneId
+
+class TouchOceanPresentationTest {
+    private val conditions = TouchOceanFixtures.conditions()
+    private val now = TouchOceanFixtures.GENERATED.toEpochMilli()
+    private val screen = TouchOceanPresenter.present(conditions, now, ZoneId.of("UTC"), twentyFourHour = false)
+
+    @Test
+    fun `US units and sixteen point compass words match Ebbward`() {
+        assertEquals(72, TouchOceanUnits.fahrenheit(22.0))
+        assertEquals("3.6", TouchOceanUnits.feet(1.11))
+        assertEquals(10, TouchOceanUnits.mph(16.8))
+        assertEquals("north", TouchOceanUnits.compassWords(352.0))
+        assertEquals("south", TouchOceanUnits.compassWords(190.0))
+        assertEquals("west-northwest", TouchOceanUnits.compassWords(293.0))
+        assertEquals("north", TouchOceanUnits.compassWords(-5.0))
+    }
+
+    @Test
+    fun `the summary uses Ebbward's wording for swell size, wind, the next high tide and the water`() {
+        assertEquals("A moderate south swell, wind 10 mph from the north, high tide 12:17 AM, water near 72°.", screen.summary)
+        assertEquals("Air 66°, wind 10 mph from the north", screen.skyLine)
+    }
+
+    @Test
+    fun `times use the beach's own zone, not the frame's`() {
+        assertEquals("9:18 PM", screen.updated)
+        assertEquals(listOf("High 12:17 AM, 3.5 ft", "Low 4:34 AM, 2.5 ft"), screen.tideNext)
+    }
+
+    @Test
+    fun `stats read waves, wind and the next sun event`() {
+        assertEquals(listOf("Waves", "Wind", "Sunrise"), screen.stats.map { it.label })
+        assertEquals(TouchOceanStat("Waves", "3.6", "ft", "17 s, from the south"), screen.stats[0])
+        assertEquals(TouchOceanStat("Wind", "10", "mph", "Gusts to 17"), screen.stats[1])
+        assertEquals(TouchOceanStat("Sunrise", "6:56", "AM", "Sunset 6:20 PM"), screen.stats[2])
+    }
+
+    @Test
+    fun `tide height interpolates the curve and the trend looks half an hour ahead`() {
+        val expected = TouchOceanFixtures.heightAt(0.0)
+        assertEquals(expected, TouchOceanTides.heightAt(conditions.tideCurve, now)!!, 0.01)
+        assertEquals(true, TouchOceanTides.rising(conditions.tideCurve, now))
+        assertEquals("and rising", screen.tideTrend)
+        assertEquals(null, TouchOceanTides.heightAt(conditions.tideCurve, now + 10L * 24 * 3_600_000))
+    }
+
+    @Test
+    fun `the chart is fitted to its own window so a day's swing fills it`() {
+        val chart = requireNotNull(screen.chart)
+        val heights = chart.points.map { it.value }
+        assertTrue(chart.minM < heights.min() && chart.maxM > heights.max())
+        val padding = (heights.max() - heights.min()) * 0.08
+        assertEquals(heights.min() - padding, chart.minM, 1e-9)
+        assertEquals(heights.max() + padding, chart.maxM, 1e-9)
+        assertTrue("never the fixed 0 to 6 ft gauge", chart.minM > 0.0)
+        assertEquals(now - 6 * 3_600_000L, chart.fromMillis)
+        assertEquals(now + 18 * 3_600_000L, chart.toMillis)
+    }
+
+    @Test
+    fun `chart ticks fall on local three hour marks`() {
+        val la = TouchOceanPresenter.present(conditions, now, ZoneId.of("UTC"), twentyFourHour = false).chart!!
+        val hours = la.ticks.map { Instant.ofEpochMilli(it.first).atZone(ZoneId.of("America/Los_Angeles")).hour }
+        assertTrue(hours.all { it % 3 == 0 })
+        assertEquals(listOf("6 PM", "9 PM", "12 AM"), la.ticks.take(3).map { it.second })
+    }
+
+    @Test
+    fun `the waterline follows the tide on Ebbward's gauge`() {
+        assertEquals(1.0, TouchOceanWaves.waterlineFraction(0.0, 1.8288), 1e-9)
+        assertEquals(0.0, TouchOceanWaves.waterlineFraction(1.8288, 1.8288), 1e-9)
+        assertEquals(0.5, TouchOceanWaves.waterlineFraction(null, 1.8288), 1e-9)
+        assertEquals(1.8288, TouchOceanTides.gaugeMaxM(conditions.tideCurve), 1e-9)
+        assertEquals(16.0, TouchOceanWaves.amplitude(5.0), 0.0)
+    }
+
+    @Test
+    fun `the swell shape repeats exactly every wavelength`() {
+        for (x in listOf(0.0, 37.5, 120.0, 333.3)) {
+            assertEquals(TouchOceanWaves.y(x, 10.0, 250.0, 0.4), TouchOceanWaves.y(x + 250.0, 10.0, 250.0, 0.4), 1e-9)
+        }
+    }
+
+    @Test
+    fun `night dims the sky for bedrooms and the moon replaces the sun after sunset`() {
+        val day = TouchOceanSky.at(12.0, 7.0, 18.5, night = false)
+        val dusk = TouchOceanSky.at(21.3, 7.0, 18.5, night = true)
+        assertTrue(TouchOceanSky.luminance(dusk.top) < 0.02)
+        assertTrue(TouchOceanSky.luminance(day.top) > 0.4)
+        assertFalse(TouchOceanSky.body(12.0, 7.0, 18.5)!!.moon)
+        assertTrue(TouchOceanSky.body(21.3, 7.0, 18.5)!!.moon)
+        assertEquals(0.5, TouchOceanSky.body(12.75, 7.0, 18.5)!!.progress, 1e-9)
+    }
+
+    @Test
+    fun `a beach with no readings still says something useful`() {
+        val empty = conditions.copy(waterC = null, waveM = null, windKmh = null)
+        val blank = TouchOceanPresenter.present(empty.copy(tides = emptyList()), now, ZoneId.of("UTC"), twentyFourHour = false)
+        assertEquals("Current readings are incomplete right now.", blank.summary)
+        assertNotNull(blank.scene)
+    }
+}
