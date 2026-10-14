@@ -81,14 +81,19 @@ def mutate_once(path: Path, before: str, after: str) -> bytes:
     return original
 
 
-def read_junit_result(result_dir: Path) -> dict[str, int]:
+def read_junit_result(result_dir: Path, retained_xml: Path | None = None) -> dict[str, int | bool]:
     xml = result_dir / f"TEST-{TEST_CLASS}.xml"
     if not xml.exists():
         raise RuntimeError("missing named JVM test XML")
+    if retained_xml is not None:
+        shutil.copy2(xml, retained_xml)
     suite = ET.parse(xml).getroot()
-    if not any(case.attrib.get("name") == TEST_CASE for case in suite.iter("testcase")):
+    target = next((case for case in suite.iter("testcase") if case.attrib.get("name") == TEST_CASE), None)
+    if target is None:
         raise RuntimeError("named JVM capability guard did not execute")
-    return {key: int(suite.attrib.get(key, "0")) for key in ("tests", "failures", "errors", "skipped")}
+    result: dict[str, int | bool] = {key: int(suite.attrib.get(key, "0")) for key in ("tests", "failures", "errors", "skipped")}
+    result["target_assertion_failure"] = target.find("failure") is not None
+    return result
 
 
 def jvm_command() -> list[str]:
@@ -125,6 +130,8 @@ def main() -> None:
         red = run([node, str(root / "scripts/tests/test-touch-live-camera.mjs")], root, report_dir / "node-red.log")
         if red.returncode == 0:
             raise RuntimeError("Node protocol guard stayed green after direct-event mutation")
+        if "direct HA event payload delivers queued remote ICE" not in red.stdout:
+            raise RuntimeError("Node mutation did not fail the intended direct-event assertion")
     finally:
         page.write_bytes(original_page)
     green = run([node, str(root / "scripts/tests/test-touch-live-camera.mjs")], root, report_dir / "node-green.log")
@@ -136,20 +143,20 @@ def main() -> None:
         result_dir = frame / "touchframe/build/test-results/testDebugUnitTest"
         baseline = run(jvm_command(), frame, report_dir / "jvm-baseline.log")
         require(baseline, "JVM capability baseline")
-        baseline_xml = read_junit_result(result_dir)
+        baseline_xml = read_junit_result(result_dir, report_dir / "jvm-baseline.xml")
         original_policy = mutate_once(policy, "visible && !consumed && active?.let", "visible && active?.let")
         try:
             red = run(jvm_command(), frame, report_dir / "jvm-red.log")
             if red.returncode == 0:
                 raise RuntimeError("JVM single-use guard stayed green after consumed-gate mutation")
-            red_xml = read_junit_result(result_dir)
-            if red_xml["failures"] + red_xml["errors"] < 1:
-                raise RuntimeError("JVM mutation did not record a named failure")
+            red_xml = read_junit_result(result_dir, report_dir / "jvm-red.xml")
+            if not red_xml["target_assertion_failure"] or red_xml["errors"] or red_xml["skipped"]:
+                raise RuntimeError("JVM mutation did not record the exact assertion failure without errors/skips")
         finally:
             policy.write_bytes(original_policy)
         green = run(jvm_command(), frame, report_dir / "jvm-green.log")
         require(green, "JVM restored capability guard")
-        green_xml = read_junit_result(result_dir)
+        green_xml = read_junit_result(result_dir, report_dir / "jvm-green.xml")
         if green_xml["failures"] or green_xml["errors"] or green_xml["skipped"]:
             raise RuntimeError("JVM restored capability guard is not fully green")
         receipt["jvm"] = {"requested": True, "baseline": baseline_xml, "red": red_xml, "green": green_xml}
