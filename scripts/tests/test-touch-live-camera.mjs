@@ -51,8 +51,10 @@ const live = context.FrameLiveCamera.active;
 const socket = FakeSocket.instances[0];
 assert.equal(socket.url, "wss://ha.example/api/websocket");
 socket.open();
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "socket"), true, "an opened signaling socket emits only its bounded milestone");
 socket.emit({ type: "auth_required" });
 assert.equal(socket.sent.at(-1).access_token, "secret");
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "auth"), true, "authentication emits a bounded milestone");
 socket.emit({ type: "auth_ok" });
 assert.equal(socket.sent.at(-1).type, "camera/webrtc/get_client_config");
 const configId = socket.sent.at(-1).id;
@@ -60,9 +62,11 @@ socket.emit({ type: "result", id: configId, success: true, result: { configurati
 await new Promise(resolve => setImmediate(resolve));
 const peer = FakePeer.instances[0];
 assert.equal(peer.dataChannel, "nest");
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "config"), true, "client configuration emits a bounded milestone");
 assert.deepEqual(peer.transceivers.map(({ kind }) => kind), ["audio", "video"]);
 const offer = socket.sent.find(value => value.type === "camera/webrtc/offer");
 assert.ok(offer);
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "offer"), true, "offer creation emits a bounded milestone");
 socket.emit({ type: "event", id: offer.id, event: { type: "candidate", candidate: { candidate: "remote", sdpMid: "0" } } });
 await new Promise(resolve => setImmediate(resolve));
 socket.emit({ type: "event", id: offer.id, event: { type: "session", session_id: "session-1" } });
@@ -72,8 +76,10 @@ socket.emit({ type: "event", id: offer.id, event: { type: "answer", answer: "ans
 await new Promise(resolve => setImmediate(resolve));
 assert.ok(peer.remoteCandidates?.length, "direct HA event payload delivers queued remote ICE");
 assert.equal(peer.remoteCandidates[0].candidate, "remote");
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "answer"), true, "answer acceptance emits a bounded milestone");
 peer.onicecandidate({ candidate: { candidate: "local", toJSON: () => ({ candidate: "local" }) } });
 assert.equal(socket.sent.at(-1).type, "camera/webrtc/candidate");
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "ice"), true, "ICE exchange emits a bounded milestone");
 peer.ontrack({ track: { kind: "video" } });
 assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "playing"), false);
 video.playing();
@@ -85,6 +91,7 @@ assert.equal(video.srcObject, null, "a failed ICE connection releases the render
 assert.equal(peer.closed, true);
 assert.equal(socket.closed, true);
 assert.equal(timers.size, 0);
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "failed-ice"), true, "ICE failure reports a bounded category without remote details");
 
 let resolveNative;
 const delayed = new context.FrameLiveCamera.LiveCameraSession({

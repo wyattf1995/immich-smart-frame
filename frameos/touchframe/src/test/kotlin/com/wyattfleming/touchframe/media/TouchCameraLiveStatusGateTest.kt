@@ -16,4 +16,12 @@ class TouchCameraLiveStatusGateTest {
         gate.release()
         assertFalse(gate.shouldRestore(second, TouchLiveCameraBridge.Status.FAILED))
     }
+
+    @Test fun activeSurfaceStaysEligibleUntilRelease() {
+        val gate = TouchCameraLiveStatusGate()
+        val generation = gate.activate()
+        assertTrue(gate.isActive(generation))
+        gate.release()
+        assertFalse(gate.isActive(generation))
+    }
 }
