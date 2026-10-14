@@ -153,17 +153,19 @@ source_bytes = {name: source.read_bytes() for name, (source, _, _) in suites.ite
 source_hashes = {name: hashlib.sha256(value).hexdigest() for name, value in source_bytes.items()}
 test_hashes = {str(test.relative_to(root)): digest(test) for _, (_, test, _) in suites.items()}
 expected_tests = sum(test_count(test) for _, (_, test, _) in suites.items())
+# `--rerun` reruns the tests every time; Gradle still recompiles whatever a mutation changed. Rebuilding every
+# task from scratch (`--rerun-tasks`) tripled each of the ~60 runs and pushed the job past the one-hour runner limit.
 command = [
-    "./gradlew", "--no-daemon", "--max-workers=2", "--rerun-tasks", ":touchframe:testDebugUnitTest",
+    "./gradlew", "--no-daemon", "--max-workers=2", ":touchframe:testDebugUnitTest", "--rerun",
     *[arg for _, (_, _, klass) in suites.items() for arg in ("--tests", klass)],
 ]
 bridge_command = [
-    "./gradlew", "--no-daemon", "--max-workers=2", "--rerun-tasks", ":frame-shared:testDebugUnitTest",
+    "./gradlew", "--no-daemon", "--max-workers=2", ":frame-shared:testDebugUnitTest", "--rerun",
     "--tests", bridge_class,
 ]
 repository_climate_case = "failed refresh makes previously confirmed climate read-only"
 repository_case_command = [
-    "./gradlew", "--no-daemon", "--max-workers=2", "--rerun-tasks", ":touchframe:testDebugUnitTest",
+    "./gradlew", "--no-daemon", "--max-workers=2", ":touchframe:testDebugUnitTest", "--rerun",
     "--tests", f"{suites['repository'][2]}.{repository_climate_case}",
 ]
 
