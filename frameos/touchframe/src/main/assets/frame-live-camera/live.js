@@ -56,7 +56,13 @@ class LiveCameraSession {
     // Gecko treats an absent or empty certificate list as a request for this same default.
     if (configuration.certificates?.length) return configuration;
     this.milestone("certificate-started");
-    const certificate = await this.RTCPeerConnection.generateCertificate({ name: "ECDSA", namedCurve: "P-256" });
+    let certificate;
+    try {
+      certificate = await this.RTCPeerConnection.generateCertificate({ name: "ECDSA", namedCurve: "P-256" });
+    } catch (_) {
+      this.close(true, "failed-offer");
+      return null;
+    }
     if (this.closed) return null;
     this.milestone("certificate-ready");
     return { ...configuration, certificates: [certificate] };
