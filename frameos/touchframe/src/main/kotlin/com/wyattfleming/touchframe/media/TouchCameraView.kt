@@ -83,6 +83,7 @@ class TouchCameraView(
     }
 
     @Volatile private var selected = cameraIds.first()
+    private val modeGate = TouchCameraModeGate()
     @Volatile private var connection: HttpURLConnection? = null
     private var periodic: java.util.concurrent.ScheduledFuture<*>? = null
 
@@ -102,6 +103,7 @@ class TouchCameraView(
     fun setActive(active: Boolean) {
         cameraVisible = active
         if (!active) {
+            modeGate.selectOrPrepareLive()
             refreshGate.setActive(false, selected)
             periodic?.cancel(true)
             periodic = null
@@ -124,7 +126,14 @@ class TouchCameraView(
         main.removeCallbacksAndMessages(null)
     }
 
+    /** Snapshot transport is a deliberate fallback, never a camera-selection side effect. */
+    private fun requestSnapshot() {
+        modeGate.requestSnapshot()
+        requestRefresh()
+    }
+
     private fun requestRefresh() {
+        if (!modeGate.snapshotMayStart()) return
         if (!cameraVisible) return
         releaseLive()
         if (stageState == Stage.Live) stageState = Stage.Loading
@@ -134,6 +143,7 @@ class TouchCameraView(
 
     /** A periodic tick never preempts a fetch in flight; slow snapshots would otherwise never finish. */
     private fun requestPeriodicRefresh() {
+        if (!modeGate.snapshotMayStart()) return
         if (refreshGate.requestPeriodic(selected)) startWorkerIfNeeded()
     }
 
@@ -211,7 +221,7 @@ class TouchCameraView(
                 }
                 signInRequired -> stageState = Stage.SignIn
                 // A failed refresh keeps a snapshot already showing for this camera and says how old it is.
-                message != null -> if (imageCamera != request.camera) stageState = Stage.Unavailable(now) else lastFailureMillis = now
+                message != null -> if (imageCamera != request.camera) stageState = Stage.LiveReady else lastFailureMillis = now
             }
             renderStage()
         }
@@ -271,7 +281,9 @@ class TouchCameraView(
     }
 
     private fun selectCamera(camera: String) {
-        if (camera == selected) return requestRefresh()
+        // Selecting either a new or current camera always cancels prior video
+        // and snapshot work and returns to the explicit Watch Live action.
+        modeGate.selectOrPrepareLive()
         refreshGate.setActive(false, selected)
         releaseLive()
         selected = camera
@@ -281,7 +293,6 @@ class TouchCameraView(
         lastFailureMillis = null
         stageState = Stage.LiveReady
         rebuild()
-        requestRefresh()
     }
 
     private fun kit() = TouchKit(context, TouchPalette.forNight(night), TouchScale.forScreen(resources.configuration))
@@ -325,7 +336,7 @@ class TouchCameraView(
             })
         }
         list.addView(View(context), LinearLayout.LayoutParams(0, 0, 1f))
-        list.addView(kit.button(context.getString(R.string.touch_camera_snapshot), TouchKit.Emphasis.SECONDARY, iconRes = R.drawable.ic_touch_refresh) { requestRefresh() }.apply {
+        list.addView(kit.button(context.getString(R.string.touch_camera_snapshot), TouchKit.Emphasis.SECONDARY, iconRes = R.drawable.ic_touch_refresh) { requestSnapshot() }.apply {
             tag = REFRESH_TAG
         }, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, kit.dp(kit.scale.target)))
         val row = LinearLayout(context).apply {
@@ -390,7 +401,7 @@ class TouchCameraView(
                 context.getString(R.string.touch_camera_sign_in_detail), context.getString(R.string.touch_camera_sign_in), TouchKit.Emphasis.PRIMARY) { onSignIn?.invoke() }
             is Stage.Unavailable -> fillEmpty(kit, context.getString(R.string.touch_camera_unavailable, name),
                 context.getString(R.string.touch_camera_unavailable_detail, timeText(state.atMillis)), context.getString(R.string.touch_camera_try_again),
-                TouchKit.Emphasis.SECONDARY) { requestRefresh() }
+                TouchKit.Emphasis.SECONDARY) { requestSnapshot() }
         }
         caption.removeAllViews()
         caption.addView(kit.text(name, kit.scale.title, TouchFonts.Face.DISPLAY_BOLD, maxLines = 1))
@@ -413,6 +424,7 @@ class TouchCameraView(
             renderStage()
             return
         }
+        modeGate.selectOrPrepareLive()
         // Snapshot work is an explicit fallback. Letting an old publication win
         // while the live surface is starting would replace the video with a stale
         // image and make the live state misleading.
@@ -555,6 +567,21 @@ internal class TouchCameraRefreshGate {
 
     @Synchronized
     private fun scheduleIfIdle(): Boolean = if (inFlight) false else true.also { inFlight = true }
+}
+
+/** Keeps snapshot transport opt-in while users select cameras or re-enter live view. */
+internal class TouchCameraModeGate {
+    private var snapshotRequested = false
+
+    @Synchronized fun selectOrPrepareLive() {
+        snapshotRequested = false
+    }
+
+    @Synchronized fun requestSnapshot() {
+        snapshotRequested = true
+    }
+
+    @Synchronized fun snapshotMayStart(): Boolean = snapshotRequested
 }
 
 internal class TouchCameraPolicy(origin: String, cameraIds: List<String>) {
