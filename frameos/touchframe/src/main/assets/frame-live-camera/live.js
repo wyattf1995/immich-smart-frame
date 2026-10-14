@@ -52,9 +52,20 @@ class LiveCameraSession {
   }
   request(command) { const id = this.nextRequestId(); return new Promise((resolve, reject) => { this.pending.set(id, { resolve, reject }); this.send({ ...command, id }); }); }
   resolveRequest(message) { const pending = this.pending.get(message.id); if (!pending) return; this.pending.delete(message.id); if (message.success === true) pending.resolve(message.result); else pending.reject(new Error("Home Assistant request failed")); }
+  async preparePeerConfiguration(configuration) {
+    // Gecko treats an absent or empty certificate list as a request for this same default.
+    if (configuration.certificates?.length) return configuration;
+    this.milestone("certificate-started");
+    const certificate = await this.RTCPeerConnection.generateCertificate({ name: "ECDSA", namedCurve: "P-256" });
+    if (this.closed) return null;
+    this.milestone("certificate-ready");
+    return { ...configuration, certificates: [certificate] };
+  }
   async configurePeer(config) {
     if (this.closed || !config?.configuration) return this.close(true, "failed-config");
-    this.peer = new this.RTCPeerConnection(config.configuration);
+    const configuration = await this.preparePeerConfiguration(config.configuration);
+    if (!configuration || this.closed) return;
+    this.peer = new this.RTCPeerConnection(configuration);
     this.milestone("peer-created");
     if (config.dataChannel) this.peer.createDataChannel(config.dataChannel);
     this.remoteStream = new this.MediaStream();
@@ -62,12 +73,17 @@ class LiveCameraSession {
     this.video.addEventListener("playing", () => { if (!this.closed && !this.playing) { this.playing = true; this.timers.clearTimeout(this.startupTimer); this.status("playing"); } }, { once: true });
     this.peer.onicecandidate = event => { if (!event.candidate?.candidate) return; if (this.sessionId) this.sendCandidate(event.candidate); else this.pendingCandidates.push(event.candidate); };
     this.peer.oniceconnectionstatechange = () => { if (this.peer?.iceConnectionState === "failed") this.close(true, "failed-ice"); };
-    this.peer.addTransceiver("audio", { direction: "recvonly" }); this.peer.addTransceiver("video", { direction: "recvonly" });
+    this.milestone("peer-prepared");
+    this.peer.addTransceiver("audio", { direction: "recvonly" });
+    this.milestone("audio-transceiver-added");
+    this.peer.addTransceiver("video", { direction: "recvonly" });
+    this.milestone("video-transceiver-added");
     try { await this.beginNegotiation(); } catch (_) { this.close(true, "failed-offer"); }
   }
   async beginNegotiation() {
     const peer = this.peer;
     if (!peer || this.closed) return;
+    this.milestone("create-offer-started");
     const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
     if (this.closed || this.peer !== peer) return;
     this.milestone("offer-created");

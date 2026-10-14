@@ -31,7 +31,7 @@ internal class TouchLiveCameraBridge(
 ) : AutoCloseable {
     /** Safe device diagnostics: these values deliberately exclude remote details. */
     enum class Status {
-        READY, CONNECTING, NATIVE_GRANT, SOCKET, AUTH, CONFIG, CONFIG_RESPONSE, PEER_CREATED, OFFER_CREATED, LOCAL_DESCRIPTION, OFFER, ANSWER, ICE, PLAYING, FAILED,
+        READY, CONNECTING, NATIVE_GRANT, SOCKET, AUTH, CONFIG, CONFIG_RESPONSE, CERTIFICATE_STARTED, CERTIFICATE_READY, PEER_CREATED, PEER_PREPARED, AUDIO_TRANSCEIVER_ADDED, VIDEO_TRANSCEIVER_ADDED, CREATE_OFFER_STARTED, OFFER_CREATED, LOCAL_DESCRIPTION, OFFER, ANSWER, ICE, PLAYING, FAILED,
         FAILED_NATIVE_GRANT, FAILED_SOCKET, FAILED_AUTH, FAILED_CONFIG, FAILED_OFFER, FAILED_ANSWER, FAILED_ICE, FAILED_TIMEOUT,
         FAILED_ATTACH, STOPPED;
 
@@ -238,7 +238,13 @@ internal class TouchLiveCameraBridge(
             "auth" to Status.AUTH,
             "config" to Status.CONFIG,
             "config-response" to Status.CONFIG_RESPONSE,
+            "certificate-started" to Status.CERTIFICATE_STARTED,
+            "certificate-ready" to Status.CERTIFICATE_READY,
             "peer-created" to Status.PEER_CREATED,
+            "peer-prepared" to Status.PEER_PREPARED,
+            "audio-transceiver-added" to Status.AUDIO_TRANSCEIVER_ADDED,
+            "video-transceiver-added" to Status.VIDEO_TRANSCEIVER_ADDED,
+            "create-offer-started" to Status.CREATE_OFFER_STARTED,
             "offer-created" to Status.OFFER_CREATED,
             "local-description" to Status.LOCAL_DESCRIPTION,
             "offer" to Status.OFFER,
