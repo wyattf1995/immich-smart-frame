@@ -66,7 +66,7 @@ required = {
     "startup policy handles reused task intents": "override fun onNewIntent(intent: Intent)",
     "reused task intent is recorded": "setIntent(intent)",
     "HOME closes an active sign-in overlay": "closeAuthorization(restoreDestination = false)",
-    "HOME routes through ordinary navigation": "navigate(destination)",
+    "HOME routes through ordinary navigation": "navigate(startup)",
     "policy requires Android MAIN": 'action == "android.intent.action.MAIN"',
     "policy requires Android HOME": '"android.intent.category.HOME" in categories',
     "policy opens Photos": "TouchDestination.PHOTOS",
