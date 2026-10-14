@@ -20,4 +20,7 @@ assert.match(bridge, /sender\.webExtension\.id != EXTENSION_ID/);
 assert.match(bridge, /sender\.url\.isNotBlank\(\) && stripFragment\(sender\.url\) != expected/);
 assert.match(bridge, /worker\.shutdown\(\)/, "close keeps an accepted task runnable to reject its GeckoResult");
 assert.match(bridge, /catch \(_: java\.util\.concurrent\.RejectedExecutionException\)/, "a close race cannot leave token handoff unresolved");
+assert.match(bridge, /import android\.util\.Base64/, "Android 6 nonce generation uses the platform encoder");
+assert.match(bridge, /Base64\.URL_SAFE or Base64\.NO_WRAP or Base64\.NO_PADDING/, "nonce fragments stay URL-safe and padding-free");
+assert.doesNotMatch(bridge, /java\.util\.Base64/, "API 26 java.util Base64 must not enter the API 23 target");
 console.log("touch live extension packaged-page binding: PASS");
