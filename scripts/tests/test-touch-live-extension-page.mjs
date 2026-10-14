@@ -55,6 +55,7 @@ assert.match(surface, /session\.close\(\)\n\s*geckoView\.releaseSession\(\)\n\s*
 assert.match(surface, /fun reportStartupTimeout\(\) = bridge\.reportStartupTimeout\(\)/, "native startup expiry has a bounded bridge breadcrumb");
 assert.match(cameraView, /liveSurface\?\.reportStartupTimeout\(\)\n\s*stageState = Stage\.LiveFailed/, "only the current native startup deadline reports timeout before teardown");
 assert.match(bridge, /NATIVE_GRANT, SOCKET, AUTH, CONFIG, CONFIG_RESPONSE, PEER_CREATED, OFFER_CREATED, LOCAL_DESCRIPTION, OFFER, ANSWER, ICE, PLAYING/, "native logs use a bounded milestone enum");
+assert.match(bridge, /"config-response" to Status\.CONFIG_RESPONSE,\s*"peer-created" to Status\.PEER_CREATED,\s*"offer-created" to Status\.OFFER_CREATED,\s*"local-description" to Status\.LOCAL_DESCRIPTION/, "the native bridge accepts each bounded diagnostic milestone");
 assert.match(live, /milestone\("config-response"\).*milestone\("peer-created"\).*milestone\("offer-created"\).*milestone\("local-description"\)/s, "post-config and negotiation milestones remain bounded and ordered");
 assert.match(bridge, /FAILED_NATIVE_GRANT, FAILED_SOCKET, FAILED_AUTH, FAILED_CONFIG, FAILED_OFFER, FAILED_ANSWER, FAILED_ICE, FAILED_TIMEOUT/, "native failure logs use bounded categories");
 console.log("touch live extension packaged-page binding: PASS");
