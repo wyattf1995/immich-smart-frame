@@ -18,4 +18,6 @@ assert.doesNotMatch(bridge, /PAGE_ANNOUNCEMENT|acceptPageAnnouncement/);
 assert.doesNotMatch(manifest, /"background"/);
 assert.match(bridge, /sender\.webExtension\.id != EXTENSION_ID/);
 assert.match(bridge, /sender\.url\.isNotBlank\(\) && stripFragment\(sender\.url\) != expected/);
+assert.match(bridge, /worker\.shutdown\(\)/, "close keeps an accepted task runnable to reject its GeckoResult");
+assert.match(bridge, /catch \(_: java\.util\.concurrent\.RejectedExecutionException\)/, "a close race cannot leave token handoff unresolved");
 console.log("touch live extension packaged-page binding: PASS");
