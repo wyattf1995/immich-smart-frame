@@ -8,12 +8,14 @@ import android.graphics.DashPathEffect
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.Shader
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.TextView
 import com.wyattfleming.touchframe.ui.TouchFonts
 import com.wyattfleming.touchframe.ui.TouchKit
 import com.wyattfleming.touchframe.ui.TouchPalette
@@ -21,12 +23,15 @@ import com.wyattfleming.touchframe.ui.TouchScale
 import java.time.ZoneId
 import kotlin.math.abs
 
-/** Fixed vertical budget (dp from the content top) so a high or low tide never pushes text into the tide chart. */
+/**
+ * Fixed vertical budget (dp from the content top) so a high or low tide never moves the waterline into the text.
+ * Below [Budget.heroTop] the conditions and the tide stack in one column, and the chart takes the height that is left.
+ */
 internal object TouchOceanLayout {
-    data class Budget(val header: Double, val waterlineTop: Double, val waterlineBottom: Double, val fish: Double, val heroTop: Double, val chart: Double)
+    data class Budget(val header: Double, val waterlineTop: Double, val waterlineBottom: Double, val fish: Double, val heroTop: Double)
 
-    val WALL = Budget(header = 150.0, waterlineTop = 270.0, waterlineBottom = 350.0, fish = 398.0, heroTop = 424.0, chart = 250.0)
-    val PANEL = Budget(header = 118.0, waterlineTop = 202.0, waterlineBottom = 252.0, fish = 276.0, heroTop = 292.0, chart = 180.0)
+    val WALL = Budget(header = 150.0, waterlineTop = 270.0, waterlineBottom = 350.0, fish = 398.0, heroTop = 424.0)
+    val PANEL = Budget(header = 118.0, waterlineTop = 202.0, waterlineBottom = 252.0, fish = 276.0, heroTop = 292.0)
 
     fun isWall(configuration: Configuration): Boolean = TouchScale.forScreen(configuration) == TouchScale.WALL
 }
@@ -103,7 +108,7 @@ internal class TouchOceanView(context: Context, private val onRetry: () -> Unit)
         overlay.removeAllViews()
         overlay.addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            addView(kit.text(screen?.title ?: "Main Beach", scale.title, TouchFonts.Face.DISPLAY_BOLD, skyInk, maxLines = 1))
+            addView(kit.text(screen?.title ?: "Main Beach", scale.title, TouchFonts.Face.DISPLAY_BOLD, skyInk, maxLines = 1), LinearLayout.LayoutParams(WRAP, WRAP))
             (screen?.place ?: "Laguna Beach, CA").let { addView(kit.text(it, scale.label, color = skyInk, maxLines = 1).apply { alpha = 0.85f }, top(kit, 4)) }
             screen?.skyLine?.let { addView(kit.text(it, scale.label, color = skyInk, maxLines = 1), top(kit, 10)) }
         }, FrameLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = pad; topMargin = (pad * 0.7f).toInt() })
@@ -119,12 +124,14 @@ internal class TouchOceanView(context: Context, private val onRetry: () -> Unit)
             emptyState(kit, budget, waterInk, waterMuted)
             return
         }
-        overlay.addView(waterRow(kit, screen, waterInk, waterMuted), FrameLayout.LayoutParams(MATCH, WRAP).apply {
+        overlay.addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(waterRow(kit, screen, waterInk, waterMuted), LinearLayout.LayoutParams(MATCH, WRAP))
+            addView(kit.text(screen.summary, scale.body, color = waterMuted, maxLines = 2).apply { setLineSpacing(0f, 1.3f) },
+                LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(scale.gap / 2) })
+            addView(tideSection(kit, screen, waterInk, waterMuted), LinearLayout.LayoutParams(MATCH, 0, 1f).apply { topMargin = kit.dp(scale.gap / 2) })
+        }, FrameLayout.LayoutParams(MATCH, MATCH).apply {
             topMargin = kit.dp(budget.heroTop.toInt())
-            leftMargin = pad
-            rightMargin = pad
-        })
-        overlay.addView(tideSection(kit, screen, budget, waterInk, waterMuted), FrameLayout.LayoutParams(MATCH, WRAP, Gravity.BOTTOM).apply {
             leftMargin = pad
             rightMargin = pad
             bottomMargin = (pad * 0.45f).toInt()
@@ -138,30 +145,35 @@ internal class TouchOceanView(context: Context, private val onRetry: () -> Unit)
         else -> "Updated ${screen.updated}"
     }
 
+    /** The water temperature beside the swell, wind and sun, top-aligned to the numeral's digits rather than its line box. */
     private fun waterRow(kit: TouchKit, screen: TouchOceanScreen, ink: Int, muted: Int): View = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         val scale = kit.scale
         addView(LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                screen.water?.let { water ->
-                    contentDescription = "Water temperature $water degrees Fahrenheit"
-                    addView(LinearLayout(context).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-                        addView(kit.text(water, scale.clock, TouchFonts.Face.DISPLAY, ink).apply { fontFeatureSettings = "tnum" })
-                        addView(kit.text("°F", scale.clock * 0.3f, TouchFonts.Face.DISPLAY, ink), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp((scale.clock * 0.12f).toInt()) })
-                    })
-                }
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            screen.water?.let { water ->
+                contentDescription = "Water temperature $water degrees Fahrenheit"
+                val number = kit.text(water, scale.clock, TouchFonts.Face.DISPLAY, ink).apply { fontFeatureSettings = "tnum" }
+                val degrees = kit.text("°F", scale.clock * 0.3f, TouchFonts.Face.DISPLAY, ink)
+                val (numberTop, numberBottom) = inkInsets(number)
                 addView(LinearLayout(context).apply {
-                    orientation = LinearLayout.VERTICAL
-                    addView(kit.text("Water temperature", scale.headline, TouchFonts.Face.TEXT_MEDIUM, ink, maxLines = 1))
-                    addView(kit.text("Blended NOAA model", scale.label, color = muted, maxLines = 1), top(kit, 4))
-                }, LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = kit.dp(scale.pad / 2) })
-            })
-            addView(kit.text(screen.summary, scale.body, color = muted, maxLines = 3).apply { setLineSpacing(0f, 1.3f) }, top(kit, 10))
+                    orientation = LinearLayout.HORIZONTAL
+                    isBaselineAligned = false
+                    importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                    addView(number, LinearLayout.LayoutParams(WRAP, WRAP))
+                    addView(degrees, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = numberTop - inkInsets(degrees).first })
+                }, LinearLayout.LayoutParams(WRAP, WRAP).apply {
+                    gravity = Gravity.TOP
+                    topMargin = -numberTop
+                    bottomMargin = -numberBottom
+                })
+            }
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(kit.text("Water temperature", scale.headline, TouchFonts.Face.TEXT_MEDIUM, ink, maxLines = 1), LinearLayout.LayoutParams(WRAP, WRAP))
+                addView(kit.text("Blended NOAA model", scale.label, color = muted, maxLines = 1), top(kit, 4))
+            }, LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = kit.dp(scale.pad / 2) })
         }, LinearLayout.LayoutParams(0, WRAP, 1f))
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -169,27 +181,28 @@ internal class TouchOceanView(context: Context, private val onRetry: () -> Unit)
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     contentDescription = listOfNotNull("${stat.label} ${stat.value} ${stat.unit}", stat.detail).joinToString(", ")
-                    addView(kit.text(stat.label, scale.label, color = muted, maxLines = 1))
+                    addView(kit.text(stat.label, scale.label, color = muted, maxLines = 1), LinearLayout.LayoutParams(WRAP, WRAP))
                     addView(LinearLayout(context).apply {
                         orientation = LinearLayout.HORIZONTAL
                         gravity = Gravity.BOTTOM
-                        addView(kit.text(stat.value, scale.display * 0.8f, TouchFonts.Face.DISPLAY_BOLD, ink, maxLines = 1).apply { fontFeatureSettings = "tnum" })
+                        addView(kit.text(stat.value, scale.display * 0.8f, TouchFonts.Face.DISPLAY_BOLD, ink, maxLines = 1).apply { fontFeatureSettings = "tnum" },
+                            LinearLayout.LayoutParams(WRAP, WRAP))
                         if (stat.unit.isNotEmpty()) addView(kit.text(stat.unit, scale.display * 0.34f, TouchFonts.Face.DISPLAY, ink, maxLines = 1),
                             LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = kit.dp(8); bottomMargin = kit.dp(6) })
                     })
-                    stat.detail?.let { addView(kit.text(it, scale.label, color = ink, maxLines = 1)) }
+                    stat.detail?.let { addView(kit.text(it, scale.label, color = ink, maxLines = 1), LinearLayout.LayoutParams(WRAP, WRAP)) }
                 }, LinearLayout.LayoutParams(0, WRAP, 1f))
             }
         }, LinearLayout.LayoutParams(0, WRAP, 1.2f).apply { marginStart = kit.dp(scale.pad) })
     }
 
-    private fun tideSection(kit: TouchKit, screen: TouchOceanScreen, budget: TouchOceanLayout.Budget, ink: Int, muted: Int): View = LinearLayout(context).apply {
+    private fun tideSection(kit: TouchKit, screen: TouchOceanScreen, ink: Int, muted: Int): View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         val scale = kit.scale
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
-            addView(kit.text("Tide", scale.headline, TouchFonts.Face.TEXT_BOLD, ink, maxLines = 1))
+            addView(kit.text("Tide", scale.headline, TouchFonts.Face.TEXT_BOLD, ink, maxLines = 1), LinearLayout.LayoutParams(WRAP, WRAP))
             screen.tideNow?.let {
                 addView(kit.text(it, scale.title, TouchFonts.Face.DISPLAY_BOLD, ink, maxLines = 1), LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = kit.dp(14) })
             }
@@ -203,14 +216,17 @@ internal class TouchOceanView(context: Context, private val onRetry: () -> Unit)
         })
         val isNight = night
         val isWall = kit.scale == TouchScale.WALL
-        screen.chart?.let { chart ->
+        val chart = screen.chart
+        if (chart == null) {
+            addView(View(context), LinearLayout.LayoutParams(MATCH, 0, 1f))
+        } else {
             addView(TouchTideChartView(context).apply {
                 set(chart, ink, muted, isNight, isWall)
                 contentDescription = listOfNotNull(
                     screen.tideNow?.let { now -> "Tide $now ${screen.tideTrend ?: ""}".trim() },
                     screen.tideNext.joinToString(". ").ifEmpty { null },
                 ).joinToString(". ")
-            }, LinearLayout.LayoutParams(MATCH, kit.dp(budget.chart.toInt())).apply { topMargin = kit.dp(8) })
+            }, LinearLayout.LayoutParams(MATCH, 0, 1f).apply { topMargin = kit.dp(8) })
         }
         addView(kit.text(screen.source, scale.caption, color = muted, maxLines = 1), top(kit, 6))
     }
@@ -220,9 +236,9 @@ internal class TouchOceanView(context: Context, private val onRetry: () -> Unit)
         overlay.addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             if (state.loading) {
-                addView(kit.text("Getting today’s conditions…", scale.headline, TouchFonts.Face.TEXT_MEDIUM, ink))
+                addView(kit.text("Getting today’s conditions…", scale.headline, TouchFonts.Face.TEXT_MEDIUM, ink), LinearLayout.LayoutParams(MATCH, WRAP))
             } else {
-                addView(kit.text("Ocean conditions aren’t available right now", scale.headline, TouchFonts.Face.TEXT_MEDIUM, ink))
+                addView(kit.text("Ocean conditions aren’t available right now", scale.headline, TouchFonts.Face.TEXT_MEDIUM, ink), LinearLayout.LayoutParams(MATCH, WRAP))
                 addView(kit.text("Ebbward didn’t answer. Check the frame’s Wi‑Fi, then try again.", scale.body, color = muted), top(kit, 10))
                 addView(kit.button("Try again", TouchKit.Emphasis.SECONDARY) { onRetry() }, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(24) })
             }
@@ -240,6 +256,13 @@ internal class TouchOceanView(context: Context, private val onRetry: () -> Unit)
     }
 
     private fun top(kit: TouchKit, dp: Int) = LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(dp) }
+
+    /** Blank space above and below [view]'s glyphs: a 150sp numeral's line box is more than a third empty. */
+    private fun inkInsets(view: TextView): Pair<Int, Int> {
+        val metrics = view.paint.fontMetricsInt
+        val ink = Rect().also { view.paint.getTextBounds(view.text.toString(), 0, view.text.length, it) }
+        return (ink.top - metrics.ascent).coerceAtLeast(0) to (metrics.descent - ink.bottom).coerceAtLeast(0)
+    }
 
     private companion object {
         const val MATCH = LayoutParams.MATCH_PARENT

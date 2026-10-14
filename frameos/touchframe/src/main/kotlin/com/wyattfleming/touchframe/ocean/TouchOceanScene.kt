@@ -228,9 +228,10 @@ internal class TouchOceanScene(context: Context) : FrameLayout(context) {
             width = width,
             layers = layers,
             period = current.periodS,
-            streakSpan = width + dp(80.0 * k),
-            streakSpeed = dp((8 + current.windKmh * 2.8) * k),
-            streakDirection = if (current.windTowardEast) 1f else -1f,
+            streakSpan = (width + dp(80.0 * k)).toDouble(),
+            streakSpacing = dp(397.0).toDouble(),
+            streakSpeed = dp((8 + current.windKmh * 2.8) * k).toDouble(),
+            streakDirection = if (current.windTowardEast) 1 else -1,
             sway = dp(8.0 * k),
             shaftLefts = floatArrayOf(width * -0.12f, width * 0.33f),
             fishLength = fishLength,
@@ -250,10 +251,7 @@ internal class TouchOceanScene(context: Context) : FrameLayout(context) {
             layer.view.translationX = -(layer.wavelength + dp(12.0)) + phase.toFloat() * layer.wavelength
         }
         streaks.forEachIndexed { index, streak ->
-            val factor = when (index % 3) { 0 -> 0.7; 1 -> 0.9; else -> 1.1 }
-            val start = (index * dp(397.0)) % g.streakSpan
-            val travel = g.streakDirection * (seconds * g.streakSpeed * factor).toFloat()
-            streak.translationX = (((start + travel) % g.streakSpan) + g.streakSpan) % g.streakSpan - dp(40.0)
+            streak.translationX = TouchOceanWaves.streakX(index, seconds, g.streakSpan, g.streakSpacing, g.streakSpeed, g.streakDirection).toFloat() - dp(40.0)
         }
         val sway = sin(2 * PI * fraction(seconds / g.period)).toFloat() * g.sway
         shafts.forEachIndexed { index, shaft -> shaft.translationX = g.shaftLefts[index] + if (index == 0) sway else -sway }
@@ -287,9 +285,10 @@ internal class TouchOceanScene(context: Context) : FrameLayout(context) {
         val width: Float,
         val layers: List<Layer>,
         val period: Double,
-        val streakSpan: Float,
-        val streakSpeed: Float,
-        val streakDirection: Float,
+        val streakSpan: Double,
+        val streakSpacing: Double,
+        val streakSpeed: Double,
+        val streakDirection: Int,
         val sway: Float,
         val shaftLefts: FloatArray,
         val fishLength: Float,

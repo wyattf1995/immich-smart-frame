@@ -129,6 +129,13 @@ internal object TouchOceanWaves {
     /** Where the waterline sits between the gauge's 0 ft (1.0) and its top (0.0). */
     fun waterlineFraction(tideM: Double?, gaugeMaxM: Double): Double =
         if (tideM == null) 0.5 else 1.0 - (tideM / gaugeMaxM).coerceIn(0.0, 1.0)
+
+    /**
+     * A wind streak's left edge within its wrap-around span. Every streak drifts at the wind's speed from its own start,
+     * so the spacing set at time zero holds: rows a few dp apart that drift at different speeds bunch into a ≡.
+     */
+    fun streakX(index: Int, seconds: Double, span: Double, spacing: Double, speed: Double, direction: Int): Double =
+        (((index * spacing + direction * seconds * speed) % span) + span) % span
 }
 
 internal data class TouchOceanStat(val label: String, val value: String, val unit: String, val detail: String?)

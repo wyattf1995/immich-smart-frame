@@ -162,8 +162,12 @@ control boundary to 3:1.
   garibaldi. Each moving part is drawn once and only translated, at most 20 updates per
   second, only while Ocean is on screen, and never when the system animation scale is off;
   `TouchOceanSceneSourceTest` guards that. The 24-hour tide chart is fitted to its own window
-  (labels carry the real heights) so a day's swing fills it. Night dims the scene 60% toward
-  black with the amber night ink. The companion has no Ocean mode yet: a remote order keeps
+  (labels carry the real heights) so a day's swing fills it. Wind streaks all drift at the
+  wind's speed so their spacing holds. Below the waterline the conditions, a one- or two-line
+  summary and the tide stack in one column and the chart takes the height that is left, so
+  text never covers it; `TouchOceanViewSourceTest` guards that, explicit layout params on
+  every text, and the °F mark hanging from the numeral's digits. Night dims the scene 60%
+  toward black with the amber night ink. The companion has no Ocean mode yet: a remote order keeps
   Ocean after Weather, and the status reports Weather while Ocean is shown.
 
 Design rounds, critiques, renders and the rubric are kept outside the repository
