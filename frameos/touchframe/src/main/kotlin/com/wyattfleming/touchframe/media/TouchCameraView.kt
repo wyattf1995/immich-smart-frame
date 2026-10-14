@@ -493,6 +493,7 @@ class TouchCameraView(
         cancelLiveStartupDeadline()
         val deadline = Runnable {
             if (liveStatusGate.isActive(generation) && stageState == Stage.Connecting) {
+                liveSurface?.reportStartupTimeout()
                 stageState = Stage.LiveFailed
                 releaseLive()
                 renderStage()

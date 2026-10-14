@@ -104,6 +104,11 @@ internal class TouchLiveCameraBridge(
 
     fun stop() = setVisible(false)
 
+    /** Emits the native watchdog category without exposing transport details. */
+    fun reportStartupTimeout() {
+        if (!closed && visible) reportStatus(Status.FAILED_TIMEOUT)
+    }
+
     override fun close() {
         if (closed) return
         closed = true

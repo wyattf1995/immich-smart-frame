@@ -39,7 +39,7 @@ internal class TouchLiveCameraSurface(
     private val bridge = TouchLiveCameraBridge(origin, cameraIds, tokenProvider) { status ->
         main.post {
             onStatus(status)
-            if (status == TouchLiveCameraBridge.Status.FAILED) visibility = View.GONE
+            if (status.isFailure()) visibility = View.GONE
         }
     }
 
@@ -76,6 +76,8 @@ internal class TouchLiveCameraSurface(
     fun hideLive() {
         close()
     }
+
+    fun reportStartupTimeout() = bridge.reportStartupTimeout()
 
     override fun close() {
         if (closed) return
