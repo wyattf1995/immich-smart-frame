@@ -9,7 +9,8 @@ class LiveCameraSession {
     this.MediaStream = MediaStreamImpl; this.RTCIceCandidate = RTCIceCandidateImpl; this.video = video;
     this.locationHref = locationHref; this.timers = timers; this.socket = null; this.peer = null; this.remoteStream = null;
     this.entity = ""; this.capability = ""; this.sessionId = null; this.offerSubscriptionId = null; this.nextId = 0;
-    this.pending = new Map(); this.pendingCandidates = []; this.closed = false; this.playing = false; this.startupTimer = null; this.maximumTimer = null;
+    this.pending = new Map(); this.pendingCandidates = []; this.pendingRemoteCandidates = []; this.remoteDescriptionSet = false;
+    this.closed = false; this.playing = false; this.startupTimer = null; this.maximumTimer = null;
   }
   nextRequestId() { this.nextId += 1; return this.nextId; }
   send(value) { if (!this.closed && this.socket?.readyState === this.WebSocket.OPEN) this.socket.send(JSON.stringify(value)); }
@@ -20,6 +21,7 @@ class LiveCameraSession {
     if (!fragment) return this.close(true);
     this.capability = fragment[1]; this.entity = fragment[2];
     const response = await this.native({ type: "start-live", capability: this.capability, entity_id: this.entity });
+    if (this.closed) return;
     if (!response?.accepted || response.entity_id !== this.entity || typeof response.access_token !== "string" || !/^wss?:\/\/[^/]+\/api\/websocket$/.test(response.origin)) return this.close(true);
     let token = response.access_token;
     this.socket = new this.WebSocket(response.origin);
@@ -27,7 +29,7 @@ class LiveCameraSession {
     this.maximumTimer = this.timers.setTimeout(() => this.close(true), MAX_LIVE_MS);
     this.socket.onmessage = event => this.onMessage(event, () => token, value => { token = value; }).catch(() => this.close(true));
     this.socket.onerror = () => this.close(true);
-    this.socket.onclose = () => this.clearTimers();
+    this.socket.onclose = () => { if (!this.closed) this.close(true); };
   }
   async onMessage(event, getToken, clearToken) {
     const message = JSON.parse(event.data);
@@ -52,16 +54,35 @@ class LiveCameraSession {
     await this.beginNegotiation();
   }
   async beginNegotiation() {
-    if (!this.peer || this.closed) return;
-    const offer = await this.peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true }); await this.peer.setLocalDescription(offer);
-    this.offerSubscriptionId = this.nextRequestId(); this.send({ type: "camera/webrtc/offer", id: this.offerSubscriptionId, entity_id: this.entity, offer: this.peer.localDescription.sdp });
+    const peer = this.peer;
+    if (!peer || this.closed) return;
+    const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+    if (this.closed || this.peer !== peer) return;
+    await peer.setLocalDescription(offer);
+    if (this.closed || this.peer !== peer) return;
+    this.offerSubscriptionId = this.nextRequestId(); this.send({ type: "camera/webrtc/offer", id: this.offerSubscriptionId, entity_id: this.entity, offer: peer.localDescription.sdp });
   }
   async handleOfferEvent(event) {
     if (!this.peer || !event || this.closed) return;
     if (event.type === "session") { this.sessionId = event.session_id; for (const candidate of this.pendingCandidates.splice(0)) this.sendCandidate(candidate); return; }
-    if (event.type === "answer") return this.peer.setRemoteDescription({ type: "answer", sdp: event.answer });
-    if (event.type === "candidate") { const value = event.candidate?.sdpMid || event.candidate?.sdpMLineIndex != null ? event.candidate : { ...event.candidate, sdpMid: "0" }; return this.peer.addIceCandidate(new this.RTCIceCandidate(value)); }
+    if (event.type === "answer") {
+      await this.peer.setRemoteDescription({ type: "answer", sdp: event.answer });
+      if (this.closed || !this.peer) return;
+      this.remoteDescriptionSet = true;
+      for (const candidate of this.pendingRemoteCandidates.splice(0)) await this.addRemoteCandidate(candidate);
+      return;
+    }
+    if (event.type === "candidate") {
+      if (!event.candidate) return this.close(true);
+      if (!this.remoteDescriptionSet) { this.pendingRemoteCandidates.push(event.candidate); return; }
+      return this.addRemoteCandidate(event.candidate);
+    }
     if (event.type === "error") return this.close(true);
+  }
+  addRemoteCandidate(candidate) {
+    if (!this.peer || this.closed) return;
+    const value = candidate.sdpMid || candidate.sdpMLineIndex != null ? candidate : { ...candidate, sdpMid: "0" };
+    return this.peer.addIceCandidate(new this.RTCIceCandidate(value));
   }
   sendCandidate(candidate) { if (!this.sessionId || this.closed) return; this.send({ type: "camera/webrtc/candidate", id: this.nextRequestId(), entity_id: this.entity, session_id: this.sessionId, candidate: candidate.toJSON() }); }
   clearTimers() { if (this.startupTimer) this.timers.clearTimeout(this.startupTimer); if (this.maximumTimer) this.timers.clearTimeout(this.maximumTimer); this.startupTimer = null; this.maximumTimer = null; }
@@ -69,8 +90,8 @@ class LiveCameraSession {
     if (this.closed) return;
     this.closed = true; this.clearTimers();
     if (this.offerSubscriptionId !== null && this.socket?.readyState === this.WebSocket.OPEN) this.socket.send(JSON.stringify({ type: "unsubscribe_events", id: this.nextRequestId(), subscription: this.offerSubscriptionId }));
-    for (const pending of this.pending.values()) pending.reject(new Error("live camera closed")); this.pending.clear(); this.pendingCandidates = [];
-    this.remoteStream?.getTracks?.().forEach(track => track.stop?.()); if (this.video) { this.video.removeAttribute("src"); this.video.load(); }
+    for (const pending of this.pending.values()) pending.reject(new Error("live camera closed")); this.pending.clear(); this.pendingCandidates = []; this.pendingRemoteCandidates = [];
+    this.remoteStream?.getTracks?.().forEach(track => track.stop?.()); if (this.video) { this.video.srcObject = null; this.video.removeAttribute("src"); this.video.load(); }
     this.peer?.close(); this.peer = null; this.socket?.close(); this.socket = null; if (failed) this.status("failed");
   }
 }

@@ -23,6 +23,9 @@ internal class TouchLiveCameraSurface(
     private val onStatus: (TouchLiveCameraBridge.Status) -> Unit = {},
 ) : FrameLayout(context), AutoCloseable {
     private val geckoView = GeckoView(context).apply { setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW) }
+    // This owned package page uses a regular session because it stores no page
+    // state, never loads remote documents, and closes on every live-view exit.
+    // That avoids granting this extension private-browsing permission.
     private val session = GeckoSession(GeckoSessionSettings().apply {
         setDisplayMode(GeckoSessionSettings.DISPLAY_MODE_FULLSCREEN)
     })

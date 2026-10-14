@@ -17,10 +17,10 @@ import java.util.concurrent.Executors
 
 /**
  * Gives the packaged live-camera page a single-use capability, never an OAuth
- * token in a URL or durable browser state. GeckoView exposes a session only for
- * page/content senders, so a missing session is always rejected for the
- * sensitive start request. The global extension delegate is used solely to
- * learn the packaged page URL from this exact installed extension instance.
+ * token in a URL or durable browser state. The installed extension metadata
+ * supplies the only accepted packaged page URL. GeckoView can report an
+ * extension-page sender without a session, so that case is bound to this exact
+ * installed extension, active session, visible generation, and one-time nonce.
  */
 internal class TouchLiveCameraBridge(
     origin: String,
@@ -53,11 +53,19 @@ internal class TouchLiveCameraBridge(
             main.post {
                 if (closed || activeSession !== session || installed == null) return@post
                 extension = installed
-                // The global delegate is extension-instance scoped. It handles only
-                // the non-sensitive packaged-page URL announcement below.
+                val page = resolveLivePage(installed.metaData.baseUrl)
+                    ?: run {
+                        onStatus(Status.FAILED)
+                        return@post
+                    }
+                extensionPageUrl = page
+                // This global delegate is scoped to this exact installed extension.
+                // It is required because GeckoView can omit sender.session for a
+                // packaged extension page. There is no background handshake.
                 installed.setMessageDelegate(delegate, NATIVE_APP)
                 session.webExtensionController.setMessageDelegate(installed, delegate, NATIVE_APP)
-                extensionPageUrl?.let(onPageReady)
+                onStatus(Status.READY)
+                onPageReady(page)
             }
         }, {
             main.post { if (!closed && activeSession === session) onStatus(Status.FAILED) }
@@ -110,23 +118,11 @@ internal class TouchLiveCameraBridge(
         override fun onMessage(nativeApp: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
             if (nativeApp != NATIVE_APP || message !is JSONObject) return GeckoResult.fromValue(response(false))
             return when (message.optString("type")) {
-                PAGE_ANNOUNCEMENT -> GeckoResult.fromValue(acceptPageAnnouncement(message, sender))
                 START_REQUEST -> grantStart(message, sender)
                 STATUS_EVENT -> GeckoResult.fromValue(acceptStatus(message, sender))
                 else -> GeckoResult.fromValue(response(false))
             }
         }
-    }
-
-    /** The extension background may announce only its own static live.html URL; it never receives a token. */
-    private fun acceptPageAnnouncement(message: JSONObject, sender: WebExtension.MessageSender): GeckoBundle {
-        if (sender.session != null) return response(false)
-        val value = message.optString("url")
-        if (!policy.isTrustedPageUrl(value)) return response(false)
-        extensionPageUrl = value
-        onStatus(Status.READY)
-        pageReady?.invoke(value)
-        return response(true)
     }
 
     private fun grantStart(message: JSONObject, sender: WebExtension.MessageSender): GeckoResult<Any> {
@@ -169,16 +165,26 @@ internal class TouchLiveCameraBridge(
     }
 
     /**
-     * A local extension-page message may be reported as a background sender by
-     * GeckoView. In that case the extension instance plus active native nonce is
-     * the capability boundary. If Gecko supplies a session, it must be this
-     * exact top-level page: a non-null mismatch is never tolerated.
+     * A local extension-page message may not carry a GeckoSession. In that
+     * documented fallback, the exact installed-extension delegate plus an active
+     * visible nonce binds the message to this one owned page. If a URL is present,
+     * it must still be the metadata-derived page. A non-null session must be the
+     * active top-level session; every mismatch is rejected.
      */
     private fun trustedLivePage(sender: WebExtension.MessageSender): Boolean {
         val expected = extensionPageUrl ?: return false
+        if (sender.webExtension.id != EXTENSION_ID || extension == null || activeSession == null || !policy.isTrustedPageUrl(expected)) return false
         val senderSession = sender.session
-        if (senderSession == null) return extension != null && activeSession != null && policy.isTrustedPageUrl(expected)
-        return senderSession === activeSession && sender.isTopLevel && stripFragment(sender.url) == expected && policy.isTrustedPageUrl(expected)
+        if (senderSession == null) {
+            if (sender.url.isNotBlank() && stripFragment(sender.url) != expected) return false
+            return true
+        }
+        return senderSession === activeSession && sender.isTopLevel && stripFragment(sender.url) == expected
+    }
+
+    private fun resolveLivePage(baseUrl: String): String? {
+        val page = "${baseUrl.trimEnd('/')}/live.html"
+        return page.takeIf(policy::isTrustedPageUrl)
     }
 
     private fun nonce(): String = ByteArray(24).also(random::nextBytes).let {
@@ -195,7 +201,6 @@ internal class TouchLiveCameraBridge(
         const val EXTENSION_LOCATION = "resource://android/assets/frame-live-camera/"
         const val EXTENSION_ID = "frame-live-camera@wyattfleming.com"
         const val NATIVE_APP = "frame_live_camera"
-        const val PAGE_ANNOUNCEMENT = "live-extension-page"
         const val START_REQUEST = "start-live"
         const val STATUS_EVENT = "live-status"
         const val START_TIMEOUT_MILLIS = 12_000L

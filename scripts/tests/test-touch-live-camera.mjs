@@ -27,7 +27,7 @@ class FakePeer {
 }
 const video = {
   addEventListener(type, callback) { if (type === "playing") this.playing = callback; },
-  removeAttribute() {}, load() {},
+  removeAttribute() {}, load() {}, srcObject: { stale: true },
 };
 const nativeCalls = [];
 const browser = { runtime: { sendNativeMessage: async (_app, value) => {
@@ -67,6 +67,9 @@ socket.emit({ type: "event", id: offer.id, event: { type: "candidate", candidate
 await new Promise(resolve => setImmediate(resolve));
 socket.emit({ type: "event", id: offer.id, event: { type: "session", session_id: "session-1" } });
 await new Promise(resolve => setImmediate(resolve));
+assert.equal(peer.remoteCandidates, undefined, "remote ICE waits for the remote answer");
+socket.emit({ type: "event", id: offer.id, event: { type: "answer", answer: "answer-sdp" } });
+await new Promise(resolve => setImmediate(resolve));
 assert.equal(peer.remoteCandidates[0].candidate, "remote");
 peer.onicecandidate({ candidate: { candidate: "local", toJSON: () => ({ candidate: "local" }) } });
 assert.equal(socket.sent.at(-1).type, "camera/webrtc/candidate");
@@ -74,8 +77,25 @@ peer.ontrack({ track: { kind: "video" } });
 assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "playing"), false);
 video.playing();
 assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "playing"), true);
+socket.onclose();
+assert.equal(peer.closed, true, "a server socket close tears down the owned peer");
+assert.equal(video.srcObject, null, "a socket close releases the rendered stream");
 live.close();
 assert.equal(peer.closed, true);
 assert.equal(socket.closed, true);
 assert.equal(timers.size, 0);
+
+let resolveNative;
+const delayed = new context.FrameLiveCamera.LiveCameraSession({
+  browserApi: { runtime: { sendNativeMessage: () => new Promise(resolve => { resolveNative = resolve; }) } },
+  WebSocketImpl: FakeSocket, RTCPeerConnectionImpl: FakePeer,
+  MediaStreamImpl: context.MediaStream, RTCIceCandidateImpl: context.RTCIceCandidate,
+  video, locationHref: context.location.href, timers: context,
+});
+const beforeDelayedSocket = FakeSocket.instances.length;
+const delayedStart = delayed.start();
+delayed.close();
+resolveNative({ accepted: true, entity_id: "camera.entryway", origin: "wss://ha.example/api/websocket", access_token: "secret" });
+await delayedStart;
+assert.equal(FakeSocket.instances.length, beforeDelayedSocket, "a revoked native response cannot open a socket");
 console.log("touch live camera protocol: PASS");
