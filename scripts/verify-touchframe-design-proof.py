@@ -42,6 +42,7 @@ CLASSES = {
     "destinations": ("com.wyattfleming.touchframe.ui.TouchDestinationOrderTest", tests / "ui/TouchDestinationOrderTest.kt"),
     "ocean": ("com.wyattfleming.touchframe.ocean.TouchOceanPresentationTest", tests / "ocean/TouchOceanPresentationTest.kt"),
     "ocean-scene": ("com.wyattfleming.touchframe.ocean.TouchOceanSceneSourceTest", tests / "ocean/TouchOceanSceneSourceTest.kt"),
+    "ocean-view": ("com.wyattfleming.touchframe.ocean.TouchOceanViewSourceTest", tests / "ocean/TouchOceanViewSourceTest.kt"),
 }
 
 MUTATIONS = [
@@ -109,6 +110,21 @@ MUTATIONS = [
      "            minM = lowest - padding,\n            maxM = highest + padding,",
      "            minM = minOf(0.0, lowest),\n            maxM = maxOf(1.8288, highest + padding),", "ocean",
      {"the chart is fitted to its own window so a day's swing fills it"}),
+    ("ocean-label-clipped-red", main / "ocean/TouchOceanView.kt",
+     'addView(kit.text("Water temperature", scale.headline, TouchFonts.Face.TEXT_MEDIUM, ink, maxLines = 1), LinearLayout.LayoutParams(WRAP, WRAP))',
+     'addView(kit.text("Water temperature", scale.headline, TouchFonts.Face.TEXT_MEDIUM, ink, maxLines = 1))', "ocean-view",
+     {"every text declares its own layout params so a wrap-content column cannot clip it"}),
+    ("ocean-chart-fixed-height-red", main / "ocean/TouchOceanView.kt",
+     "            }, LinearLayout.LayoutParams(MATCH, 0, 1f).apply { topMargin = kit.dp(8) })",
+     "            }, LinearLayout.LayoutParams(MATCH, kit.dp(250)).apply { topMargin = kit.dp(8) })", "ocean-view",
+     {"the tide section is stacked under the conditions and its chart takes the height that is left"}),
+    ("ocean-degree-baseline-red", main / "ocean/TouchOceanView.kt",
+     "isBaselineAligned = false", "isBaselineAligned = true", "ocean-view",
+     {"the degree mark hangs from the top of the numeral instead of sitting on its baseline"}),
+    ("ocean-streak-speeds-red", main / "ocean/TouchOceanPresentation.kt",
+     "(((index * spacing + direction * seconds * speed) % span) + span) % span",
+     "(((index * spacing + direction * seconds * speed * (0.7 + 0.2 * (index % 3))) % span) + span) % span", "ocean",
+     {"wind streaks keep their spacing so neighbouring rows never stack into a menu-like glyph"}),
 ]
 
 
