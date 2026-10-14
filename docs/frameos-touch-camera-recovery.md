@@ -1,10 +1,22 @@
 # Touch live-camera recovery and acceptance
 
-The camera recovery candidate at `70d909843ad341e58ca7507f815c598982d84f05`
+The camera recovery candidate at `7931d7f28d3b6a1b8bc6c1d404c1596fc8f3a507`
 preserves the native Touch design and adds explicit connection and failure
-states. Compilation and complete JVM validation are pending at this checkpoint.
-The Node protocol, packaged-page binding, and their source-negative checks have
-passed. This is not evidence of working video on a physical frame.
+states. On October 14, 2026, the ARMv7/API23 candidate passed release compilation,
+lint, and 316 JVM tests across 83 report files, with no failures, errors or skips.
+The retained source-only negative/restored-green checks cover 53 base cases,
+14 design mutations, one weather-header guard, one startup guard, three climate
+guards, and three Node plus three JVM camera mutations. Transport and restored
+source hashes match all 392 source files; APK, mapping and reports were verified
+and archived before the original build workspace was retired.
+
+The preceding run stopped because its proof harness expected only one failing
+mode test from a mutation that affects two existing cases. The corrected harness
+requires both exact failures and every other selected case to pass; no product
+test was weakened or removed. Failed evidence was retained.
+
+The candidate is QA-signed and prepared, not installed. This validation does not
+establish working video or connection reliability on a physical frame.
 
 ## Expected behavior
 
