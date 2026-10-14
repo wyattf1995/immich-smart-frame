@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ebbward hero garibaldi (original flat art, design round R3), facing right; tail turns about (23, 0). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="100dp"
+    android:height="54dp"
+    android:viewportWidth="100"
+    android:viewportHeight="54">
+    <group android:translateY="27">
+        <path
+            android:fillColor="#3A1A08"
+            android:pathData="M82,-19C72,-23.5 60,-24.5 50,-24C40,-24 31,-21 26.5,-13.5C25,-10.5 25,-8 26,-6L40,-12Z" />
+        <path
+            android:fillColor="#3A1A08"
+            android:pathData="M58,16.5C50,23 39,23 31,16.5L26.5,7L40,9Z" />
+        <path
+            android:fillColor="#3A1A08"
+            android:pathData="M72,17L66,23L62,17Z" />
+        <path
+            android:fillColor="#5A2A0A"
+            android:pathData="M100,1C99,-8 92,-17 80,-20C64,-23 44,-19 30,-9L21,-4.5L21,4.5C32,9 46,19 62,20C80,21 95,12 100,1Z" />
+        <path
+            android:fillColor="#3A1A08"
+            android:pathData="M80,4C74,2 67,4 64,8C68,10 75,9 80,6Z" />
+        <path
+            android:fillColor="#160904"
+            android:pathData="M85.2,-6a2.8,2.8 0 1,0 5.6,0a2.8,2.8 0 1,0 -5.6,0Z" />
+    </group>
+</vector>

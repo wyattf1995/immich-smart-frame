@@ -155,6 +155,16 @@ control boundary to 3:1.
   visible but greyed (a grey panel by day, an outlined box by night); today is tinted
   and outlined; today's Week column says "Today", folds finished events into "N
   earlier" and marks the current one "Now".
+- **Ocean:** conditions at one beach (Main Beach, Laguna Beach by default) from Ebbward's
+  public `/api/v1/ocean` (NOAA blend; no account), over Ebbward's surface scene: sky by the
+  hour, sun or moon, wind streaks, three swell layers that slide one wavelength per swell
+  period, the waterline at the predicted tide on a 6 ft gauge, light shafts by day and a
+  garibaldi. Each moving part is drawn once and only translated, at most 20 updates per
+  second, only while Ocean is on screen, and never when the system animation scale is off;
+  `TouchOceanSceneSourceTest` guards that. The 24-hour tide chart is fitted to its own window
+  (labels carry the real heights) so a day's swing fills it. Night dims the scene 60% toward
+  black with the amber night ink. The companion has no Ocean mode yet: a remote order keeps
+  Ocean after Weather, and the status reports Weather while Ocean is shown.
 
 Design rounds, critiques, renders and the rubric are kept outside the repository
 (they include device captures); public examples use synthetic data only.
