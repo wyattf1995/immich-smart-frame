@@ -7,6 +7,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TouchLiveCameraCapabilityTest {
+    private val firstNonce = "first-capability-nonce-1234"
+    private val secondNonce = "second-capability-nonce-123"
     private val policy = TouchLiveCameraPolicy(
         "https://home.example:8443",
         listOf("camera.entryway", "camera.backyard"),
@@ -27,30 +29,35 @@ class TouchLiveCameraCapabilityTest {
 
     @Test fun nonceMayBeConsumedOnlyOnceWhileItsGenerationIsVisible() {
         val gate = TouchLiveCameraCapabilityGate()
-        val capability = gate.begin("camera.entryway", "nonce")
-        assertTrue(gate.accepts(capability.generation, "camera.entryway", "nonce", visible = true))
-        assertTrue(gate.consume(capability.generation, "camera.entryway", "nonce", visible = true))
-        assertFalse(gate.consume(capability.generation, "camera.entryway", "nonce", visible = true))
+        val capability = gate.begin("camera.entryway", firstNonce)
+        assertTrue(gate.accepts(capability.generation, "camera.entryway", firstNonce, visible = true))
+        assertTrue(gate.consume(capability.generation, "camera.entryway", firstNonce, visible = true))
+        assertFalse(gate.consume(capability.generation, "camera.entryway", firstNonce, visible = true))
     }
 
     @Test fun staleNonceWrongEntityAndHiddenSurfaceAreRefused() {
         val gate = TouchLiveCameraCapabilityGate()
-        val first = gate.begin("camera.entryway", "first")
-        val second = gate.begin("camera.backyard", "second")
-        assertFalse(gate.accepts(first.generation, "camera.entryway", "first", visible = true))
-        assertFalse(gate.accepts(second.generation, "camera.entryway", "second", visible = true))
-        assertFalse(gate.accepts(second.generation, "camera.backyard", "second", visible = false))
-        assertTrue(gate.accepts(second.generation, "camera.backyard", "second", visible = true))
+        val first = gate.begin("camera.entryway", firstNonce)
+        val second = gate.begin("camera.backyard", secondNonce)
+        assertFalse(gate.accepts(first.generation, "camera.entryway", firstNonce, visible = true))
+        assertFalse(gate.accepts(second.generation, "camera.entryway", secondNonce, visible = true))
+        assertFalse(gate.accepts(second.generation, "camera.backyard", secondNonce, visible = false))
+        assertTrue(gate.accepts(second.generation, "camera.backyard", secondNonce, visible = true))
         gate.revoke()
         assertNull(gate.current())
     }
 
     @Test fun consumedCapabilityRemainsIdentifiableOnlyUntilRevoked() {
         val gate = TouchLiveCameraCapabilityGate()
-        val issued = gate.begin("camera.entryway", "nonce")
+        val issued = gate.begin("camera.entryway", firstNonce)
         assertTrue(gate.consume(issued.generation, issued.entityId, issued.nonce, visible = true))
         assertTrue(gate.isCurrent(issued.generation, issued.entityId, issued.nonce, visible = true))
         gate.revoke()
         assertFalse(gate.isCurrent(issued.generation, issued.entityId, issued.nonce, visible = true))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun shortNonceCannotCreateACapability() {
+        TouchLiveCameraCapabilityGate().begin("camera.entryway", "too-short")
     }
 }
