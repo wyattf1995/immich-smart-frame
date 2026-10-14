@@ -39,7 +39,7 @@ internal class TouchLiveCameraSurface(
     private val bridge = TouchLiveCameraBridge(origin, cameraIds, tokenProvider) { status ->
         main.post {
             onStatus(status)
-            if (status == TouchLiveCameraBridge.Status.FAILED) visibility = View.GONE
+            if (status.isFailure()) visibility = View.GONE
         }
     }
 
@@ -77,13 +77,20 @@ internal class TouchLiveCameraSurface(
         close()
     }
 
+    fun reportStartupTimeout() = bridge.reportStartupTimeout()
+
     override fun close() {
         if (closed) return
         closed = true
         requestedCamera = null
         bridge.close()
-        geckoView.releaseSession()
+        // GeckoSession.close() explicitly destroys the compositor Surface. Keep
+        // the view attached until that completes, then release the display and
+        // invalidate before TouchCameraView removes this child.
         session.close()
+        geckoView.releaseSession()
+        geckoView.invalidate()
+        invalidate()
     }
 
     private fun allowedUri(value: String): Boolean {

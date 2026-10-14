@@ -29,7 +29,14 @@ internal class TouchLiveCameraBridge(
     private val tokenProvider: (WeatherRequestDeadline) -> String?,
     private val onStatus: (Status) -> Unit = {},
 ) : AutoCloseable {
-    enum class Status { READY, CONNECTING, PLAYING, FAILED, STOPPED }
+    /** Safe device diagnostics: these values deliberately exclude remote details. */
+    enum class Status {
+        READY, CONNECTING, NATIVE_GRANT, SOCKET, AUTH, CONFIG, OFFER, ANSWER, ICE, PLAYING, FAILED,
+        FAILED_NATIVE_GRANT, FAILED_SOCKET, FAILED_AUTH, FAILED_CONFIG, FAILED_OFFER, FAILED_ANSWER, FAILED_ICE, FAILED_TIMEOUT,
+        FAILED_ATTACH, STOPPED;
+
+        fun isFailure(): Boolean = this == FAILED || name.startsWith("FAILED_")
+    }
 
     private val policy = TouchLiveCameraPolicy(origin, cameraIds)
     private val capability = TouchLiveCameraCapabilityGate()
@@ -56,7 +63,7 @@ internal class TouchLiveCameraBridge(
                 extension = installed
                 val page = resolveLivePage(installed.metaData.baseUrl)
                     ?: run {
-                        reportStatus(Status.FAILED)
+                        reportStatus(Status.FAILED_ATTACH)
                         return@post
                     }
                 extensionPageUrl = page
@@ -69,7 +76,7 @@ internal class TouchLiveCameraBridge(
                 onPageReady(page)
             }
         }, {
-            main.post { if (!closed && activeSession === session) reportStatus(Status.FAILED) }
+            main.post { if (!closed && activeSession === session) reportStatus(Status.FAILED_ATTACH) }
         })
         return true
     }
@@ -96,6 +103,11 @@ internal class TouchLiveCameraBridge(
     }
 
     fun stop() = setVisible(false)
+
+    /** Emits the native watchdog category without exposing transport details. */
+    fun reportStartupTimeout() {
+        if (!closed && visible) reportStatus(Status.FAILED_TIMEOUT)
+    }
 
     override fun close() {
         if (closed) return
@@ -168,11 +180,8 @@ internal class TouchLiveCameraBridge(
     private fun acceptStatus(message: JSONObject, sender: WebExtension.MessageSender): GeckoBundle {
         val current = capability.current() ?: return response(false)
         if (!trustedLivePage(sender) || message.optString("entity_id") != current.entityId || message.optString("capability") != current.nonce) return response(false)
-        when (message.optString("state")) {
-            "playing" -> reportStatus(Status.PLAYING)
-            "failed" -> reportStatus(Status.FAILED)
-            else -> return response(false)
-        }
+        val status = PAGE_STATUS[message.optString("state")] ?: return response(false)
+        reportStatus(status)
         return response(true)
     }
 
@@ -223,5 +232,23 @@ internal class TouchLiveCameraBridge(
         const val STATUS_EVENT = "live-status"
         const val START_TIMEOUT_MILLIS = 12_000L
         const val LOG_TAG = "TouchLiveCamera"
+        val PAGE_STATUS = mapOf(
+            "native-grant" to Status.NATIVE_GRANT,
+            "socket" to Status.SOCKET,
+            "auth" to Status.AUTH,
+            "config" to Status.CONFIG,
+            "offer" to Status.OFFER,
+            "answer" to Status.ANSWER,
+            "ice" to Status.ICE,
+            "playing" to Status.PLAYING,
+            "failed-native-grant" to Status.FAILED_NATIVE_GRANT,
+            "failed-socket" to Status.FAILED_SOCKET,
+            "failed-auth" to Status.FAILED_AUTH,
+            "failed-config" to Status.FAILED_CONFIG,
+            "failed-offer" to Status.FAILED_OFFER,
+            "failed-answer" to Status.FAILED_ANSWER,
+            "failed-ice" to Status.FAILED_ICE,
+            "failed-timeout" to Status.FAILED_TIMEOUT,
+        )
     }
 }

@@ -71,11 +71,16 @@ class TouchCameraView(
     private var stageState: Stage = Stage.LiveReady
     private var cameraVisible = false
     private var liveSurface: TouchLiveCameraSurface? = null
+    private val liveStatusGate = TouchCameraLiveStatusGate()
+    private var liveGeneration: Long? = null
+    private var liveStartupDeadline: Runnable? = null
 
     /** What the snapshot area shows; network results are published into it on the main thread. */
     private sealed class Stage {
         object LiveReady : Stage()
+        object Connecting : Stage()
         object Live : Stage()
+        object LiveFailed : Stage()
         object Loading : Stage()
         object Image : Stage()
         object SignIn : Stage()
@@ -109,7 +114,7 @@ class TouchCameraView(
             periodic = null
             disconnectFromUi()
             releaseLive()
-            if (stageState == Stage.Live) stageState = Stage.LiveReady
+            if (stageState == Stage.Live || stageState == Stage.Connecting) stageState = Stage.LiveReady
         }
     }
 
@@ -388,13 +393,18 @@ class TouchCameraView(
         val showImage = stageState == Stage.Image && imageCamera == selected
         image.visibility = if (showImage) View.VISIBLE else View.INVISIBLE
         val showLive = stageState == Stage.Live
+        val startingLive = stageState == Stage.Connecting
         emptyState.visibility = if (showImage || showLive) View.GONE else View.VISIBLE
-        list.findViewWithTag<View>(REFRESH_TAG)?.visibility = if (showLive) View.GONE else View.VISIBLE
+        list.findViewWithTag<View>(REFRESH_TAG)?.visibility = if (showLive || startingLive) View.GONE else View.VISIBLE
         emptyState.removeAllViews()
         when (val state = stageState) {
             Stage.LiveReady -> fillEmpty(kit, context.getString(R.string.touch_camera_live_title, name),
                 context.getString(R.string.touch_camera_live_detail), context.getString(R.string.touch_camera_watch_live), TouchKit.Emphasis.PRIMARY) { watchLive() }
+            Stage.Connecting -> fillEmpty(kit, context.getString(R.string.touch_camera_live_connecting_title),
+                context.getString(R.string.touch_camera_live_connecting_detail), null, TouchKit.Emphasis.SECONDARY) { }
             Stage.Live -> Unit
+            Stage.LiveFailed -> fillEmpty(kit, context.getString(R.string.touch_camera_live_failed_title),
+                context.getString(R.string.touch_camera_live_failed_detail), context.getString(R.string.touch_camera_watch_live), TouchKit.Emphasis.PRIMARY) { watchLive() }
             Stage.Image -> Unit
             Stage.Loading -> emptyState.addView(kit.text(context.getString(R.string.touch_camera_loading, name), kit.scale.body, color = p.inkMuted))
             Stage.SignIn -> fillEmpty(kit, context.getString(R.string.touch_camera_sign_in_required),
@@ -430,22 +440,36 @@ class TouchCameraView(
         // image and make the live state misleading.
         refreshGate.setActive(false, selected)
         disconnectFromUi()
-        var created: TouchLiveCameraSurface? = null
-        val surface = liveSurface ?: TouchLiveCameraSurface(context, engine, policyOrigin(), cameraIds, tokenProvider) { status ->
-            main.post {
-                if (created !== liveSurface) return@post
-                if (status == TouchLiveCameraBridge.Status.FAILED && stageState == Stage.Live) {
-                    stageState = Stage.LiveReady
-                    releaseLive()
-                    renderStage()
+        val surface = liveSurface ?: run {
+            val generation = liveStatusGate.activate()
+            liveGeneration = generation
+            TouchLiveCameraSurface(context, engine, policyOrigin(), cameraIds, tokenProvider) { status ->
+                // TouchLiveCameraSurface dispatches this on the main thread. Do
+                // not queue a second callback behind the failed Gecko surface:
+                // remove it before restoring the native live-ready controls.
+                if (liveStatusGate.isActive(generation)) {
+                    if (status == TouchLiveCameraBridge.Status.PLAYING && stageState == Stage.Connecting) {
+                        cancelLiveStartupDeadline()
+                        stageState = Stage.Live
+                        renderStage()
+                    } else if (liveStatusGate.shouldRestore(generation, status) && (stageState == Stage.Connecting || stageState == Stage.Live)) {
+                        stageState = Stage.LiveFailed
+                        releaseLive()
+                        renderStage()
+                    }
                 }
             }
         }.also { newSurface ->
-            created = newSurface
-            this@TouchCameraView.liveSurface = newSurface
-            mat.addView(newSurface, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+            liveSurface = newSurface
+            // Keep native connecting and failure controls above the Gecko child.
+            mat.addView(newSurface, 1, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         }
-        stageState = Stage.Live
+        stageState = Stage.Connecting
+        armLiveStartupDeadline(liveGeneration ?: run {
+            stageState = Stage.LiveFailed
+            renderStage()
+            return
+        })
         surface.start(selected)
         renderStage()
     }
@@ -455,21 +479,46 @@ class TouchCameraView(
 
     /** A live camera owns a peer/socket/session; hiding it is never a passive View visibility change. */
     private fun releaseLive() {
+        cancelLiveStartupDeadline()
+        liveStatusGate.release()
+        liveGeneration = null
         val surface = liveSurface ?: return
         liveSurface = null
-        (surface.parent as? android.view.ViewGroup)?.removeView(surface)
         surface.close()
+        (surface.parent as? android.view.ViewGroup)?.removeView(surface)
+        mat.invalidate()
     }
 
-    private fun fillEmpty(kit: TouchKit, title: String, detail: String, action: String, emphasis: TouchKit.Emphasis, onAction: () -> Unit) {
+    private fun armLiveStartupDeadline(generation: Long) {
+        cancelLiveStartupDeadline()
+        val deadline = Runnable {
+            if (liveStatusGate.isActive(generation) && stageState == Stage.Connecting) {
+                liveSurface?.reportStartupTimeout()
+                stageState = Stage.LiveFailed
+                releaseLive()
+                renderStage()
+            }
+        }
+        liveStartupDeadline = deadline
+        main.postDelayed(deadline, LIVE_START_TIMEOUT_MILLIS)
+    }
+
+    private fun cancelLiveStartupDeadline() {
+        liveStartupDeadline?.let(main::removeCallbacks)
+        liveStartupDeadline = null
+    }
+
+    private fun fillEmpty(kit: TouchKit, title: String, detail: String, action: String?, emphasis: TouchKit.Emphasis, onAction: () -> Unit) {
         val p = kit.palette
         emptyState.addView(kit.icon(R.drawable.ic_touch_cameras, p.inkMuted, 64))
         emptyState.addView(kit.text(title, kit.scale.headline, TouchFonts.Face.DISPLAY_BOLD).apply { gravity = Gravity.CENTER },
             LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { topMargin = kit.dp(16) })
         emptyState.addView(kit.text(detail, kit.scale.body, color = p.inkMuted).apply { gravity = Gravity.CENTER; maxWidth = kit.dp(620) },
             LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { topMargin = kit.dp(10) })
-        emptyState.addView(kit.button(action, emphasis, iconRes = if (emphasis == TouchKit.Emphasis.SECONDARY) R.drawable.ic_touch_refresh else null) { onAction() },
-            LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, kit.dp(kit.scale.target)).apply { topMargin = kit.dp(20) })
+        action?.let { label ->
+            emptyState.addView(kit.button(label, emphasis, iconRes = if (emphasis == TouchKit.Emphasis.SECONDARY) R.drawable.ic_touch_refresh else null) { onAction() },
+                LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, kit.dp(kit.scale.target)).apply { topMargin = kit.dp(20) })
+        }
     }
 
     private fun timeText(millis: Long): String = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(millis))
@@ -477,6 +526,7 @@ class TouchCameraView(
     private companion object {
         const val MAX_BYTES = 8 * 1024 * 1024
         const val TOTAL_TIMEOUT_MILLIS = 8_000L
+        const val LIVE_START_TIMEOUT_MILLIS = 12_000L
         const val REFRESH_TAG = "touch-camera-refresh"
         // Worker-side outcome markers; the main thread chooses the visible wording.
         const val SIGN_IN_REQUIRED = "sign-in-required"
@@ -582,6 +632,23 @@ internal class TouchCameraModeGate {
     }
 
     @Synchronized fun snapshotMayStart(): Boolean = snapshotRequested
+}
+
+/** Rejects status callbacks from an already-released or replaced live surface. */
+internal class TouchCameraLiveStatusGate {
+    private var generation = 0L
+    private var activeGeneration: Long? = null
+
+    @Synchronized fun activate(): Long = (++generation).also { activeGeneration = it }
+
+    @Synchronized fun release() {
+        activeGeneration = null
+    }
+
+    @Synchronized fun isActive(surfaceGeneration: Long): Boolean = activeGeneration == surfaceGeneration
+
+    @Synchronized fun shouldRestore(surfaceGeneration: Long, status: TouchLiveCameraBridge.Status): Boolean =
+        activeGeneration == surfaceGeneration && (status == TouchLiveCameraBridge.Status.FAILED || status.isFailure())
 }
 
 internal class TouchCameraPolicy(origin: String, cameraIds: List<String>) {
