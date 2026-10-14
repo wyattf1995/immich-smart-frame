@@ -188,6 +188,23 @@ class TouchHomeRepositoryTest {
         }
     }
 
+    @Test
+    fun `observed off thermostat stays connected and cannot post a made up target`() {
+        val transport = FakeTransport(climateBody = """{"entity_id":"climate.entryway_entryway","state":"off","attributes":{"min_temp":50,"max_temp":90,"current_temperature":71,"temperature":null,"target_temp_low":null,"target_temp_high":null,"hvac_modes":["heat","cool","heat_cool","off"],"supported_features":411,"hvac_action":"off"}}""")
+        TouchHomeRepository(config, { _ -> "token" }, transport).use { repository ->
+            val model = repository.refresh(null)
+            val reads = transport.requests.size
+
+            assertEquals(TouchConnection.CONNECTED, model.connection)
+            assertEquals("°F", model.climate?.unit)
+            assertEquals(null, model.climate?.targetTemperature)
+            assertTrue(model.climate?.canSetTarget == false)
+            assertTrue(model.climate?.canSetMode == true)
+            assertTrue(!repository.changeClimateTarget(72.0))
+            assertEquals(reads, transport.requests.size)
+        }
+    }
+
     private class BlockingTransport : CancellableHomeAssistantHttpTransport {
         val started = CountDownLatch(2)
         private val released = CountDownLatch(1)

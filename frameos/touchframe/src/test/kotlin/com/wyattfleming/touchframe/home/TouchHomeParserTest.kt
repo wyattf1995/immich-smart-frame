@@ -48,6 +48,22 @@ class TouchHomeParserTest {
     }
 
     @Test
+    fun `climate parser retains the observed off thermostat without inventing a target`() {
+        val climate = parser.parseClimate(
+            "climate.entryway_entryway",
+            """{"entity_id":"climate.entryway_entryway","state":"off","attributes":{"min_temp":50,"max_temp":90,"current_temperature":71,"temperature":null,"target_temp_low":null,"target_temp_high":null,"hvac_modes":["heat","cool","heat_cool","off"],"supported_features":411,"hvac_action":"off"}}""",
+            fallbackTemperatureUnit = "°F",
+        )!!
+
+        assertEquals("off", climate.mode)
+        assertEquals(71.0, climate.currentTemperature)
+        assertEquals(null, climate.targetTemperature)
+        assertTrue(!climate.canSetTarget)
+        assertTrue(climate.canSetMode)
+        assertEquals(listOf("heat", "cool", "heat_cool", "off"), climate.modes)
+    }
+
+    @Test
     fun `calendar parser handles all-day and date-time events then excludes past events`() {
         val now = Instant.parse("2026-10-12T12:00:00Z")
         val events = parser.parseCalendarEvents(
