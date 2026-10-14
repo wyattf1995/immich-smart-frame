@@ -475,7 +475,12 @@ class TouchHomeView private constructor(
                 })
                 return@apply
             }
-            val canMutate = !climateBusy && connection == TouchConnection.CONNECTED
+            val canSetMode = !climateBusy && connection == TouchConnection.CONNECTED && climate.canSetMode
+            if (!climate.canSetTarget) {
+                addView(readOnlyThermostat(kit, climate, canSetMode), LinearLayout.LayoutParams(MATCH, 0, 1f).apply { topMargin = kit.dp(12) })
+                return@apply
+            }
+            val canSetTarget = !climateBusy && connection == TouchConnection.CONNECTED
             val shown = draft.target ?: climate.targetTemperature
             val body = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -484,7 +489,7 @@ class TouchHomeView private constructor(
             val stepper = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                addView(stepButton(kit, R.drawable.ic_touch_minus, "Lower setpoint", canMutate) { step(climate, -1) })
+                addView(stepButton(kit, R.drawable.ic_touch_minus, "Lower setpoint", canSetTarget) { step(climate, -1) })
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER_HORIZONTAL
@@ -504,7 +509,7 @@ class TouchHomeView private constructor(
                         addView(setpointState(kit, climate, connection, shown), FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER_HORIZONTAL or Gravity.TOP))
                     }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = kit.dp(8) })
                 }, LinearLayout.LayoutParams(0, WRAP, 1f))
-                addView(stepButton(kit, R.drawable.ic_touch_plus, "Raise setpoint", canMutate) { step(climate, 1) })
+                addView(stepButton(kit, R.drawable.ic_touch_plus, "Raise setpoint", canSetTarget) { step(climate, 1) })
             }
             body.addView(stepper, LinearLayout.LayoutParams(MATCH, WRAP))
             // The slot keeps its height in every state so the stepper never jumps.
@@ -519,7 +524,7 @@ class TouchHomeView private constructor(
                 }, LinearLayout.LayoutParams(0, kit.dp(scale.target), 1f).apply { marginEnd = kit.dp(12) })
                 val failed = climateResult == ClimateResult.FAILED
                 actions.addView(kit.button(if (failed) "Try again" else "Set to ${formatTemperature(target)}", TouchKit.Emphasis.PRIMARY,
-                    iconRes = if (failed) R.drawable.ic_touch_refresh else null, enabled = canMutate) {
+                    iconRes = if (failed) R.drawable.ic_touch_refresh else null, enabled = canSetTarget) {
                     onClimateTarget(target)
                 }, LinearLayout.LayoutParams(0, kit.dp(scale.target), 1.4f))
             }
@@ -528,7 +533,7 @@ class TouchHomeView private constructor(
             if (modes.isNotEmpty()) {
                 val rows = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
                 modes.chunked(MODES_PER_ROW).forEachIndexed { index, chunk ->
-                    rows.addView(kit.segmented(chunk.map { modeLabel(it) to it }, climate.mode.takeIf { it in chunk }, canMutate, scale.label) { mode ->
+                    rows.addView(kit.segmented(chunk.map { modeLabel(it) to it }, climate.mode.takeIf { it in chunk }, canSetMode, scale.label) { mode ->
                         onClimateMode(mode)
                     }, LinearLayout.LayoutParams(MATCH, kit.dp(scale.target)).apply { if (index > 0) topMargin = kit.dp(8) })
                 }
@@ -536,6 +541,31 @@ class TouchHomeView private constructor(
             }
             // Stepper, action slot and modes stay together as one centred block on tall panels.
             addView(body, LinearLayout.LayoutParams(MATCH, 0, 1f).apply { topMargin = kit.dp(12) })
+        }
+    }
+
+    /** A readable state is useful, but this frame never invents a target for an unsupported thermostat. */
+    private fun readOnlyThermostat(kit: TouchKit, climate: TouchClimate, canSetMode: Boolean): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_VERTICAL
+        climate.targetTemperature?.let { addView(kit.text("Set to ${formatTemperature(it)}", scale.setpoint, TouchFonts.Face.DISPLAY_BOLD).apply { gravity = Gravity.CENTER }) }
+        if (climate.targetTemperatureLow != null && climate.targetTemperatureHigh != null) {
+            addView(kit.text("Range ${formatTemperature(climate.targetTemperatureLow)}–${formatTemperature(climate.targetTemperatureHigh)}", scale.body, TouchFonts.Face.TEXT_MEDIUM).apply { gravity = Gravity.CENTER })
+        }
+        addView(note(kit, if (climate.targetTemperatureLow != null) {
+            "This thermostat reports a heat/cool range. This frame won’t change it."
+        } else {
+            "This thermostat isn’t reporting a single setpoint, so it can’t be adjusted here."
+        }))
+        val modes = climate.modes.distinct()
+        if (climate.canSetMode && modes.isNotEmpty()) {
+            val rows = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+            modes.chunked(MODES_PER_ROW).forEachIndexed { index, chunk ->
+                rows.addView(kit.segmented(chunk.map { modeLabel(it) to it }, climate.mode.takeIf { it in chunk }, canSetMode, scale.label) { mode ->
+                    onClimateMode(mode)
+                }, LinearLayout.LayoutParams(MATCH, kit.dp(scale.target)).apply { if (index > 0) topMargin = kit.dp(8) })
+            }
+            addView(rows, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = kit.dp(scale.gap) })
         }
     }
 

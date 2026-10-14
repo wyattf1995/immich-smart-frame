@@ -8,7 +8,11 @@ import org.json.JSONObject
 
 class TouchHomeCacheCodecTest {
     private val fingerprint = TouchHomeCacheCodec.fingerprint("https://home.example", listOf("weather.home", "climate.entryway"))
-    private fun model() = TouchHomeModel("Cloudy", "61°F", listOf(TouchCalendarEvent("Dinner", 10, null, false)), TouchClimate("climate.entryway", 60.0, 61.0, "°F", "heat", listOf("heat"), 50.0, 80.0, 1.0), TouchConnection.CONNECTED, 9)
+    private fun model() = TouchHomeModel("Cloudy", "61°F", listOf(TouchCalendarEvent("Dinner", 10, null, false)), TouchClimate(
+        entityId = "climate.entryway", currentTemperature = 60.0, targetTemperature = 61.0,
+        unit = "°F", mode = "heat", modes = listOf("heat"), minTemperature = 50.0,
+        maxTemperature = 80.0, step = 1.0, canSetTarget = true, canSetMode = true,
+    ), TouchConnection.CONNECTED, 9)
 
     @Test fun cachedSnapshotIsAlwaysOfflineAndBoundToOriginAndEntities() {
         val encoded = TouchHomeCacheCodec.encode(model(), fingerprint)!!
