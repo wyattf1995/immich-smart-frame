@@ -64,6 +64,9 @@ android {
         // AGP 9.1.1 requires Gradle 9.3.1; it is also within Kotlin 2.4's fully
         // supported range. Keep the checksum-pinned wrapper until that stack moves.
         disable += "AndroidGradlePluginVersion"
+        // These sources are also compiled at minSdk 23 (the legacy target and :frame-shared for FrameOS Touch), where
+        // the version checks and the values-v27 folder are required; at the modern minSdk 29 lint calls them obsolete.
+        disable += "ObsoleteSdkInt"
     }
 }
 
