@@ -69,6 +69,7 @@ class HomeAssistantRouteTest {
         assertNull(HomeAssistantRoute.urlFor(base, FrameMode.PHOTOS))
         assertNull(HomeAssistantRoute.urlFor(base, FrameMode.ART))
         assertNull(HomeAssistantRoute.urlFor(base, FrameMode.WEATHER))
+        assertNull(HomeAssistantRoute.urlFor(base, FrameMode.OCEAN))
     }
 
     @Test

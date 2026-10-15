@@ -16,6 +16,7 @@ class FrameReducerTest {
         val expected = listOf(
             FrameMode.HOME,
             FrameMode.WEATHER,
+            FrameMode.OCEAN,
             FrameMode.CAMERAS,
             FrameMode.CALENDAR,
             FrameMode.PHOTOS,
@@ -28,13 +29,14 @@ class FrameReducerTest {
     }
 
     @Test
-    fun `configured Birds mode follows Weather and wraps through the remaining modes`() {
+    fun `configured Birds mode follows Weather and Ocean and wraps through the remaining modes`() {
         var state = FrameState()
         val reducer = FrameReducer { FrameMode.cycleModes(birdsConfigured = true) }
 
         val expected = listOf(
             FrameMode.HOME,
             FrameMode.WEATHER,
+            FrameMode.OCEAN,
             FrameMode.BIRDS,
             FrameMode.CAMERAS,
             FrameMode.CALENDAR,

@@ -65,7 +65,8 @@ class TouchDisclosureTest {
     @Test
     fun `the companion can open Ocean and Power by name and still only known pages`() {
         fun command(mode: String) = "{\"id\":\"123e4567-e89b-12d3-a456-426614174000\",\"type\":\"show_mode\",\"mode\":\"$mode\",\"issuedAt\":1,\"expiresAt\":2}"
-        assertEquals(FrameRemoteCommand.ShowPage("123e4567-e89b-12d3-a456-426614174000", "ocean", 1, 2), FrameCompanionCommandDecoder.decode(command("ocean"), 1))
+        // Ocean became a FrameMode when the Lenovo app gained it; Power is still a Touch-only page.
+        assertEquals(FrameRemoteCommand.ShowMode("123e4567-e89b-12d3-a456-426614174000", FrameMode.OCEAN, 1, 2), FrameCompanionCommandDecoder.decode(command("ocean"), 1))
         assertEquals(FrameRemoteCommand.ShowPage("123e4567-e89b-12d3-a456-426614174000", "power", 1, 2), FrameCompanionCommandDecoder.decode(command("Power"), 1))
         assertEquals(FrameRemoteCommand.ShowMode("123e4567-e89b-12d3-a456-426614174000", FrameMode.WEATHER, 1, 2), FrameCompanionCommandDecoder.decode(command("weather"), 1))
         assertNull(FrameCompanionCommandDecoder.decode(command("settings"), 1))

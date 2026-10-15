@@ -78,6 +78,7 @@ class FrameSurfaceRouterTest {
     @Test
     fun `weather remains native and the hidden HA surface preloads Calendar`() {
         assertEquals(FrameSurfaceTarget.NativeWeather, router.target(FrameMode.WEATHER))
+        assertEquals(FrameSurfaceTarget.NativeOcean, router.target(FrameMode.OCEAN))
         assertEquals(
             router.target(FrameMode.CALENDAR),
             router.calendarPreloadTarget(),
