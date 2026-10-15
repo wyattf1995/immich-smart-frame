@@ -53,6 +53,7 @@ CLASSES = {
     "power": ("com.wyattfleming.touchframe.power.TouchPowerPresentationTest", tests / "power/TouchPowerPresentationTest.kt"),
     "power-repo": ("com.wyattfleming.touchframe.power.TouchPowerRepositoryTest", tests / "power/TouchPowerRepositoryTest.kt"),
     "power-view": ("com.wyattfleming.touchframe.power.TouchPowerViewSourceTest", tests / "power/TouchPowerViewSourceTest.kt"),
+    "motion": ("com.wyattfleming.touchframe.ui.TouchMotionTest", tests / "ui/TouchMotionTest.kt"),
 }
 
 MUTATIONS = [
@@ -194,6 +195,12 @@ MUTATIONS = [
     ("shell-stacked-tabs-red", main / "ui/TouchShellLayout.kt",
      "fun stackedTabs(large: Boolean): Boolean = !large", "fun stackedTabs(large: Boolean): Boolean = large", "destinations",
      {"the 1280 panel stacks each tab's label under its icon and the 1920 bar keeps them side by side"}),
+    ("motion-weather-still-red", frame / "app/src/main/kotlin/com/wyattfleming/frameos/weather/WeatherRenderCadence.kt",
+     "if (sceneAnimated && motionEnabled) return ANIMATED_FRAME_DELAY_MILLIS", "if (sceneAnimated) return ANIMATED_FRAME_DELAY_MILLIS", "motion",
+     {"with Android animations off an animated weather scene holds still and wakes only for the hourly page"}),
+    ("motion-menu-exit-red", main / "ui/TouchShellLayout.kt",
+     "bar.animate().translationX(-width.toFloat())", "bar.animate().translationX(-0f)", "motion",
+     {"the immersive menu leaves the way it came in"}),
 ]
 
 
