@@ -90,8 +90,8 @@ MUTATIONS = [
       "timing treats all-day events as current all day and open-ended ones as finished once started"}),
     ("tab-chip-padding-order-red", main / "ui/TouchShellLayout.kt",
      """        background = insetChip(rounded(palette.settings, palette.settingsStroke), 0)
-        setPadding(dp(if (compact) 18 else 20), 0, dp(if (compact) 18 else 20), 0)""",
-     """        setPadding(dp(if (compact) 18 else 20), 0, dp(if (compact) 18 else 20), 0)
+        setPadding(dp(20), 0, dp(20), 0)""",
+     """        setPadding(dp(20), 0, dp(20), 0)
         background = insetChip(rounded(palette.settings, palette.settingsStroke), 0)""", "chip",
      {"tab chips are assigned before their padding so the inset background cannot erase it"}),
     ("month-six-week-fit-red", main / "calendar/TouchCalendarView.kt",
@@ -191,9 +191,9 @@ MUTATIONS = [
     ("destinations-power-anchor-red", main / "ui/TouchDestination.kt",
      "else order.subList(0, anchor + 1) + TouchDestination.POWER + order.subList(anchor + 1, order.size)", "else order + TouchDestination.POWER", "destinations",
      {"Power follows Ocean, or Weather without Ocean, when a remote order does not name it"}),
-    ("shell-compact-bar-red", main / "ui/TouchShellLayout.kt",
-     "= !large && tabCount >= COMPACT_TAB_COUNT", "= large && tabCount >= COMPACT_TAB_COUNT", "destinations",
-     {"only an eight-tab bar on the 1280 panel tightens its tabs and shows Settings as an icon"}),
+    ("shell-stacked-tabs-red", main / "ui/TouchShellLayout.kt",
+     "fun stackedTabs(large: Boolean): Boolean = !large", "fun stackedTabs(large: Boolean): Boolean = large", "destinations",
+     {"the 1280 panel stacks each tab's label under its icon and the 1920 bar keeps them side by side"}),
 ]
 
 

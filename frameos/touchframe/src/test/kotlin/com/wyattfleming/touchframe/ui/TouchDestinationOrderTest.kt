@@ -152,9 +152,8 @@ class TouchDestinationOrderTest {
     }
 
     @Test
-    fun `only an eight-tab bar on the 1280 panel tightens its tabs and shows Settings as an icon`() {
-        assertEquals(true, TouchShellLayout.compactBar(large = false, tabCount = 8))
-        assertEquals(false, TouchShellLayout.compactBar(large = false, tabCount = 7))
-        assertEquals(false, TouchShellLayout.compactBar(large = true, tabCount = 9))
+    fun `the 1280 panel stacks each tab's label under its icon and the 1920 bar keeps them side by side`() {
+        assertEquals(true, TouchShellLayout.stackedTabs(large = false))
+        assertEquals(false, TouchShellLayout.stackedTabs(large = true))
     }
 }
