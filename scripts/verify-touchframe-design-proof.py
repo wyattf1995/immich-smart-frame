@@ -26,6 +26,13 @@ tests = module / "src/test/kotlin/com/wyattfleming/touchframe"
 out = root / "reports" / "touchframe-design"
 out.mkdir(parents=True, exist_ok=True)
 result_dir = module / "build" / "test-results" / "testDebugUnitTest"
+shared_tests = frame / "app/src/test/kotlin/com/wyattfleming/frameos"
+shared_main = frame / "app/src/main/kotlin/com/wyattfleming/frameos"
+# Classes guarding shared FrameOS sources run in :frame-shared, everything else in :touchframe.
+TASKS = {
+    "touchframe": (":touchframe:testDebugUnitTest", result_dir),
+    "frame-shared": (":frame-shared:testDebugUnitTest", frame / "frame-shared" / "build" / "test-results" / "testDebugUnitTest"),
+}
 
 CLASSES = {
     "agenda": ("com.wyattfleming.touchframe.home.TouchHomeAgendaTest", tests / "home/TouchHomeAgendaTest.kt"),
@@ -56,6 +63,12 @@ CLASSES = {
     "motion": ("com.wyattfleming.touchframe.ui.TouchMotionTest", tests / "ui/TouchMotionTest.kt"),
     "media-tap": ("com.wyattfleming.touchframe.ui.TouchMediaTapTest", tests / "ui/TouchMediaTapTest.kt"),
     "disclosure": ("com.wyattfleming.touchframe.ui.TouchDisclosureTest", tests / "ui/TouchDisclosureTest.kt"),
+    "weather": ("com.wyattfleming.touchframe.weather.TouchWeatherPresentationTest", tests / "weather/TouchWeatherPresentationTest.kt"),
+    "weather-colors": ("com.wyattfleming.touchframe.weather.TouchWeatherColorsTest", tests / "weather/TouchWeatherColorsTest.kt"),
+    "weather-sun": ("com.wyattfleming.touchframe.weather.TouchSunRepositoryTest", tests / "weather/TouchSunRepositoryTest.kt"),
+    "weather-view": ("com.wyattfleming.touchframe.weather.TouchWeatherViewSourceTest", tests / "weather/TouchWeatherViewSourceTest.kt"),
+    "weather-parser": ("com.wyattfleming.frameos.weather.HomeAssistantWeatherParserTest", shared_tests / "weather/HomeAssistantWeatherParserTest.kt", "frame-shared"),
+    "weather-codec": ("com.wyattfleming.frameos.weather.WeatherSnapshotCodecTest", shared_tests / "weather/WeatherSnapshotCodecTest.kt", "frame-shared"),
 }
 
 MUTATIONS = [
@@ -228,6 +241,58 @@ MUTATIONS = [
     ("companion-show-page-red", main / "ui/TouchDestination.kt",
      "\"power\" -> TouchDestination.POWER", "\"power\" -> null", "disclosure",
      {"the companion can open Ocean and Power by name and still only known pages"}),
+    ("weather-min-range-red", main / "weather/TouchWeatherPresentation.kt",
+     "val range = maxOf((high - low).toDouble(), minRange)", "val range = maxOf((high - low).toDouble(), 1.0)", "weather",
+     {"a calm day keeps at least 12 degrees of height, centred on its readings"}),
+    ("weather-turn-red", main / "weather/TouchWeatherPresentation.kt",
+     "if ((hi > lo && lo != 0) || hi == 0) \"Low\" to lo else \"High\" to hi", "if (false) \"Low\" to lo else \"High\" to hi", "weather",
+     {"the sentence names the next turn - the afternoon high before tonight's low, the overnight low before tomorrow's high"}),
+    ("weather-rain-amount-red", main / "weather/TouchWeatherPresentation.kt",
+     "            if (amount <= 0.0) {", "            if (amount <= 9.0) {", "weather",
+     {"met no rain amounts become one bar per wet stretch labelled with its total, and a sentence saying when it ends",
+      "a little rain is called light rain and millimetres keep their unit",
+      "while it rains now the Now column joins the run without counting the next hour twice"}),
+    ("weather-now-double-count-red", main / "weather/TouchWeatherPresentation.kt",
+     "if (hour.counted) total += amount", "total = total + amount", "weather",
+     {"while it rains now the Now column joins the run without counting the next hour twice"}),
+    ("weather-chance-red", main / "weather/TouchWeatherPresentation.kt",
+     "val first = wet.firstOrNull { (it.percent ?: 0) >= SAY_RAIN_PERCENT } ?: return null",
+     "val first = wet.firstOrNull { (it.percent ?: 0) >= BAR_RAIN_PERCENT } ?: return null", "weather",
+     {"a chance of rain names the first hour at 30 percent and the highest chance after it"}),
+    ("weather-night-sun-red", main / "weather/TouchWeatherPresentation.kt",
+     "        if (rising != null && setting != null) {", "        if (false && rising != null && setting != null) {", "weather",
+     {"night hours follow Home Assistant's sunrise and sunset, not the clock",
+      "sun times read a while ago roll forward by whole days"}),
+    ("weather-sun-rollover-red", main / "weather/TouchWeatherPresentation.kt",
+     "if (millis > nowMillis) millis else millis + ((nowMillis - millis) / DAY_MILLIS + 1) * DAY_MILLIS", "millis + 0L * nowMillis", "weather",
+     {"sun times read a while ago roll forward by whole days"}),
+    ("weather-axis-midnight-red", main / "weather/TouchWeatherPresentation.kt",
+     "axisLabel = if (k % every == 0 && local.hour != 0)", "axisLabel = if (k % every == 0)", "weather",
+     {"midnight starts the new day by name and the axis never says Midnight"}),
+    ("weather-week-day-glyph-red", main / "weather/TouchWeatherPresentation.kt",
+     "glyph = glyph(forecast.condition, night = false),", "glyph = glyph(forecast.condition, night = true),", "weather",
+     {"the week starts today and always draws days as days, with rain as a chance or an amount"}),
+    ("weather-facts-order-red", main / "weather/TouchWeatherPresentation.kt",
+     ".sortedBy { it.second }.forEach { (label, millis) ->", ".sortedBy { it.first }.forEach { (label, millis) ->", "weather",
+     {"facts list wind, humidity and UV, the next sun event first, then pressure"}),
+    ("weather-contrast-red", main / "weather/TouchWeatherColors.kt",
+     "rain = 0xFF1D5487.toInt()", "rain = 0xFF2C67A0.toInt()", "weather-colors",
+     {"weather text keeps four and a half to one on the sky, field and ground by day and night"}),
+    ("weather-curve-overshoot-red", main / "weather/TouchWeatherColors.kt",
+     "            if (r > 9.0) {", "            if (r > 900.0) {", "weather-colors",
+     {"the curve passes through every reading and never overshoots one"}),
+    ("weather-sun-sensor-red", main / "weather/TouchSunRepository.kt",
+     "TouchSunParser.fromSensor(get(\"sensor.sun_next_rising\", headers, deadline)),", "(null as Long?),", "weather-sun",
+     {"without sun dot sun's attributes the timestamp sensors stand in"}),
+    ("weather-draw-allocation-red", main / "weather/TouchWeatherView.kt",
+     "canvas.drawText(tempLabels[k], x, y - lift, tempText)", "canvas.drawText(\"${hour.temperature}°\", x, y - lift, tempText)", "weather-view",
+     {"drawing allocates nothing, labels and paths are built when the data or size changes"}),
+    ("weather-parser-rain-red", shared_main / "weather/HomeAssistantWeatherParser.kt",
+     "precipitation = item.optionalDouble(\"precipitation\"),", "precipitation = null,", "weather-parser",
+     {"parses met no rain amounts, hourly UV and the rain unit Home Assistant converted them to"}),
+    ("weather-codec-rain-red", shared_main / "weather/WeatherSnapshotCodec.kt",
+     ".putNullable(\"precipitation\", forecast.precipitation)", ".putNullable(\"precipitation\", null)", "weather-codec",
+     {"round trips rain amounts, hourly UV and the rain unit"}),
 ]
 
 
@@ -235,18 +300,27 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def task_of(key: str) -> str:
+    return CLASSES[key][2] if len(CLASSES[key]) > 2 else "touchframe"
+
+
 def run(label: str, keys: list[str], expected_failures: set[str]) -> dict:
-    if result_dir.exists():
-        shutil.rmtree(result_dir)
-    command = ["./gradlew", "--no-daemon", "--max-workers=2", ":touchframe:testDebugUnitTest", "--rerun"]
-    for key in keys:
-        command += ["--tests", CLASSES[key][0]]
+    groups = {task: [key for key in keys if task_of(key) == task] for task in TASKS}
+    command = ["./gradlew", "--no-daemon", "--max-workers=2", "--continue"]
+    for task, members in groups.items():
+        if not members:
+            continue
+        if TASKS[task][1].exists():
+            shutil.rmtree(TASKS[task][1])
+        command += [TASKS[task][0], "--rerun"]
+        for key in members:
+            command += ["--tests", CLASSES[key][0]]
     log = out / f"{label}.log"
     with log.open("w", encoding="utf-8") as stream:
         result = subprocess.run(command, cwd=frame, stdout=stream, stderr=subprocess.STDOUT)
     cases = []
     for key in keys:
-        xmls = list(result_dir.rglob(f"TEST-{CLASSES[key][0]}.xml"))
+        xmls = list(TASKS[task_of(key)][1].rglob(f"TEST-{CLASSES[key][0]}.xml"))
         if len(xmls) != 1:
             tail = "\n".join(log.read_text(errors="replace").splitlines()[-60:])
             raise RuntimeError(f"{label}: expected one JUnit XML for {CLASSES[key][0]}, found {xmls}; exit={result.returncode}\n{tail}")
@@ -266,7 +340,7 @@ def run(label: str, keys: list[str], expected_failures: set[str]) -> dict:
     return {"exit": result.returncode, "tests": len(cases), "failedCases": sorted(failed), "log": log.name, "logSha256": digest(log)}
 
 
-test_hashes = {key: digest(path) for key, (_, path) in CLASSES.items()}
+test_hashes = {key: digest(spec[1]) for key, spec in CLASSES.items()}
 sources = sorted({path for _, path, *_ in MUTATIONS})
 source_hashes = {str(path.relative_to(root)): digest(path) for path in sources}
 for label, path, before, after, _, _ in MUTATIONS:
@@ -286,7 +360,7 @@ for label, path, before, after, key, expected in MUTATIONS:
         raise RuntimeError(f"{label}: source was not restored exactly")
 
 green = run("design-restored-green", list(CLASSES), set())
-if {key: digest(path) for key, (_, path) in CLASSES.items()} != test_hashes:
+if {key: digest(spec[1]) for key, spec in CLASSES.items()} != test_hashes:
     raise RuntimeError("a guarding test changed during the proof")
 if {str(path.relative_to(root)): digest(path) for path in sources} != source_hashes:
     raise RuntimeError("production source changed during the proof")

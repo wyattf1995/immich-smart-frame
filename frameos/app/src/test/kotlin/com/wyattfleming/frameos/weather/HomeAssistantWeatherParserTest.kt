@@ -76,6 +76,34 @@ class HomeAssistantWeatherParserTest {
     }
 
     @Test
+    fun `parses met no rain amounts, hourly UV and the rain unit Home Assistant converted them to`() {
+        val current = parser.parseCurrentState(
+            expectedEntityId = "weather.forecast_home",
+            payload = """
+                {"entity_id":"weather.forecast_home","state":"rainy","last_updated":"2026-10-15T13:00:00+00:00",
+                 "attributes":{"temperature":63,"temperature_unit":"°F","uv_index":0.0,"precipitation_unit":"in"}}
+            """.trimIndent(),
+        )
+        val hours = parser.parseForecastResponse(
+            expectedEntityId = "weather.forecast_home",
+            forecastType = WeatherForecastType.HOURLY,
+            payload = """
+                {"weather.forecast_home":{"forecast":[
+                  {"datetime":"2026-10-15T14:00:00+00:00","condition":"rainy","temperature":63,"precipitation":0.04,"uv_index":1.2},
+                  {"datetime":"2026-10-15T15:00:00+00:00","condition":"cloudy","temperature":64}
+                ]}}
+            """.trimIndent(),
+        )
+
+        assertEquals("in", current.precipitationUnit)
+        assertEquals(0.04, requireNotNull(hours[0].precipitation), 0.0)
+        assertEquals(1.2, requireNotNull(hours[0].uvIndex), 0.0)
+        assertNull("met.no sends no chance of rain here", hours[0].precipitationProbability)
+        assertNull(hours[1].precipitation)
+        assertNull(hours[1].uvIndex)
+    }
+
+    @Test
     fun `parses all 24 hourly entries from return_response without truncating them`() {
         val hours = (0 until 24).joinToString(",") { hour ->
             """{"datetime":"2026-08-24T${hour.toString().padStart(2, '0')}:00:00-07:00","condition":"sunny","temperature":${89 + hour}}"""
