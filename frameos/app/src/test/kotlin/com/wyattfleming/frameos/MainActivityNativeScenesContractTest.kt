@@ -17,7 +17,10 @@ class MainActivityNativeScenesContractTest {
     @Test
     fun `the Lenovo app shows the shared Weather page and Ocean, not the old Weather canvas`() {
         assertTrue(source.contains("private lateinit var weatherContent: TouchWeatherView"))
-        assertTrue(source.contains("oceanContent = TouchOceanView(this)"))
+        assertTrue(source.contains("oceanContent = TouchOceanView(scenes)"))
+        assertTrue("both shared screens render at the density that gives them their designed height",
+            source.contains("weatherContent = TouchWeatherView(scenes, ::refreshWeather)"))
+        assertTrue(methodBody("private fun nativeSceneContext()").contains("NativeSceneDensity.dpiFor("))
         assertFalse(source.contains("WeatherContentView"))
         assertFalse("the new page shows all 24 hours, so volume has nothing to page", source.contains("moveHourlyPage"))
     }

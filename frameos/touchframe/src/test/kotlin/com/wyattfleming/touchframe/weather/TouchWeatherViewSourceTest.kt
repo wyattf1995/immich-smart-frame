@@ -74,6 +74,12 @@ class TouchWeatherViewSourceTest {
     }
 
     @Test
+    fun `a short space never turns the 24-hour curve upside down`() {
+        // Seen on the Lenovo before its density fix: the plot's bottom rose above its top and the curve drew inverted.
+        assertTrue(source.contains("val plotBottom = maxOf(base - dp(pick(52f, 70f)), top + dp(MIN_PLOT_DP))"))
+    }
+
+    @Test
     fun `Touch shows its own weather page, not the shared Lenovo canvas`() {
         assertTrue(activity.contains("weather = TouchWeatherView(this, ::refreshWeather, ::signIn)"))
         assertFalse(activity.contains("WeatherContentView"))
