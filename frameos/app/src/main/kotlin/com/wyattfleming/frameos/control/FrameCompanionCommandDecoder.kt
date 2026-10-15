@@ -13,7 +13,10 @@ object FrameCompanionCommandDecoder {
         val issued = json.getLong("issuedAt"); val expires = json.getLong("expiresAt")
         require(FrameRemoteControlPolicy.acceptsCommand(issued, expires, nowMillis))
         when (json.getString("type")) {
-            "show_mode" -> FrameRemoteCommand.ShowMode(id, FrameMode.valueOf(json.getString("mode").uppercase()), issued, expires)
+            "show_mode" -> json.getString("mode").lowercase().let { mode ->
+                FrameMode.entries.firstOrNull { it.name.lowercase() == mode }?.let { FrameRemoteCommand.ShowMode(id, it, issued, expires) }
+                    ?: FrameRemoteCommand.ShowPage(id, mode.also { require(it in FrameRemoteCommand.ShowPage.PAGES) }, issued, expires)
+            }
             "photo_next" -> FrameRemoteCommand.PhotoStep(id, true, issued, expires)
             "photo_previous" -> FrameRemoteCommand.PhotoStep(id, false, issued, expires)
             "photo_pause" -> FrameRemoteCommand.PhotoPause(id, true, issued, expires)

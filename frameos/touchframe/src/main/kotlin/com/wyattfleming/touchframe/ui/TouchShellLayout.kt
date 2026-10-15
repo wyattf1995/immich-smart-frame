@@ -73,6 +73,16 @@ class TouchShellLayout(
     private val edgeStream = TouchShellEdgeStream()
     private val mediaTap = TouchMediaTap()
 
+    /** A faint pill on the edge the menu lives behind; a tap on it (or a swipe from it) opens the menu, and TalkBack can press it. */
+    private val edgeHandle = FrameLayout(context).apply {
+        visibility = View.GONE
+        isClickable = true
+        isFocusable = true
+        contentDescription = "Open menu"
+        setOnClickListener { showMenu() }
+    }
+    private val edgeHandlePill = View(context).apply { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+
     /** A still tap on Photos or Art with the menu hidden; the activity decides whether to point at the edge. */
     var onMediaTap: (() -> Unit)? = null
     private val hideNotice = Runnable { fadeOutNotice() }
@@ -82,6 +92,8 @@ class TouchShellLayout(
 
     init {
         addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        edgeHandle.addView(edgeHandlePill)
+        addView(edgeHandle, LayoutParams(dp(EDGE_WIDTH_DP), dp(EDGE_HANDLE_TARGET_DP), Gravity.START or Gravity.CENTER_VERTICAL))
         addView(noticeHost, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START))
         addView(edgeHint, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.CENTER_VERTICAL))
         addView(scrim, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -294,7 +306,12 @@ class TouchShellLayout(
         // Observed, never consumed: the photo page still gets its own tap.
         val tapped = mediaTap.onEvent(event.actionMasked, event.x, event.y, event.eventTime, destination, menuVisible,
             ViewConfiguration.get(context).scaledTouchSlop)
-        if (tapped) onMediaTap?.invoke()
+        if (tapped) {
+            when (TouchEdgeHintPolicy.tapOutcome(mediaTap.lastDownX, dp(EDGE_WIDTH_DP))) {
+                TouchEdgeHintPolicy.TapOutcome.OPEN_MENU -> showMenu()
+                TouchEdgeHintPolicy.TapOutcome.SHOW_HINT -> onMediaTap?.invoke()
+            }
+        }
         return result.ownsStream || super.dispatchTouchEvent(event)
     }
 
@@ -329,6 +346,13 @@ class TouchShellLayout(
         clock.visibility = if (destination == TouchDestination.HOME) View.GONE else View.VISIBLE
 
         bar.visibility = if (menuVisible) View.VISIBLE else View.GONE
+        edgeHandle.visibility = if (destination.isImmersiveMedia && !menuVisible) View.VISIBLE else View.GONE
+        edgeHandlePill.background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = dp(4).toFloat()
+            setColor(if (night) 0x59B39668 else 0x61F6F4EF)
+            setStroke(dp(1), if (night) 0x33000000 else 0x2E101211)
+        }
+        edgeHandlePill.layoutParams = LayoutParams(dp(8), dp(96), Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = dp(10) }
         scrim.visibility = if (destination.isImmersiveMedia && menuVisible) View.VISIBLE else View.GONE
         (scrim.getChildAt(0)?.layoutParams as? LayoutParams)?.topMargin = barHeight + dp(40)
         (scrim.getChildAt(0) as? TextView)?.setTextColor(if (night) TouchPalette.NIGHT.ink else 0xFFF6F4EF.toInt())
@@ -471,6 +495,7 @@ class TouchShellLayout(
         const val HORIZONTAL_THRESHOLD_DP = 56
         const val VERTICAL_TOLERANCE_DP = 32
         const val MIN_TARGET_DP = 56
+        const val EDGE_HANDLE_TARGET_DP = 160
         const val PANEL_BAR_HEIGHT_DP = 68
         const val WIDE_BAR_HEIGHT_DP = 80
         private const val TAB_INSET_DP = 6
@@ -516,6 +541,9 @@ internal class TouchMediaTap {
     private var downY = 0f
     private var downAtMillis = 0L
 
+    /** Where the last stream went down; a tap on the edge handle opens the menu instead of pointing at it. */
+    val lastDownX: Float get() = downX
+
     fun onEvent(action: Int, x: Float, y: Float, timeMillis: Long, destination: TouchDestination, menuVisible: Boolean, slop: Int): Boolean =
         when (action) {
             MotionEvent.ACTION_DOWN -> {
@@ -552,6 +580,12 @@ internal object TouchEdgeHintPolicy {
 
     fun showOnTap(nowMillis: Long, lastShownMillis: Long?): Boolean =
         lastShownMillis == null || nowMillis - lastShownMillis >= TAP_HINT_INTERVAL_MILLIS
+
+    enum class TapOutcome { OPEN_MENU, SHOW_HINT }
+
+    /** A tap that starts on the handle's edge strip opens the menu; anywhere else on the photo shows the hint. */
+    fun tapOutcome(downX: Float, edgeWidthPx: Int): TapOutcome =
+        if (downX <= edgeWidthPx) TapOutcome.OPEN_MENU else TapOutcome.SHOW_HINT
 }
 
 internal class TouchShellEdgeStream {

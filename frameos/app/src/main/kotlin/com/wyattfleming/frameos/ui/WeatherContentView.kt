@@ -26,6 +26,7 @@ import com.wyattfleming.frameos.weather.WeatherMetric
 import com.wyattfleming.frameos.weather.WeatherPresentation
 import com.wyattfleming.frameos.weather.WeatherRenderCadence
 import com.wyattfleming.frameos.weather.WeatherStaticLayerCacheState
+import com.wyattfleming.frameos.weather.WeatherTapAction
 import com.wyattfleming.frameos.weather.sceneProfile
 import kotlin.math.cos
 import kotlin.math.sin
@@ -83,10 +84,21 @@ class WeatherContentView(context: Context) : View(context) {
     /** Android's animation setting, read on attach and visibility changes, never per frame. */
     private var motionEnabled = true
 
+    /** FrameOS Touch: a tap turns the hourly page when there is more than one. */
+    var pagesOnTap: Boolean = false
+        set(value) {
+            field = value
+            updateInteractionState()
+        }
+
     init {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
         setOnClickListener {
-            if (isPrimaryActionAvailable()) onPrimaryAction?.invoke()
+            when (tapAction()) {
+                WeatherTapAction.SIGN_IN -> onPrimaryAction?.invoke()
+                WeatherTapAction.NEXT_PAGE -> moveHourlyPage(forward = true)?.let(::announceForAccessibility)
+                WeatherTapAction.NONE -> Unit
+            }
         }
         updateInteractionState()
     }
@@ -496,20 +508,25 @@ class WeatherContentView(context: Context) : View(context) {
         actionConfigured = onPrimaryAction != null,
     )
 
+    private fun tapAction(): WeatherTapAction =
+        WeatherTapAction.forTap(isPrimaryActionAvailable(), pagesOnTap, hourlyPager.pageCount(presentation.hourly))
+
     private fun updateInteractionState() {
-        val primaryActionAvailable = isPrimaryActionAvailable()
-        isClickable = primaryActionAvailable
-        isFocusable = primaryActionAvailable
+        val action = tapAction()
+        val actionable = action != WeatherTapAction.NONE
+        isClickable = actionable
+        isFocusable = actionable
         val metricSummary = presentation.metrics.joinToString { "${it.label} ${it.value}" }
         val fallbackDescription = buildString {
             locationLabel?.let { append("$it. ") }
             append("${presentation.condition}, ${presentation.temperature}. ${presentation.status}")
             if (metricSummary.isNotEmpty()) append(". $metricSummary")
+            if (action == WeatherTapAction.NEXT_PAGE) append(". Tap for the next hours")
         }
         contentDescription = WeatherTouchPrimaryAction.contentDescriptionFor(
             emptyMessage = presentation.emptyMessage,
             fallbackDescription = fallbackDescription,
-            actionConfigured = primaryActionAvailable,
+            actionConfigured = action == WeatherTapAction.SIGN_IN,
         )
     }
 

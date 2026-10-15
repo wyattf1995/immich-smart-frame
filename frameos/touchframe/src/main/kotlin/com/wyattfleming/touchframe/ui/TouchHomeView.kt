@@ -13,6 +13,7 @@ import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -120,6 +121,7 @@ class TouchHomeView private constructor(
     private var comingSlot: FrameLayout? = null
     private var columnRule: View? = null
     private var sheetLayer: FrameLayout? = null
+    private var sheetTitle: View? = null
     private var sheetSlot: FrameLayout? = null
     private var renderedKeys = HashMap<String, Any?>()
     private var renderedDay: java.time.LocalDate? = null
@@ -844,6 +846,8 @@ class TouchHomeView private constructor(
     private fun openSheet(next: Sheet) {
         sheet = next
         refillSlots()
+        // TalkBack lands on the sheet's title instead of staying on the tile that opened it.
+        post { sheetTitle?.takeIf { it.isAttachedToWindow }?.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null) }
     }
 
     private fun openAdd(list: TouchTodoListRef) {
@@ -872,7 +876,7 @@ class TouchHomeView private constructor(
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                addView(kit.text(title, scale.title, TouchFonts.Face.DISPLAY_BOLD, maxLines = 1), LinearLayout.LayoutParams(0, WRAP, 1f))
+                addView(kit.text(title, scale.title, TouchFonts.Face.DISPLAY_BOLD, maxLines = 1).also { sheetTitle = it }, LinearLayout.LayoutParams(0, WRAP, 1f))
                 detail?.let { addView(kit.text(it, scale.body, color = p.inkMuted, maxLines = 1), LinearLayout.LayoutParams(WRAP, WRAP).apply { marginEnd = kit.dp(16) }) }
                 actions.forEach { addView(it, LinearLayout.LayoutParams(WRAP, WRAP).apply { marginEnd = kit.dp(12) }) }
                 addView(kit.iconButton(R.drawable.ic_touch_close, "Close") { closeSheet() })

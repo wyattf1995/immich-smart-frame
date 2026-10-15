@@ -1516,6 +1516,8 @@ class MainActivity : Activity() {
             "applied"
         } else "rejected"
         is FrameRemoteCommand.SetProfile -> if (setPhotosProfile(command.profile)) "applied" else "failed"
+        // Ocean and Power exist only in FrameOS Touch.
+        is FrameRemoteCommand.ShowPage -> "rejected"
     }
 
     private fun applyCompanionSettings(settings: FrameRemoteSettings) {

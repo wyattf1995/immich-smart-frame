@@ -201,6 +201,7 @@ class TouchFrameActivity : Activity() {
             locationLabel = configuration?.weatherLocationLabel
             presentation = WeatherPresentation(emptyMessage = "Sign in to Home Assistant for weather", authenticationRequired = true)
             setOnPrimaryActionListener(::signIn)
+            pagesOnTap = true
             visibility = View.GONE
         }
         calendar = TouchCalendarView(this, ::requestCalendar, ::signIn).apply { visibility = View.GONE }
@@ -934,6 +935,13 @@ class TouchFrameActivity : Activity() {
                 navigate(route)
                 if (destination == route) TouchCompanionController.CommandResult.Applied()
                 else TouchCompanionController.CommandResult.Failed("Mode is not configured")
+            }
+            is FrameRemoteCommand.ShowPage -> {
+                val route = TouchCompanionPages.destination(command.page)
+                    ?: return TouchCompanionController.CommandResult.Unsupported("Page is unavailable on this frame")
+                navigate(route)
+                if (destination == route) TouchCompanionController.CommandResult.Applied()
+                else TouchCompanionController.CommandResult.Failed("${route.name.lowercase().replaceFirstChar { it.uppercase() }} is not on this frame's menu")
             }
             is FrameRemoteCommand.PhotoStep -> {
                 if (destination != TouchDestination.PHOTOS || media?.movePhoto(command.forward) != true)

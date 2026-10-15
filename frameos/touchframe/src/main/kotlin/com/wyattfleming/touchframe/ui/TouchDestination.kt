@@ -85,6 +85,15 @@ internal object TouchDestinationOrder {
     ): TouchDestination = current.takeIf { it in available } ?: TouchDestination.HOME
 }
 
+/** Touch-only pages the companion can open by name; they have no FrameMode. */
+internal object TouchCompanionPages {
+    fun destination(page: String): TouchDestination? = when (page) {
+        "ocean" -> TouchDestination.OCEAN
+        "power" -> TouchDestination.POWER
+        else -> null
+    }
+}
+
 /** When an idle native screen returns to Photos (the default experience). */
 internal object TouchIdleReturnPolicy {
     fun shouldReturnToPhotos(

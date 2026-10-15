@@ -29,4 +29,11 @@ sealed interface FrameRemoteCommand {
     data class PhotoPause(override val id: String, val paused: Boolean, override val issuedAtMillis: Long, override val expiresAtMillis: Long) : FrameRemoteCommand
     data class PhotoHold(override val id: String, val durationSeconds: Long, override val issuedAtMillis: Long, override val expiresAtMillis: Long) : FrameRemoteCommand
     data class SetProfile(override val id: String, val profile: String, override val issuedAtMillis: Long, override val expiresAtMillis: Long) : FrameRemoteCommand
+
+    /** A page that exists only in FrameOS Touch (it has no FrameMode); other apps answer it as rejected. */
+    data class ShowPage(override val id: String, val page: String, override val issuedAtMillis: Long, override val expiresAtMillis: Long) : FrameRemoteCommand {
+        companion object {
+            val PAGES = setOf("ocean", "power")
+        }
+    }
 }
