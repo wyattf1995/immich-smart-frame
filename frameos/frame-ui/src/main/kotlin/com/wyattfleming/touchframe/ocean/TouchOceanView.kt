@@ -184,7 +184,7 @@ class TouchOceanView(context: Context, private val onRetry: () -> Unit) : FrameL
         }, LinearLayout.LayoutParams(0, WRAP, 1f))
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            screen.stats.forEach { stat ->
+            screen.stats.forEachIndexed { index, stat ->
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     contentDescription = listOfNotNull("${stat.label} ${stat.value} ${stat.unit}", stat.detail).joinToString(", ")
@@ -197,8 +197,8 @@ class TouchOceanView(context: Context, private val onRetry: () -> Unit) : FrameL
                         if (stat.unit.isNotEmpty()) addView(kit.text(stat.unit, scale.display * 0.34f, TouchFonts.Face.DISPLAY, ink, maxLines = 1),
                             LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = kit.dp(8); bottomMargin = kit.dp(6) })
                     })
-                    stat.detail?.let { addView(kit.text(it, scale.label, color = ink, maxLines = 1), LinearLayout.LayoutParams(WRAP, WRAP)) }
-                }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                    stat.detail?.let { addView(kit.text(it, scale.label, color = ink, maxLines = 2), LinearLayout.LayoutParams(WRAP, WRAP)) }
+                }, LinearLayout.LayoutParams(0, WRAP, 1f).apply { if (index > 0) marginStart = kit.dp(scale.gap / 2) })
             }
         }, LinearLayout.LayoutParams(0, WRAP, 1.2f).apply { marginStart = kit.dp(scale.pad) })
     }
@@ -280,6 +280,12 @@ class TouchOceanView(context: Context, private val onRetry: () -> Unit) : FrameL
         val NIGHT_INK = 0xFFB39668.toInt()
         val NIGHT_MUTED = 0xFF8E7A58.toInt()
     }
+}
+
+/** Hour labels under the tide chart: centred on their tick, moved inside the chart when a tick sits near either edge. */
+object TouchTideAxis {
+    fun labelStart(center: Float, labelWidth: Float, chartWidth: Float): Float =
+        (center - labelWidth / 2f).coerceIn(0f, maxOf(0f, chartWidth - labelWidth))
 }
 
 /**
@@ -384,7 +390,9 @@ class TouchTideChartView(context: Context) : View(context) {
 
         labels.clear()
         dots.clear()
-        data.ticks.forEach { (millis, label) -> labels.add(Label(x(millis), axisY, "", label, muted, Paint.Align.CENTER)) }
+        data.ticks.forEach { (millis, label) ->
+            labels.add(Label(TouchTideAxis.labelStart(x(millis), text.measureText(label), w), axisY, "", label, muted, Paint.Align.LEFT))
+        }
         labels.add(Label(nowX + dp(10f), top - dp(10f), "Now", "", ink, Paint.Align.LEFT))
         val keepClear = dp(if (wall) 110f else 80f)
         val edge = dp(70f)

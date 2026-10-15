@@ -3,6 +3,7 @@ package com.wyattfleming.touchframe.ocean
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.ceil
@@ -188,6 +189,16 @@ object TouchOceanPresenter {
         val clock = DateTimeFormatter.ofPattern(if (twentyFourHour) "H:mm" else "h:mm a", Locale.US).withZone(zone)
         val hourOnly = DateTimeFormatter.ofPattern(if (twentyFourHour) "H:00" else "h a", Locale.US).withZone(zone)
         fun time(millis: Long) = clock.format(Instant.ofEpochMilli(millis))
+        val today = Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate()
+        /** A time with its day when that is not today: tomorrow's 12:18 PM high must not read as one already past. */
+        fun moment(millis: Long): String {
+            val date = Instant.ofEpochMilli(millis).atZone(zone).toLocalDate()
+            return when (date) {
+                today -> time(millis)
+                today.plusDays(1) -> "tomorrow ${time(millis)}"
+                else -> "${date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.US)} ${time(millis)}"
+            }
+        }
 
         val swellFrom = TouchOceanUnits.compassWords(conditions.waveFromDeg)
         val windFrom = TouchOceanUnits.compassWords(conditions.windFromDeg)
@@ -203,33 +214,34 @@ object TouchOceanPresenter {
 
         val stats = buildList {
             conditions.waveM?.let { wave ->
-                val detail = listOfNotNull(conditions.wavePeriodS?.let { "${it.roundToInt()} s" }, swellFrom?.let { "from the $it" }).joinToString(", ")
+                val detail = listOfNotNull(conditions.wavePeriodS?.let { "${it.roundToInt()}${NBSP}s" }, swellFrom?.let { "from the $it" }).joinToString(", ")
                 add(TouchOceanStat("Waves", TouchOceanUnits.feet(wave), "ft", detail.ifEmpty { null }))
             }
             conditions.windKmh?.let { wind ->
-                add(TouchOceanStat("Wind", TouchOceanUnits.mph(wind).toString(), "mph", conditions.gustKmh?.let { "Gusts to ${TouchOceanUnits.mph(it)}" }))
+                add(TouchOceanStat("Wind", TouchOceanUnits.mph(wind).toString(), "mph", conditions.gustKmh?.let { "Gusts to ${TouchOceanUnits.mph(it)}${NBSP}mph" }))
             }
             sunStat(conditions.days, nowMillis, ::time)?.let { add(it) }
         }
 
         val zoneNow = Instant.ofEpochMilli(nowMillis).atZone(zone)
         val hour = zoneNow.hour + zoneNow.minute / 60.0
-        val today = conditions.days.firstOrNull { it.date == zoneNow.toLocalDate().toString() }
+        val sunDay = conditions.days.firstOrNull { it.date == zoneNow.toLocalDate().toString() }
         fun hourOf(millis: Long) = Instant.ofEpochMilli(millis).atZone(zone).let { it.hour + it.minute / 60.0 }
-        val sunrise = today?.let { hourOf(it.sunriseMillis) }
-        val sunset = today?.let { hourOf(it.sunsetMillis).let { set -> if (sunrise != null && set < sunrise) set + 24 else set } }
+        val sunrise = sunDay?.let { hourOf(it.sunriseMillis) }
+        val sunset = sunDay?.let { hourOf(it.sunsetMillis).let { set -> if (sunrise != null && set < sunrise) set + 24 else set } }
 
         return TouchOceanScreen(
             title = conditions.spotName,
             place = conditions.place,
             skyLine = skyLine,
             water = conditions.waterC?.let { TouchOceanUnits.fahrenheit(it).toString() },
-            summary = summary(conditions, swellFrom, windFrom, high?.let { time(it.epochMillis) }),
+            summary = summary(conditions, swellFrom, windFrom, high?.let { moment(it.epochMillis).replace(' ', NBSP) }),
             stats = stats,
             tideNow = tideNow?.let { "${TouchOceanUnits.feet(it)} ft" },
             tideTrend = rising?.let { if (it) "and rising" else "and falling" },
             tideNext = listOfNotNull(low, high).sortedBy { it.epochMillis }.map {
-                "${if (it.high) "High" else "Low"} ${time(it.epochMillis)}, ${TouchOceanUnits.feet(it.heightM)} ft"
+                // Height then time, as the chart labels its highs and lows.
+                "${if (it.high) "High" else "Low"} ${TouchOceanUnits.feet(it.heightM)} ft, ${moment(it.epochMillis)}"
             },
             chart = tideNow?.let { chart(conditions, nowMillis, it, ::time, hourOnly, zone) },
             source = listOfNotNull(
@@ -255,9 +267,9 @@ object TouchOceanPresenter {
         val clauses = listOfNotNull(
             conditions.waveM?.let { wave ->
                 if (swellFrom != null) "a ${if (wave < 1.0) "small" else if (wave < 1.8) "moderate" else "larger"} $swellFrom swell"
-                else "waves ${TouchOceanUnits.feet(wave)} ft offshore"
+                else "waves ${TouchOceanUnits.feet(wave)}${NBSP}ft offshore"
             },
-            conditions.windKmh?.let { "wind ${TouchOceanUnits.mph(it)} mph${windFrom?.let { from -> " from the $from" } ?: ""}" },
+            conditions.windKmh?.let { "wind ${TouchOceanUnits.mph(it)}${NBSP}mph${windFrom?.let { from -> " from the $from" } ?: ""}" },
             highTide?.let { "high tide $it" },
             conditions.waterC?.let { "water near ${TouchOceanUnits.fahrenheit(it)}°" },
         )
@@ -312,4 +324,6 @@ object TouchOceanPresenter {
     }
 
     private const val HOUR = 3_600_000L
+    /** Keeps a number with its unit when the two-line summary or a stat's detail wraps. */
+    private const val NBSP = '\u00A0'
 }
