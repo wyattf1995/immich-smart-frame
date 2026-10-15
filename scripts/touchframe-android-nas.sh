@@ -112,12 +112,31 @@ run_step touchframe-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-da
 # replace JUnit XML inventory used by the final retained summary.
 run_step touchframe-shared-tests-preflight bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :frame-shared:testDebugUnitTest"
 run_step touchframe-tests-preflight bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:testDebugUnitTest"
-run_step touchframe-startup-source-proof python3 "$root_dir/scripts/verify-touch-startup-proof.py" "$root_dir"
-run_step touchframe-climate-source-proof python3 "$root_dir/scripts/verify-touch-climate-proof.py" "$root_dir"
-run_step touchframe-live-camera-source-proof python3 "$root_dir/scripts/verify-touch-live-camera-proof.py" "$root_dir" --run-jvm --report-dir "$root_dir/reports/touch-live-camera"
-run_step touchframe-source-proof python3 "$root_dir/scripts/verify-touchframe-proof.py" "$root_dir"
-run_step weather-header-source-proof python3 "$root_dir/scripts/verify-weather-header-layout-proof.py" "$root_dir"
-run_step touchframe-design-source-proof python3 "$root_dir/scripts/verify-touchframe-design-proof.py" "$root_dir"
+# A transport carrying proof-scope.json is a fast-lane device build: it runs only the design
+# mutations whose source or guarding test changed since the named full-proof baseline and skips
+# the other proof suites. The full matrix (no scope file) must still pass before any merge.
+readonly proof_scope="$root_dir/proof-scope.json"
+lane=full
+if [[ -f "$proof_scope" ]]; then
+  python3 - "$proof_scope" <<'PY'
+import json,re,sys
+from pathlib import Path
+d=json.loads(Path(sys.argv[1]).read_text())
+ok=(d.get('schema')==1 and d.get('mode')=='fast' and re.fullmatch(r'[0-9a-f]{40}',str(d.get('baseline',''))) and isinstance(d.get('changed'),list)
+    and all(isinstance(p,str) and p and not p.startswith('/') and '..' not in p.split('/') for p in d['changed']))
+if not ok: raise SystemExit('invalid proof-scope.json')
+PY
+  lane=fast
+  printf '\n== fast-lane ==\nFAST LANE: proofs only for files changed since the full-proof baseline; the full proof matrix must pass before merge\n' | tee -a "$raw_log"
+  run_step touchframe-design-source-proof env TOUCHFRAME_PROOF_SCOPE="$proof_scope" python3 "$root_dir/scripts/verify-touchframe-design-proof.py" "$root_dir"
+else
+  run_step touchframe-startup-source-proof python3 "$root_dir/scripts/verify-touch-startup-proof.py" "$root_dir"
+  run_step touchframe-climate-source-proof python3 "$root_dir/scripts/verify-touch-climate-proof.py" "$root_dir"
+  run_step touchframe-live-camera-source-proof python3 "$root_dir/scripts/verify-touch-live-camera-proof.py" "$root_dir" --run-jvm --report-dir "$root_dir/reports/touch-live-camera"
+  run_step touchframe-source-proof python3 "$root_dir/scripts/verify-touchframe-proof.py" "$root_dir"
+  run_step weather-header-source-proof python3 "$root_dir/scripts/verify-weather-header-layout-proof.py" "$root_dir"
+  run_step touchframe-design-source-proof python3 "$root_dir/scripts/verify-touchframe-design-proof.py" "$root_dir"
+fi
 run_step touchframe-shared-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :frame-shared:testDebugUnitTest"
 run_step touchframe-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:testDebugUnitTest"
 run_step touchframe-assemble-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:assembleRelease"
@@ -171,4 +190,8 @@ with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
    for p in sorted(base.rglob('*')):
     if p.is_file() and p.suffix in {'.html','.json','.txt','.xml','.log'}: z.write(p,p.relative_to(root))
 PY
-printf 'TouchFrame NAS validation passed\n' | tee -a "$log_file"
+if [[ "$lane" == fast ]]; then
+  printf 'TouchFrame NAS validation passed (fast lane)\n' | tee -a "$log_file"
+else
+  printf 'TouchFrame NAS validation passed\n' | tee -a "$log_file"
+fi

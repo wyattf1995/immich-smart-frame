@@ -7,6 +7,7 @@ and finally runs every guarding class green. Tests are never edited by this scri
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -348,8 +349,19 @@ for label, path, before, after, _, _ in MUTATIONS:
     if text.count(before) != 1 or after in text:
         raise RuntimeError(f"{label}: target must occur exactly once and its replacement must be absent")
 
+# Fast lane: TOUCHFRAME_PROOF_SCOPE names the files changed since the last full-proof baseline;
+# only mutations whose source or guarding test changed run. Every marker is still checked above.
+scope_file = os.environ.get("TOUCHFRAME_PROOF_SCOPE")
+scope = json.loads(Path(scope_file).read_text(encoding="utf-8")) if scope_file else None
+if scope is None:
+    selected = MUTATIONS
+else:
+    changed = set(scope["changed"])
+    selected = [m for m in MUTATIONS
+                if m[1].relative_to(root).as_posix() in changed or CLASSES[m[4]][1].relative_to(root).as_posix() in changed]
+
 results = {}
-for label, path, before, after, key, expected in MUTATIONS:
+for label, path, before, after, key, expected in selected:
     original = path.read_bytes()
     try:
         path.write_text(original.decode("utf-8").replace(before, after), encoding="utf-8")
@@ -366,9 +378,13 @@ if {str(path.relative_to(root)): digest(path) for path in sources} != source_has
     raise RuntimeError("production source changed during the proof")
 (out / "touchframe-design-source-proof.json").write_text(json.dumps({
     "passed": True,
+    "scope": {"mode": "full"} if scope is None else {
+        "mode": "fast", "baseline": scope["baseline"], "changed": sorted(scope["changed"]),
+        "selected": [m[0] for m in selected], "total": len(MUTATIONS)},
     "sourceSha256": source_hashes,
     "unchangedTestSha256": test_hashes,
     "negative": results,
     "restoredGreen": green,
 }, indent=2) + "\n")
-print(f"TouchFrame design source-only red ({len(results)}) / exact restore green verified")
+lane = "" if scope is None else f" of {len(MUTATIONS)}, fast lane"
+print(f"TouchFrame design source-only red ({len(results)}{lane}) / exact restore green verified")
