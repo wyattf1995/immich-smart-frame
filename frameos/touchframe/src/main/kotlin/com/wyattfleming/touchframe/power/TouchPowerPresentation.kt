@@ -104,7 +104,8 @@ object TouchPowerPresenter {
         val headline = when {
             price == null -> "Rates aren’t available"
             firstChange == null -> "${price.period.label} all day"
-            else -> "${price.period.label} until ${whenText(firstChange)}"
+            // The change is always within the day ahead; "tomorrow" stays on the next line so the headline fits.
+            else -> "${price.period.label} until ${hourTime(firstChange)}"
         }
         val next = when {
             nextPrice == null -> null

@@ -54,12 +54,13 @@ class TouchPowerRepository(
             val current = setup.energyEntities.mapNotNull { id -> states[id]?.takeIf { it.available }?.number?.let { id to it } }.toMap()
             val hours = TouchPowerHours.hourly(starts, hourReadings, current, nowMillis)
             if (setup.laundry.isNotEmpty() && nowMillis - laundryAtMillis !in 0 until LAUNDRY_REFRESH_MILLIS) optional {
-                laundryHistory = history(nowMillis - LAUNDRY_WINDOW_MILLIS, null, setup.laundry.map { it.entity }, headers, deadline)
+                laundryHistory = history(nowMillis - LAUNDRY_WINDOW_MILLIS, nowMillis, setup.laundry.map { it.entity }, headers, deadline)
                 laundryAtMillis = nowMillis
             }
+            // Both reads name their end: Home Assistant stops an open history read one day after its start.
             val solar = setup.solarEntity
             if (solar != null && nowMillis - solarAtMillis !in 0 until SOLAR_REFRESH_MILLIS) optional {
-                solarHistory = history(nowMillis - SOLAR_WINDOW_MILLIS, null, listOf(solar), headers, deadline)[solar].orEmpty()
+                solarHistory = history(nowMillis - SOLAR_WINDOW_MILLIS, nowMillis, listOf(solar), headers, deadline)[solar].orEmpty()
                 solarAtMillis = nowMillis
             }
             val schedule = TouchPowerParser.parseSchedule(states[setup.scheduleEntity])
