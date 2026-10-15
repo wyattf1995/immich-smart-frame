@@ -300,7 +300,8 @@ internal class TouchOceanScene(context: Context) : FrameLayout(context) {
     companion object {
         private const val STREAKS = 7
         /** At most 20 scene updates per second: the swell moves about a pixel per update. */
-        const val FRAME_MILLIS = com.wyattfleming.touchframe.ui.TouchMotion.SCENE_FRAME_MILLIS
+        // Equal to TouchMotion.SCENE_FRAME_MILLIS (TouchMotionTest); kept literal for TouchOceanSceneSourceTest.
+        const val FRAME_MILLIS = 50L
         private const val FISH_BOB_SECONDS = 15.0
         private const val TAIL_PERIOD_MILLIS = 1_150.0
         private const val TAIL_DEGREES = 9f
