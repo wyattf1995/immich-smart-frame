@@ -55,6 +55,7 @@ CLASSES = {
     "power-view": ("com.wyattfleming.touchframe.power.TouchPowerViewSourceTest", tests / "power/TouchPowerViewSourceTest.kt"),
     "motion": ("com.wyattfleming.touchframe.ui.TouchMotionTest", tests / "ui/TouchMotionTest.kt"),
     "media-tap": ("com.wyattfleming.touchframe.ui.TouchMediaTapTest", tests / "ui/TouchMediaTapTest.kt"),
+    "disclosure": ("com.wyattfleming.touchframe.ui.TouchDisclosureTest", tests / "ui/TouchDisclosureTest.kt"),
 }
 
 MUTATIONS = [
@@ -208,6 +209,18 @@ MUTATIONS = [
     ("edge-hint-interval-red", main / "ui/TouchShellLayout.kt",
      "nowMillis - lastShownMillis >= TAP_HINT_INTERVAL_MILLIS", "nowMillis - lastShownMillis >= 0L", "media-tap",
      {"the edge hint shows on a tap at most once every ten minutes"}),
+    ("edge-tap-opens-menu-red", main / "ui/TouchShellLayout.kt",
+     "if (downX <= edgeWidthPx) TapOutcome.OPEN_MENU", "if (downX < 0f) TapOutcome.OPEN_MENU", "disclosure",
+     {"a tap that starts on the edge handle opens the menu and a tap on the photo shows the hint"}),
+    ("sheet-focus-red", main / "ui/TouchHomeView.kt",
+     "AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null", "AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS, null", "disclosure",
+     {"opening a Home sheet moves TalkBack to the sheet's title"}),
+    ("weather-tap-pages-red", frame / "app/src/main/kotlin/com/wyattfleming/frameos/weather/WeatherTapAction.kt",
+     "pagesOnTap && pageCount > 1 -> NEXT_PAGE", "false -> NEXT_PAGE", "disclosure",
+     {"a tap on Weather signs in when that is needed, otherwise turns the hourly page"}),
+    ("companion-show-page-red", main / "ui/TouchDestination.kt",
+     "\"power\" -> TouchDestination.POWER", "\"power\" -> null", "disclosure",
+     {"the companion can open Ocean and Power by name and still only known pages"}),
 ]
 
 
