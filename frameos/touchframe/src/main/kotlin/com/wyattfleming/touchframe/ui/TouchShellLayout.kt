@@ -3,6 +3,7 @@ package com.wyattfleming.touchframe.ui
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
+import android.text.Layout
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -468,7 +469,11 @@ class TouchShellLayout(
         setTextSize(TypedValue.COMPLEX_UNIT_SP, if (large) 22f else if (stacked) 18f else 19f)
         includeFontPadding = false
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
-        maxLines = 1
+        // Its own wrap-content params: without them a stacked (vertical) tab hands the label MATCH_PARENT, which the
+        // API 23 frame squeezed to the icon's width and hyphenated ("Pho-", "Weat"). One line, never hyphenated.
+        layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
+        isSingleLine = true
+        hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
     }
 
     /** A full-height touch target whose visible chip is inset; pressing tints the chip, never moves it. */
