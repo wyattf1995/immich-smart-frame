@@ -65,6 +65,8 @@ data class WeatherCurrent(
     val dewPoint: Double? = null,
     val cloudCoverage: Double? = null,
     val uvIndex: Double? = null,
+    /** Unit Home Assistant converted forecast rain amounts to ("in" or "mm"). */
+    val precipitationUnit: String? = null,
 )
 
 data class WeatherForecast(
@@ -79,6 +81,9 @@ data class WeatherForecast(
     val humidity: Double? = null,
     val windSpeed: Double? = null,
     val windBearing: Double? = null,
+    /** Expected rain in [WeatherCurrent.precipitationUnit]; met.no sends this where it has no chance of rain. */
+    val precipitation: Double? = null,
+    val uvIndex: Double? = null,
 )
 
 data class WeatherSnapshot(

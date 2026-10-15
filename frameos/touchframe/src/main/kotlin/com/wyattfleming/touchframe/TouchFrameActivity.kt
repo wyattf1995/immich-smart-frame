@@ -21,7 +21,6 @@ import com.wyattfleming.frameos.config.FrameExperienceStore
 import com.wyattfleming.frameos.config.QuietHoursBrightnessPolicy
 import com.wyattfleming.frameos.control.*
 import com.wyattfleming.frameos.navigation.FrameMode
-import com.wyattfleming.frameos.ui.WeatherContentView
 import com.wyattfleming.frameos.weather.*
 import com.wyattfleming.frameos.web.FrameOAuthWebSurface
 import com.wyattfleming.touchframe.concurrent.TouchTaskScope
@@ -38,6 +37,11 @@ import com.wyattfleming.touchframe.media.TouchPhotoOfDay
 import com.wyattfleming.touchframe.ocean.*
 import com.wyattfleming.touchframe.power.*
 import com.wyattfleming.touchframe.ui.*
+import com.wyattfleming.touchframe.weather.TouchSunRepository
+import com.wyattfleming.touchframe.weather.TouchSunTimes
+import com.wyattfleming.touchframe.weather.TouchWeatherConnection
+import com.wyattfleming.touchframe.weather.TouchWeatherView
+import com.wyattfleming.touchframe.weather.TouchWeatherViewState
 import java.security.SecureRandom
 import java.time.Instant
 import java.time.ZoneId
@@ -86,13 +90,14 @@ class TouchFrameActivity : Activity() {
     private var calendarLastRefreshMillis = 0L
     private var oauth: HomeAssistantOAuthClient? = null
     private var weatherRemote: HomeAssistantWeatherRemote? = null
-    private var weatherSnapshot: WeatherSnapshot? = null
+    private var sunRepository: TouchSunRepository? = null
+    private var weatherState = TouchWeatherViewState(loading = true)
     private var lastWeatherAt: Long? = null
     private var model = TouchHomeModel("", "", emptyList(), null, TouchConnection.REFRESHING, null)
     private lateinit var root: FrameLayout
     private lateinit var shell: TouchShellLayout
     private lateinit var home: TouchHomeView
-    private lateinit var weather: WeatherContentView
+    private lateinit var weather: TouchWeatherView
     private lateinit var calendar: TouchCalendarView
     private lateinit var ocean: TouchOceanView
     private var oceanState = TouchOceanState()
@@ -136,6 +141,8 @@ class TouchFrameActivity : Activity() {
             if (destination == TouchDestination.OCEAN) ocean.tick()
             power.setNight(isNight)
             if (destination == TouchDestination.POWER) power.tick()
+            weather.setNight(isNight)
+            if (destination == TouchDestination.WEATHER) weather.tick()
             cameras?.setNight(isNight)
             main.postDelayed(this, 1_000L)
         }
@@ -197,11 +204,13 @@ class TouchFrameActivity : Activity() {
                 override fun add(list: TouchTodoListRef, summary: String) = addTodo(list, summary)
             }
         }
-        weather = WeatherContentView(this).apply {
-            locationLabel = configuration?.weatherLocationLabel
-            presentation = WeatherPresentation(emptyMessage = "Sign in to Home Assistant for weather", authenticationRequired = true)
-            setOnPrimaryActionListener(::signIn)
-            pagesOnTap = true
+        weatherState = TouchWeatherViewState(
+            loading = configuration != null,
+            connection = if (configuration == null) TouchWeatherConnection.NOT_SET_UP else TouchWeatherConnection.LIVE,
+            location = configuration?.weatherLocationLabel,
+        )
+        weather = TouchWeatherView(this, ::refreshWeather, ::signIn).apply {
+            render(weatherState)
             visibility = View.GONE
         }
         calendar = TouchCalendarView(this, ::requestCalendar, ::signIn).apply { visibility = View.GONE }
@@ -270,6 +279,7 @@ class TouchFrameActivity : Activity() {
             HomeAssistantWeatherEndpoint.fromDisplayUrl(config.homeAssistantUrl),
             UrlConnectionHomeAssistantTransport(), HomeAssistantWeatherParser(),
         )
+        sunRepository = TouchSunRepository(config.homeAssistantOrigin)
     }
 
     override fun onResume() {
@@ -544,36 +554,51 @@ class TouchFrameActivity : Activity() {
         }
     }
 
+    /**
+     * The forecast, then Home Assistant's sun times with what is left of the deadline (night bands and sunrise/sunset
+     * fall back to clock hours without them). A failed read keeps the last forecast on screen, marked as old.
+     */
     private fun refreshWeather() {
         val config = configuration ?: return
         val remote = weatherRemote ?: return
         val client = oauth ?: return
+        val sunReader = sunRepository
         if (!resumed || weatherInFlight || !networkAllowed()) return
         weatherInFlight = true
+        if (weatherState.snapshot == null && !weatherState.loading) {
+            weatherState = weatherState.copy(loading = true)
+            weather.render(weatherState)
+        }
         tasks.submit(worker) { isCurrent ->
             val deadline = WeatherRequestDeadline(timeoutMillis = 12_000L)
+            var sun: TouchSunTimes? = null
             val result = runCatching {
                 val token = synchronized(tokenLock) { if (isCurrent()) client.validAccessToken(deadline) else null }
                 if (token == null) WeatherRemoteResult.AuthRequired("Sign-in needed")
-                else if (isCurrent()) remote.fetch(config.weatherEntityId, token, deadline) else WeatherRemoteResult.Offline("Cancelled")
+                else if (!isCurrent()) WeatherRemoteResult.Offline("Cancelled")
+                else remote.fetch(config.weatherEntityId, token, deadline).also {
+                    if (it is WeatherRemoteResult.Success && isCurrent()) {
+                        sun = sunReader?.load(token, WeatherRequestDeadline(timeoutMillis = SUN_TIMEOUT_MILLIS))
+                    }
+                }
             }.getOrElse { WeatherRemoteResult.Offline("Unavailable") }
             main.post {
                 if (!isCurrent()) return@post
                 weatherInFlight = false
-                val load = when (result) {
-                    is WeatherRemoteResult.Success -> WeatherLoadResult.Fresh(result.snapshot).also {
-                        weatherSnapshot = result.snapshot
+                weatherState = when (result) {
+                    is WeatherRemoteResult.Success -> {
                         lastWeatherAt = System.currentTimeMillis()
+                        weatherState.copy(snapshot = result.snapshot, sun = sun ?: weatherState.sun,
+                            connection = TouchWeatherConnection.LIVE, loading = false)
                     }
-                    is WeatherRemoteResult.AuthRequired -> weatherSnapshot?.let { WeatherLoadResult.Stale(it, true) } ?: WeatherLoadResult.AuthRequired
-                    is WeatherRemoteResult.Offline -> weatherSnapshot?.let { WeatherLoadResult.Stale(it) } ?: WeatherLoadResult.Offline
+                    is WeatherRemoteResult.AuthRequired -> weatherState.copy(connection = TouchWeatherConnection.SIGN_IN_REQUIRED, loading = false)
+                    is WeatherRemoteResult.Offline -> weatherState.copy(connection = TouchWeatherConnection.OFFLINE, loading = false)
                 }
-                weather.presentation = WeatherPresenter(ZoneId.systemDefault(), Locale.getDefault()).present(load).let {
-                    if (load == WeatherLoadResult.AuthRequired) it.copy(authenticationRequired = true) else it
-                }
+                weather.render(weatherState)
                 if (destination == TouchDestination.WEATHER) {
                     main.removeCallbacks(refresh)
-                    main.postDelayed(refresh, 60_000L)
+                    // Home Assistant's forecast changes about hourly; a failed read tries again sooner.
+                    main.postDelayed(refresh, if (result is WeatherRemoteResult.Success) WEATHER_REFRESH_MILLIS else 60_000L)
                 }
             }
         }
@@ -1147,6 +1172,8 @@ class TouchFrameActivity : Activity() {
         const val OCEAN_TIMEOUT_MILLIS = 15_000
         const val POWER_REFRESH_MILLIS = 60_000L
         const val POWER_RETRY_MILLIS = 30_000L
+        const val WEATHER_REFRESH_MILLIS = 10 * 60_000L
+        const val SUN_TIMEOUT_MILLIS = 4_000L
         const val EDGE_HINT_LIMIT = 3
         const val LAN_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
         const val LAN_REQUEST = 101
