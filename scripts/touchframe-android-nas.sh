@@ -106,7 +106,7 @@ write_source_inventory "$manifest"
 
 # Fail fast on release compilation/lint before the source-mutation matrix.
 # The final source-inventory comparison still verifies exact byte restoration.
-run_step touchframe-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:lintRelease"
+run_step touchframe-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:lintRelease :frame-ui:lintRelease"
 # Catch ordinary shared and Touch regressions before the costly mutation matrix.
 # Run them again after the focused proof because its targeted Gradle invocations
 # replace JUnit XML inventory used by the final retained summary.
