@@ -5,6 +5,7 @@ import com.wyattfleming.frameos.control.FrameRemoteCommand
 import com.wyattfleming.frameos.navigation.FrameMode
 import com.wyattfleming.frameos.weather.WeatherTapAction
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -46,10 +47,11 @@ class TouchDisclosureTest {
     }
 
     @Test
-    fun `opening a Home sheet moves TalkBack to the sheet's title`() {
-        val open = body(home, "private fun openSheet(next: Sheet)")
-        assertTrue(open.contains("ACTION_ACCESSIBILITY_FOCUS"))
+    fun `opening a Home sheet tells TalkBack which sheet opened without moving its focus`() {
+        assertTrue(body(home, "private fun refillSlots(").contains("layer.accessibilityPaneTitle = sheetTitle?.text?.takeIf { sheet != Sheet.NONE }"))
+        assertTrue("older frames hear the title instead", body(home, "private fun openSheet(next: Sheet)").contains("announceForAccessibility"))
         assertTrue(body(home, "private fun sheetFrame(").contains("sheetTitle = it"))
+        assertFalse("Android forbids forcing accessibility focus", home.contains("ACTION_ACCESSIBILITY_FOCUS"))
     }
 
     @Test
