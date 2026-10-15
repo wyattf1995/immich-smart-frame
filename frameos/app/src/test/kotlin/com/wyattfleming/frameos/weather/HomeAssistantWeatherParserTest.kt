@@ -96,8 +96,8 @@ class HomeAssistantWeatherParserTest {
         )
 
         assertEquals("in", current.precipitationUnit)
-        assertEquals(0.04, requireNotNull(hours[0].precipitation), 0.0)
-        assertEquals(1.2, requireNotNull(hours[0].uvIndex), 0.0)
+        assertEquals(0.04, hours[0].precipitation)
+        assertEquals(1.2, hours[0].uvIndex)
         assertNull("met.no sends no chance of rain here", hours[0].precipitationProbability)
         assertNull(hours[1].precipitation)
         assertNull(hours[1].uvIndex)

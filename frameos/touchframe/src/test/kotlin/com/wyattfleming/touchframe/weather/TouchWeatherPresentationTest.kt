@@ -105,7 +105,7 @@ class TouchWeatherPresentationTest {
 
         assertEquals("Light rain from 3 PM to 4 PM", light.rain)
         assertEquals("Rain from 2 PM to 4 PM, about 3 mm", metric.rain)
-        assertEquals("3 mm", metric.rainRuns.single().label)
+        assertEquals(listOf("3 mm"), metric.rainRuns.map { it.label })
     }
 
     @Test
@@ -113,8 +113,8 @@ class TouchWeatherPresentationTest {
         val screen = present(snapshot(current = current(condition = WeatherCondition.RAINY), hourly = hourly(at("2026-10-15T14:00"), List(23) { 64 },
             rain = listOf(0.04, 0.02) + List(21) { 0.0 })), afternoon)!!
 
-        assertEquals(0 to 3, screen.rainRuns.single().start to screen.rainRuns.single().end)
-        assertEquals("0.06 in", screen.rainRuns.single().label)
+        assertEquals(listOf(0 to 3), screen.rainRuns.map { it.start to it.end })
+        assertEquals(listOf("0.06 in"), screen.rainRuns.map { it.label })
         assertEquals("Rain until 4 PM, about 0.06 in", screen.rain)
     }
 

@@ -44,8 +44,8 @@ class WeatherSnapshotCodecTest {
         val decoded = codec.decode("weather.home", codec.encode("weather.home", entry))
 
         assertEquals("in", decoded?.snapshot?.current?.precipitationUnit)
-        assertEquals(0.04, requireNotNull(decoded?.snapshot?.hourly?.single()?.precipitation), 0.0)
-        assertEquals(1.2, requireNotNull(decoded?.snapshot?.hourly?.single()?.uvIndex), 0.0)
+        assertEquals(listOf(0.04), decoded?.snapshot?.hourly?.map { it.precipitation })
+        assertEquals(listOf(1.2), decoded?.snapshot?.hourly?.map { it.uvIndex })
     }
 
     @Test
