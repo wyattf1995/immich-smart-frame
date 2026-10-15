@@ -17,6 +17,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 MODES = ('photos', 'home', 'weather', 'birds', 'cameras', 'calendar')
+# FrameOS Touch pages: a show_mode command may name them, but they never join modeOrder.
+PAGES = ('ocean', 'power')
 DEFAULTS = {'modeOrder': list(MODES), 'quietHours': {'enabled': False, 'start': '22:00', 'end': '07:00', 'brightness': 10}, 'idleReturnSeconds': 300, 'profile': 'balanced', 'hiddenHomeSuspend': False, 'eventOverlays': False}
 COMMANDS = {'show_mode', 'photo_next', 'photo_previous', 'photo_pause', 'photo_resume', 'photo_hold', 'set_profile'}
 TERMINAL = {'applied', 'dispatched', 'rejected', 'failed', 'expired'}
@@ -285,7 +287,7 @@ class FrameStore:
         kind = payload['type']
         fields = {'type'} | ({'mode'} if kind=='show_mode' else {'profile'} if kind=='set_profile' else {'durationSeconds'} if kind=='photo_hold' else set())
         if set(payload) != fields: raise FrameError('Unexpected command fields')
-        if kind=='show_mode' and payload['mode'] not in MODES: raise FrameError('Unknown view')
+        if kind=='show_mode' and payload['mode'] not in MODES + PAGES: raise FrameError('Unknown view')
         if kind=='set_profile' and payload['profile'] not in self.profiles: raise FrameError('Unknown profile')
         if kind=='photo_hold' and not integer(payload['durationSeconds'],15,3600): raise FrameError('Invalid hold duration')
         self._maintain()
