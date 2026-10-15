@@ -21,6 +21,23 @@ class TouchProvisionContractTest {
     }
 
     @Test
+    fun `a provisioned frame can change its weather location label and nothing else`() {
+        // Provisioning is write-once, so the 1920x1080 frame could never gain the label the 1280x800 frame shows.
+        val current = requireNotNull(TouchProvisionContract.parse(
+            photosUrl = "https://photos.example/frame",
+            homeAssistantUrl = "https://ha.example",
+            weatherEntityId = "weather.home", artUrl = null,
+            climateEntityId = null, calendarEntityIds = null, cameraEntityIds = null,
+        ))
+        assertEquals(current.copy(weatherLocationLabel = "Laguna Beach, CA"), TouchProvisionContract.withWeatherLocation(current, " Laguna Beach,\n  CA "))
+        val cleared = TouchProvisionContract.withWeatherLocation(current.copy(weatherLocationLabel = "Old place"), "  ")
+        assertNotNull(cleared)
+        assertNull("a blank label clears it", cleared?.weatherLocationLabel)
+        assertNull("over-long input is refused", TouchProvisionContract.withWeatherLocation(current, "x".repeat(257)))
+        assertNull("a missing label is refused rather than read as a clear", TouchProvisionContract.withWeatherLocation(current, null))
+    }
+
+    @Test
     fun `valid bounded non secret inputs create an initial configuration`() {
         val configuration = TouchProvisionContract.parse(
             photosUrl = "https://photos.example/frame",

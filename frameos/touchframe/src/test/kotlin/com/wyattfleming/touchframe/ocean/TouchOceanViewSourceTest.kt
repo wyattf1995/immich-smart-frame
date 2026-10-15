@@ -80,6 +80,13 @@ class TouchOceanViewSourceTest {
     }
 
     @Test
+    fun `the water temperature reads in degrees like every other temperature on the frame`() {
+        assertTrue(source.contains("val degrees = kit.text(\"°\", scale.clock * 0.42f, TouchFonts.Face.DISPLAY, ink)"))
+        assertFalse(source.contains("\"°F\""))
+        assertTrue("TalkBack still says the unit", source.contains("contentDescription = \"Water temperature \$water degrees Fahrenheit\""))
+    }
+
+    @Test
     fun `the degree mark hangs from the top of the numeral instead of sitting on its baseline`() {
         val number = source.substring(source.indexOf("val number = kit.text(water"), source.indexOf("\"Water temperature\""))
         assertTrue(number.contains("isBaselineAligned = false"))

@@ -44,6 +44,12 @@ class TouchOceanSceneSourceTest {
     }
 
     @Test
+    fun `light shafts stay faint enough for the text over them to read`() {
+        // Measured 10/15 on the 1920x1080 frame: at 0x24 white the shaft's brightest pixel left the muted labels at 3.9:1.
+        assertTrue(source.contains("paint.shader = LinearGradient(0f, 0f, right, bottom, 0x14FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP)"))
+    }
+
+    @Test
     fun `the swell bands are cached textures`() {
         assertTrue(source.contains("listOf(back, middle, front).forEach { it.setLayerType(LAYER_TYPE_HARDWARE, null) }"))
     }
