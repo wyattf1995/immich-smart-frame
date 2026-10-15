@@ -110,7 +110,7 @@ class TouchCalendarView(
             state.connection == TouchCalendarConnection.OFFLINE -> banner(kit, R.drawable.ic_touch_offline,
                 state.updatedEpochMillis?.let { "Can’t reach Home Assistant. Showing the schedule saved at ${time(it)}." }
                     ?: "Can’t reach Home Assistant. Showing the last available schedule.") { refresh() }
-            state.connection == TouchCalendarConnection.CONNECTED && state.partial -> banner(kit, R.drawable.ic_touch_alert,
+            state.connection == TouchCalendarConnection.CONNECTED && state.partial -> banner(kit, com.wyattfleming.frameui.R.drawable.ic_touch_alert,
                 "Some calendars couldn’t be refreshed. Their events may be missing.") { refresh() }
         }
         val skeleton = state.loading && noEvents
