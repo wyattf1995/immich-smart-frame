@@ -129,9 +129,10 @@ class TouchDestinationOrderTest {
 
     @Test
     fun `Power follows Ocean, or Weather without Ocean, when a remote order does not name it`() {
+        // withPower alone: Ocean's own placement has its own case and revert proof.
         assertEquals(
             listOf(TouchDestination.HOME, TouchDestination.WEATHER, TouchDestination.OCEAN, TouchDestination.POWER, TouchDestination.CALENDAR),
-            TouchDestinationOrder.withLocal(listOf(TouchDestination.HOME, TouchDestination.WEATHER, TouchDestination.CALENDAR)),
+            TouchDestinationOrder.withPower(listOf(TouchDestination.HOME, TouchDestination.WEATHER, TouchDestination.OCEAN, TouchDestination.CALENDAR)),
         )
         assertEquals(
             listOf(TouchDestination.HOME, TouchDestination.WEATHER, TouchDestination.POWER, TouchDestination.CAMERAS),
