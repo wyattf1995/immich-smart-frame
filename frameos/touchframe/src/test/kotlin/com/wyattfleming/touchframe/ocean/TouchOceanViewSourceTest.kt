@@ -12,7 +12,7 @@ import java.io.File
  * its top, and let a two-line summary run into the tide heading that was pinned to the bottom of the screen.
  */
 class TouchOceanViewSourceTest {
-    private val source = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/ocean/TouchOceanView.kt").readText()
+    private val source = File("frame-ui/src/main/kotlin/com/wyattfleming/touchframe/ocean/TouchOceanView.kt").readText()
 
     /** The argument lists of every `addView(kit.text(...) ...)` call, found by matching brackets outside strings. */
     private fun textAdds(): List<List<String>> {

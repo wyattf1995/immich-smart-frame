@@ -7,7 +7,7 @@ import org.junit.Test
 import java.io.File
 
 class TouchSegmentedWidthTest {
-    private val source = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchTheme.kt").readText()
+    private val source = File("frame-ui/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchTheme.kt").readText()
 
     private fun segmentedBody(): String {
         val from = source.indexOf("fun <T> segmented(")

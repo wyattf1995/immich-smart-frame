@@ -12,7 +12,7 @@ import java.io.File
  * Touch shows this page rather than the shared Lenovo canvas.
  */
 class TouchWeatherViewSourceTest {
-    private val source = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/weather/TouchWeatherView.kt").readText()
+    private val source = File("frame-ui/src/main/kotlin/com/wyattfleming/touchframe/weather/TouchWeatherView.kt").readText()
     private val activity = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/TouchFrameActivity.kt").readText()
 
     /** The bodies of every `onDraw`, found by matching braces. */

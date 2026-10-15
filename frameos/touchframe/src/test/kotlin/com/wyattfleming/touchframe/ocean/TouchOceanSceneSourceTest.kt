@@ -10,7 +10,7 @@ import java.io.File
  * 15 fps with 97% janky frames. The ocean scene must only move cached drawings, at a bounded rate, while visible.
  */
 class TouchOceanSceneSourceTest {
-    private val source = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/ocean/TouchOceanScene.kt").readText()
+    private val source = File("frame-ui/src/main/kotlin/com/wyattfleming/touchframe/ocean/TouchOceanScene.kt").readText()
 
     private fun body(signature: String, until: String): String {
         val from = source.indexOf(signature)

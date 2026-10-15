@@ -6,8 +6,10 @@ import org.junit.Test
 import java.io.File
 
 class TouchIconPathTest {
-    private val icons = File("touchframe/src/main/res/drawable").listFiles { file -> file.name.startsWith("ic_touch_") && file.name.endsWith(".xml") }
-        .orEmpty().sortedBy { it.name }
+    // Touch's own icons plus the shared screens' icons and weather glyphs in :frame-ui.
+    private val icons = listOf("touchframe/src/main/res/drawable", "frame-ui/src/main/res/drawable").flatMap { dir ->
+        File(dir).listFiles { file -> (file.name.startsWith("ic_touch_") || file.name.startsWith("ic_wx_")) && file.name.endsWith(".xml") }.orEmpty().toList()
+    }.sortedBy { it.name }
     private val number = Regex("""-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?""")
 
     @Test
