@@ -16,6 +16,11 @@ class FakeSocket {
 }
 class FakePeer {
   static instances = [];
+  static certificateRequests = [];
+  static async generateCertificate(options) {
+    FakePeer.certificateRequests.push(options);
+    return { kind: "fake-ecdsa-certificate" };
+  }
   constructor(config) { this.config = config; this.localDescription = { type: "offer", sdp: "offer-sdp" }; FakePeer.instances.push(this); }
   createDataChannel(name) { this.dataChannel = name; }
   addTransceiver(kind, options) { (this.transceivers ??= []).push({ kind, options }); }
@@ -62,11 +67,21 @@ const configId = socket.sent.at(-1).id;
 socket.emit({ type: "result", id: configId, success: true, result: { configuration: { iceServers: [{ urls: "stun:example" }] }, dataChannel: "nest" } });
 await new Promise(resolve => setImmediate(resolve));
 const peer = FakePeer.instances[0];
+assert.equal(FakePeer.certificateRequests.length, 1, "a missing certificate generates exactly once");
+assert.equal(FakePeer.certificateRequests[0].name, "ECDSA", "a missing certificate uses the explicit Gecko-default algorithm");
+assert.equal(FakePeer.certificateRequests[0].namedCurve, "P-256", "a missing certificate uses the explicit Gecko-default P-256 curve");
+assert.equal(peer.config.certificates[0].kind, "fake-ecdsa-certificate", "the generated certificate is supplied only to this peer configuration");
 assert.equal(peer.dataChannel, "nest");
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "certificate-started"), true, "certificate generation begins with a bounded milestone");
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "certificate-ready"), true, "certificate generation completion emits a bounded milestone");
 assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "config"), true, "the client-config request emits a bounded milestone");
 assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "config-response"), true, "a resolved client configuration emits a bounded milestone");
 assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "peer-created"), true, "peer construction emits a bounded milestone");
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "peer-prepared"), true, "synchronous peer setup emits a bounded milestone");
 assert.deepEqual(peer.transceivers.map(({ kind }) => kind), ["audio", "video"]);
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "audio-transceiver-added"), true, "audio transceiver completion emits a bounded milestone");
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "video-transceiver-added"), true, "video transceiver completion emits a bounded milestone");
+assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "create-offer-started"), true, "createOffer entry emits a bounded milestone");
 assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "offer-created"), true, "offer creation emits a bounded milestone");
 assert.equal(nativeCalls.some(value => value.type === "live-status" && value.state === "local-description"), true, "local description assignment emits a bounded milestone");
 const offer = socket.sent.find(value => value.type === "camera/webrtc/offer");
@@ -111,6 +126,39 @@ delayed.close();
 resolveNative({ accepted: true, entity_id: "camera.entryway", origin: "wss://ha.example/api/websocket", access_token: "secret" });
 await delayedStart;
 assert.equal(FakeSocket.instances.length, beforeDelayedSocket, "a revoked native response cannot open a socket");
+
+const suppliedCertificate = { kind: "provided-certificate" };
+const suppliedConfiguration = { iceServers: [{ urls: "stun:provided" }], certificates: [suppliedCertificate] };
+class SuppliedCertificatePeer extends FakePeer {
+  static generateCalls = 0;
+  static async generateCertificate() { SuppliedCertificatePeer.generateCalls += 1; throw new Error("must not generate when supplied"); }
+}
+const supplied = new context.FrameLiveCamera.LiveCameraSession({
+  browserApi: browser, WebSocketImpl: FakeSocket, RTCPeerConnectionImpl: SuppliedCertificatePeer,
+  MediaStreamImpl: context.MediaStream, RTCIceCandidateImpl: context.RTCIceCandidate,
+  video, locationHref: context.location.href, timers: context,
+});
+await supplied.configurePeer({ configuration: suppliedConfiguration });
+assert.equal(SuppliedCertificatePeer.generateCalls, 0, "a supplied certificate is preserved without generation");
+assert.equal(FakePeer.instances.at(-1).config, suppliedConfiguration, "the supplied peer configuration remains intact");
+supplied.close();
+
+let resolveLateCertificate;
+class PendingCertificatePeer extends FakePeer {
+  static async generateCertificate() { return new Promise(resolve => { resolveLateCertificate = resolve; }); }
+}
+const late = new context.FrameLiveCamera.LiveCameraSession({
+  browserApi: browser, WebSocketImpl: FakeSocket, RTCPeerConnectionImpl: PendingCertificatePeer,
+  MediaStreamImpl: context.MediaStream, RTCIceCandidateImpl: context.RTCIceCandidate,
+  video, locationHref: context.location.href, timers: context,
+});
+const peerCountBeforeLateCertificate = FakePeer.instances.length;
+const pendingConfiguration = late.configurePeer({ configuration: { iceServers: [{ urls: "stun:late" }] } });
+await new Promise(resolve => setImmediate(resolve));
+late.close();
+resolveLateCertificate({ kind: "late-certificate" });
+await pendingConfiguration;
+assert.equal(FakePeer.instances.length, peerCountBeforeLateCertificate, "a certificate resolving after close cannot create a peer");
 
 // Window timer methods may require their Window receiver. The extension bootstrap
 // must not detach them into a plain object before LiveCameraSession invokes them.
@@ -162,4 +210,30 @@ assert.deepEqual(receiverStatuses, ["native-grant"], "a timer receiver failure i
 receiverContext.FrameLiveCamera.active.close();
 assert.equal(receiverSocket?.closed, true, "closing live video closes its signaling socket");
 assert.equal(receiverClears, 2, "closing live video clears both deadlines through the Window receiver");
+// Certificate generation occurs after the authenticated client-config response. Its
+// failure remains an offer-stage failure, matching Gecko's former implicit path.
+const certificateFailureStatuses = [];
+class RejectingCertificatePeer extends FakePeer {
+  static async generateCertificate() { throw new Error("certificate unavailable"); }
+}
+const certificateFailure = new context.FrameLiveCamera.LiveCameraSession({
+  browserApi: { runtime: { sendNativeMessage: async (_app, value) => {
+    if (value.type === "live-status") certificateFailureStatuses.push(value.state);
+    return { accepted: true };
+  } } },
+  WebSocketImpl: FakeSocket, RTCPeerConnectionImpl: RejectingCertificatePeer,
+  MediaStreamImpl: context.MediaStream, RTCIceCandidateImpl: context.RTCIceCandidate,
+  video, locationHref: context.location.href, timers: context,
+});
+certificateFailure.capability = "abcdefghijklmnop";
+certificateFailure.entity = "camera.entryway";
+certificateFailure.request = async command => {
+  assert.equal(command.type, "camera/webrtc/get_client_config", "the rejection follows the authenticated client-config request");
+  return { configuration: { iceServers: [{ urls: "stun:certificate-failure" }] } };
+};
+await certificateFailure.onMessage({ data: JSON.stringify({ type: "auth_ok" }) }, () => "", () => {});
+assert.equal(certificateFailure.closed, true, "certificate rejection tears down the live session");
+assert.equal(certificateFailureStatuses.includes("failed-offer"), true, "certificate rejection remains an offer-stage failure");
+assert.equal(certificateFailureStatuses.includes("failed-config"), false, "certificate rejection is not mislabeled as a client-config failure");
+
 console.log("touch live camera protocol: PASS");
