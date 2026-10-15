@@ -2,9 +2,11 @@ package com.wyattfleming.frameos
 
 import android.app.Activity
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.pm.PackageManager
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.BitmapFactory
 import android.graphics.Bitmap
@@ -14,6 +16,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.DisplayMetrics
+import android.view.ContextThemeWrapper
 import android.view.GestureDetector
 import android.view.InputDevice
 import android.view.Gravity
@@ -85,6 +89,7 @@ import com.wyattfleming.frameos.ui.FrameHomeBackNavigation
 import com.wyattfleming.frameos.ui.TouchNavigationRail
 import com.wyattfleming.frameos.ui.AndroidFrameExternalSettingsReturnAdapter
 import com.wyattfleming.frameos.ui.FrameExternalSettingsReturnController
+import com.wyattfleming.frameos.ui.NativeSceneDensity
 import com.wyattfleming.frameos.ui.dp
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherEndpoint
 import com.wyattfleming.frameos.weather.HomeAssistantWeatherParser
@@ -718,13 +723,14 @@ class MainActivity : Activity() {
                 handled
             }
         }
-        weatherContent = TouchWeatherView(this, ::refreshWeather) {
+        val scenes = nativeSceneContext()
+        weatherContent = TouchWeatherView(scenes, ::refreshWeather) {
             if (state.mode == FrameMode.WEATHER && weatherNeedsAuthentication) dispatch(FrameIntent.PrimaryAction)
         }.apply {
             visibility = View.GONE
             render(weatherState)
         }
-        oceanContent = TouchOceanView(this) { refreshOcean(force = true) }.apply { visibility = View.GONE }
+        oceanContent = TouchOceanView(scenes) { refreshOcean(force = true) }.apply { visibility = View.GONE }
         offlinePhoto = ImageView(this).apply {
             visibility = View.GONE
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -1368,6 +1374,20 @@ class MainActivity : Activity() {
             weatherNeedsAuthentication = false
             showWeatherStatus("Weather needs a secure Home Assistant URL", TouchWeatherConnection.NOT_SET_UP)
         }
+    }
+
+    /** The shared screens' context: the activity, at the density that gives them their designed height (see [NativeSceneDensity]). */
+    private fun nativeSceneContext(): Context {
+        val configuration = resources.configuration
+        val heightPx = configuration.screenHeightDp * configuration.densityDpi / DisplayMetrics.DENSITY_DEFAULT
+        val dpi = NativeSceneDensity.dpiFor(heightPx, configuration.screenHeightDp) ?: return this
+        val scaled = Configuration(configuration).apply {
+            screenWidthDp = configuration.screenWidthDp * configuration.densityDpi / dpi
+            screenHeightDp = configuration.screenHeightDp * configuration.densityDpi / dpi
+            smallestScreenWidthDp = configuration.smallestScreenWidthDp * configuration.densityDpi / dpi
+            densityDpi = dpi
+        }
+        return ContextThemeWrapper(this, R.style.Theme_FrameOS).apply { applyOverrideConfiguration(scaled) }
     }
 
     private fun refreshWeather() {

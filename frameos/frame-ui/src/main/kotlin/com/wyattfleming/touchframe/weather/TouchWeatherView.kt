@@ -413,7 +413,8 @@ class TouchWeatherRidgeView(context: Context) : View(context) {
         val rainRow = hourRow - hourText.textSize - dp(pick(24f, 30f))
         base = (if (data.rainRuns.isNotEmpty()) rainRow - rainText.textSize - dp(8f) else rainRow + dp(4f)) - dp(pick(4f, 8f))
         top = dp(pick(24f, 34f)) + icon + tempText.textSize + dp(14f)
-        val plotBottom = base - dp(pick(52f, 70f))
+        // Short of room the curve flattens rather than its bottom rising above its top and drawing it upside down.
+        val plotBottom = maxOf(base - dp(pick(52f, 70f)), top + dp(MIN_PLOT_DP))
         fun y(value: Int) = top + (1f - ((value - data.floor) / data.range).toFloat()) * (plotBottom - top)
 
         xs = FloatArray(hours.size) { pad + (it + 0.5f) * colW }
@@ -515,6 +516,10 @@ class TouchWeatherRidgeView(context: Context) : View(context) {
         rainBars.forEach { canvas.drawRoundRect(it, it.height() / 2f, it.height() / 2f, fillPaint) }
         fillPaint.alpha = 255
         rainLabels.forEach { (x, y, label) -> canvas.drawText(label, x, y, rainText) }
+    }
+
+    private companion object {
+        const val MIN_PLOT_DP = 24f
     }
 }
 
