@@ -232,7 +232,7 @@ class TouchWeatherView(
         }
         val pad = kit.dp(scale.pad)
         empty.setPadding(pad, pad, pad, pad)
-        empty.addView(kit.text(title, scale.headline, TouchFonts.Face.TEXT_MEDIUM, colors.ink), LinearLayout.LayoutParams(WRAP, WRAP))
+        empty.addView(kit.text(state.message ?: title, scale.headline, TouchFonts.Face.TEXT_MEDIUM, colors.ink), LinearLayout.LayoutParams(WRAP, WRAP))
         body?.let { empty.addView(kit.text(it, scale.body, color = colors.muted), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(10) }) }
         action?.let { (label, run) ->
             empty.addView(kit.button(label, TouchKit.Emphasis.SECONDARY) { run() }, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(24) })

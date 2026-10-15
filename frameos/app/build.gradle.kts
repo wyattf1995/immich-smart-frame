@@ -47,9 +47,10 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-        // The NIO flavor covers the existing java.time and java.nio.file uses
-        // on the API23 legacy target. Modern keeps its current platform behavior.
-        isCoreLibraryDesugaringEnabled = legacyArmv7
+        // The NIO flavor covers the existing java.time and java.nio.file uses on the API23 legacy target. :frame-ui
+        // (the shared Weather and Ocean screens, minSdk 23) requires its consumers to desugar too; at the modern
+        // target's minSdk 29 these APIs are native, so D8 rewrites nothing and platform behaviour is unchanged.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     testOptions {
@@ -78,10 +79,11 @@ dependencies {
             "org.mozilla.geckoview:geckoview-arm64-v8a:154.0.20260814215756"
         },
     )
-    if (legacyArmv7) {
-        // Android's documented Java 11 NIO desugaring artifact for API23.
-        coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.1")
-    }
+    // Android's documented Java 11 NIO desugaring artifact (API23 legacy, and :frame-ui's requirement).
+    //noinspection GradleDependency
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.1")
+    // FrameOS's shared native screens: the new Weather page and Ocean.
+    implementation(project(":frame-ui"))
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20260814")

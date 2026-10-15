@@ -82,7 +82,6 @@ import com.wyattfleming.frameos.security.FrameExternalControlPolicy
 import com.wyattfleming.frameos.diagnostics.FrameDiagnosticStore
 import com.wyattfleming.frameos.ui.FrameTouchInputLayout
 import com.wyattfleming.frameos.ui.FrameHomeBackNavigation
-import com.wyattfleming.frameos.ui.WeatherContentView
 import com.wyattfleming.frameos.ui.TouchNavigationRail
 import com.wyattfleming.frameos.ui.AndroidFrameExternalSettingsReturnAdapter
 import com.wyattfleming.frameos.ui.FrameExternalSettingsReturnController
@@ -94,7 +93,8 @@ import com.wyattfleming.frameos.weather.CancellableHomeAssistantHttpTransport
 import com.wyattfleming.frameos.weather.SharedPreferencesWeatherCache
 import com.wyattfleming.frameos.weather.UrlConnectionHomeAssistantTransport
 import com.wyattfleming.frameos.weather.WeatherCoordinator
-import com.wyattfleming.frameos.weather.WeatherPresentation
+import com.wyattfleming.frameos.weather.WeatherDisplayLoad
+import com.wyattfleming.frameos.weather.WeatherLoadResult
 import com.wyattfleming.frameos.weather.WeatherPresenter
 import com.wyattfleming.frameos.weather.WeatherRefreshPolicy
 import com.wyattfleming.frameos.weather.WeatherRepository
@@ -106,6 +106,17 @@ import com.wyattfleming.frameos.web.FrameWebSlot
 import com.wyattfleming.frameos.web.FrameWebSurface
 import com.wyattfleming.frameos.web.FrameOAuthWebSurface
 import org.mozilla.geckoview.GeckoView
+import com.wyattfleming.touchframe.ocean.TouchOceanConnection
+import com.wyattfleming.touchframe.ocean.TouchOceanLoad
+import com.wyattfleming.touchframe.ocean.TouchOceanRepository
+import com.wyattfleming.touchframe.ocean.TouchOceanState
+import com.wyattfleming.touchframe.ocean.TouchOceanView
+import com.wyattfleming.touchframe.ui.TouchDayNight
+import com.wyattfleming.touchframe.weather.TouchSunRepository
+import com.wyattfleming.touchframe.weather.TouchSunTimes
+import com.wyattfleming.touchframe.weather.TouchWeatherConnection
+import com.wyattfleming.touchframe.weather.TouchWeatherView
+import com.wyattfleming.touchframe.weather.TouchWeatherViewState
 import java.net.URI
 import java.security.SecureRandom
 import java.time.ZoneId
@@ -142,7 +153,14 @@ class MainActivity : Activity() {
 
     private lateinit var root: FrameTouchInputLayout
     private lateinit var settingsReturnController: FrameExternalSettingsReturnController
-    private lateinit var weatherContent: WeatherContentView
+    private lateinit var weatherContent: TouchWeatherView
+    private lateinit var oceanContent: TouchOceanView
+    private var weatherState = TouchWeatherViewState(loading = true)
+    private var sunRepository: TouchSunRepository? = null
+    private var oceanState = TouchOceanState()
+    private var oceanInFlight = false
+    private var oceanFuture: Future<*>? = null
+    private val oceanRepository by lazy { TouchOceanRepository(java.io.File(filesDir, "frame-ocean/conditions.json")) }
     private lateinit var hud: LinearLayout
     private lateinit var hudLabel: TextView
     private lateinit var hudPosition: TextView
@@ -261,6 +279,23 @@ class MainActivity : Activity() {
     private val refreshPhotoFreshness = Runnable { checkPhotoFreshness() }
     private val rotateOfflinePhoto = Runnable { if (!sharedPlaybackConfigured()) showOfflinePhoto(step = 1) }
     private val refreshVisibleWeather = Runnable { refreshWeather() }
+    private val refreshVisibleOcean = Runnable { refreshOcean() }
+    /** Night palette for the native Weather and Ocean pages, and their "Now"; each is a no-op when nothing changed. */
+    private val refreshNativeScenes = object : Runnable {
+        override fun run() {
+            if (!activityResumed) return
+            val night = TouchDayNight.isNight(LocalTime.now().hour)
+            if (::weatherContent.isInitialized) {
+                weatherContent.setNight(night)
+                if (state.mode == FrameMode.WEATHER) weatherContent.tick()
+            }
+            if (::oceanContent.isInitialized) {
+                oceanContent.setNight(night)
+                if (state.mode == FrameMode.OCEAN) oceanContent.tick()
+            }
+            handler.postDelayed(this, NATIVE_SCENE_TICK_MILLIS)
+        }
+    }
     private val preloadCalendar = Runnable {
         if (!FrameWebCompositionPolicy.forMode(state.mode).warmCalendarInBackground || !activityResumed) {
             return@Runnable
@@ -391,6 +426,8 @@ class MainActivity : Activity() {
         render(state, announce = false)
         handler.removeCallbacks(refreshNavigationRailClock)
         refreshNavigationRailClock.run()
+        handler.removeCallbacks(refreshNativeScenes)
+        refreshNativeScenes.run()
         if (configuration == null) confirmBootRecoveryAfterNextDraw()
         scheduleCompanionPoll()
         if (pendingAuthorizationCode != null && !weatherAuthorizationInProgress) {
@@ -422,6 +459,9 @@ class MainActivity : Activity() {
         handler.removeCallbacks(pollCompanion)
         handler.removeCallbacks(refreshQuietHours)
         handler.removeCallbacks(refreshNavigationRailClock)
+        handler.removeCallbacks(refreshNativeScenes)
+        handler.removeCallbacks(refreshVisibleOcean)
+        if (::oceanContent.isInitialized) oceanContent.setActive(false)
         cancelPhotoWork()
         hideOfflinePhoto()
         photoBridge.setCaptureEnabled(false, true)
@@ -445,6 +485,7 @@ class MainActivity : Activity() {
         closeWeatherAuthorization(consumeState = true)
         invalidateCompanionPoll()
         cancelHomeAssistantWork(stage = "activity_destroy", clearPendingAuthorizationCode = true)
+        oceanFuture?.cancel(true)
         weatherWorkerExecutor.shutdownNow()
         companionWorkerExecutor.shutdownNow()
         companionReserveExecutor.shutdownNow()
@@ -490,13 +531,6 @@ class MainActivity : Activity() {
                     if (movePhoto(action.forward)) {
                         showHud(if (action.forward) "Next photo" else "Previous photo")
                     }
-                    scheduleIdleReset()
-                }
-                true
-            }
-            is ContextualFrameAction.WeatherPageStep -> {
-                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    weatherContent.moveHourlyPage(action.forward)?.let(::showHud)
                     scheduleIdleReset()
                 }
                 true
@@ -684,14 +718,13 @@ class MainActivity : Activity() {
                 handled
             }
         }
-        weatherContent = WeatherContentView(this).apply {
+        weatherContent = TouchWeatherView(this, ::refreshWeather) {
+            if (state.mode == FrameMode.WEATHER && weatherNeedsAuthentication) dispatch(FrameIntent.PrimaryAction)
+        }.apply {
             visibility = View.GONE
-            setOnPrimaryActionListener {
-                if (state.mode == FrameMode.WEATHER && weatherNeedsAuthentication) {
-                    dispatch(FrameIntent.PrimaryAction)
-                }
-            }
+            render(weatherState)
         }
+        oceanContent = TouchOceanView(this) { refreshOcean(force = true) }.apply { visibility = View.GONE }
         offlinePhoto = ImageView(this).apply {
             visibility = View.GONE
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -784,6 +817,7 @@ class MainActivity : Activity() {
             addContentView(warmHomeAssistantView)
             addContentView(requireNotNull(webSurface))
             addContentView(weatherContent)
+            addContentView(oceanContent)
             addContentView(requireNotNull(offlinePhoto))
         } else {
             addContentView(buildConfigurationView())
@@ -1047,6 +1081,7 @@ class MainActivity : Activity() {
             is FrameSurfaceTarget.Web -> when (target.slot) {
                 FrameWebSlot.PHOTOS -> {
                     weatherContent.visibility = View.GONE
+                    hideOcean()
                     hideWebRecovery()
                     webSurface?.show(target.slot, target.url, takeFocus = false)
                     webSurface?.setContentActive(activityResumed)
@@ -1058,12 +1093,14 @@ class MainActivity : Activity() {
                 FrameWebSlot.HOME_ASSISTANT, FrameWebSlot.CAMERAS -> {
                     hideOfflinePhoto()
                     weatherContent.visibility = View.GONE
+                    hideOcean()
                     hideWebRecovery()
                     webSurface?.show(target.slot, target.url, takeFocus = true)
                 }
                 FrameWebSlot.BIRDS, FrameWebSlot.ART -> {
                     hideOfflinePhoto()
                     weatherContent.visibility = View.GONE
+                    hideOcean()
                     hideWebRecovery()
                     webSurface?.show(target.slot, target.url, takeFocus = true)
                 }
@@ -1073,6 +1110,7 @@ class MainActivity : Activity() {
                 hideOfflinePhoto()
                 hideWebRecovery()
                 webSurface?.hide()
+                hideOcean()
                 weatherContent.visibility = View.VISIBLE
                 diagnosticStore.recordPaint(System.currentTimeMillis())
                 root.requestFocus()
@@ -1081,9 +1119,31 @@ class MainActivity : Activity() {
                     weatherContent.animate().alpha(1f).setDuration(180).start()
                 }.start()
             }
+            FrameSurfaceTarget.NativeOcean -> {
+                hideOfflinePhoto()
+                hideWebRecovery()
+                webSurface?.hide()
+                weatherContent.visibility = View.GONE
+                oceanContent.visibility = View.VISIBLE
+                oceanContent.setActive(activityResumed)
+                diagnosticStore.recordPaint(System.currentTimeMillis())
+                root.requestFocus()
+                if (activityResumed) {
+                    confirmBootRecoveryAfterNextDraw()
+                    refreshOcean()
+                }
+            }
         }
         scheduleCalendarPreload()
         scheduleWeatherRefresh()
+    }
+
+    /** Ocean animates only while it is the page on screen. */
+    private fun hideOcean() {
+        handler.removeCallbacks(refreshVisibleOcean)
+        if (!::oceanContent.isInitialized) return
+        oceanContent.setActive(false)
+        oceanContent.visibility = View.GONE
     }
 
     private fun confirmBootRecoveryAfterNextDraw(webLabel: String? = null) {
@@ -1297,18 +1357,16 @@ class MainActivity : Activity() {
                 entityId = activeConfiguration.weatherEntityId,
             )
             weatherCache = cache
+            sunRepository = TouchSunRepository(weatherEndpoint.canonicalOrigin, transport)
             weatherNeedsAuthentication = false
             pendingAuthorizationCode = null
             pendingAuthorizationPreviousAuthEpoch = null
-            weatherContent.presentation = WeatherPresentation(
-                emptyMessage = "Loading the latest forecast",
-            )
+            showWeatherStatus("Loading the latest forecast", loading = true)
         } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
             homeAssistantTransport = null
+            sunRepository = null
             weatherNeedsAuthentication = false
-            weatherContent.presentation = WeatherPresentation(
-                emptyMessage = "Weather needs a secure Home Assistant URL",
-            )
+            showWeatherStatus("Weather needs a secure Home Assistant URL", TouchWeatherConnection.NOT_SET_UP)
         }
     }
 
@@ -1319,30 +1377,98 @@ class MainActivity : Activity() {
         weatherRefreshStartedAtUptimeMillis = SystemClock.uptimeMillis()
         handler.removeCallbacks(refreshVisibleWeather)
         val generation = ++weatherRequestGeneration
+        val sunReader = sunRepository
         weatherRefreshFuture = weatherWorkerExecutor.submit {
-            coordinator.cachedPresentation()?.let { cached ->
+            coordinator.cachedLoad()?.let { cached ->
                 handler.post {
                     if (generation != weatherRequestGeneration || isFinishing || isDestroyed) return@post
-                    weatherContent.presentation = cached
+                    showWeatherLoad(cached, sun = null)
                 }
             }
-            val presentation = try {
-                coordinator.refresh()
+            val display = try {
+                coordinator.refreshForDisplay()
             } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
-                WeatherPresentation(emptyMessage = "Weather is temporarily unavailable")
+                WeatherDisplayLoad(WeatherLoadResult.Offline, null)
+            }
+            // Sunrise and sunset are optional: without them the page's night bands follow the clock.
+            val sun = display.accessToken?.takeIf { display.load is WeatherLoadResult.Fresh }?.let { token ->
+                runCatching { sunReader?.load(token, WeatherRequestDeadline(timeoutMillis = SUN_TIMEOUT_MILLIS)) }.getOrNull()
             }
             handler.post {
                 if (generation != weatherRequestGeneration || isFinishing || isDestroyed) return@post
                 weatherRefreshFuture = null
                 weatherRefreshStartedAtUptimeMillis = 0L
                 weatherRefreshInProgress = false
-                weatherContent.presentation = presentation
-                presentation.freshDataEpochMillis?.let(diagnosticStore::recordWeatherSuccess)
-                weatherNeedsAuthentication = presentation.authenticationRequired ||
-                    presentation.emptyMessage == "Weather needs Home Assistant sign-in"
+                showWeatherLoad(display.load, sun)
+                (display.load as? WeatherLoadResult.Fresh)?.snapshot?.current?.updatedAtEpochMillis?.takeIf { it > 0L }
+                    ?.let(diagnosticStore::recordWeatherSuccess)
+                weatherNeedsAuthentication = display.load == WeatherLoadResult.AuthRequired ||
+                    (display.load as? WeatherLoadResult.Stale)?.authenticationRequired == true
                 scheduleWeatherRefresh()
             }
         }
+    }
+
+    /** The Weather page's state from a load; a failed read keeps the last forecast on screen, marked as old. */
+    private fun showWeatherLoad(load: WeatherLoadResult, sun: TouchSunTimes?) {
+        weatherState = when (load) {
+            is WeatherLoadResult.Fresh -> weatherState.copy(snapshot = load.snapshot, sun = sun ?: weatherState.sun,
+                connection = TouchWeatherConnection.LIVE, loading = false, message = null)
+            is WeatherLoadResult.Stale -> weatherState.copy(snapshot = load.snapshot, loading = false, message = null,
+                connection = if (load.authenticationRequired) TouchWeatherConnection.SIGN_IN_REQUIRED else TouchWeatherConnection.OFFLINE)
+            WeatherLoadResult.Offline -> weatherState.copy(connection = TouchWeatherConnection.OFFLINE, loading = false, message = null)
+            WeatherLoadResult.AuthRequired -> weatherState.copy(connection = TouchWeatherConnection.SIGN_IN_REQUIRED, loading = false,
+                message = "Weather needs Home Assistant sign-in")
+        }
+        weatherContent.render(weatherState)
+    }
+
+    /** A status for the Weather page; it shows while there is no forecast, and a sign-in prompt also shows over one. */
+    private fun showWeatherStatus(
+        message: String,
+        connection: TouchWeatherConnection = TouchWeatherConnection.LIVE,
+        loading: Boolean = false,
+    ) {
+        weatherState = weatherState.copy(connection = connection, loading = loading, message = message)
+        if (::weatherContent.isInitialized) weatherContent.render(weatherState)
+    }
+
+    /** Public Ebbward conditions for Main Beach: fresh data is reused for ten minutes, a failed read retries in a minute. */
+    private fun refreshOcean(force: Boolean = false) {
+        if (!activityResumed || oceanInFlight || state.mode != FrameMode.OCEAN) return
+        val now = System.currentTimeMillis()
+        val fetched = oceanState.fetchedAtMillis
+        if (!force && oceanState.connection == TouchOceanConnection.LIVE && fetched != null && now - fetched in 0 until OCEAN_REFRESH_MILLIS) {
+            oceanContent.render(oceanState)
+            scheduleOceanRefresh(OCEAN_REFRESH_MILLIS - (now - fetched))
+            return
+        }
+        oceanInFlight = true
+        oceanState = oceanState.copy(loading = true)
+        oceanContent.render(oceanState)
+        oceanFuture = weatherWorkerExecutor.submit {
+            val load = runCatching { oceanRepository.load(TouchOceanRepository.DEFAULT_SPOT, OCEAN_TIMEOUT_MILLIS) }
+                .getOrElse { TouchOceanLoad(null, TouchOceanConnection.OFFLINE) }
+            handler.post {
+                if (isFinishing || isDestroyed) return@post
+                oceanInFlight = false
+                oceanFuture = null
+                val live = load.connection == TouchOceanConnection.LIVE
+                oceanState = TouchOceanState(
+                    conditions = load.conditions ?: oceanState.conditions,
+                    connection = load.connection,
+                    loading = false,
+                    fetchedAtMillis = if (live) System.currentTimeMillis() else oceanState.fetchedAtMillis,
+                )
+                oceanContent.render(oceanState)
+                scheduleOceanRefresh(if (live) OCEAN_REFRESH_MILLIS else OCEAN_RETRY_MILLIS)
+            }
+        }
+    }
+
+    private fun scheduleOceanRefresh(delayMillis: Long) {
+        handler.removeCallbacks(refreshVisibleOcean)
+        if (activityResumed && state.mode == FrameMode.OCEAN) handler.postDelayed(refreshVisibleOcean, delayMillis.coerceAtLeast(1_000L))
     }
 
     private fun scheduleWeatherRefresh() {
@@ -1592,7 +1718,7 @@ class MainActivity : Activity() {
         embeddedAuthorizationPending = true
         pendingStateStore.write(state)
         val authorization = endpoint.authorizationRequest(callbackPageUrl, state)
-        weatherContent.presentation = WeatherPresentation(emptyMessage = "Sign in to Home Assistant")
+        showWeatherStatus("Sign in to Home Assistant", TouchWeatherConnection.SIGN_IN_REQUIRED)
         weatherNeedsAuthentication = false
         handler.removeCallbacks(expireIdle)
         handler.removeCallbacks(refreshVisibleWeather)
@@ -1645,7 +1771,7 @@ class MainActivity : Activity() {
             if (hadSurface || !weatherAuthorizationInProgress) {
                 weatherNeedsAuthentication = true
                 if (::weatherContent.isInitialized) {
-                    weatherContent.presentation = WeatherPresentation(emptyMessage = "Weather needs Home Assistant sign-in")
+                    showWeatherStatus("Weather needs Home Assistant sign-in", TouchWeatherConnection.SIGN_IN_REQUIRED)
                 }
             }
         }
@@ -1668,14 +1794,14 @@ class MainActivity : Activity() {
             pendingAuthorizationPreviousAuthEpoch = null
             weatherAuthorizationInProgress = false
             weatherNeedsAuthentication = true
-            weatherContent.presentation = WeatherPresentation(emptyMessage = "Weather needs Home Assistant sign-in")
+            showWeatherStatus("Weather needs Home Assistant sign-in", TouchWeatherConnection.SIGN_IN_REQUIRED)
             showHud("Sign-in link expired")
             return
         }
         setIntent(Intent(this, MainActivity::class.java))
         state = state.copy(mode = FrameMode.WEATHER)
         render(state, announce = false)
-        weatherContent.presentation = WeatherPresentation(emptyMessage = "Connecting to Home Assistant")
+        showWeatherStatus("Connecting to Home Assistant", loading = true)
         weatherNeedsAuthentication = false
         pendingAuthorizationPreviousAuthEpoch = oauthClient?.authEpoch()
         pendingAuthorizationCode = code.code
@@ -1721,7 +1847,7 @@ class MainActivity : Activity() {
                     pendingAuthorizationCode = null
                     pendingAuthorizationPreviousAuthEpoch = null
                     weatherNeedsAuthentication = true
-                    weatherContent.presentation = WeatherPresentation(emptyMessage = "Weather needs Home Assistant sign-in")
+                    showWeatherStatus("Weather needs Home Assistant sign-in", TouchWeatherConnection.SIGN_IN_REQUIRED)
                     showHud("Home Assistant sign-in failed")
                     scheduleWeatherRefresh()
                 }
@@ -2041,6 +2167,11 @@ class MainActivity : Activity() {
         }
 
     private companion object {
+        const val NATIVE_SCENE_TICK_MILLIS = 30_000L
+        const val OCEAN_REFRESH_MILLIS = 10 * 60_000L
+        const val OCEAN_RETRY_MILLIS = 60_000L
+        const val OCEAN_TIMEOUT_MILLIS = 15_000
+        const val SUN_TIMEOUT_MILLIS = 4_000L
         const val STARTUP_SPINNER_DELAY_MILLIS = 350L
         const val STARTUP_READY_MILLIS = 1_100L
         const val CALENDAR_PRELOAD_DELAY_MILLIS = 2_000L

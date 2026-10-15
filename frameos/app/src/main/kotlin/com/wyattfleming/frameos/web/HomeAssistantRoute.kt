@@ -24,6 +24,7 @@ object HomeAssistantRoute {
         val fragment = when (mode) {
             FrameMode.HOME -> "home"
             FrameMode.WEATHER -> return null
+            FrameMode.OCEAN -> return null
             FrameMode.CAMERAS -> "cameras"
             FrameMode.CALENDAR -> "calendar"
             FrameMode.BIRDS -> return null

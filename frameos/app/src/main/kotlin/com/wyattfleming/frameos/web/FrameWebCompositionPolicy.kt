@@ -31,7 +31,7 @@ internal object FrameWebCompositionPolicy {
             retainHomeAssistantSurface = true,
             warmCalendarInBackground = false,
         )
-        FrameMode.WEATHER -> FrameWebComposition(
+        FrameMode.WEATHER, FrameMode.OCEAN -> FrameWebComposition(
             foreground = FrameWebForeground.NATIVE_WEATHER,
             retainHomeAssistantSurface = true,
             warmCalendarInBackground = true,

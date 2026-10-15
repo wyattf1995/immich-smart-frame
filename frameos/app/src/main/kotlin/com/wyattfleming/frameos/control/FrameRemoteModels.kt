@@ -33,7 +33,7 @@ sealed interface FrameRemoteCommand {
     /** A page that exists only in FrameOS Touch (it has no FrameMode); other apps answer it as rejected. */
     data class ShowPage(override val id: String, val page: String, override val issuedAtMillis: Long, override val expiresAtMillis: Long) : FrameRemoteCommand {
         companion object {
-            val PAGES = setOf("ocean", "power")
+            val PAGES = setOf("power")
         }
     }
 }

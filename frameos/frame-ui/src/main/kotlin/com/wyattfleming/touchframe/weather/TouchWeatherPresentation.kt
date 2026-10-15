@@ -39,6 +39,8 @@ data class TouchWeatherViewState(
     val connection: TouchWeatherConnection = TouchWeatherConnection.LIVE,
     val loading: Boolean = false,
     val location: String? = null,
+    /** A host's own words for the empty page ("Connecting to Home Assistant"); the forecast, when there is one, wins. */
+    val message: String? = null,
 )
 
 data class TouchWeatherFact(val label: String, val value: String)
