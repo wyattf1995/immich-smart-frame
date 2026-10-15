@@ -31,6 +31,14 @@ class TouchPowerPresentationTest {
     }
 
     @Test
+    fun `late at night the headline leaves tomorrow to the next line so it fits on one line`() {
+        // Seen on the 1920 frame at 11:02 PM: "Off-peak until 8 AM tomorrow" was cut off.
+        val late = present(now = at(23, 2))
+        assertEquals("Off-peak until 8 AM", late.headline)
+        assertEquals("Then super off-peak until 4 PM tomorrow, 32¢ a kWh.", late.next)
+    }
+
+    @Test
     fun `without a published schedule the page says rates are not available instead of guessing`() {
         val screen = present(TouchPowerFixtures.eveningSnapshot().copy(schedule = null))
         assertEquals("Rates aren’t available", screen.headline)

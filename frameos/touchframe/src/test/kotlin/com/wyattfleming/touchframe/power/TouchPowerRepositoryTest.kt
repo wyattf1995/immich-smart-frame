@@ -14,6 +14,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.URLDecoder
+import java.net.URLEncoder
+import java.time.Instant
 
 class TouchPowerRepositoryTest {
     private class FakeHomeAssistant(var historyStatus: Int = 200, var configStatus: Int = 200, var failLive: Boolean = false) : HomeAssistantHttpTransport {
@@ -75,6 +77,21 @@ class TouchPowerRepositoryTest {
         fake.requests.clear()
         repository.load(at(21, 0, TouchPowerFixtures.day) + 30_000L)
         assertEquals("a new hour: one new reading", 1, fake.energyHistory.size)
+    }
+
+    @Test
+    fun `the solar and laundry reads end now, because Home Assistant stops an open read one day after its start`() {
+        // Without end_time the eight-day solar read only covered its first day: the frame said Sunrun was silent since Oct 7.
+        val fake = FakeHomeAssistant()
+        val now = at(20, 2)
+        repository(fake).load(now)
+        val end = "end_time=" + URLEncoder.encode(Instant.ofEpochMilli(now).toString(), "UTF-8")
+        val solar = fake.historyRequests.filter { it.url.contains("sensor.sunrun_lifetime") }
+        assertEquals(1, solar.size)
+        assertTrue("solar read ends now: ${solar.single().url}", solar.single().url.contains(end))
+        val laundry = fake.historyRequests.filter { it.url.contains("binary_sensor.frame_dryer_running") }
+        assertEquals(1, laundry.size)
+        assertTrue("laundry read ends now", laundry.single().url.contains(end))
     }
 
     @Test
