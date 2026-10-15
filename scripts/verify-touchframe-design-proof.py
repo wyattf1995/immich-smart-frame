@@ -260,7 +260,7 @@ MUTATIONS = [
      "val first = wet.firstOrNull { (it.percent ?: 0) >= BAR_RAIN_PERCENT } ?: return null", "weather",
      {"a chance of rain names the first hour at 30 percent and the highest chance after it"}),
     ("weather-night-sun-red", main / "weather/TouchWeatherPresentation.kt",
-     "        if (rising != null && setting != null) {", "        if (false && rising != null && setting != null) {", "weather",
+     "val rising = sun?.nextRisingMillis\n        val setting = sun?.nextSettingMillis\n", "val rising: Long? = null\n        val setting: Long? = null\n", "weather",
      {"night hours follow Home Assistant's sunrise and sunset, not the clock",
       "sun times read a while ago roll forward by whole days"}),
     ("weather-sun-rollover-red", main / "weather/TouchWeatherPresentation.kt",
