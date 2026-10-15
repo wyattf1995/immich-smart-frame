@@ -1,5 +1,6 @@
 package com.wyattfleming.touchframe.ui
 
+import android.animation.TimeInterpolator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Canvas
@@ -15,6 +16,8 @@ import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -119,6 +122,30 @@ internal data class TouchPalette(
             return (maxOf(first, second) + 0.05) / (minOf(first, second) + 0.05)
         }
     }
+}
+
+/**
+ * Touch's motion tokens (motion audit, 2026-10-15). Everything that moves takes one of these timings: a property
+ * animation is scaled by Android's animation setting, so "Remove animations" makes each one an instant change.
+ * Ambient scenes (Ocean, Weather) update at most once per [SCENE_FRAME_MILLIS] and hold a still frame instead when
+ * animations are off.
+ */
+internal object TouchMotion {
+    /** Feedback and exits: a menu or notice leaving, a hint arriving. */
+    const val QUICK_MILLIS = 150L
+
+    /** Entrances that orient: the menu sliding in from the edge it was swiped from, a notice arriving. */
+    const val STANDARD_MILLIS = 200L
+
+    /** A cue that fades away by itself. */
+    const val GENTLE_MILLIS = 400L
+
+    /** Twenty scene updates a second; each full-window frame costs these SoCs 14–21 ms. */
+    const val SCENE_FRAME_MILLIS = 50L
+
+    /** Arrivals slow into place; departures speed away. */
+    val enter: TimeInterpolator get() = DecelerateInterpolator()
+    val exit: TimeInterpolator get() = AccelerateInterpolator()
 }
 
 /** Day/night boundary shared by every native destination (night is 19:00–06:59 local). */

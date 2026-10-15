@@ -1,5 +1,6 @@
 package com.wyattfleming.frameos.ui
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -12,7 +13,9 @@ import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.os.Build
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.TypedValue
 import android.view.View
 import com.wyattfleming.frameos.weather.WeatherCondition
@@ -77,6 +80,8 @@ class WeatherContentView(context: Context) : View(context) {
     private var pageEpochMillis = SystemClock.uptimeMillis()
     private var pageAnchorIndex = 0
     private var sceneEpochMillis = SystemClock.uptimeMillis()
+    /** Android's animation setting, read on attach and visibility changes, never per frame. */
+    private var motionEnabled = true
 
     init {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
@@ -110,7 +115,8 @@ class WeatherContentView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val now = SystemClock.uptimeMillis()
-        drawBackground(canvas, (now - sceneEpochMillis) / 1_000f)
+        // "Remove animations" holds the scene on one still moment instead of slowing it.
+        drawBackground(canvas, if (motionEnabled) (now - sceneEpochMillis) / 1_000f else STILL_SCENE_SECONDS)
         drawStaticForeground(canvas, now)
 
         if (isShown) {
@@ -118,7 +124,30 @@ class WeatherContentView(context: Context) : View(context) {
                 sceneAnimated = presentation.sceneCondition.sceneProfile().animated,
                 hourlyItemCount = presentation.hourly.size,
                 pageElapsedMillis = now - pageEpochMillis,
+                motionEnabled = motionEnabled,
             )?.let(::postInvalidateDelayed)
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        refreshMotionSetting()
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        if (visibility == VISIBLE) refreshMotionSetting()
+    }
+
+    private fun refreshMotionSetting() {
+        val enabled = if (Build.VERSION.SDK_INT >= 26) {
+            ValueAnimator.areAnimatorsEnabled()
+        } else {
+            Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
+        }
+        if (enabled != motionEnabled) {
+            motionEnabled = enabled
+            invalidate()
         }
     }
 
@@ -663,6 +692,8 @@ class WeatherContentView(context: Context) : View(context) {
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
 
     private companion object {
+        /** The moment a still scene shows: between lightning flashes (every 12 s) and clear of shooting stars. */
+        const val STILL_SCENE_SECONDS = 6f
         const val SHOOTING_STAR_CYCLE_SECONDS = 30f
         const val SHOOTING_STAR_DURATION_SECONDS = 1.35f
         const val MUTED = 0xFFD1D7E0.toInt()

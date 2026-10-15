@@ -70,8 +70,10 @@ class TouchShellLayout(
     private var menuVisible = false
     private var noticeVisible = false
     private val edgeStream = TouchShellEdgeStream()
-    private val hideNotice = Runnable { clearNotice() }
-    private val hideEdgeHint = Runnable { edgeHint.animate().alpha(0f).setDuration(400L).withEndAction { edgeHint.visibility = View.GONE } }
+    private val hideNotice = Runnable { fadeOutNotice() }
+    private val hideEdgeHint = Runnable {
+        edgeHint.animate().alpha(0f).setDuration(TouchMotion.GENTLE_MILLIS).setInterpolator(TouchMotion.exit).withEndAction { edgeHint.visibility = View.GONE }
+    }
 
     init {
         addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -98,6 +100,9 @@ class TouchShellLayout(
     }
 
     fun select(next: TouchDestination) {
+        // A menu leaving or arriving never carries over to the next screen; cancel() skips its end action.
+        bar.animate().cancel()
+        bar.translationX = 0f
         if (next != destination) {
             removeCallbacks(hideNotice)
             noticeHost.removeAllViews()
@@ -129,16 +134,23 @@ class TouchShellLayout(
         menuVisible = true
         applyChrome()
         // The swipe moves right, so the bar follows it in from the left edge.
+        bar.animate().cancel()
         bar.translationX = -width.toFloat()
-        bar.animate().translationX(0f).setDuration(MENU_SLIDE_MILLIS).start()
+        bar.animate().translationX(0f).setDuration(TouchMotion.STANDARD_MILLIS).setInterpolator(TouchMotion.enter).start()
     }
 
+    /** The menu leaves the way it came in; navigating away instead cancels this in [select]. */
     fun hideMenu() {
         if (!destination.isImmersiveMedia) return
         bar.animate().cancel()
-        bar.translationX = 0f
-        menuVisible = false
-        applyChrome()
+        scrim.visibility = View.GONE
+        bar.animate().translationX(-width.toFloat()).setDuration(TouchMotion.QUICK_MILLIS).setInterpolator(TouchMotion.exit).withEndAction {
+            bar.translationX = 0f
+            if (destination.isImmersiveMedia) {
+                menuVisible = false
+                applyChrome()
+            }
+        }.start()
     }
 
     /** The bar carries the time on every screen except Home, whose clock is the page itself. */
@@ -191,10 +203,12 @@ class TouchShellLayout(
                 isFocusable = true
                 contentDescription = "Dismiss"
                 addView(kit.icon(R.drawable.ic_touch_close, ink, 28))
-                setOnClickListener { clearNotice() }
+                setOnClickListener { fadeOutNotice() }
             })
         }
         noticeHost.addView(notice, FrameLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+        notice.alpha = 0f
+        notice.animate().alpha(1f).setDuration(TouchMotion.STANDARD_MILLIS).setInterpolator(TouchMotion.enter).start()
         noticeVisible = true
         applyChrome()
         postDelayed(hideNotice, if (tone == NoticeTone.ERROR) ERROR_NOTICE_MILLIS else INFO_NOTICE_MILLIS)
@@ -220,9 +234,19 @@ class TouchShellLayout(
         }, FrameLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = kit.dp(34) })
         removeCallbacks(hideEdgeHint)
         edgeHint.animate().cancel()
-        edgeHint.alpha = 1f
+        edgeHint.alpha = 0f
         edgeHint.visibility = View.VISIBLE
+        edgeHint.animate().alpha(1f).setDuration(TouchMotion.QUICK_MILLIS).setInterpolator(TouchMotion.enter).start()
         postDelayed(hideEdgeHint, EDGE_HINT_MILLIS)
+    }
+
+    /** A notice that times out or is dismissed fades away; navigation clears it at once. */
+    private fun fadeOutNotice() {
+        removeCallbacks(hideNotice)
+        val notice = noticeHost.getChildAt(0) ?: return clearNotice()
+        notice.animate().alpha(0f).setDuration(TouchMotion.QUICK_MILLIS).setInterpolator(TouchMotion.exit).withEndAction {
+            if (notice.parent === noticeHost) clearNotice()
+        }.start()
     }
 
     /** Removes the notice and gives its docked strip back to the destination. */
@@ -444,7 +468,6 @@ class TouchShellLayout(
         private const val INFO_NOTICE_MILLIS = 6_000L
         private const val ERROR_NOTICE_MILLIS = 30_000L
         private const val EDGE_HINT_MILLIS = 4_000L
-        private const val MENU_SLIDE_MILLIS = 200L
 
         fun barHeightDpFor(screenWidthDp: Int): Int = if (screenWidthDp >= 1400) WIDE_BAR_HEIGHT_DP else PANEL_BAR_HEIGHT_DP
 
