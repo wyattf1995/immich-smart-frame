@@ -7,13 +7,13 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.text.InputType
 import android.text.format.DateFormat
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
-import android.view.accessibility.AccessibilityNodeInfo
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -121,7 +121,7 @@ class TouchHomeView private constructor(
     private var comingSlot: FrameLayout? = null
     private var columnRule: View? = null
     private var sheetLayer: FrameLayout? = null
-    private var sheetTitle: View? = null
+    private var sheetTitle: TextView? = null
     private var sheetSlot: FrameLayout? = null
     private var renderedKeys = HashMap<String, Any?>()
     private var renderedDay: java.time.LocalDate? = null
@@ -472,7 +472,13 @@ class TouchHomeView private constructor(
             Sheet.PICKER -> listOf(discovery, pickerChoice.toMap())
         }
         fill("sheet", listOf(sheet, sheetInputs, sheetList), force, sheetSlot) { sheetContent(kit, snapshot) }
-        sheetLayer?.visibility = if (sheet == Sheet.NONE) View.GONE else View.VISIBLE
+        sheetLayer?.let { layer ->
+            // Set before the layer shows, so TalkBack announces the sheet as it appears (Android 9+).
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layer.accessibilityPaneTitle = sheetTitle?.text?.takeIf { sheet != Sheet.NONE }
+            }
+            layer.visibility = if (sheet == Sheet.NONE) View.GONE else View.VISIBLE
+        }
     }
 
     /** Lines that fit in Coming up; before the first layout pass, a conservative default. */
@@ -846,8 +852,8 @@ class TouchHomeView private constructor(
     private fun openSheet(next: Sheet) {
         sheet = next
         refillSlots()
-        // TalkBack lands on the sheet's title instead of staying on the tile that opened it.
-        post { sheetTitle?.takeIf { it.isAttachedToWindow }?.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null) }
+        // Older frames have no pane titles; they hear the sheet's title instead. Focus is never forced.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) sheetTitle?.text?.let(::announceForAccessibility)
     }
 
     private fun openAdd(list: TouchTodoListRef) {
