@@ -27,7 +27,7 @@ import kotlin.math.abs
  * Fixed vertical budget (dp from the content top) so a high or low tide never moves the waterline into the text.
  * Below [Budget.heroTop] the conditions and the tide stack in one column, and the chart takes the height that is left.
  */
-internal object TouchOceanLayout {
+object TouchOceanLayout {
     data class Budget(val header: Double, val waterlineTop: Double, val waterlineBottom: Double, val fish: Double, val heroTop: Double)
 
     val WALL = Budget(header = 150.0, waterlineTop = 270.0, waterlineBottom = 350.0, fish = 398.0, heroTop = 424.0)
@@ -42,7 +42,7 @@ internal object TouchOceanLayout {
  * what it shows changes; the scene animates by itself while [setActive] is true.
  */
 @SuppressLint("ViewConstructor")
-internal class TouchOceanView(context: Context, private val onRetry: () -> Unit) : FrameLayout(context) {
+class TouchOceanView(context: Context, private val onRetry: () -> Unit) : FrameLayout(context) {
     private val scene = TouchOceanScene(context)
     private val overlay = FrameLayout(context)
     private var state = TouchOceanState()
@@ -288,7 +288,7 @@ internal class TouchOceanView(context: Context, private val onRetry: () -> Unit)
  * never while drawing.
  */
 @SuppressLint("ViewConstructor")
-internal class TouchTideChartView(context: Context) : View(context) {
+class TouchTideChartView(context: Context) : View(context) {
     private var chart: TouchOceanChart? = null
     private var ink = 0
     private var muted = 0

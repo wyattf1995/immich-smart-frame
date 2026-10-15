@@ -12,7 +12,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /** US display units, matching Ebbward's US formatting. */
-internal object TouchOceanUnits {
+object TouchOceanUnits {
     private const val FEET_PER_METER = 3.28084
     private val COMPASS = listOf(
         "north", "north-northeast", "northeast", "east-northeast", "east", "east-southeast", "southeast", "south-southeast",
@@ -32,7 +32,7 @@ internal object TouchOceanUnits {
 }
 
 /** Tide arithmetic on Ebbward's 6-minute NOAA prediction curve and its high/low events. */
-internal object TouchOceanTides {
+object TouchOceanTides {
     /** The gauge tops out at 6 ft, or the next 2 ft above a bigger range (Ebbward `gaugeMaxM`). */
     fun gaugeMaxM(curve: List<TouchOceanTimed>): Double {
         val highest = curve.maxOfOrNull { it.value } ?: 0.0
@@ -61,7 +61,7 @@ internal object TouchOceanTides {
 }
 
 /** Ebbward's sky keyframes (`waterColumn.skyAt`) and sun/moon arc (`skyBody`), plus Touch's bedroom dimming. */
-internal object TouchOceanSky {
+object TouchOceanSky {
     data class Sky(val top: Int, val horizon: Int)
     data class Body(val moon: Boolean, val progress: Double)
 
@@ -119,7 +119,7 @@ internal object TouchOceanSky {
 }
 
 /** Ebbward's swell shape (`oceanGeometry.periodicWaveY`): a wave plus its first harmonic, periodic in one wavelength. */
-internal object TouchOceanWaves {
+object TouchOceanWaves {
     fun y(x: Double, amplitude: Double, wavelength: Double, offset: Double): Double =
         amplitude * sin(2 * PI * x / wavelength + offset) + 0.32 * amplitude * sin(4 * PI * x / wavelength + offset * 2)
 
@@ -138,11 +138,11 @@ internal object TouchOceanWaves {
         (((index * spacing + direction * seconds * speed) % span) + span) % span
 }
 
-internal data class TouchOceanStat(val label: String, val value: String, val unit: String, val detail: String?)
+data class TouchOceanStat(val label: String, val value: String, val unit: String, val detail: String?)
 
-internal data class TouchOceanChartEvent(val epochMillis: Long, val heightM: Double, val high: Boolean, val height: String, val time: String)
+data class TouchOceanChartEvent(val epochMillis: Long, val heightM: Double, val high: Boolean, val height: String, val time: String)
 
-internal data class TouchOceanChart(
+data class TouchOceanChart(
     val fromMillis: Long,
     val toMillis: Long,
     val nowMillis: Long,
@@ -154,7 +154,7 @@ internal data class TouchOceanChart(
     val ticks: List<Pair<Long, String>>,
 )
 
-internal data class TouchOceanSceneSpec(
+data class TouchOceanSceneSpec(
     val hour: Double,
     val sunrise: Double?,
     val sunset: Double?,
@@ -165,7 +165,7 @@ internal data class TouchOceanSceneSpec(
     val windTowardEast: Boolean,
 )
 
-internal data class TouchOceanScreen(
+data class TouchOceanScreen(
     val title: String,
     val place: String?,
     val skyLine: String?,
@@ -182,7 +182,7 @@ internal data class TouchOceanScreen(
 )
 
 /** Turns one Ebbward response into the wall's words and numbers. Pure; the clock and zone are passed in. */
-internal object TouchOceanPresenter {
+object TouchOceanPresenter {
     fun present(conditions: TouchOceanConditions, nowMillis: Long, fallbackZone: ZoneId, twentyFourHour: Boolean): TouchOceanScreen {
         val zone = conditions.timeZone?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: fallbackZone
         val clock = DateTimeFormatter.ofPattern(if (twentyFourHour) "H:mm" else "h:mm a", Locale.US).withZone(zone)

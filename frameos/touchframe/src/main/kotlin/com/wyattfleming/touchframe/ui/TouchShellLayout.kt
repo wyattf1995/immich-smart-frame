@@ -204,7 +204,7 @@ class TouchShellLayout(
             minimumHeight = kit.dp(kit.scale.target + 16)
             setPadding(kit.dp(24), kit.dp(8), kit.dp(if (tone == NoticeTone.ERROR || actionLabel != null) 8 else 28), kit.dp(8))
             accessibilityLiveRegion = if (tone == NoticeTone.ERROR) View.ACCESSIBILITY_LIVE_REGION_ASSERTIVE else View.ACCESSIBILITY_LIVE_REGION_POLITE
-            addView(kit.icon(if (tone == NoticeTone.ERROR) R.drawable.ic_touch_alert else R.drawable.ic_touch_check, ink, 30))
+            addView(kit.icon(if (tone == NoticeTone.ERROR) com.wyattfleming.frameui.R.drawable.ic_touch_alert else com.wyattfleming.frameui.R.drawable.ic_touch_check, ink, 30))
             addView(kit.text(message, kit.scale.body, TouchFonts.Face.TEXT_MEDIUM, ink, maxLines = 2), LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
                 marginStart = kit.dp(16)
                 marginEnd = kit.dp(16)

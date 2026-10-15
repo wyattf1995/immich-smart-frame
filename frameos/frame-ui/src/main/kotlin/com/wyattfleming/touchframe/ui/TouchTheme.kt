@@ -21,7 +21,7 @@ import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.wyattfleming.touchframe.R
+import com.wyattfleming.frameui.R
 import kotlin.math.ceil
 import kotlin.math.pow
 
@@ -30,7 +30,7 @@ import kotlin.math.pow
  * surfaces with a graphite moulding rail by day, warm amber on black by night for bedrooms.
  * Photos/Art media and the shared Weather canvas keep their own artwork.
  */
-internal data class TouchPalette(
+data class TouchPalette(
     val wall: Int,
     val mat: Int,
     val matRaised: Int,
@@ -130,7 +130,7 @@ internal data class TouchPalette(
  * Ambient scenes (Ocean, Weather) update at most once per [SCENE_FRAME_MILLIS] and hold a still frame instead when
  * animations are off.
  */
-internal object TouchMotion {
+object TouchMotion {
     /** Feedback and exits: a menu or notice leaving, a hint arriving. */
     const val QUICK_MILLIS = 150L
 
@@ -149,7 +149,7 @@ internal object TouchMotion {
 }
 
 /** Day/night boundary shared by every native destination (night is 19:00–06:59 local). */
-internal object TouchDayNight {
+object TouchDayNight {
     fun isNight(hour: Int): Boolean = hour < 7 || hour >= 19
 }
 
@@ -157,7 +157,7 @@ internal object TouchDayNight {
  * Text sizes in sp and spacing in dp. `Wall` is the 1920×1080 class, `Panel` the 1280×800 class;
  * both panels are mdpi, so these are also the on-glass pixel sizes at default font scale.
  */
-internal data class TouchScale(
+data class TouchScale(
     val clock: Float,
     val clockSuffix: Float,
     val display: Float,
@@ -202,7 +202,7 @@ internal data class TouchScale(
 }
 
 /** Bundled Red Hat Display/Text (SIL OFL 1.1, `assets/fonts/OFL.txt`); falls back to system sans. */
-internal object TouchFonts {
+object TouchFonts {
     enum class Face(val asset: String, val fallbackStyle: Int) {
         TEXT("fonts/RedHatText-Regular.ttf", Typeface.NORMAL),
         TEXT_MEDIUM("fonts/RedHatText-Medium.ttf", Typeface.NORMAL),
@@ -225,13 +225,13 @@ private const val SEGMENT_RADIUS_DP = 8
 private const val SEGMENT_PADDING_DP = 18
 
 /** One width for every segment: the widest label, measured in the selected bold face, plus padding. */
-internal object TouchSegmentSizing {
+object TouchSegmentSizing {
     fun width(labelWidthsPx: List<Float>, horizontalPaddingPx: Int, slackPx: Int): Int =
         ceil(labelWidthsPx.maxOrNull() ?: 0f).toInt() + 2 * horizontalPaddingPx + slackPx
 }
 
 /** Small programmatic component kit; every native destination builds controls through it. */
-internal class TouchKit(private val context: Context, val palette: TouchPalette, val scale: TouchScale) {
+class TouchKit(private val context: Context, val palette: TouchPalette, val scale: TouchScale) {
     fun dp(value: Int): Int = (value * context.resources.displayMetrics.density + 0.5f).toInt()
 
     fun text(

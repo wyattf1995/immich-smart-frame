@@ -28,7 +28,7 @@ import android.widget.LinearLayout
 import android.widget.TableLayout
 import android.widget.TableRow
 import android.widget.TextView
-import com.wyattfleming.touchframe.R
+import com.wyattfleming.frameui.R
 import com.wyattfleming.touchframe.ui.TouchFonts
 import com.wyattfleming.touchframe.ui.TouchKit
 import com.wyattfleming.touchframe.ui.TouchPalette
@@ -43,7 +43,7 @@ import java.util.Locale
  * re-derived when the forecast arrives and once every five minutes so "Now" and the night bands keep up.
  */
 @SuppressLint("ViewConstructor")
-internal class TouchWeatherView(
+class TouchWeatherView(
     context: Context,
     private val onRetry: () -> Unit,
     private val onSignIn: () -> Unit,
@@ -268,7 +268,7 @@ private class FaceSpan(private val face: Typeface) : MetricAffectingSpan() {
 }
 
 /** Draws a weather glyph: the line in the icon ink, a sun's disc filled in the sun colour underneath it. */
-internal class TouchWeatherGlyphs(private val context: Context) {
+class TouchWeatherGlyphs(private val context: Context) {
     /** Tinted drawables keyed by resource and colour, so drawing a page allocates nothing. */
     private val cache = LongSparseArray<Drawable>()
 
@@ -328,7 +328,7 @@ private class TouchWeatherGlyphView(context: Context, private val glyph: TouchWe
  * drawing.
  */
 @SuppressLint("ViewConstructor")
-internal class TouchWeatherRidgeView(context: Context) : View(context) {
+class TouchWeatherRidgeView(context: Context) : View(context) {
     private var screen: TouchWeatherScreen? = null
     private var colors = TouchWeatherColors.DAY
     private var night = false
@@ -523,7 +523,7 @@ internal class TouchWeatherRidgeView(context: Context) : View(context) {
  * them, the day's name, glyph and any rain above, today on a soft panel.
  */
 @SuppressLint("ViewConstructor")
-internal class TouchWeatherWeekView(context: Context) : View(context) {
+class TouchWeatherWeekView(context: Context) : View(context) {
     private var screen: TouchWeatherScreen? = null
     private var colors = TouchWeatherColors.DAY
     private var night = false

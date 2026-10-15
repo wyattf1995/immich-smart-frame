@@ -4,12 +4,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
 
-internal data class TouchOceanTimed(val epochMillis: Long, val value: Double)
-internal data class TouchOceanTide(val epochMillis: Long, val heightM: Double, val high: Boolean)
-internal data class TouchOceanSunDay(val date: String, val sunriseMillis: Long, val sunsetMillis: Long)
+data class TouchOceanTimed(val epochMillis: Long, val value: Double)
+data class TouchOceanTide(val epochMillis: Long, val heightM: Double, val high: Boolean)
+data class TouchOceanSunDay(val date: String, val sunriseMillis: Long, val sunsetMillis: Long)
 
 /** The part of Ebbward's ocean response (schemaVersion 1) the wall view shows. Metric, as served. */
-internal data class TouchOceanConditions(
+data class TouchOceanConditions(
     val spotId: String,
     val spotName: String,
     val place: String?,
@@ -31,7 +31,7 @@ internal data class TouchOceanConditions(
 )
 
 /** Parses Ebbward's `/api/v1/ocean` body; anything it cannot trust becomes null rather than a wrong number. */
-internal class TouchOceanParser {
+class TouchOceanParser {
     fun parse(body: String): TouchOceanConditions? = runCatching {
         if (body.length > MAX_BODY_CHARS) return null
         val root = JSONObject(body)

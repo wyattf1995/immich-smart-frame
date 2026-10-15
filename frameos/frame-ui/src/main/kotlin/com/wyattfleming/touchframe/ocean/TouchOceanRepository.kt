@@ -7,11 +7,11 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
 
-internal enum class TouchOceanConnection { LIVE, OFFLINE }
+enum class TouchOceanConnection { LIVE, OFFLINE }
 
-internal data class TouchOceanLoad(val conditions: TouchOceanConditions?, val connection: TouchOceanConnection)
+data class TouchOceanLoad(val conditions: TouchOceanConditions?, val connection: TouchOceanConnection)
 
-internal data class TouchOceanState(
+data class TouchOceanState(
     val conditions: TouchOceanConditions? = null,
     val connection: TouchOceanConnection = TouchOceanConnection.OFFLINE,
     val loading: Boolean = false,
@@ -22,7 +22,7 @@ internal data class TouchOceanState(
  * Public beach conditions from Ebbward (NOAA blend), no account or token. The last good body is kept so a
  * Wi-Fi drop shows saved conditions with their time instead of an empty screen. Blocking: call off the UI thread.
  */
-internal class TouchOceanRepository(
+class TouchOceanRepository(
     private val cacheFile: File,
     private val parser: TouchOceanParser = TouchOceanParser(),
     private val transport: (URI, Int) -> String = { uri, timeout -> httpGet(uri, timeout) },

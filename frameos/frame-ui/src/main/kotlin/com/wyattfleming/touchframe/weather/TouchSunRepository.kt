@@ -34,7 +34,7 @@ class TouchSunRepository(
     }
 }
 
-internal object TouchSunParser {
+object TouchSunParser {
     /** `sun.sun`'s next rising and setting attributes; null when neither is there. */
     fun fromSun(body: String?): TouchSunTimes? {
         val attributes = body?.let { runCatching { JSONObject(it).optJSONObject("attributes") }.getOrNull() } ?: return null

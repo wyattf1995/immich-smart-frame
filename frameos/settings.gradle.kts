@@ -16,4 +16,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "FrameOS"
-include(":app", ":frame-shared", ":touchframe")
+include(":app", ":frame-shared", ":frame-ui", ":touchframe")

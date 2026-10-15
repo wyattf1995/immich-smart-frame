@@ -15,7 +15,7 @@ import android.provider.Settings
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
-import com.wyattfleming.touchframe.R
+import com.wyattfleming.frameui.R
 import kotlin.math.PI
 import kotlin.math.max
 import kotlin.math.sin
@@ -28,7 +28,7 @@ import kotlin.math.sin
  * scene stays still when the system animation scale is off (reduced motion).
  */
 @SuppressLint("ViewConstructor")
-internal class TouchOceanScene(context: Context) : FrameLayout(context) {
+class TouchOceanScene(context: Context) : FrameLayout(context) {
     private val sky = View(context)
     private val body = SkyBodyView(context)
     private val streaks = List(STREAKS) { StreakView(context) }
@@ -311,14 +311,14 @@ internal class TouchOceanScene(context: Context) : FrameLayout(context) {
     }
 }
 
-internal sealed class FillSpec {
+sealed class FillSpec {
     data class Solid(val color: Int) : FillSpec()
     class Sea(val stops: IntArray, val fromY: Float, val toY: Float) : FillSpec()
 }
 
 /** One swell band: a periodic wave drawn once into this view; the scene only slides it. */
 @SuppressLint("ViewConstructor")
-internal class SwellView(context: Context) : View(context) {
+class SwellView(context: Context) : View(context) {
     private val fillPath = Path()
     private val crestPath = Path()
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -366,7 +366,7 @@ internal class SwellView(context: Context) : View(context) {
 
 /** The deep water under the front band, continuing the band's own gradient rows. */
 @SuppressLint("ViewConstructor")
-internal class SeaBodyView(context: Context) : View(context) {
+class SeaBodyView(context: Context) : View(context) {
     private val paint = Paint()
 
     fun setGradient(stops: IntArray, fromY: Float, toY: Float) {
@@ -381,7 +381,7 @@ internal class SeaBodyView(context: Context) : View(context) {
 
 /** The sun, or a crescent moon cut with a second circle. */
 @SuppressLint("ViewConstructor")
-internal class SkyBodyView(context: Context) : View(context) {
+class SkyBodyView(context: Context) : View(context) {
     private val path = Path()
     private val cut = Path()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -408,7 +408,7 @@ internal class SkyBodyView(context: Context) : View(context) {
 
 /** One wind streak: a shallow arc in a box of its own. */
 @SuppressLint("ViewConstructor")
-internal class StreakView(context: Context) : View(context) {
+class StreakView(context: Context) : View(context) {
     private val path = Path()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
 
@@ -429,7 +429,7 @@ internal class StreakView(context: Context) : View(context) {
 
 /** A light shaft below the surface: a quad fading from 14% white to nothing. */
 @SuppressLint("ViewConstructor")
-internal class ShaftView(context: Context) : View(context) {
+class ShaftView(context: Context) : View(context) {
     private val path = Path()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 

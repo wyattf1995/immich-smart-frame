@@ -762,7 +762,7 @@ class TouchHomeView private constructor(
             val dot = kit.dp(if (wall) 40 else 34)
             addView(FrameLayout(context).apply {
                 background = if (pending) kit.oval(p.accent, p.accentStroke, 3) else kit.oval(0x00000000, p.stroke, 3)
-                if (pending) addView(kit.icon(R.drawable.ic_touch_check, p.onAccent, (dot * 0.6f / resources.displayMetrics.density).toInt()),
+                if (pending) addView(kit.icon(com.wyattfleming.frameui.R.drawable.ic_touch_check, p.onAccent, (dot * 0.6f / resources.displayMetrics.density).toInt()),
                     LayoutParams((dot * 0.6f).toInt(), (dot * 0.6f).toInt(), Gravity.CENTER))
             }, LinearLayout.LayoutParams(dot, dot))
             addView(kit.text(item.summary, scale.body, TouchFonts.Face.TEXT, if (pending) p.inkMuted else p.ink, maxLines = 1).apply {

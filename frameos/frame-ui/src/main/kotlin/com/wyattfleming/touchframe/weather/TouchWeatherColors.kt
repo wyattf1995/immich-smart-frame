@@ -5,7 +5,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /** The Weather page's sky, field and ground; text uses Touch's day and night inks. */
-internal data class TouchWeatherColors(
+data class TouchWeatherColors(
     val skyTop: Int,
     val skyBottom: Int,
     val field: Int,
@@ -74,7 +74,7 @@ internal data class TouchWeatherColors(
  * Monotone cubic (Fritsch–Carlson) through the readings: the line passes through every point and never bulges above
  * a high or below a low, so the drawn curve never shows a temperature the forecast does not.
  */
-internal object TouchWeatherCurve {
+object TouchWeatherCurve {
     /** Tangent at each point for x-ordered [xs] and [ys]; flat stretches and turning points get zero. */
     fun tangents(xs: DoubleArray, ys: DoubleArray): DoubleArray {
         val n = xs.size
