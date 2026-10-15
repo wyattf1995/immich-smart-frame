@@ -162,7 +162,7 @@ class TouchOceanView(context: Context, private val onRetry: () -> Unit) : FrameL
             screen.water?.let { water ->
                 contentDescription = "Water temperature $water degrees Fahrenheit"
                 val number = kit.text(water, scale.clock, TouchFonts.Face.DISPLAY, ink).apply { fontFeatureSettings = "tnum" }
-                val degrees = kit.text("°F", scale.clock * 0.3f, TouchFonts.Face.DISPLAY, ink)
+                val degrees = kit.text("°", scale.clock * 0.42f, TouchFonts.Face.DISPLAY, ink)
                 val (numberTop, numberBottom) = inkInsets(number)
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL

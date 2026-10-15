@@ -29,6 +29,7 @@
             android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="com.wyattfleming.touchframe.PROVISION" />
+                <action android:name="com.wyattfleming.touchframe.SET_WEATHER_LOCATION" />
             </intent-filter>
         </receiver>
         <!-- stateNotNeeded keeps Touch's place when the low-memory killer takes it on

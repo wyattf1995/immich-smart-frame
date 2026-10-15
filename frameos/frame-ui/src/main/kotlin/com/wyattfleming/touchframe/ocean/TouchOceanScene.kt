@@ -443,7 +443,7 @@ class ShaftView(context: Context) : View(context) {
         path.lineTo(xs[3], bottom)
         path.close()
         val right = layoutParams?.width?.toFloat() ?: width.toFloat()
-        paint.shader = LinearGradient(0f, 0f, right, bottom, 0x24FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP)
+        paint.shader = LinearGradient(0f, 0f, right, bottom, 0x14FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP)
         invalidate()
     }
 
