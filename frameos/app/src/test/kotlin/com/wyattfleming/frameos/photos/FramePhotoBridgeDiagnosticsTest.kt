@@ -49,7 +49,7 @@ class FramePhotoBridgeDiagnosticsTest {
             .put("image", "a")
 
         assertTrue(nativeResponse(bridge, FramePhotoBridge.NATIVE_APP, capture, sender).getBoolean("accepted"))
-        assertTrue(reserve.latest()?.isFile == true)
+        assertTrue(reserve.latest()?.file?.isFile == true)
     }
 
     @Test
