@@ -287,11 +287,12 @@ class TouchShellLayout(
         )).apply { setLayerInset(1, 0, 0, 0, dp(1)) }
         bar.setPadding(dp(8), 0, dp(8), 0)
         bar.layoutParams = (bar.layoutParams as LayoutParams).apply { height = barHeight }
-        rebuildTabs(palette, barHeight, large)
+        val compact = compactBar(large, destinations.size)
+        rebuildTabs(palette, barHeight, large, compact)
         clock.typeface = TouchFonts.get(context, TouchFonts.Face.DISPLAY)
         clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (large) 30f else 27f)
         clock.setTextColor(palette.ink)
-        clock.setPadding(dp(16), 0, dp(16), 0)
+        clock.setPadding(dp(if (compact) 12 else 16), 0, dp(if (compact) 12 else 16), 0)
         clock.text = clockText
         clock.visibility = if (destination == TouchDestination.HOME) View.GONE else View.VISIBLE
 
@@ -324,17 +325,17 @@ class TouchShellLayout(
         return dp(scale.target + 16 + scale.pad / 2)
     }
 
-    private fun rebuildTabs(palette: Palette, barHeight: Int, large: Boolean) {
+    private fun rebuildTabs(palette: Palette, barHeight: Int, large: Boolean, compact: Boolean) {
         tabs.removeAllViews()
-        destinations.forEach { item -> tabs.addView(destinationTab(item, palette, barHeight, large)) }
+        destinations.forEach { item -> tabs.addView(destinationTab(item, palette, barHeight, large, compact)) }
         while (bar.childCount > 2) bar.removeViewAt(2)
         // A divider and gap keep Settings (which leaves the app) from reading as one more tab.
         bar.addView(View(context).apply { setBackgroundColor(palette.settingsStroke ?: palette.muted); alpha = 0.5f },
             LinearLayout.LayoutParams(dp(1), barHeight - dp(32)).apply { marginEnd = dp(16) })
-        bar.addView(settingsTab(palette, barHeight, large))
+        bar.addView(settingsTab(palette, barHeight, large, compact))
     }
 
-    private fun destinationTab(item: TouchDestination, palette: Palette, barHeight: Int, large: Boolean): View {
+    private fun destinationTab(item: TouchDestination, palette: Palette, barHeight: Int, large: Boolean, compact: Boolean): View {
         val selected = item == destination
         return LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -347,7 +348,8 @@ class TouchShellLayout(
             // The whole bar height is the touch target; the chip is drawn inset inside it. The
             // background is set before the padding: an InsetDrawable reports padding and would replace it.
             background = insetChip(if (selected) rounded(palette.selected, palette.selectedStroke) else rounded(Color.TRANSPARENT, null), dp(2))
-            setPadding(dp(if (large) 26 else 20), 0, dp(if (large) 26 else 20), 0)
+            val side = if (large) 26 else if (compact) 14 else 20
+            setPadding(dp(side), 0, dp(side), 0)
             setOnClickListener {
                 hideMenu()
                 onNavigate(item)
@@ -359,7 +361,8 @@ class TouchShellLayout(
         }
     }
 
-    private fun settingsTab(palette: Palette, barHeight: Int, large: Boolean): View = LinearLayout(context).apply {
+    /** Settings keeps its outline and its spoken name; a crowded 1280 bar drops only the visible word. */
+    private fun settingsTab(palette: Palette, barHeight: Int, large: Boolean, compact: Boolean): View = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         isClickable = true
@@ -367,10 +370,12 @@ class TouchShellLayout(
         contentDescription = "Settings"
         minimumWidth = dp(MIN_TARGET_DP)
         background = insetChip(rounded(palette.settings, palette.settingsStroke), 0)
-        setPadding(dp(20), 0, dp(20), 0)
+        setPadding(dp(if (compact) 18 else 20), 0, dp(if (compact) 18 else 20), 0)
         setOnClickListener { onSettings() }
-        addView(icon(R.drawable.ic_touch_settings, palette.settingsInk, large))
-        addView(label("Settings", palette.settingsInk, large))
+        addView(icon(R.drawable.ic_touch_settings, palette.settingsInk, large).apply {
+            if (compact) (layoutParams as LinearLayout.LayoutParams).marginEnd = 0
+        })
+        if (!compact) addView(label("Settings", palette.settingsInk, large))
     }.also { view ->
         view.layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, barHeight)
     }
@@ -383,6 +388,7 @@ class TouchShellLayout(
             TouchDestination.BIRDS -> R.drawable.ic_touch_birds
             TouchDestination.WEATHER -> R.drawable.ic_touch_weather
             TouchDestination.OCEAN -> R.drawable.ic_touch_ocean
+            TouchDestination.POWER -> R.drawable.ic_touch_power
             TouchDestination.CAMERAS -> R.drawable.ic_touch_cameras
             TouchDestination.CALENDAR -> R.drawable.ic_touch_calendar
         }
@@ -438,6 +444,14 @@ class TouchShellLayout(
         private const val MENU_SLIDE_MILLIS = 200L
 
         fun barHeightDpFor(screenWidthDp: Int): Int = if (screenWidthDp >= 1400) WIDE_BAR_HEIGHT_DP else PANEL_BAR_HEIGHT_DP
+
+        /**
+         * Eight tabs, the clock and Settings overflow the 1280 bar by about a tab. Only then do the tabs tighten
+         * (20 to 14dp a side) and Settings shows its icon alone; seven tabs keep the familiar bar.
+         */
+        fun compactBar(large: Boolean, tabCount: Int): Boolean = !large && tabCount >= COMPACT_TAB_COUNT
+
+        const val COMPACT_TAB_COUNT = 8
 
     }
 }

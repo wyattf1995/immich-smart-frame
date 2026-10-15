@@ -11,6 +11,7 @@ enum class TouchDestination(
     BIRDS("Birds", "♢"),
     WEATHER("Weather", "☀"),
     OCEAN("Ocean", "≈"),
+    POWER("Power", "⚡"),
     CAMERAS("Cameras", "◉"),
     CALENDAR("Calendar", "▣"),
     ;
@@ -49,6 +50,20 @@ internal object TouchDestinationOrder {
         return if (weather < 0) order + TouchDestination.OCEAN
         else order.subList(0, weather + 1) + TouchDestination.OCEAN + order.subList(weather + 1, order.size)
     }
+
+    /**
+     * Power is local to Touch as well: it follows Ocean (or Weather, or the end) and, like Ocean, a remote order
+     * never hides it.
+     */
+    fun withPower(order: List<TouchDestination>): List<TouchDestination> {
+        if (TouchDestination.POWER in order) return order
+        val anchor = order.indexOf(TouchDestination.OCEAN).takeIf { it >= 0 } ?: order.indexOf(TouchDestination.WEATHER)
+        return if (anchor < 0) order + TouchDestination.POWER
+        else order.subList(0, anchor + 1) + TouchDestination.POWER + order.subList(anchor + 1, order.size)
+    }
+
+    /** Both Touch-only screens in their places. */
+    fun withLocal(order: List<TouchDestination>): List<TouchDestination> = withPower(withOcean(order))
 
     fun normalize(remoteOrder: List<TouchDestination>): List<TouchDestination> = buildList {
         add(TouchDestination.HOME)

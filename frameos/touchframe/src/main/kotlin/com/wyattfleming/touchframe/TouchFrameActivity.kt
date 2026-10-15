@@ -36,6 +36,7 @@ import com.wyattfleming.touchframe.media.TouchMediaView
 import com.wyattfleming.touchframe.media.TouchOfflinePhotoStore
 import com.wyattfleming.touchframe.media.TouchPhotoOfDay
 import com.wyattfleming.touchframe.ocean.*
+import com.wyattfleming.touchframe.power.*
 import com.wyattfleming.touchframe.ui.*
 import java.security.SecureRandom
 import java.time.Instant
@@ -52,6 +53,8 @@ class TouchFrameActivity : Activity() {
     private val worker = TouchTaskScope.newSingleWorker()
     // Ebbward is on the internet; its timeouts never queue Home Assistant loads behind them.
     private val oceanWorker = TouchTaskScope.newSingleWorker()
+    // Power's first open reads up to 25 hour starts; it never queues Home or Calendar loads behind it.
+    private val powerWorker = TouchTaskScope.newSingleWorker()
     private val authorizationWorker = Executors.newSingleThreadExecutor()
     private val tokenLock = Any()
     private val tasks = TouchTaskScope()
@@ -93,6 +96,10 @@ class TouchFrameActivity : Activity() {
     private lateinit var calendar: TouchCalendarView
     private lateinit var ocean: TouchOceanView
     private var oceanState = TouchOceanState()
+    private lateinit var power: TouchPowerView
+    private var powerState = TouchPowerViewState(loading = true)
+    private var powerRepository: TouchPowerRepository? = null
+    private var powerInFlight = false
     private var todoRepository: TouchTodoRepository? = null
     private val todoPreferences by lazy { getSharedPreferences("touch_todo", MODE_PRIVATE) }
     private var todoBoard = TouchTodoBoard.notChosen()
@@ -126,6 +133,8 @@ class TouchFrameActivity : Activity() {
             if (destination == TouchDestination.CALENDAR) calendar.tick(now)
             ocean.setNight(isNight)
             if (destination == TouchDestination.OCEAN) ocean.tick()
+            power.setNight(isNight)
+            if (destination == TouchDestination.POWER) power.tick()
             cameras?.setNight(isNight)
             main.postDelayed(this, 1_000L)
         }
@@ -136,6 +145,7 @@ class TouchFrameActivity : Activity() {
             TouchDestination.CALENDAR -> requestCalendar(calendarState.mode, calendarState.anchor, calendarState.selectedDate, true)
             TouchDestination.WEATHER -> refreshWeather()
             TouchDestination.OCEAN -> refreshOcean()
+            TouchDestination.POWER -> refreshPower()
             else -> Unit
         }
     }
@@ -193,10 +203,12 @@ class TouchFrameActivity : Activity() {
         }
         calendar = TouchCalendarView(this, ::requestCalendar, ::signIn).apply { visibility = View.GONE }
         ocean = TouchOceanView(this) { refreshOcean(force = true) }.apply { visibility = View.GONE }
+        power = TouchPowerView(this, ::refreshPower, ::signIn).apply { visibility = View.GONE }
         shell.content.addView(home, fill())
         shell.content.addView(weather, fill())
         shell.content.addView(calendar, fill())
         shell.content.addView(ocean, fill())
+        shell.content.addView(power, fill())
         root.addView(shell, fill())
         setContentView(root)
         companion = TouchCompanionController.create(
@@ -245,6 +257,9 @@ class TouchFrameActivity : Activity() {
         todoRepository = TouchTodoRepository(config.homeAssistantOrigin, TouchHomeTokenProvider { deadline ->
             synchronized(tokenLock) { if (Thread.currentThread().isInterrupted) null else client.validAccessToken(deadline) }
         })
+        powerRepository = TouchPowerRepository(config.homeAssistantOrigin, TouchHomeTokenProvider { deadline ->
+            synchronized(tokenLock) { if (Thread.currentThread().isInterrupted) null else client.validAccessToken(deadline) }
+        })
         calendarRepository = TouchCalendarRepository(config, TouchCalendarTokenProvider { deadline ->
             synchronized(tokenLock) { if (Thread.currentThread().isInterrupted) null else client.validAccessToken(deadline) }
         })
@@ -283,6 +298,7 @@ class TouchFrameActivity : Activity() {
         weatherInFlight = false
         oceanInFlight = false
         ocean.setActive(false)
+        powerInFlight = false
         climateInFlight = false
         home.setClimateBusy(false)
         releaseData()
@@ -305,6 +321,7 @@ class TouchFrameActivity : Activity() {
         cameras?.close()
         worker.shutdownNow()
         oceanWorker.shutdownNow()
+        powerWorker.shutdownNow()
         authorizationWorker.shutdownNow()
         cancellationWorker.shutdown()
         main.removeCallbacksAndMessages(null)
@@ -322,17 +339,20 @@ class TouchFrameActivity : Activity() {
         // capture these exact instances so a resumed activity's new clients are unaffected.
         val oldRepository = repository
         val oldTodoRepository = todoRepository
+        val oldPowerRepository = powerRepository
         val oldCalendarRepository = calendarRepository
         val oldWeather = weatherRemote
         val oldOAuth = oauth
         repository = null
         todoRepository = null
+        powerRepository = null
         calendarRepository = null
         weatherRemote = null
         oauth = null
         cancellationWorker.execute {
             oldRepository?.close()
             oldTodoRepository?.cancel()
+            oldPowerRepository?.cancel()
             oldCalendarRepository?.close()
             oldWeather?.cancel()
             oldOAuth?.cancelInFlight()
@@ -362,6 +382,7 @@ class TouchFrameActivity : Activity() {
         calendar.visibility = if (next == TouchDestination.CALENDAR) View.VISIBLE else View.GONE
         ocean.visibility = if (next == TouchDestination.OCEAN) View.VISIBLE else View.GONE
         ocean.setActive(resumed && next == TouchDestination.OCEAN)
+        power.visibility = if (next == TouchDestination.POWER) View.VISIBLE else View.GONE
         cameras?.visibility = if (next == TouchDestination.CAMERAS) View.VISIBLE else View.GONE
         cameras?.setActive(resumed && networkAllowed() && next == TouchDestination.CAMERAS)
         media?.setVisibleActive(resumed && networkAllowed() && next.usesWebMedia)
@@ -372,6 +393,7 @@ class TouchFrameActivity : Activity() {
             TouchDestination.CALENDAR -> requestCalendar(calendarState.mode, calendarState.anchor, calendarState.selectedDate, true)
             TouchDestination.WEATHER -> refreshWeather()
             TouchDestination.OCEAN -> refreshOcean()
+            TouchDestination.POWER -> refreshPower()
             TouchDestination.PHOTOS, TouchDestination.ART, TouchDestination.BIRDS -> {
                 val url = webMediaUrl(next) ?: run { message("${next.label} isn\u2019t set up on this frame.", TouchShellLayout.NoticeTone.ERROR); return }
                 if (!networkAllowed()) { requestLocalNetwork(); return }
@@ -594,6 +616,48 @@ class TouchFrameActivity : Activity() {
 
     private fun scheduleOceanRefresh(delayMillis: Long) {
         if (destination != TouchDestination.OCEAN) return
+        main.removeCallbacks(refresh)
+        main.postDelayed(refresh, delayMillis.coerceAtLeast(1_000L))
+    }
+
+    /**
+     * Power's readings from Home Assistant, once a minute while Power is shown. A failed read keeps the last snapshot
+     * so the page can say how old it is; sign-in and a missing Power package replace it with their own screens.
+     */
+    private fun refreshPower() {
+        if (!resumed || powerInFlight) return
+        val source = powerRepository
+        if (source == null || !networkAllowed()) {
+            powerState = powerState.copy(loading = false, connection = if (configuration == null) TouchPowerConnection.NOT_SET_UP else TouchPowerConnection.OFFLINE)
+            power.render(powerState)
+            schedulePowerRefresh(POWER_RETRY_MILLIS)
+            return
+        }
+        powerInFlight = true
+        if (powerState.snapshot == null) {
+            powerState = powerState.copy(loading = true)
+            power.render(powerState)
+        }
+        tasks.submit(powerWorker) { isCurrent ->
+            if (!isCurrent()) return@submit
+            val load = runCatching { source.load(System.currentTimeMillis()) }
+                .getOrElse { TouchPowerLoad(null, TouchPowerConnection.OFFLINE) }
+            main.post {
+                if (!isCurrent()) return@post
+                powerInFlight = false
+                powerState = TouchPowerViewState(
+                    snapshot = load.snapshot ?: powerState.snapshot.takeIf { load.connection == TouchPowerConnection.OFFLINE },
+                    connection = load.connection,
+                    loading = false,
+                )
+                power.render(powerState)
+                schedulePowerRefresh(if (load.connection == TouchPowerConnection.LIVE) POWER_REFRESH_MILLIS else POWER_RETRY_MILLIS)
+            }
+        }
+    }
+
+    private fun schedulePowerRefresh(delayMillis: Long) {
+        if (destination != TouchDestination.POWER) return
         main.removeCallbacks(refresh)
         main.postDelayed(refresh, delayMillis.coerceAtLeast(1_000L))
     }
@@ -934,7 +998,7 @@ class TouchFrameActivity : Activity() {
         } else {
             TouchDestinationOrder.defaults(birdsConfigured)
         }
-        val destinations = TouchDestinationOrder.withOcean(TouchDestinationOrder.available(requested, birdsConfigured))
+        val destinations = TouchDestinationOrder.withLocal(TouchDestinationOrder.available(requested, birdsConfigured))
         home.setDestinations(destinations)
         shell.setDestinations(destinations)
     }
@@ -1063,6 +1127,8 @@ class TouchFrameActivity : Activity() {
         const val TODO_SELECTION = "selection"
         const val OCEAN_REFRESH_MILLIS = 10 * 60_000L
         const val OCEAN_TIMEOUT_MILLIS = 15_000
+        const val POWER_REFRESH_MILLIS = 60_000L
+        const val POWER_RETRY_MILLIS = 30_000L
         const val EDGE_HINT_LIMIT = 3
         const val LAN_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
         const val LAN_REQUEST = 101
