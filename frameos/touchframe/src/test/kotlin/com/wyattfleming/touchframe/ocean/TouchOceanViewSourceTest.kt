@@ -66,6 +66,20 @@ class TouchOceanViewSourceTest {
     }
 
     @Test
+    fun `a stat's detail may take a second line and the columns keep a gap, so a long swell never runs into Wind`() {
+        // Seen 10/15 on the Lenovo and the 1280x800 frame: "15 s, from the south-southw…" ellipsized against "Gusts to 20".
+        val stats = source.substring(source.indexOf("screen.stats.forEachIndexed"), source.indexOf("private fun tideSection"))
+        assertTrue(stats.contains("stat.detail?.let { addView(kit.text(it, scale.label, color = ink, maxLines = 2)"))
+        assertTrue(stats.contains("if (index > 0) marginStart = kit.dp(scale.gap / 2)"))
+    }
+
+    @Test
+    fun `the tide axis places its hour labels inside the chart`() {
+        // Seen 10/15: a tick near the left edge drew as "AM" and the last one as "9 A".
+        assertTrue(source.contains("TouchTideAxis.labelStart(x(millis), text.measureText(label), w)"))
+    }
+
+    @Test
     fun `the degree mark hangs from the top of the numeral instead of sitting on its baseline`() {
         val number = source.substring(source.indexOf("val number = kit.text(water"), source.indexOf("\"Water temperature\""))
         assertTrue(number.contains("isBaselineAligned = false"))

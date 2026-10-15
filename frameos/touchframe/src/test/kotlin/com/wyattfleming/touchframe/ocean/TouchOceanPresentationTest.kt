@@ -27,21 +27,31 @@ class TouchOceanPresentationTest {
 
     @Test
     fun `the summary uses Ebbward's wording for swell size, wind, the next high tide and the water`() {
-        assertEquals("A moderate south swell, wind 10 mph from the north, high tide 12:17 AM, water near 72°.", screen.summary)
+        // Numbers stay with their units and the tide time stays whole when the two-line summary wraps.
+        assertEquals("A moderate south swell, wind 10\u00A0mph from the north, high tide tomorrow\u00A012:17\u00A0AM, water near 72°.", screen.summary)
         assertEquals("Air 66°, wind 10 mph from the north", screen.skyLine)
     }
 
     @Test
     fun `times use the beach's own zone, not the frame's`() {
         assertEquals("9:18 PM", screen.updated)
-        assertEquals(listOf("High 12:17 AM, 3.5 ft", "Low 4:34 AM, 2.5 ft"), screen.tideNext)
+        assertEquals(listOf("High 3.5 ft, tomorrow 12:17 AM", "Low 2.5 ft, tomorrow 4:34 AM"), screen.tideNext)
+    }
+
+    @Test
+    fun `a tide on another day says so, and the tide list reads height then time like the chart`() {
+        // Seen 10/15 at 3 PM: "High 12:18 PM, 4.7 ft" was tomorrow's high and read as one already past.
+        val earlyMorning = TouchOceanPresenter.present(conditions, Instant.parse("2026-10-14T08:00:00Z").toEpochMilli(), ZoneId.of("UTC"), twentyFourHour = false)
+        assertEquals(listOf("Low 2.5 ft, 4:34 AM", "High 5.4 ft, 11:05 AM"), earlyMorning.tideNext)
+        assertTrue(earlyMorning.summary.contains("high tide 11:05\u00A0AM,"))
+        assertEquals(listOf("High 3.5 ft, tomorrow 12:17 AM", "Low 2.5 ft, tomorrow 4:34 AM"), screen.tideNext)
     }
 
     @Test
     fun `stats read waves, wind and the next sun event`() {
         assertEquals(listOf("Waves", "Wind", "Sunrise"), screen.stats.map { it.label })
-        assertEquals(TouchOceanStat("Waves", "3.6", "ft", "17 s, from the south"), screen.stats[0])
-        assertEquals(TouchOceanStat("Wind", "10", "mph", "Gusts to 17"), screen.stats[1])
+        assertEquals(TouchOceanStat("Waves", "3.6", "ft", "17\u00A0s, from the south"), screen.stats[0])
+        assertEquals("gusts carry their unit like every other number", TouchOceanStat("Wind", "10", "mph", "Gusts to 17\u00A0mph"), screen.stats[1])
         assertEquals(TouchOceanStat("Sunrise", "6:56", "AM", "Sunset 6:20 PM"), screen.stats[2])
     }
 
