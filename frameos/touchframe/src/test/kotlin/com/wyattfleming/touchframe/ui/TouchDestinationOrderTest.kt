@@ -126,4 +126,35 @@ class TouchDestinationOrderTest {
         assertEquals(false, TouchDestination.OCEAN.usesWebMedia)
         assertEquals(false, TouchDestination.OCEAN.isImmersiveMedia)
     }
+
+    @Test
+    fun `Power follows Ocean, or Weather without Ocean, when a remote order does not name it`() {
+        assertEquals(
+            listOf(TouchDestination.HOME, TouchDestination.WEATHER, TouchDestination.OCEAN, TouchDestination.POWER, TouchDestination.CALENDAR),
+            TouchDestinationOrder.withLocal(listOf(TouchDestination.HOME, TouchDestination.WEATHER, TouchDestination.CALENDAR)),
+        )
+        assertEquals(
+            listOf(TouchDestination.HOME, TouchDestination.WEATHER, TouchDestination.POWER, TouchDestination.CAMERAS),
+            TouchDestinationOrder.withPower(listOf(TouchDestination.HOME, TouchDestination.WEATHER, TouchDestination.CAMERAS)),
+        )
+        assertEquals(
+            listOf(TouchDestination.HOME, TouchDestination.PHOTOS, TouchDestination.POWER),
+            TouchDestinationOrder.withPower(listOf(TouchDestination.HOME, TouchDestination.PHOTOS)),
+        )
+        val explicit = listOf(TouchDestination.HOME, TouchDestination.POWER, TouchDestination.OCEAN)
+        assertEquals(explicit, TouchDestinationOrder.withPower(explicit))
+    }
+
+    @Test
+    fun `Power is a native screen, not retained web media`() {
+        assertEquals(false, TouchDestination.POWER.usesWebMedia)
+        assertEquals(false, TouchDestination.POWER.isImmersiveMedia)
+    }
+
+    @Test
+    fun `only an eight-tab bar on the 1280 panel tightens its tabs and shows Settings as an icon`() {
+        assertEquals(true, TouchShellLayout.compactBar(large = false, tabCount = 8))
+        assertEquals(false, TouchShellLayout.compactBar(large = false, tabCount = 7))
+        assertEquals(false, TouchShellLayout.compactBar(large = true, tabCount = 9))
+    }
 }

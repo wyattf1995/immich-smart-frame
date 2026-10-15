@@ -48,6 +48,11 @@ CLASSES = {
     "todo-repo": ("com.wyattfleming.touchframe.home.TouchTodoRepositoryTest", tests / "home/TouchTodoRepositoryTest.kt"),
     "home-todo": ("com.wyattfleming.touchframe.ui.TouchHomeTodoSourceTest", tests / "ui/TouchHomeTodoSourceTest.kt"),
     "ocean-glance": ("com.wyattfleming.touchframe.ocean.TouchOceanGlanceTest", tests / "ocean/TouchOceanGlanceTest.kt"),
+    "power-parser": ("com.wyattfleming.touchframe.power.TouchPowerParserTest", tests / "power/TouchPowerParserTest.kt"),
+    "power-signals": ("com.wyattfleming.touchframe.power.TouchPowerSignalsTest", tests / "power/TouchPowerParserTest.kt"),
+    "power": ("com.wyattfleming.touchframe.power.TouchPowerPresentationTest", tests / "power/TouchPowerPresentationTest.kt"),
+    "power-repo": ("com.wyattfleming.touchframe.power.TouchPowerRepositoryTest", tests / "power/TouchPowerRepositoryTest.kt"),
+    "power-view": ("com.wyattfleming.touchframe.power.TouchPowerViewSourceTest", tests / "power/TouchPowerViewSourceTest.kt"),
 }
 
 MUTATIONS = [
@@ -85,8 +90,8 @@ MUTATIONS = [
       "timing treats all-day events as current all day and open-ended ones as finished once started"}),
     ("tab-chip-padding-order-red", main / "ui/TouchShellLayout.kt",
      """        background = insetChip(rounded(palette.settings, palette.settingsStroke), 0)
-        setPadding(dp(20), 0, dp(20), 0)""",
-     """        setPadding(dp(20), 0, dp(20), 0)
+        setPadding(dp(if (compact) 18 else 20), 0, dp(if (compact) 18 else 20), 0)""",
+     """        setPadding(dp(if (compact) 18 else 20), 0, dp(if (compact) 18 else 20), 0)
         background = insetChip(rounded(palette.settings, palette.settingsStroke), 0)""", "chip",
      {"tab chips are assigned before their padding so the inset background cannot erase it"}),
     ("month-six-week-fit-red", main / "calendar/TouchCalendarView.kt",
@@ -159,6 +164,36 @@ MUTATIONS = [
      "it.epochMillis > nowMillis", "it.epochMillis > 0L", "ocean-glance",
      {"Home's ocean glance names the spot, its water and the next tide",
       "with every listed tide in the past the glance says nothing about tides"}),
+    ("power-meter-reset-red", main / "power/TouchPower.kt",
+     "total += if (end >= start) end - start else end", "total += end - start", "power-signals",
+     {"a meter that went backwards was reset, so its new reading is the hour's use"}),
+    ("power-laundry-restart-red", main / "power/TouchPower.kt",
+     'if (rows[i - 1].state == "on" && rows[i].state == "off")', 'if (rows[i].state == "off")', "power-signals",
+     {"a Home Assistant restart's unknown-to-off is not a finished load"}),
+    ("power-solar-restart-red", main / "power/TouchPower.kt",
+     "if (rows[i].number != value) break", "if (true) break", "power-signals",
+     {"a restart that rewrites the same reading does not count as a Sunrun report"}),
+    ("power-unpriced-schedule-red", main / "power/TouchPower.kt",
+     "if (today.any { it !in rates } || tomorrow.any { it !in ratesTomorrow }) return null", "if (false) return null", "power-parser",
+     {"a schedule that names a period without a price is not shown at all"}),
+    ("power-next-change-red", main / "power/TouchPowerPresentation.kt",
+     "if (at.period != period) return t", "if (at.period == period) return t", "power",
+     {"the headline names the period now and when it ends, then the next period and its price"}),
+    ("power-ring-clip-red", main / "power/TouchPowerPresentation.kt",
+     "maxOf(RING_STEP_KWH, ceil((kwh.maxOrNull() ?: 0.0) / RING_STEP_KWH) * RING_STEP_KWH)", "maxOf(RING_STEP_KWH, 0.0 * kwh.size)", "power",
+     {"the use ring grows past half a kWh instead of clipping a busy hour"}),
+    ("power-history-optional-red", main / "power/TouchPowerRepository.kt",
+     "optional { fillHourReadings(setup, starts, headers, deadline) }", "run { fillHourReadings(setup, starts, headers, deadline) }", "power-repo",
+     {"a failed history read keeps the live readings"}),
+    ("power-view-minute-red", main / "power/TouchPowerView.kt",
+     "const val SLOT_MILLIS = 60_000L", "const val SLOT_MILLIS = 1_000L", "power-view",
+     {"the page never animates and the dial turns only with the minute"}),
+    ("destinations-power-anchor-red", main / "ui/TouchDestination.kt",
+     "else order.subList(0, anchor + 1) + TouchDestination.POWER + order.subList(anchor + 1, order.size)", "else order + TouchDestination.POWER", "destinations",
+     {"Power follows Ocean, or Weather without Ocean, when a remote order does not name it"}),
+    ("shell-compact-bar-red", main / "ui/TouchShellLayout.kt",
+     "= !large && tabCount >= COMPACT_TAB_COUNT", "= large && tabCount >= COMPACT_TAB_COUNT", "destinations",
+     {"only an eight-tab bar on the 1280 panel tightens its tabs and shows Settings as an icon"}),
 ]
 
 
