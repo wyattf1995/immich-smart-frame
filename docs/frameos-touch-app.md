@@ -30,6 +30,8 @@ not the Lenovo activity or its mode/gesture state machine.
 - Photos and Art fill the screen. Artwork stays uncropped with blurred margins.
   An inward swipe from the left edge reveals the top navigation over immersive
   media; its scrim dismisses the menu.
+  A tap on the photo shows a hint pointing at that edge, at most every ten
+  minutes, because Photos usually arrives by itself (idle return, Home button).
 - Android Settings opens directly and gets an explicit Return to FrameOS Touch
   overlay. Failure to establish that return route keeps the user in the app.
 - Home, Calendar, climate controls, and Weather use the authenticated Home

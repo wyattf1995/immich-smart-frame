@@ -117,6 +117,7 @@ class TouchFrameActivity : Activity() {
     private var authorizationContainer: View? = null
     private var pendingAuthorization: SharedPreferencesPendingOAuthStateStore? = null
     private var lanPromptShown = false
+    private var tapHintAtMillis: Long? = null
     private var lanDialog: AlertDialog? = null
     private val runtime get() = (application as TouchFrameApplication).runtime
     private val clock = object : Runnable {
@@ -176,6 +177,7 @@ class TouchFrameActivity : Activity() {
         }) {
             if (!settingsReturn.open()) message("Turn on the FrameOS Touch return button before opening Android Settings.", TouchShellLayout.NoticeTone.ERROR)
         }
+        shell.onMediaTap = ::maybeShowTapHint
         home = TouchHomeView(this, { route ->
             TouchDestination.entries.firstOrNull { it.name.equals(route, true) }?.let { next ->
                 // Home's Coming up always opens the current week, whatever week was browsed last.
@@ -1113,6 +1115,14 @@ class TouchFrameActivity : Activity() {
         actionLabel: String? = null,
         action: (() -> Unit)? = null,
     ) = shell.showNotice(value, tone, actionLabel, action)
+
+    /** A tap on the photo usually means "where are the controls?": point at the edge, at most every ten minutes. */
+    private fun maybeShowTapHint() {
+        val now = SystemClock.elapsedRealtime()
+        if (!TouchEdgeHintPolicy.showOnTap(now, tapHintAtMillis)) return
+        tapHintAtMillis = now
+        shell.showEdgeHint()
+    }
 
     /** Shown after a tap into Photos or Art, for the first few times on this frame. */
     private fun maybeShowEdgeHint() {

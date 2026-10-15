@@ -7,6 +7,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -70,6 +71,10 @@ class TouchShellLayout(
     private var menuVisible = false
     private var noticeVisible = false
     private val edgeStream = TouchShellEdgeStream()
+    private val mediaTap = TouchMediaTap()
+
+    /** A still tap on Photos or Art with the menu hidden; the activity decides whether to point at the edge. */
+    var onMediaTap: (() -> Unit)? = null
     private val hideNotice = Runnable { fadeOutNotice() }
     private val hideEdgeHint = Runnable {
         edgeHint.animate().alpha(0f).setDuration(TouchMotion.GENTLE_MILLIS).setInterpolator(TouchMotion.exit).withEndAction { edgeHint.visibility = View.GONE }
@@ -286,6 +291,10 @@ class TouchShellLayout(
             verticalTolerance = dp(VERTICAL_TOLERANCE_DP),
         )
         if (result.reveal) showMenu()
+        // Observed, never consumed: the photo page still gets its own tap.
+        val tapped = mediaTap.onEvent(event.actionMasked, event.x, event.y, event.eventTime, destination, menuVisible,
+            ViewConfiguration.get(context).scaledTouchSlop)
+        if (tapped) onMediaTap?.invoke()
         return result.ownsStream || super.dispatchTouchEvent(event)
     }
 
@@ -500,6 +509,51 @@ internal object TouchShellGesture {
 }
 
 /** Stateful ownership policy for an edge stream claimed before any child accepts DOWN. */
+/** A short, still tap on immersive media while the menu is hidden: the moment to remind someone where the menu is. */
+internal class TouchMediaTap {
+    private var tracking = false
+    private var downX = 0f
+    private var downY = 0f
+    private var downAtMillis = 0L
+
+    fun onEvent(action: Int, x: Float, y: Float, timeMillis: Long, destination: TouchDestination, menuVisible: Boolean, slop: Int): Boolean =
+        when (action) {
+            MotionEvent.ACTION_DOWN -> {
+                tracking = destination.isImmersiveMedia && !menuVisible
+                downX = x
+                downY = y
+                downAtMillis = timeMillis
+                false
+            }
+            MotionEvent.ACTION_UP -> {
+                val tap = tracking && destination.isImmersiveMedia && !menuVisible && timeMillis - downAtMillis <= MAX_TAP_MILLIS &&
+                    abs(x - downX) <= slop && abs(y - downY) <= slop
+                tracking = false
+                tap
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                tracking = false
+                false
+            }
+            else -> false
+        }
+
+    companion object {
+        const val MAX_TAP_MILLIS = 400L
+    }
+}
+
+/**
+ * The edge hint after a tap on the photo: at most once every ten minutes, so it helps whoever is looking for the
+ * menu without becoming a fixture on the wall. Tab taps into Photos keep their own first-three-times hint.
+ */
+internal object TouchEdgeHintPolicy {
+    const val TAP_HINT_INTERVAL_MILLIS = 10 * 60_000L
+
+    fun showOnTap(nowMillis: Long, lastShownMillis: Long?): Boolean =
+        lastShownMillis == null || nowMillis - lastShownMillis >= TAP_HINT_INTERVAL_MILLIS
+}
+
 internal class TouchShellEdgeStream {
     private var active = false
     private var revealed = false
