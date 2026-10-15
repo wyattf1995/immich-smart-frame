@@ -54,6 +54,7 @@ CLASSES = {
     "power-repo": ("com.wyattfleming.touchframe.power.TouchPowerRepositoryTest", tests / "power/TouchPowerRepositoryTest.kt"),
     "power-view": ("com.wyattfleming.touchframe.power.TouchPowerViewSourceTest", tests / "power/TouchPowerViewSourceTest.kt"),
     "motion": ("com.wyattfleming.touchframe.ui.TouchMotionTest", tests / "ui/TouchMotionTest.kt"),
+    "media-tap": ("com.wyattfleming.touchframe.ui.TouchMediaTapTest", tests / "ui/TouchMediaTapTest.kt"),
 }
 
 MUTATIONS = [
@@ -201,6 +202,12 @@ MUTATIONS = [
     ("motion-menu-exit-red", main / "ui/TouchShellLayout.kt",
      "bar.animate().translationX(-width.toFloat())", "bar.animate().translationX(-0f)", "motion",
      {"the immersive menu leaves the way it came in"}),
+    ("media-tap-still-red", main / "ui/TouchShellLayout.kt",
+     "abs(x - downX) <= slop && abs(y - downY) <= slop", "abs(x - downX) >= 0f && abs(y - downY) >= 0f", "media-tap",
+     {"swipes, long presses, native screens and an open menu are not taps on the photo"}),
+    ("edge-hint-interval-red", main / "ui/TouchShellLayout.kt",
+     "nowMillis - lastShownMillis >= TAP_HINT_INTERVAL_MILLIS", "nowMillis - lastShownMillis >= 0L", "media-tap",
+     {"the edge hint shows on a tap at most once every ten minutes"}),
 ]
 
 
