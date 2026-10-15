@@ -23,8 +23,10 @@ not the Lenovo activity or its mode/gesture state machine.
   Assistant: `sensor.frame_power` lists the devices, laundry sensors and solar
   meter to show, and `sensor.sce_tou_schedule` publishes each hour's TOU period
   and price for today and tomorrow (both from the `frame_power.yaml` package). The
-  frame never works out a rate itself. With eight tabs on the 1280 panel the tabs
-  tighten and Settings shows its icon alone; seven tabs keep the familiar bar.
+  frame never works out a rate itself.
+- On the 1280 panel each tab stacks its label (18sp) under its icon, so ten or
+  eleven labelled tabs fit beside the clock and Settings; the 1920 bar keeps icon
+  and label side by side. A "More" popover is the next step only past that.
 - Photos and Art fill the screen. Artwork stays uncropped with blurred margins.
   An inward swipe from the left edge reveals the top navigation over immersive
   media; its scrim dismisses the menu.

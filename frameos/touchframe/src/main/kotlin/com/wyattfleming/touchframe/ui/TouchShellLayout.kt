@@ -287,12 +287,11 @@ class TouchShellLayout(
         )).apply { setLayerInset(1, 0, 0, 0, dp(1)) }
         bar.setPadding(dp(8), 0, dp(8), 0)
         bar.layoutParams = (bar.layoutParams as LayoutParams).apply { height = barHeight }
-        val compact = compactBar(large, destinations.size)
-        rebuildTabs(palette, barHeight, large, compact)
+        rebuildTabs(palette, barHeight, large, stackedTabs(large))
         clock.typeface = TouchFonts.get(context, TouchFonts.Face.DISPLAY)
         clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (large) 30f else 27f)
         clock.setTextColor(palette.ink)
-        clock.setPadding(dp(if (compact) 12 else 16), 0, dp(if (compact) 12 else 16), 0)
+        clock.setPadding(dp(16), 0, dp(16), 0)
         clock.text = clockText
         clock.visibility = if (destination == TouchDestination.HOME) View.GONE else View.VISIBLE
 
@@ -325,44 +324,43 @@ class TouchShellLayout(
         return dp(scale.target + 16 + scale.pad / 2)
     }
 
-    private fun rebuildTabs(palette: Palette, barHeight: Int, large: Boolean, compact: Boolean) {
+    private fun rebuildTabs(palette: Palette, barHeight: Int, large: Boolean, stacked: Boolean) {
         tabs.removeAllViews()
-        destinations.forEach { item -> tabs.addView(destinationTab(item, palette, barHeight, large, compact)) }
+        destinations.forEach { item -> tabs.addView(destinationTab(item, palette, barHeight, large, stacked)) }
         while (bar.childCount > 2) bar.removeViewAt(2)
         // A divider and gap keep Settings (which leaves the app) from reading as one more tab.
         bar.addView(View(context).apply { setBackgroundColor(palette.settingsStroke ?: palette.muted); alpha = 0.5f },
             LinearLayout.LayoutParams(dp(1), barHeight - dp(32)).apply { marginEnd = dp(16) })
-        bar.addView(settingsTab(palette, barHeight, large, compact))
+        bar.addView(settingsTab(palette, barHeight, large))
     }
 
-    private fun destinationTab(item: TouchDestination, palette: Palette, barHeight: Int, large: Boolean, compact: Boolean): View {
+    private fun destinationTab(item: TouchDestination, palette: Palette, barHeight: Int, large: Boolean, stacked: Boolean): View {
         val selected = item == destination
         return LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            orientation = if (stacked) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            gravity = if (stacked) Gravity.CENTER else Gravity.CENTER_VERTICAL
             isClickable = true
             isFocusable = true
             isSelected = selected
             contentDescription = item.label
-            minimumWidth = dp(MIN_TARGET_DP)
+            minimumWidth = dp(if (stacked) STACKED_MIN_WIDTH_DP else MIN_TARGET_DP)
             // The whole bar height is the touch target; the chip is drawn inset inside it. The
             // background is set before the padding: an InsetDrawable reports padding and would replace it.
             background = insetChip(if (selected) rounded(palette.selected, palette.selectedStroke) else rounded(Color.TRANSPARENT, null), dp(2))
-            val side = if (large) 26 else if (compact) 14 else 20
+            val side = if (large) 26 else if (stacked) 12 else 20
             setPadding(dp(side), 0, dp(side), 0)
             setOnClickListener {
                 hideMenu()
                 onNavigate(item)
             }
-            addView(icon(item.icon, if (selected) palette.selectedInk else palette.muted, large))
-            addView(label(item.label, if (selected) palette.selectedInk else palette.ink, large))
+            addView(icon(item.icon, if (selected) palette.selectedInk else palette.muted, large, stacked))
+            addView(label(item.label, if (selected) palette.selectedInk else palette.ink, large, stacked))
         }.also { view ->
             view.layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, barHeight)
         }
     }
 
-    /** Settings keeps its outline and its spoken name; a crowded 1280 bar drops only the visible word. */
-    private fun settingsTab(palette: Palette, barHeight: Int, large: Boolean, compact: Boolean): View = LinearLayout(context).apply {
+    private fun settingsTab(palette: Palette, barHeight: Int, large: Boolean): View = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         isClickable = true
@@ -370,12 +368,10 @@ class TouchShellLayout(
         contentDescription = "Settings"
         minimumWidth = dp(MIN_TARGET_DP)
         background = insetChip(rounded(palette.settings, palette.settingsStroke), 0)
-        setPadding(dp(if (compact) 18 else 20), 0, dp(if (compact) 18 else 20), 0)
+        setPadding(dp(20), 0, dp(20), 0)
         setOnClickListener { onSettings() }
-        addView(icon(R.drawable.ic_touch_settings, palette.settingsInk, large).apply {
-            if (compact) (layoutParams as LinearLayout.LayoutParams).marginEnd = 0
-        })
-        if (!compact) addView(label("Settings", palette.settingsInk, large))
+        addView(icon(R.drawable.ic_touch_settings, palette.settingsInk, large))
+        addView(label("Settings", palette.settingsInk, large))
     }.also { view ->
         view.layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, barHeight)
     }
@@ -393,19 +389,26 @@ class TouchShellLayout(
             TouchDestination.CALENDAR -> R.drawable.ic_touch_calendar
         }
 
-    private fun icon(resource: Int, color: Int, large: Boolean): ImageView = ImageView(context).apply {
+    private fun icon(resource: Int, color: Int, large: Boolean, stacked: Boolean = false): ImageView = ImageView(context).apply {
         setImageDrawable(context.getDrawable(resource)?.mutate()?.apply { setTint(color) })
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
-        val size = dp(if (large) 30 else 26)
-        layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = dp(10) }
+        val size = dp(if (large) 30 else if (stacked) 24 else 26)
+        layoutParams = LinearLayout.LayoutParams(size, size).apply {
+            if (stacked) {
+                bottomMargin = dp(2)
+            } else {
+                marginEnd = dp(10)
+            }
+        }
     }
 
     /** Single-line label in one weight, so selection never changes a tab's width. */
-    private fun label(value: String, color: Int, large: Boolean): TextView = TextView(context).apply {
+    private fun label(value: String, color: Int, large: Boolean, stacked: Boolean = false): TextView = TextView(context).apply {
         text = value
         setTextColor(color)
         typeface = TouchFonts.get(context, TouchFonts.Face.TEXT_MEDIUM)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, if (large) 22f else 19f)
+        // Stacked labels sit at the panel's 18sp floor so a tab is as wide as its word, not its word plus an icon.
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, if (large) 22f else if (stacked) 18f else 19f)
         includeFontPadding = false
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
         maxLines = 1
@@ -446,12 +449,13 @@ class TouchShellLayout(
         fun barHeightDpFor(screenWidthDp: Int): Int = if (screenWidthDp >= 1400) WIDE_BAR_HEIGHT_DP else PANEL_BAR_HEIGHT_DP
 
         /**
-         * Eight tabs, the clock and Settings overflow the 1280 bar by about a tab. Only then do the tabs tighten
-         * (20 to 14dp a side) and Settings shows its icon alone; seven tabs keep the familiar bar.
+         * The 1280 panel stacks each tab's label under its icon (Wyatt's choice, 2026-10-15): a tab is about 80dp
+         * instead of 120, so ten or eleven labelled tabs, the clock and a labelled Settings fit without hiding a
+         * page. The 1920 bar has room and keeps icon and label side by side.
          */
-        fun compactBar(large: Boolean, tabCount: Int): Boolean = !large && tabCount >= COMPACT_TAB_COUNT
+        fun stackedTabs(large: Boolean): Boolean = !large
 
-        const val COMPACT_TAB_COUNT = 8
+        const val STACKED_MIN_WIDTH_DP = 76
 
     }
 }
