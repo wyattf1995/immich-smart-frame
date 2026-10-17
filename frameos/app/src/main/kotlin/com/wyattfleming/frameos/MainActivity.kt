@@ -59,6 +59,7 @@ import com.wyattfleming.frameos.auth.OAuthCallbackVerifier
 import com.wyattfleming.frameos.auth.OAuthState
 import com.wyattfleming.frameos.auth.PendingOAuthStateStore
 import com.wyattfleming.frameos.auth.SharedPreferencesPendingOAuthStateStore
+import com.wyattfleming.frameos.boot.FrameBootRecoveryLog
 import com.wyattfleming.frameos.boot.FrameBootRecoveryScheduler
 import com.wyattfleming.frameos.config.FrameConfiguration
 import com.wyattfleming.frameos.config.FrameConfigurationStore
@@ -1183,6 +1184,7 @@ class MainActivity : Activity() {
             }
             FrameBootRecoveryScheduler.cancelRetries(this)
             bootRecoveryConfirmed = true
+            operationLogger.log(FrameBootRecoveryLog.confirmed(SystemClock.elapsedRealtime()))
         }
     }
 

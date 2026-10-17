@@ -8,17 +8,20 @@ import android.content.Intent
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
+import com.wyattfleming.frameos.AndroidFrameOperationLogger
+import com.wyattfleming.frameos.FrameOperationLogEntry
 import com.wyattfleming.frameos.MainActivity
 
 class FrameBootRecoveryReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == FrameBootRecoveryScheduler.ACTION_RETRY) {
-            FrameBootRecoveryScheduler.launch(context)
+            FrameBootRecoveryScheduler.launch(context, retry = true)
             return
         }
 
         val delays = FrameBootRecoveryPolicy.launchDelaysFor(intent.action)
         if (delays.isNotEmpty()) {
+            FrameBootRecoveryScheduler.log(FrameBootRecoveryLog.scheduled(intent.action, SystemClock.elapsedRealtime()))
             FrameBootRecoveryScheduler.schedule(context, delays)
         }
     }
@@ -49,9 +52,9 @@ internal object FrameBootRecoveryScheduler {
         }
     }
 
-    fun launch(context: Context) {
+    fun launch(context: Context, retry: Boolean = false) {
         if (!Settings.canDrawOverlays(context)) {
-            Log.w(LOG_TAG, "Boot recovery skipped until display-over-other-apps access is granted")
+            log(FrameBootRecoveryLog.launched(retry, FrameBootRecoveryLog.Launch.NO_OVERLAY_ACCESS, SystemClock.elapsedRealtime()))
             return
         }
         val launchIntent = Intent(context, MainActivity::class.java).setAction(ACTION_RETRY).addFlags(
@@ -61,10 +64,16 @@ internal object FrameBootRecoveryScheduler {
         )
         try {
             context.startActivity(launchIntent)
+            log(FrameBootRecoveryLog.launched(retry, FrameBootRecoveryLog.Launch.STARTED, SystemClock.elapsedRealtime()))
         } catch (error: RuntimeException) {
             Log.e(LOG_TAG, "Unable to restore FrameOS after boot", error)
+            log(FrameBootRecoveryLog.launched(retry, FrameBootRecoveryLog.Launch.FAILED, SystemClock.elapsedRealtime()))
         }
     }
+
+    fun log(entry: FrameOperationLogEntry) = logger.log(entry)
+
+    private val logger = AndroidFrameOperationLogger()
 
     private fun retryIntent(context: Context, attemptIndex: Int): PendingIntent =
         PendingIntent.getBroadcast(
