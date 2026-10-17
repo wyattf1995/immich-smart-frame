@@ -54,6 +54,7 @@ CLASSES = {
     "ocean-scene": ("com.wyattfleming.touchframe.ocean.TouchOceanSceneSourceTest", tests / "ocean/TouchOceanSceneSourceTest.kt"),
     "ocean-view": ("com.wyattfleming.touchframe.ocean.TouchOceanViewSourceTest", tests / "ocean/TouchOceanViewSourceTest.kt"),
     "tide-axis": ("com.wyattfleming.touchframe.ocean.TouchTideAxisTest", tests / "ocean/TouchTideAxisTest.kt"),
+    "ocean-water": ("com.wyattfleming.touchframe.ocean.TouchOceanWaterTest", tests / "ocean/TouchOceanWaterTest.kt"),
     "provision": ("com.wyattfleming.touchframe.control.TouchProvisionContractTest", tests / "control/TouchProvisionContractTest.kt"),
     "manifest": ("com.wyattfleming.touchframe.TouchFrameActivityManifestTest", tests / "TouchFrameActivityManifestTest.kt"),
     "todo": ("com.wyattfleming.touchframe.home.TouchTodoTest", tests / "home/TouchTodoTest.kt"),
@@ -187,6 +188,10 @@ MUTATIONS = [
     ("ocean-shaft-bright-red", ui_main / "ocean/TouchOceanScene.kt",
      "0x14FFFFFF, 0x00FFFFFF", "0x24FFFFFF, 0x00FFFFFF", "ocean-scene",
      {"light shafts stay faint enough for the text over them to read"}),
+    # #7: the top of the daytime water darkened so the stat labels hold 4.5:1 (measured 3.6:1 at #3C8F98).
+    ("ocean-water-light-top-red", ui_main / "ocean/TouchOceanPresentation.kt",
+     "val DAY = intArrayOf(0xFF2B676D.toInt(),", "val DAY = intArrayOf(0xFF3C8F98.toInt(),", "ocean-water",
+     {"daytime labels hold four and a half to one on the lightest water, light shafts included"}),
     ("ocean-degree-f-red", ui_main / "ocean/TouchOceanView.kt",
      'val degrees = kit.text("°", scale.clock * 0.42f, TouchFonts.Face.DISPLAY, ink)',
      'val degrees = kit.text("°F", scale.clock * 0.3f, TouchFonts.Face.DISPLAY, ink)', "ocean-view",
