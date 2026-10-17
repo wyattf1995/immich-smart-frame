@@ -37,6 +37,9 @@ class TouchMediaView(
 ) : FrameLayout(context) {
     var onStatus: ((String?) -> Unit)? = null
     var onPhotoObserved: ((com.wyattfleming.frameos.photos.FramePhotoBridge.PhotoObserved) -> Unit)? = null
+    /** Called once per page session whose Gecko content process crashed or was killed (health report). */
+    var onPageLost: (() -> Unit)? = null
+    private var lostGeneration = -1L
     private val ownsPhotoStore = photoStore == null
     private val offlineStore = photoStore ?: TouchOfflinePhotoStore(context)
 
@@ -357,6 +360,7 @@ class TouchMediaView(
 
     private fun reportContentProcessKilled(source: GeckoSession) {
         if (!isCurrentSession(source)) return
+        if (lostGeneration != sessionGeneration) { lostGeneration = sessionGeneration; onPageLost?.invoke() }
         // onKill may arrive after a hidden session has been foregrounded. One
         // retained-return ticket survives that delay; replacement consumes it,
         // so another kill cannot create a reload loop. onCrash stays manual.
@@ -366,6 +370,7 @@ class TouchMediaView(
 
     private fun reportContentProcessClosed(source: GeckoSession? = session) {
         if (source == null || !isCurrentSession(source)) return
+        if (lostGeneration != sessionGeneration) { lostGeneration = sessionGeneration; onPageLost?.invoke() }
         renderDeadline.failed()
         cancelRenderDeadlineTask()
         loadState.markContentProcessClosed(whileHidden = !active)

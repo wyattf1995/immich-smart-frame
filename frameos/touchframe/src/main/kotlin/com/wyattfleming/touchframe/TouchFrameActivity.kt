@@ -27,6 +27,9 @@ import com.wyattfleming.touchframe.concurrent.TouchTaskScope
 import com.wyattfleming.touchframe.calendar.*
 import com.wyattfleming.touchframe.control.TouchCompanionController
 import com.wyattfleming.touchframe.control.TouchRemoteSettingsPolicy
+import com.wyattfleming.touchframe.control.TouchHealth
+import com.wyattfleming.touchframe.control.TouchHealthReporter
+import com.wyattfleming.touchframe.control.TouchHealthSnapshot
 import com.wyattfleming.touchframe.data.TouchConfiguration
 import com.wyattfleming.touchframe.data.TouchConfigurationStore
 import com.wyattfleming.touchframe.home.*
@@ -75,6 +78,12 @@ class TouchFrameActivity : Activity() {
     /** When the user last left Photos, Art or Birds for a native screen (see [TouchMediaRetention]). */
     private var leftMediaAt = 0L
     private val releaseMedia = Runnable { releaseMediaIfAway() }
+    // Health report (control/TouchHealth): Photos page losses and the last memory warning in this process.
+    private var pageLosses = 0
+    private var lastTrimLevel: Int? = null
+    private var healthReporter: TouchHealthReporter? = null
+    private val healthWorker = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "touchframe-health").apply { isDaemon = true } }
+    private val healthReport = Runnable { reportHealth() }
     private var lastAppliedBrightness: Float? = null
     private var currentAssetId: String? = null
     private var lastPhotoAt: Long? = null
@@ -283,6 +292,9 @@ class TouchFrameActivity : Activity() {
             UrlConnectionHomeAssistantTransport(), HomeAssistantWeatherParser(),
         )
         sunRepository = TouchSunRepository(config.homeAssistantOrigin)
+        healthReporter = TouchHealthReporter(config.homeAssistantOrigin, TouchHomeTokenProvider { deadline ->
+            synchronized(tokenLock) { if (Thread.currentThread().isInterrupted) null else client.validAccessToken(deadline) }
+        })
     }
 
     override fun onResume() {
@@ -297,11 +309,14 @@ class TouchFrameActivity : Activity() {
         navigate(destination)
         companion.setEnabled(networkAllowed() && runtimePreferences.getBoolean("companion_enabled", false))
         companion.start()
+        main.removeCallbacks(healthReport)
+        main.postDelayed(healthReport, TouchHealth.FIRST_REPORT_MILLIS)
         if (!networkAllowed() && !lanPromptShown) requestLocalNetwork()
     }
 
     override fun onPause() {
         resumed = false
+        main.removeCallbacks(healthReport)
         tasks.pause()
         companion.stop()
         main.removeCallbacks(clock)
@@ -339,6 +354,7 @@ class TouchFrameActivity : Activity() {
         oceanWorker.shutdownNow()
         powerWorker.shutdownNow()
         authorizationWorker.shutdownNow()
+        healthWorker.shutdownNow()
         cancellationWorker.shutdown()
         main.removeCallbacksAndMessages(null)
         super.onDestroy()
@@ -365,6 +381,7 @@ class TouchFrameActivity : Activity() {
         calendarRepository = null
         weatherRemote = null
         oauth = null
+        healthReporter = null
         cancellationWorker.execute {
             oldRepository?.close()
             oldTodoRepository?.cancel()
@@ -427,6 +444,7 @@ class TouchFrameActivity : Activity() {
                         lastMediaError = status
                         if (destination.usesWebMedia && status != null) message(status)
                     }
+                    it.onPageLost = { pageLosses += 1 }
                     it.onPhotoObserved = { photo ->
                         currentAssetId = photo.assetId
                         lastPhotoAt = System.currentTimeMillis()
@@ -459,6 +477,38 @@ class TouchFrameActivity : Activity() {
                 view.setActive(resumed)
             }
         }
+    }
+
+    /**
+     * Every five minutes while Touch is in front: memory, page losses and starts go to Home Assistant as one sensor
+     * (packages/frame_touch_health.yaml alerts from it). Collection and the request run on the health worker;
+     * getProcessMemoryInfo is too slow for the UI thread. A paused Touch stops reporting, which the package treats as
+     * "stopped reporting" (the 10/14 stuck-in-Settings case).
+     */
+    private fun reportHealth() {
+        val config = configuration
+        val reporter = healthReporter
+        if (resumed && config != null && reporter != null && networkAllowed()) {
+            val app = application as TouchFrameApplication
+            val screen = destination.name
+            val losses = pageLosses
+            val trim = lastTrimLevel
+            healthWorker.execute {
+                val manager = getSystemService(android.app.ActivityManager::class.java) ?: return@execute
+                val memory = android.app.ActivityManager.MemoryInfo().also(manager::getMemoryInfo)
+                val pids = manager.runningAppProcesses.orEmpty().map { it.pid }.toIntArray()
+                val pssKb = runCatching { manager.getProcessMemoryInfo(pids).sumOf { it.totalPss } }.getOrDefault(0)
+                val installedAt = runCatching { packageManager.getPackageInfo(packageName, 0).lastUpdateTime }.getOrDefault(0L)
+                reporter.publish(TouchHealthSnapshot(
+                    frame = TouchHealth.frame(config.photosUrl), memAvailableMb = (memory.availMem / (1024 * 1024)).toInt(),
+                    lowMemory = memory.lowMemory, touchPssMb = pssKb / 1024, pageLosses = losses, appStarts = app.appStarts,
+                    appStartedAtMillis = app.startedAtMillis, installedAtMillis = installedAt, lastTrimLevel = trim,
+                    screen = screen, version = "touch-0.1.0", reportedAtMillis = System.currentTimeMillis(),
+                ))
+            }
+        }
+        main.removeCallbacks(healthReport)
+        main.postDelayed(healthReport, TouchHealth.INTERVAL_MILLIS)
     }
 
     /** Closes the Photos/Art page after time away; the next visit builds it again, as after a low-memory kill. */
@@ -848,6 +898,7 @@ class TouchFrameActivity : Activity() {
     /** The photo is the one large bitmap Home holds; it goes first when Android asks for memory back. */
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        lastTrimLevel = level
         if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW && destination != TouchDestination.HOME) {
             home.setPhoto(null)
             photoDay = null
