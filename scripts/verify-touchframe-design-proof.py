@@ -42,6 +42,7 @@ CLASSES = {
     "camera": ("com.wyattfleming.touchframe.media.TouchCameraPolicyTest", tests / "media/TouchCameraPolicyTest.kt"),
     "media-retention": ("com.wyattfleming.touchframe.media.TouchMediaRetentionTest", tests / "media/TouchMediaRetentionTest.kt"),
     "stay": ("com.wyattfleming.touchframe.TouchStayOnScreenSourceTest", tests / "TouchStayOnScreenSourceTest.kt"),
+    "photos-return": ("com.wyattfleming.touchframe.media.TouchPhotosReturnSourceTest", tests / "media/TouchPhotosReturnSourceTest.kt"),
     "week": ("com.wyattfleming.touchframe.calendar.TouchCalendarWeekPresentationTest", tests / "calendar/TouchCalendarWeekPresentationTest.kt"),
     "theme": ("com.wyattfleming.touchframe.ui.TouchThemeTest", tests / "ui/TouchThemeTest.kt"),
     "day": ("com.wyattfleming.touchframe.calendar.TouchCalendarDayStyleTest", tests / "calendar/TouchCalendarDayStyleTest.kt"),
@@ -94,6 +95,19 @@ MUTATIONS = [
      {"periodicTickNeverInvalidatesAFetchInFlight"}),
     # 10/17: a picked screen stays (the idle return to Photos is gone); the Photos page is hidden under native
     # screens and released after two minutes away; it keeps the TextureView backend (SurfaceView broke first paint, build 40).
+    # Latency audit fixes (10/17): reserve photo while the page loads, high priority hint while hidden.
+    ("media-priority-hint-red", main / "media/TouchMediaView.kt",
+     "current.setPriorityHint(if (active) GeckoSession.PRIORITY_DEFAULT else GeckoSession.PRIORITY_HIGH)",
+     "// no priority hint", "photos-return",
+     {"a hidden Photos page asks Gecko to keep its process, a shown one returns to the default"}),
+    ("media-reserve-not-on-return-red", main / "media/TouchMediaView.kt",
+     "            armRenderDeadline(renderDeadline.foregrounded())\n            showReserveWhileLoading()\n",
+     "            armRenderDeadline(renderDeadline.foregrounded())\n", "photos-return",
+     {"a loading Photos page shows the newest reserve photo until Kiosk shows a live one"}),
+    ("media-reserve-never-handed-off-red", main / "media/TouchMediaView.kt",
+     "        if (reserveShownForLoad) postDelayed(reserveHandoff, TouchMediaRetention.RESERVE_HANDOFF_MILLIS)\n",
+     "        // reserve kept until Kiosk reports a photo\n", "photos-return",
+     {"the reserve photo leaves within ten seconds of first paint even if Kiosk never reports a photo"}),
     ("idle-return-back-red", main / "TouchFrameActivity.kt",
      "            media?.setPhotosPaused(false)\n        }\n    }\n\n    private fun photoProfile(",
      "            media?.setPhotosPaused(false)\n        }\n        if (!destination.isImmersiveMedia) navigate(TouchDestination.PHOTOS)\n    }\n\n    private fun photoProfile(",
