@@ -108,8 +108,8 @@ class TouchOceanView(context: Context, private val onRetry: () -> Unit) : FrameL
             TouchOceanSky.luminance(sky.top) < 0.28 -> 0xFFF2F9F8.toInt()
             else -> 0xFF0B2A36.toInt()
         }
-        val waterInk = if (night) NIGHT_INK else 0xFFFFFFFF.toInt()
-        val waterMuted = if (night) NIGHT_MUTED else 0xFFE4F3F2.toInt()
+        val waterInk = if (night) NIGHT_INK else TouchOceanWater.DAY_INK
+        val waterMuted = if (night) NIGHT_MUTED else TouchOceanWater.DAY_MUTED
         val pad = kit.dp(scale.pad)
 
         overlay.removeAllViews()

@@ -141,8 +141,7 @@ class TouchOceanScene(context: Context) : FrameLayout(context) {
         sky.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(skyColors.top, skyColors.horizon))
         val skyDark = TouchOceanSky.luminance(skyColors.top) < 0.28
         val tone = { color: Int -> if (night) TouchOceanSky.dim(color) else color }
-        val seaStops = (if (night) intArrayOf(0xFF2C7A70.toInt(), 0xFF0F4640.toInt(), 0xFF061C1A.toInt())
-        else intArrayOf(0xFF3C8F98.toInt(), 0xFF1D6476.toInt(), 0xFF0B3547.toInt())).map(tone).toIntArray()
+        val seaStops = (if (night) TouchOceanWater.NIGHT else TouchOceanWater.DAY).map(tone).toIntArray()
 
         val layers = listOf(
             Layer(back, 0.45, -amplitude * 1.2f - dp(6.0), dp(120.0 * k * 1.6), 1.3, 0.9),
@@ -427,7 +426,7 @@ class StreakView(context: Context) : View(context) {
     }
 }
 
-/** A light shaft below the surface: a quad fading from 14% white to nothing. */
+/** A light shaft below the surface: a quad fading from 8% white (0x14) to nothing. */
 @SuppressLint("ViewConstructor")
 class ShaftView(context: Context) : View(context) {
     private val path = Path()

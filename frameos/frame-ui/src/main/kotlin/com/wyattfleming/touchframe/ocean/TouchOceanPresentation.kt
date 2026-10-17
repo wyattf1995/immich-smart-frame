@@ -119,6 +119,18 @@ object TouchOceanSky {
     }
 }
 
+/** The deep water's gradient, top to bottom, and the daytime text drawn over it. */
+object TouchOceanWater {
+    /**
+     * The stat labels (Waves, Wind, Sunset) sit on the top stop, so by day it is dark enough for the muted ink to hold
+     * 4.5:1 under the brightest light-shaft pixel. At #3C8F98 they measured 3.6:1 on both Touch frames (10/15).
+     */
+    val DAY = intArrayOf(0xFF2B676D.toInt(), 0xFF1D6476.toInt(), 0xFF0B3547.toInt())
+    val NIGHT = intArrayOf(0xFF2C7A70.toInt(), 0xFF0F4640.toInt(), 0xFF061C1A.toInt())
+    val DAY_INK = 0xFFFFFFFF.toInt()
+    val DAY_MUTED = 0xFFE4F3F2.toInt()
+}
+
 /** Ebbward's swell shape (`oceanGeometry.periodicWaveY`): a wave plus its first harmonic, periodic in one wavelength. */
 object TouchOceanWaves {
     fun y(x: Double, amplitude: Double, wavelength: Double, offset: Double): Double =
