@@ -23,7 +23,7 @@ android {
         // Retain 1: the verified signed 0.2.8 rollback artifact uses it, and
         // direct-device rollback installs must remain possible.
         versionCode = 1
-        versionName = "0.2.15"
+        versionName = "0.2.16"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
