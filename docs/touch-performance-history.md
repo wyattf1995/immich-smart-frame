@@ -25,3 +25,8 @@ today (Kiosk's per-frame slide timer, 10/13 audit) and pass once that is fixed.
 install and build 37 about 80 minutes after its, and Gecko grows with uptime, so the Photos-idle PSS difference
 (413 vs a 342 median) is not attributed to these changes.
 
+**Latency (device/latency_sampler.py, 10/17).** Build 41: return to Photos after the page was released 4.45 s black,
+cold start 7.2–8.0 s to a picture, one warm return 4.0 s after a kernel kill of the hidden page. Build 42 (reserve photo
+on load, high priority hint while hidden): 0.58 s, 1.68 s, warm returns 0.55 s (one 1.36 s), no page kills. Budgets in
+`performance-budget.json` → `device.latency`.
+
