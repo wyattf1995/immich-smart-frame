@@ -11,6 +11,9 @@ internal object TouchMediaRetention {
     /** A quick look at another screen and back keeps the page warm. */
     const val RELEASE_AFTER_MILLIS = 2 * 60_000L
 
+    /** The longest a reserve photo stays over a painted page when Kiosk never reports its first live photo. */
+    const val RESERVE_HANDOFF_MILLIS = 10_000L
+
     /** Native screens are opaque; a page drawn underneath them only costs compositing. */
     fun visible(destination: TouchDestination): Boolean = destination.usesWebMedia
 

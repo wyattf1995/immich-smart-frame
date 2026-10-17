@@ -83,6 +83,12 @@ class TouchMediaView(
     private var loadGeneration = 0L
     private val renderDeadline = TouchMediaRenderDeadline()
     private var renderDeadlineTask: Runnable? = null
+    /** The reserve photo is up only to cover a load (not a failure); see [showReserveWhileLoading]. */
+    private var reserveShownForLoad = false
+    private val reserveHandoff = Runnable {
+        if (reserveShownForLoad && retryButton.visibility != View.VISIBLE) offlinePhotos.hideFallback()
+        reserveShownForLoad = false
+    }
 
     init {
         setBackgroundColor(Color.BLACK)
@@ -162,10 +168,14 @@ class TouchMediaView(
         session?.let { current ->
             current.setFocused(active)
             current.setActive(active)
+            // Hidden, Gecko drops the page's process to Android's cached tier, and on the 976 MB frame the kernel
+            // killed it 6 s after leaving Photos (10/17). The activity closes the page after two minutes away anyway.
+            current.setPriorityHint(if (active) GeckoSession.PRIORITY_DEFAULT else GeckoSession.PRIORITY_HIGH)
         }
         offlinePhotos.setActive(active && photosProfile != null)
         if (active) {
             armRenderDeadline(renderDeadline.foregrounded())
+            showReserveWhileLoading()
         } else {
             renderDeadline.hidden()
             cancelRenderDeadlineTask()
@@ -178,6 +188,7 @@ class TouchMediaView(
         closed = true
         renderDeadline.close()
         cancelRenderDeadlineTask()
+        removeCallbacks(reserveHandoff)
         retryButton.visibility = View.GONE
         offlinePhotos.close()
         if (ownsPhotoStore) offlineStore.close()
@@ -240,6 +251,18 @@ class TouchMediaView(
         val load = TouchMediaRenderDeadline.LoadToken(++loadGeneration, sessionGeneration)
         armRenderDeadline(renderDeadline.beginLoading(load, active))
         session?.loadUri(url)
+        showReserveWhileLoading()
+    }
+
+    /**
+     * While the Photos page loads, the newest reserve photo is shown at once instead of black (4-8 s on the large
+     * frame, 10/17). The bridge hides it when Kiosk shows its first live photo (TouchOfflinePhotos.onObserved);
+     * [reserveHandoff] hides it after first paint if that report never comes.
+     */
+    private fun showReserveWhileLoading() {
+        if (!active || photosProfile == null || loadingCover.visibility != View.VISIBLE) return
+        offlinePhotos.showFallback()
+        reserveShownForLoad = true
     }
 
     private fun openSession() {
@@ -312,6 +335,8 @@ class TouchMediaView(
         geckoView.visibility = View.VISIBLE
         loadingCover.visibility = View.GONE
         retryButton.visibility = View.GONE
+        removeCallbacks(reserveHandoff)
+        if (reserveShownForLoad) postDelayed(reserveHandoff, TouchMediaRetention.RESERVE_HANDOFF_MILLIS)
         onStatus?.invoke(null)
     }
 
@@ -324,6 +349,8 @@ class TouchMediaView(
         geckoView.visibility = View.INVISIBLE
         loadingCover.visibility = View.VISIBLE
         retryButton.visibility = View.VISIBLE
+        reserveShownForLoad = false
+        removeCallbacks(reserveHandoff)
         if (photosProfile != null) offlinePhotos.showFallback()
         onStatus?.invoke(message)
     }
@@ -345,6 +372,8 @@ class TouchMediaView(
         geckoView.visibility = View.INVISIBLE
         loadingCover.visibility = View.VISIBLE
         retryButton.visibility = View.VISIBLE
+        reserveShownForLoad = false
+        removeCallbacks(reserveHandoff)
         if (photosProfile != null) offlinePhotos.showFallback()
         onStatus?.invoke(context.getString(R.string.touch_media_load_failed, label))
     }
