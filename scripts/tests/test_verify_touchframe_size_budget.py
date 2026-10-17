@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
 
+# Loading the checker must not leave bytecode in the source tree (the NAS gate compares source inventories).
+sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("size_budget", ROOT / "scripts/verify-touchframe-size-budget.py")
 size_budget = importlib.util.module_from_spec(spec)

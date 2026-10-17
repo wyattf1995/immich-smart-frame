@@ -152,8 +152,9 @@ run_step touchframe-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --
 run_step touchframe-assemble-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:assembleRelease"
 # Size budgets (frameos/touchframe/performance-budget.json): the self-test proves the check fails each regression kind,
 # then the real APK is measured; a breach fails the build and names the metric, budget, value and entry.
-run_step touchframe-size-budget-selftest python3 "$root_dir/scripts/tests/test_verify_touchframe_size_budget.py"
-run_step touchframe-size-budget python3 "$root_dir/scripts/verify-touchframe-size-budget.py" "$touch_apk" "$frameos_dir/touchframe/performance-budget.json" "$report_dir/size-budget.json"
+# -B: no __pycache__ in the source tree, which the closing source-inventory check would count as a change (build 39).
+run_step touchframe-size-budget-selftest python3 -B "$root_dir/scripts/tests/test_verify_touchframe_size_budget.py"
+run_step touchframe-size-budget python3 -B "$root_dir/scripts/verify-touchframe-size-budget.py" "$touch_apk" "$frameos_dir/touchframe/performance-budget.json" "$report_dir/size-budget.json"
 
 write_source_inventory "$post_manifest"
 cmp -- "$manifest" "$post_manifest" || { printf 'extracted transport source inventory changed during TouchFrame validation\n' >&2; exit 73; }
