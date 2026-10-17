@@ -93,7 +93,7 @@ MUTATIONS = [
      "if (closed || !active || inFlight) return false", "if (closed || !active || false) return false", "camera",
      {"periodicTickNeverInvalidatesAFetchInFlight"}),
     # 10/17: a picked screen stays (the idle return to Photos is gone); the Photos page is hidden under native
-    # screens, released after two minutes away and drawn through a SurfaceView.
+    # screens and released after two minutes away; it keeps the TextureView backend (SurfaceView broke first paint, build 40).
     ("idle-return-back-red", main / "TouchFrameActivity.kt",
      "            media?.setPhotosPaused(false)\n        }\n    }\n\n    private fun photoProfile(",
      "            media?.setPhotosPaused(false)\n        }\n        if (!destination.isImmersiveMedia) navigate(TouchDestination.PHOTOS)\n    }\n\n    private fun photoProfile(",
@@ -112,9 +112,9 @@ MUTATIONS = [
     ("media-release-keeps-view-red", main / "TouchFrameActivity.kt",
      "        shell.content.removeView(surface)\n",
      "        // closed page left attached\n", "stay", {"leaving the page hides it, and two minutes away release it"}),
-    ("media-texture-backend-red", main / "media/TouchMediaView.kt",
-     "setViewBackend(GeckoView.BACKEND_SURFACE_VIEW)", "setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)", "stay",
-     {"Photos draws straight to the display"}),
+    ("media-surface-backend-red", main / "media/TouchMediaView.kt",
+     "setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)", "setViewBackend(GeckoView.BACKEND_SURFACE_VIEW)", "stay",
+     {"Photos keeps the TextureView backend that reports its first paint on the frames"}),
     ("week-fitted-page-red", main / "calendar/TouchCalendarWeekPresentation.kt",
      "val size = pageSize.coerceIn(1, DETAILS_PER_PAGE)", "val size = DETAILS_PER_PAGE", "week",
      {"fittedDetailPagesShowOnlyWholeRowsAndKeepEveryEventReachable"}),
