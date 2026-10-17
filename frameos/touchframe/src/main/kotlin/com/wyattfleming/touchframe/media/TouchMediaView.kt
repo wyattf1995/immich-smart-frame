@@ -42,13 +42,15 @@ class TouchMediaView(
 
     private val requiresFullAccessibilityTree = context.getSystemService(AccessibilityManager::class.java)
         ?.isTouchExplorationEnabled == true
+    // Gecko draws straight to its own display surface. A TextureView routed every Gecko frame through this
+    // app's UI thread and kept a full-screen copy here (10/13 runtime audit); Touch has a single GeckoView, so
+    // the legacy app's two-view z-order reason for it does not apply.
     private val geckoView = GeckoView(context).apply {
-        setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
+        setViewBackend(GeckoView.BACKEND_SURFACE_VIEW)
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
     }
-    // Keep Gecko drawing under this opaque surface until its first contentful
-    // paint. API 27 otherwise exposes a transient white TextureView after a
-    // content-process restart.
+    // Keep Gecko's surface covered until its first contentful paint, so a new or
+    // restarted content process never shows a blank or white frame.
     private val loadingCover = View(context).apply {
         setBackgroundColor(Color.BLACK)
     }

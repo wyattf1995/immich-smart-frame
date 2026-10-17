@@ -93,16 +93,3 @@ internal object TouchCompanionPages {
         else -> null
     }
 }
-
-/** When an idle native screen returns to Photos (the default experience). */
-internal object TouchIdleReturnPolicy {
-    fun shouldReturnToPhotos(
-        destination: TouchDestination,
-        authorizationOpen: Boolean,
-        configured: Boolean,
-        networkAllowed: Boolean,
-        idleMillis: Long,
-        idleReturnSeconds: Int,
-    ): Boolean = !authorizationOpen && configured && networkAllowed && !destination.isImmersiveMedia &&
-        idleMillis >= idleReturnSeconds * 1_000L
-}

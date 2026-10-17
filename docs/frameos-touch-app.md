@@ -31,7 +31,9 @@ not the Lenovo activity or its mode/gesture state machine.
   An inward swipe from the left edge reveals the top navigation over immersive
   media; its scrim dismisses the menu.
   A tap on the photo shows a hint pointing at that edge, at most every ten
-  minutes, because Photos usually arrives by itself (idle return, Home button).
+  minutes. A screen the user opens stays until they choose another; there is no
+  idle return to Photos (10/17). While another screen is up, the Photos page is
+  hidden at once and released after two minutes, then reloaded on the next visit.
 - Android Settings opens directly and gets an explicit Return to FrameOS Touch
   overlay. Failure to establish that return route keeps the user in the app.
 - Home, Calendar, climate controls, and Weather use the authenticated Home
@@ -112,7 +114,7 @@ than the original shared Weather renderer.
 
 The source integrates a 12-photo/24-MiB private offline reserve, uncropped fallback
 with a small blurred backdrop, monotonic remote settings, quiet-hours brightness,
-idle return, and bounded companion callbacks. Companion polling remains disabled
+and bounded companion callbacks. The companion's idle-return delay is not used by Touch. Companion polling remains disabled
 until a reviewed takeover provides this package's own credentials and enables it;
 never run old and new pollers with the same device identity at once. Events use
 durable at-most-once claims; a lifecycle interruption after a claim may suppress

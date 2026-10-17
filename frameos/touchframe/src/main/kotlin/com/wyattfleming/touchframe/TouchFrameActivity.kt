@@ -31,6 +31,7 @@ import com.wyattfleming.touchframe.data.TouchConfiguration
 import com.wyattfleming.touchframe.data.TouchConfigurationStore
 import com.wyattfleming.touchframe.home.*
 import com.wyattfleming.touchframe.media.TouchCameraView
+import com.wyattfleming.touchframe.media.TouchMediaRetention
 import com.wyattfleming.touchframe.media.TouchMediaView
 import com.wyattfleming.touchframe.media.TouchOfflinePhotoStore
 import com.wyattfleming.touchframe.media.TouchPhotoOfDay
@@ -71,7 +72,9 @@ class TouchFrameActivity : Activity() {
     private var experience = FrameExperienceSettings()
     private var photosPaused = false
     private var holdUntilMillis = 0L
-    private var lastInteractionMillis = SystemClock.elapsedRealtime()
+    /** When the user last left Photos, Art or Birds for a native screen (see [TouchMediaRetention]). */
+    private var leftMediaAt = 0L
+    private val releaseMedia = Runnable { releaseMediaIfAway() }
     private var lastAppliedBrightness: Float? = null
     private var currentAssetId: String? = null
     private var lastPhotoAt: Long? = null
@@ -388,6 +391,7 @@ class TouchFrameActivity : Activity() {
             calendarTask = null
             calendarRepository?.invalidate()
         }
+        val leavingMedia = destination.usesWebMedia && !next.usesWebMedia
         destination = next
         shell.select(next)
         home.visibility = if (next == TouchDestination.HOME) View.VISIBLE else View.GONE
@@ -399,6 +403,13 @@ class TouchFrameActivity : Activity() {
         cameras?.visibility = if (next == TouchDestination.CAMERAS) View.VISIBLE else View.GONE
         cameras?.setActive(resumed && networkAllowed() && next == TouchDestination.CAMERAS)
         media?.setVisibleActive(resumed && networkAllowed() && next.usesWebMedia)
+        media?.visibility = if (TouchMediaRetention.visible(next)) View.VISIBLE else View.INVISIBLE
+        if (next.usesWebMedia) main.removeCallbacks(releaseMedia)
+        else if (leavingMedia && media != null) {
+            leftMediaAt = SystemClock.elapsedRealtime()
+            main.removeCallbacks(releaseMedia)
+            main.postDelayed(releaseMedia, TouchMediaRetention.RELEASE_AFTER_MILLIS)
+        }
         main.removeCallbacks(refresh)
         if (next != TouchDestination.HOME) home.closeSheet()
         when (next) {
@@ -448,6 +459,15 @@ class TouchFrameActivity : Activity() {
                 view.setActive(resumed)
             }
         }
+    }
+
+    /** Closes the Photos/Art page after time away; the next visit builds it again, as after a low-memory kill. */
+    private fun releaseMediaIfAway() {
+        val surface = media ?: return
+        if (!TouchMediaRetention.shouldRelease(destination, SystemClock.elapsedRealtime() - leftMediaAt)) return
+        media = null
+        surface.close()
+        shell.content.removeView(surface)
     }
 
     private fun webMediaUrl(destination: TouchDestination): String? = when (destination) {
@@ -908,11 +928,6 @@ class TouchFrameActivity : Activity() {
         if (hadAuthorization && restoreDestination && resumed) navigate(destination)
     }
 
-    override fun onUserInteraction() {
-        super.onUserInteraction()
-        lastInteractionMillis = SystemClock.elapsedRealtime()
-    }
-
     private fun updateDisplayBehavior(now: Long) {
         val brightness = QuietHoursBrightnessPolicy.effectivePercent(null, experience.quietHours,
             Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalTime())?.div(100f)
@@ -925,13 +940,6 @@ class TouchFrameActivity : Activity() {
             holdUntilMillis = 0
             photosPaused = false
             media?.setPhotosPaused(false)
-        }
-        if (TouchIdleReturnPolicy.shouldReturnToPhotos(destination, authorization != null, configuration != null, networkAllowed(),
-                SystemClock.elapsedRealtime() - lastInteractionMillis, experience.idleReturnSeconds)) {
-            // After an idle return, Calendar opens on today rather than whatever week was browsed last.
-            java.time.LocalDate.now().let { today -> calendarState = calendarState.copy(anchor = today, selectedDate = today) }
-            lastInteractionMillis = SystemClock.elapsedRealtime()
-            navigate(TouchDestination.PHOTOS)
         }
     }
 
@@ -952,7 +960,6 @@ class TouchFrameActivity : Activity() {
 
     private fun applyRemoteCommand(command: FrameRemoteCommand): TouchCompanionController.CommandResult {
         if (!resumed || authorization != null) return TouchCompanionController.CommandResult.Failed("Frame is not ready")
-        lastInteractionMillis = SystemClock.elapsedRealtime()
         return when (command) {
             is FrameRemoteCommand.ShowMode -> {
                 val route = TouchDestination.entries.firstOrNull { it.name == command.mode.name }
