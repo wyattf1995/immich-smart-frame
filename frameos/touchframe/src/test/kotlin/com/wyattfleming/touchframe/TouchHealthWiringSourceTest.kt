@@ -19,6 +19,9 @@ class TouchHealthWiringSourceTest {
     @Test
     fun `every process start is counted before any screen exists`() {
         val onCreate = body(application, "override fun onCreate()")
+        // Gecko's child processes run Application.onCreate too; only the main process is a start of Touch.
+        val guard = onCreate.indexOf("if (!isMainProcess()) return")
+        assertTrue("only the main process counts", guard >= 0 && guard < onCreate.indexOf("appStarts ="))
         assertTrue(onCreate.contains("appStarts = preferences.getInt(TouchHealth.APP_STARTS, 0) + 1"))
         assertTrue(onCreate.contains("preferences.edit().putInt(TouchHealth.APP_STARTS, appStarts).apply()"))
     }
