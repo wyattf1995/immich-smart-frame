@@ -105,6 +105,45 @@ class FrameBootRecoveryRuntimeContractTest {
     }
 
     @Test
+    fun `every recovery step leaves one FrameOS log line, timed from boot`() {
+        val receiver = source("app/src/main/kotlin/com/wyattfleming/frameos/boot/FrameBootRecoveryReceiver.kt")
+        val activity = source("app/src/main/kotlin/com/wyattfleming/frameos/MainActivity.kt")
+        val onReceive = methodBody(receiver, "override fun onReceive(")
+        val launch = methodBody(receiver, "fun launch(")
+        val completeAfterDraw = methodBody(activity, "private fun completeBootRecoveryAfterDraw(")
+
+        assertTrue("alarm retries are logged as retries", onReceive.contains("FrameBootRecoveryScheduler.launch(context, retry = true)"))
+        assertContainsInOrder(
+            onReceive,
+            listOf(
+                "FrameBootRecoveryScheduler.log(FrameBootRecoveryLog.scheduled(intent.action, SystemClock.elapsedRealtime()))",
+                "FrameBootRecoveryScheduler.schedule(context, delays)",
+            ),
+        )
+        assertContainsInOrder(
+            launch,
+            listOf(
+                "Settings.canDrawOverlays(context)",
+                "FrameBootRecoveryLog.Launch.NO_OVERLAY_ACCESS",
+                "return",
+                "context.startActivity(launchIntent)",
+                "FrameBootRecoveryLog.Launch.STARTED",
+                "catch (error: RuntimeException)",
+                "FrameBootRecoveryLog.Launch.FAILED",
+            ),
+        )
+        assertTrue("the lines share the FrameOS tag and format", receiver.contains("AndroidFrameOperationLogger()"))
+        assertContainsInOrder(
+            completeAfterDraw,
+            listOf(
+                "FrameBootRecoveryScheduler.cancelRetries(this)",
+                "bootRecoveryConfirmed = true",
+                "operationLogger.log(FrameBootRecoveryLog.confirmed(SystemClock.elapsedRealtime()))",
+            ),
+        )
+    }
+
+    @Test
     fun `web native weather and configuration surfaces all have paint qualified recovery paths`() {
         val activity = source("app/src/main/kotlin/com/wyattfleming/frameos/MainActivity.kt")
         val onResume = methodBody(activity, "override fun onResume()")
