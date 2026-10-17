@@ -102,7 +102,7 @@ MUTATIONS = [
      {"a hidden Photos page asks Gecko to keep its process, a shown one returns to the default"}),
     ("media-reserve-not-on-return-red", main / "media/TouchMediaView.kt",
      "            armRenderDeadline(renderDeadline.foregrounded())\n            showReserveWhileLoading()\n",
-     "            armRenderDeadline(renderDeadline.foregrounded())\n", "photos-return",
+     "            armRenderDeadline(renderDeadline.foregrounded())\n            // no reserve photo on return\n", "photos-return",
      {"a loading Photos page shows the newest reserve photo until Kiosk shows a live one"}),
     ("media-reserve-never-handed-off-red", main / "media/TouchMediaView.kt",
      "        if (reserveShownForLoad) postDelayed(reserveHandoff, TouchMediaRetention.RESERVE_HANDOFF_MILLIS)\n",
