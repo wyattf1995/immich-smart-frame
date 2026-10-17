@@ -24,6 +24,16 @@ readonly touch_mapping="$frameos_dir/touchframe/build/outputs/mapping/release/ma
 export ANDROID_SDK_HOME="$work_dir/android-preferences"
 export ANDROID_USER_HOME="$ANDROID_SDK_HOME/.android"
 mkdir -p "$work_dir/tmp" "$work_dir/gradle-home" "$report_dir" "$ANDROID_USER_HOME"
+# A failed run keeps a redacted copy of its log in reports/: agent-nas export refuses the dot directory the raw log is
+# written in, so without this a failed job's only diagnosis is whatever files happen to sit in plain build folders.
+keep_failed_log() {
+  local status=$?
+  if (( status != 0 )) && [[ -f "$raw_log" ]]; then
+    python3 -c 'import re,sys; from pathlib import Path; t=Path(sys.argv[1]).read_text(errors="replace"); Path(sys.argv[2]).write_text(re.sub(r"(?i)\b(authorization|password|token|secret)\b(\s*[:=]\s*)\S+", r"\1\2[REDACTED]", t))' "$raw_log" "$report_dir/validation-failed.log" || true
+  fi
+  return "$status"
+}
+trap keep_failed_log EXIT
 export TMPDIR="$work_dir/tmp"
 export GRADLE_USER_HOME="$work_dir/gradle-home"
 export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Djava.io.tmpdir=$TMPDIR"
@@ -140,6 +150,10 @@ fi
 run_step touchframe-shared-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :frame-shared:testDebugUnitTest"
 run_step touchframe-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:testDebugUnitTest"
 run_step touchframe-assemble-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:assembleRelease"
+# Size budgets (frameos/touchframe/performance-budget.json): the self-test proves the check fails each regression kind,
+# then the real APK is measured; a breach fails the build and names the metric, budget, value and entry.
+run_step touchframe-size-budget-selftest python3 "$root_dir/scripts/tests/test_verify_touchframe_size_budget.py"
+run_step touchframe-size-budget python3 "$root_dir/scripts/verify-touchframe-size-budget.py" "$touch_apk" "$frameos_dir/touchframe/performance-budget.json" "$report_dir/size-budget.json"
 
 write_source_inventory "$post_manifest"
 cmp -- "$manifest" "$post_manifest" || { printf 'extracted transport source inventory changed during TouchFrame validation\n' >&2; exit 73; }
