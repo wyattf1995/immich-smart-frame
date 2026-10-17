@@ -42,11 +42,11 @@ class TouchMediaView(
 
     private val requiresFullAccessibilityTree = context.getSystemService(AccessibilityManager::class.java)
         ?.isTouchExplorationEnabled == true
-    // Gecko draws straight to its own display surface. A TextureView routed every Gecko frame through this
-    // app's UI thread and kept a full-screen copy here (10/13 runtime audit); Touch has a single GeckoView, so
-    // the legacy app's two-view z-order reason for it does not apply.
+    // TextureView: build 40 tried a SurfaceView to keep Gecko frames off the app's UI thread, but on the 159K
+    // (Android 8.1) Gecko then never reported first contentful paint and every load timed out into Retry.
+    // The view is hidden while a native screen covers it, so it only draws while Photos or Art is on screen.
     private val geckoView = GeckoView(context).apply {
-        setViewBackend(GeckoView.BACKEND_SURFACE_VIEW)
+        setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
     }
     // Keep Gecko's surface covered until its first contentful paint, so a new or
