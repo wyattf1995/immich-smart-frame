@@ -29,6 +29,12 @@
     "home_after_3_minutes": {
       "touch_pss_mb": {"max": 280, "why": "build 41, 5 runs: median 240, max 256, spread 17 MB, with the Photos page released after 2 minutes away; build 37 held 325"}
     },
+    "latency": {
+      "why": "Wyatt's targets (10/17). Measured by device/latency_sampler.py: raw on-device captures every ~0.8 s for photos, framestats bracketed by the device clock for taps (times after the tap command returned, so a lower bound by up to ~0.3 s).",
+      "photos_picture_after_return_s": {"max": 1.0, "why": "a picture on screen within 1 s of tapping Photos, warm or after the page was released"},
+      "photos_picture_after_cold_start_s": {"max": 3.0, "why": "a picture on screen within 3 s of Touch starting"},
+      "new_screen_after_tap_ms": {"max": 300, "why": "navigation budget for a menu tap to a native screen"}
+    },
     "touch_process_kills": {"max": 0, "why": "a kernel kill of any Touch process during the check is a regression (10/14 the foreground app was killed)"}
   }
 }
