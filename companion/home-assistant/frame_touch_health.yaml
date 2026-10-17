@@ -1,0 +1,91 @@
+# FrameOS Touch field health (10/17). Each Touch frame posts sensor.frameos_touch_<frame_id> every 5 minutes while
+# Touch is in front, with its own Home Assistant sign-in. State: memory Android has left (MB). Attributes:
+# touch_pss_mb, low_memory, page_losses, app_starts, app_started_at, installed_at, screen, reported_at.
+# States set this way do not survive a Home Assistant restart; each frame reposts within 5 minutes.
+# Alerts go through script.notify_household, so warnings respect its quiet hours.
+
+template:
+  - binary_sensor:
+      - name: FrameOS Touch frames reporting
+        unique_id: frameos_touch_frames_reporting
+        device_class: connectivity
+        state: >-
+          {% set frames = ['sensor.frameos_touch_bigasuo_159k_1', 'sensor.frameos_touch_pf1007_qa'] %}
+          {% set ns = namespace(fresh=0, known=0) %}
+          {% for entity in frames if states[entity] is not none %}
+            {% set ns.known = ns.known + 1 %}
+            {% if now() - states[entity].last_updated < timedelta(minutes=20) %}{% set ns.fresh = ns.fresh + 1 %}{% endif %}
+          {% endfor %}
+          {{ ns.known == 0 or ns.fresh == ns.known }}
+        attributes:
+          stale: >-
+            {% set frames = ['sensor.frameos_touch_bigasuo_159k_1', 'sensor.frameos_touch_pf1007_qa'] %}
+            {% set ns = namespace(names=[]) %}
+            {% for entity in frames if states[entity] is not none and now() - states[entity].last_updated >= timedelta(minutes=20) %}
+              {% set ns.names = ns.names + [state_attr(entity, 'frame') or entity] %}
+            {% endfor %}
+            {{ ns.names | join(', ') }}
+
+automation:
+  - id: frameos_touch_restarted
+    alias: FrameOS Touch restarted
+    description: Touch started again without an update (a crash or a low-memory kill of the app itself).
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: [sensor.frameos_touch_bigasuo_159k_1, sensor.frameos_touch_pf1007_qa]
+        attribute: app_started_at
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.from_state is not none and trigger.to_state is not none
+             and trigger.from_state.attributes.get('app_started_at') is not none
+             and trigger.to_state.attributes.get('app_started_at') != trigger.from_state.attributes.get('app_started_at')
+             and trigger.to_state.attributes.get('installed_at') == trigger.from_state.attributes.get('installed_at') }}
+    actions:
+      - action: script.notify_household
+        data:
+          title: Frame restarted
+          message: >-
+            FrameOS Touch restarted on {{ trigger.to_state.attributes.get('frame') }} (it was on
+            {{ trigger.from_state.attributes.get('screen', 'an unknown screen') | lower }}). That is start
+            {{ trigger.to_state.attributes.get('app_starts') }} since the last install.
+          severity: warning
+
+  - id: frameos_touch_low_memory
+    alias: FrameOS Touch low on memory
+    description: Android has had less than 120 MB left for 30 minutes; the kernel kills apps below about 72 MB.
+    mode: single
+    triggers:
+      - trigger: numeric_state
+        entity_id: [sensor.frameos_touch_bigasuo_159k_1, sensor.frameos_touch_pf1007_qa]
+        below: 120
+        for: {minutes: 30}
+    actions:
+      - action: script.notify_household
+        data:
+          title: Frame low on memory
+          message: >-
+            {{ trigger.to_state.attributes.get('frame') }} has had under 120 MB free for 30 minutes
+            ({{ trigger.to_state.state }} MB now; Touch uses {{ trigger.to_state.attributes.get('touch_pss_mb') }} MB).
+          severity: warning
+
+  - id: frameos_touch_stopped_reporting
+    alias: FrameOS Touch stopped reporting
+    description: A frame has sent nothing for 20 minutes (off the network, stuck outside Touch, or Touch not running).
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.frameos_touch_frames_reporting
+        to: 'off'
+        for: {minutes: 10}
+    # After a Home Assistant restart the frames' states are gone until they repost; frames with no state are not
+    # counted, so a restart does not raise this alert.
+    actions:
+      - action: script.notify_household
+        data:
+          title: Frame stopped reporting
+          message: >-
+            No report for 30 minutes from {{ state_attr('binary_sensor.frameos_touch_frames_reporting', 'stale') or 'a Touch frame' }}.
+            It may be off the network or stuck outside Touch.
+          severity: warning
