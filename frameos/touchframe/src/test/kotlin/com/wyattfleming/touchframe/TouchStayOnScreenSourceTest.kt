@@ -7,8 +7,8 @@ import java.io.File
 
 /**
  * Wyatt (10/17): a screen the user opens stays until they choose another; Photos is one tap away. The frame used to
- * return to Photos after the companion's idle delay. The Photos page is still released when it is not shown, so a
- * screen left up for hours does not hold the page's memory.
+ * return to Photos after the companion's idle delay. The Photos page is hidden while another screen covers it and
+ * released after two minutes away, so a screen left up for hours does not hold the page's memory.
  */
 class TouchStayOnScreenSourceTest {
     private val activity = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/TouchFrameActivity.kt").readText()
@@ -55,9 +55,11 @@ class TouchStayOnScreenSourceTest {
     }
 
     @Test
-    fun `Photos draws straight to the display`() {
-        // A TextureView routed every Gecko frame through the app's UI thread and kept a full-screen copy in the app.
-        assertTrue(media.contains("setViewBackend(GeckoView.BACKEND_SURFACE_VIEW)"))
-        assertFalse(media.contains("BACKEND_TEXTURE_VIEW"))
+    fun `Photos keeps the TextureView backend that reports its first paint on the frames`() {
+        // Build 40 (10/17) tried BACKEND_SURFACE_VIEW: on the 159K's Android 8.1 Gecko never reported first contentful
+        // paint, so every load timed out into the offline photos with Retry. Hiding the page under native screens
+        // (above) is what stops it drawing there.
+        assertTrue(media.contains("setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)"))
+        assertFalse(media.contains("BACKEND_SURFACE_VIEW"))
     }
 }
