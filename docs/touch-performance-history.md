@@ -13,11 +13,14 @@ Touch design workspace: 60 s windows, navigation taps only, run after installing
 | 2026-10-17 | 41 run 3 | a77c2059 | 145.5 | 342 | 90.6 (51.7 + 38.9) | 1,344 | 240 | 0 | same |
 | 2026-10-17 | 41 run 4 | a77c2059 | 145.5 | 362 | 91.2 (51.7 + 39.5) | 1,345 | 239 | 0 | same |
 | 2026-10-17 | 41 run 5 | a77c2059 | 145.5 | 304 | 89.9 (51.0 + 38.9) | 1,325 | 247 | 0 | same |
+| 2026-10-17 | 43 | cd6451df | 145.5 | 355 | 91.0 (52.1 + 38.9) | 1,388 | 221 | 0 | after the Kiosk slide-timer cutover: unchanged, so Kiosk was not the cause |
+| 2026-10-17 | 44 run 1 | 45a1bc5f | 145.5 | 313 | 17.4 (12.6 + 4.8) | 86 | 276 | 0 | GeckoView frame gate; all device budgets pass (3 min after install) |
+| 2026-10-17 | 44 run 2 | 45a1bc5f | 145.5 | 281 | 11.5 (9.0 + 2.5) | 46 | 257 | 0 | same; all pass |
 
 **Noise floor (build 41, five back-to-back runs, 10/17 14:13–14:47 PDT):** Photos-idle PSS 303–362 MB (spread 59),
 Photos CPU 89.9–92.2% (2.3), app frames 1,325–1,643 a minute (318), Home-after-3-minutes PSS 239–256 MB (17). APK size
-is identical build to build. Budgets sit above these spreads; the Photos CPU and frame budgets are targets that fail
-today (Kiosk's per-frame slide timer, 10/13 audit) and pass once that is fixed.
+is identical build to build. Budgets sit above these spreads; the Photos CPU and frame budgets were targets that failed
+until build 44 (GeckoView's TextureView redraw loop, see below).
 
 **Build 37 → 41:** after 3 minutes on Home, Touch holds 240 MB instead of 325 and Android has 362 MB available instead of
 264 (the Photos page is released after 2 minutes away). Photos itself is unchanged: build 41 keeps the TextureView
@@ -30,3 +33,17 @@ cold start 7.2–8.0 s to a picture, one warm return 4.0 s after a kernel kill o
 on load, high priority hint while hidden): 0.58 s, 1.68 s, warm returns 0.55 s (one 1.36 s), no page kills. Budgets in
 `performance-budget.json` → `device.latency`.
 
+
+**Build 43 → 44 (Photos redraw loop).** The 10/13 audit blamed Kiosk's per-frame slide timer. The timer fix went live
+at 17:35 on 10/17 and build 43 still measured 91% and 1,388 frames a minute. The cause was GeckoView itself: its
+TextureView backend hands Gecko a new surface after every frame (`SurfaceViewWrapper.ListenerWrapper.
+onSurfaceTextureUpdated`, GeckoView 144 and 154), so Gecko rebuilt its EGL surface and drew again in a loop.
+`TouchGeckoView` passes a frame update to Gecko only when Gecko asks for a new surface.
+
+Results on idle Photos:
+- CPU: 91% before, 11.5-17.4% now.
+- Frames: 1,388 a minute before, 46-86 now.
+- Surface-rebuild log lines: at least 244 in 43 s before, 3 in 5 minutes now.
+
+Home after 3 minutes, 276 then 257 MB: both runs started within minutes of a fresh Touch start. At that point Gecko
+holds a second content process (about 30 MB) that the earlier, hour-old runs did not have.

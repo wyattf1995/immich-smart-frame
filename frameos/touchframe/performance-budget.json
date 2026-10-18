@@ -23,8 +23,8 @@
     "why": "Measured by device/memory_ab.py (60 s windows); see docs/touch-performance-history.md for the runs and the noise floor behind each number.",
     "photos_idle": {
       "touch_pss_mb": {"max": 420, "why": "build 41, 5 runs 10/17: median 342, max 362, run-to-run spread 59 MB (Gecko varies with the photo and its caches); max + spread"},
-      "cpu_percent_main_plus_gpu": {"max": 30, "why": "target, fails today: a still photo with a 1 s fade every ~7 s should cost a few percent; build 41 measures 90-92 (spread 2.3) because Kiosk's per-frame slide timer redraws an unchanged photo (10/13 runtime audit, Critical)"},
-      "app_frames_per_minute": {"max": 300, "why": "target, fails today: one 1 s fade per slide is about 25 frames x 8.5 slides a minute; build 41 measures 1,325-1,643 (about 22-27 fps) for the same Kiosk timer"}
+      "cpu_percent_main_plus_gpu": {"max": 30, "why": "target: a still photo with a 1 s fade every 45 s should cost a few percent. Builds 37-43 measured 90-95 (spread 2.3) because GeckoView's TextureView handed Gecko a new surface after every frame (a redraw loop, not Kiosk); build 44's frame gate measures 17.4 (one run, 10/17)"},
+      "app_frames_per_minute": {"max": 300, "why": "target: one 1 s fade per 45 s slide is under 40 frames a minute, plus Kiosk's swaps; builds 37-43 measured 1,325-1,643 (about 22-27 fps) from the same GeckoView loop; build 44 measures 86 (one run, 10/17)"}
     },
     "home_after_3_minutes": {
       "touch_pss_mb": {"max": 280, "why": "build 41, 5 runs: median 240, max 256, spread 17 MB, with the Photos page released after 2 minutes away; build 37 held 325"}
