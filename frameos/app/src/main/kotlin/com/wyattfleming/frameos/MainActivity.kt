@@ -107,6 +107,7 @@ import com.wyattfleming.frameos.weather.WeatherRepository
 import com.wyattfleming.frameos.weather.WeatherRequestDeadline
 import com.wyattfleming.frameos.web.FrameSurfaceRouter
 import com.wyattfleming.frameos.web.FrameSurfaceTarget
+import com.wyattfleming.frameos.web.FrameTextureGeckoView
 import com.wyattfleming.frameos.web.FrameWebCompositionPolicy
 import com.wyattfleming.frameos.web.FrameWebSlot
 import com.wyattfleming.frameos.web.FrameWebSurface
@@ -749,7 +750,7 @@ class MainActivity : Activity() {
         val activeConfiguration = configuration
         if (activeConfiguration != null) {
             val runtime = (application as FrameOsApplication).geckoRuntime
-            val warmHomeAssistantView = GeckoView(this).apply {
+            val warmHomeAssistantView = FrameTextureGeckoView(this).apply {
                 setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
                 setBackgroundColor(Color.BLACK)
                 coverUntilFirstPaint(Color.BLACK)

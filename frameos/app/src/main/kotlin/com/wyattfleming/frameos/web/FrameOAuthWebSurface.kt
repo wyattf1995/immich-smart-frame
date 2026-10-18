@@ -32,7 +32,7 @@ class FrameOAuthWebSurface(
     private val timeoutMillis: Long = TIMEOUT_MILLIS,
     private val navigationPolicy: FrameOAuthNavigationPolicy =
         FrameOAuthNavigationPolicy(configuredHomeAssistantUrl, callbackPageUrl),
-) : GeckoView(context) {
+) : FrameTextureGeckoView(context) {
     private val oauthSession = GeckoSession(
         GeckoSessionSettings().apply {
             setAllowJavascript(true)
