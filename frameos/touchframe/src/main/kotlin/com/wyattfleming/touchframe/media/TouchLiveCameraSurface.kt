@@ -25,7 +25,7 @@ internal class TouchLiveCameraSurface(
     tokenProvider: (com.wyattfleming.frameos.weather.WeatherRequestDeadline) -> String?,
     private val onStatus: (TouchLiveCameraBridge.Status) -> Unit = {},
 ) : FrameLayout(context), AutoCloseable {
-    private val geckoView = GeckoView(context).apply { setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW) }
+    private val geckoView = TouchGeckoView(context).apply { setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW) }
     // This owned package page uses a regular session because it stores no page
     // state, never loads remote documents, and closes on every live-view exit.
     // That avoids granting this extension private-browsing permission.

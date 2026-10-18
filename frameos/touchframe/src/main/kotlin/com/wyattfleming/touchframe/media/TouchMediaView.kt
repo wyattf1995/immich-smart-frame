@@ -47,8 +47,9 @@ class TouchMediaView(
         ?.isTouchExplorationEnabled == true
     // TextureView: build 40 tried a SurfaceView to keep Gecko frames off the app's UI thread, but on the 159K
     // (Android 8.1) Gecko then never reported first contentful paint and every load timed out into Retry.
-    // The view is hidden while a native screen covers it, so it only draws while Photos or Art is on screen.
-    private val geckoView = GeckoView(context).apply {
+    // The view is hidden while a native screen covers it, so it only draws while Photos or Art is on screen, and
+    // TouchGeckoView stops GeckoView's own redraw loop so a still photo draws nothing (10/17).
+    private val geckoView = TouchGeckoView(context).apply {
         setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
     }
