@@ -75,8 +75,9 @@ Since 0.5.0 Frame TV builds inside the FrameOS Gradle project as `:frametv`
 (`frameos/settings.gradle.kts` includes this `app/` directory), so it can show the
 shared Weather and Ocean screens from `frameos/frame-ui`. It uses that project's
 pinned toolchain: JDK 17, Gradle 9.3.1, AGP 9.1.1, Kotlin 2.4.10, compile SDK 37.
-The build compiles three FrameOS sources it needs (the weather models, the TLS
-helper the Ocean reader uses, and the scene-density rule) from a build-owned
+The build compiles four FrameOS sources it needs (the weather models and their
+request deadline, the TLS helper the Ocean reader uses, and the scene-density
+rule) from a build-owned
 mirror of exactly those files, never the frame's browser, sign-in or companion
 code. `tvos/gradlew` (Gradle 8.11.1) remains only for the separate `probe4k`
 project. The build runs in the admitted NAS Android runtime with two Gradle workers,

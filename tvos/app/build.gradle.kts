@@ -18,6 +18,7 @@ val syncFrameSources by tasks.registering(FrameSourceSync::class) {
     from(rootProject.file("app/src/main/kotlin")) {
         include(
             "com/wyattfleming/frameos/weather/WeatherModels.kt",
+            "com/wyattfleming/frameos/weather/WeatherRequestDeadline.kt",
             "com/wyattfleming/frameos/weather/LegacyIsrgRootTls.kt",
             "com/wyattfleming/frameos/ui/NativeSceneDensity.kt",
         )
