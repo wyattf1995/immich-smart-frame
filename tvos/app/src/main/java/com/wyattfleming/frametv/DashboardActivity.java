@@ -211,6 +211,9 @@ public final class DashboardActivity extends Activity {
         }
         return super.onKeyUp(keyCode, event);
     }
+    // Back reaches onBackPressed on every Android version: the manifest opts out of predictive back
+    // (enableOnBackInvokedCallback=false), and this app has no AndroidX OnBackPressedDispatcher.
+    @android.annotation.SuppressLint("GestureBackNavigation")
     @Override public void onBackPressed() {
         if (menuRequested) {
             menuRequested = false;

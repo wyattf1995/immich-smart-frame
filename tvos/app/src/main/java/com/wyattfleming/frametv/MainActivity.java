@@ -75,6 +75,9 @@ public final class MainActivity extends Activity {
         super.onDestroy();
     }
 
+    // Back reaches onBackPressed on every Android version: the manifest opts out of predictive back
+    // (enableOnBackInvokedCallback=false), and this app has no AndroidX OnBackPressedDispatcher.
+    @android.annotation.SuppressLint("GestureBackNavigation")
     @Override public void onBackPressed() {
         // A HOME activity must not reveal an old streaming task when Back is pressed at its root.
         if (isTaskRoot()) {
