@@ -41,6 +41,8 @@ data class TouchWeatherViewState(
     val location: String? = null,
     /** A host's own words for the empty page ("Connecting to Home Assistant"); the forecast, when there is one, wins. */
     val message: String? = null,
+    /** A host's own line under [message], for a device whose forecast does not come from a frame's Home Assistant. */
+    val detail: String? = null,
 )
 
 data class TouchWeatherFact(val label: String, val value: String)

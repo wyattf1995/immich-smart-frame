@@ -28,6 +28,7 @@
         </activity>
         <activity android:name=".WeatherSetupActivity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".WeatherActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".OceanActivity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".SetupActivity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".DashboardActivity" android:exported="false" android:screenOrientation="landscape" />
     </application>

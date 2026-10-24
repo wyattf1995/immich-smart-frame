@@ -93,7 +93,9 @@ class TouchWeatherView(
         val wall = scale == TouchScale.WALL
         val twentyFour = android.text.format.DateFormat.is24HourFormat(context)
         val screen = TouchWeatherPresenter.present(state, now, ZoneId.systemDefault(), twentyFour, wall, Locale.getDefault())
-        val key = listOf(screen, night, scale, state.connection, state.loading, state.snapshot == null)
+        // The empty page shows the host's words, so a new message with the same connection must redraw it too.
+        val words = if (screen == null) state.message to state.detail else null
+        val key = listOf(screen, night, scale, state.connection, state.loading, state.snapshot == null, words)
         if (key == renderedKey) return
         renderedKey = key
 
@@ -233,7 +235,7 @@ class TouchWeatherView(
         val pad = kit.dp(scale.pad)
         empty.setPadding(pad, pad, pad, pad)
         empty.addView(kit.text(state.message ?: title, scale.headline, TouchFonts.Face.TEXT_MEDIUM, colors.ink), LinearLayout.LayoutParams(WRAP, WRAP))
-        body?.let { empty.addView(kit.text(it, scale.body, color = colors.muted), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(10) }) }
+        (state.detail ?: body)?.let { empty.addView(kit.text(it, scale.body, color = colors.muted), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(10) }) }
         action?.let { (label, run) ->
             empty.addView(kit.button(label, TouchKit.Emphasis.SECONDARY) { run() }, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(24) })
         }

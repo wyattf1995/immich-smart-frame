@@ -223,7 +223,7 @@ public final class MainActivity extends Activity {
         int column = 0;
         for (Feature feature : Feature.values()) {
             String id = "feature:" + feature.name();
-            boolean configured = feature == Feature.WEATHER || preferences.configured(feature);
+            boolean configured = feature == Feature.WEATHER || !feature.addressed || preferences.configured(feature);
             String detail = configured ? feature.description : "Set up " + feature.title;
             android.widget.Button tile = TvUi.compactButton(this, feature.title + "\n" + detail,
                     () -> openFeature(feature));
@@ -327,6 +327,10 @@ public final class MainActivity extends Activity {
     private void openFeature(Feature feature) {
         if (feature == Feature.WEATHER) {
             startActivity(new Intent(this, WeatherActivity.class));
+            return;
+        }
+        if (feature == Feature.OCEAN) {
+            startActivity(new Intent(this, OceanActivity.class));
             return;
         }
         if (!preferences.configured(feature)) {

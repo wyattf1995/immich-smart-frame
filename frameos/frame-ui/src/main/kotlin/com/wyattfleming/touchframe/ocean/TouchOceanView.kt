@@ -246,7 +246,7 @@ class TouchOceanView(context: Context, private val onRetry: () -> Unit) : FrameL
                 addView(kit.text("Getting today’s conditions…", scale.headline, TouchFonts.Face.TEXT_MEDIUM, ink), LinearLayout.LayoutParams(MATCH, WRAP))
             } else {
                 addView(kit.text("Ocean conditions aren’t available right now", scale.headline, TouchFonts.Face.TEXT_MEDIUM, ink), LinearLayout.LayoutParams(MATCH, WRAP))
-                addView(kit.text("Ebbward didn’t answer. Check the frame’s Wi‑Fi, then try again.", scale.body, color = muted), top(kit, 10))
+                addView(kit.text("Ebbward didn’t answer. Check the Wi‑Fi, then try again.", scale.body, color = muted), top(kit, 10))
                 addView(kit.button("Try again", TouchKit.Emphasis.SECONDARY) { onRetry() }, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = kit.dp(24) })
             }
         }, FrameLayout.LayoutParams(MATCH, WRAP).apply {
