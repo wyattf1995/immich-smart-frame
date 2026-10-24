@@ -17,9 +17,9 @@ The repository's AGPL-3.0 license applies.
   and translucent cards add atmosphere without a background animation loop.
 - Hold Select on an app to add or remove it from Favorites.
 - Open HDMI inputs exposed by the TV's input service.
-- See all six home cards at once: Photos, Home, Weather, Cameras, Calendar and
-  Birds use existing dashboard
-  addresses. Every feature is optional; streaming works before setup.
+- See all seven home cards at once: Photos, Home, Cameras, Calendar and Birds use
+  existing dashboard addresses; Weather and Ocean are native pages that need none.
+  Every feature is optional; streaming works before setup.
 - Reach the TV's settings and original home screen from the System row.
 - Select Refresh apps after installing or removing another application.
 
@@ -71,8 +71,16 @@ and the web page. Back always returns to Frame TV; Reload recovers a failed page
 
 ## Build and verification
 
-Pinned toolchain: JDK 17, Gradle 8.11.1, AGP 8.10.1, SDK/build tools 36. It runs
-in the admitted NAS Android runtime with two Gradle workers:
+Since 0.5.0 Frame TV builds inside the FrameOS Gradle project as `:frametv`
+(`frameos/settings.gradle.kts` includes this `app/` directory), so it can show the
+shared Weather and Ocean screens from `frameos/frame-ui`. It uses that project's
+pinned toolchain: JDK 17, Gradle 9.3.1, AGP 9.1.1, Kotlin 2.4.10, compile SDK 37.
+The build compiles three FrameOS sources it needs (the weather models, the TLS
+helper the Ocean reader uses, and the scene-density rule) from a build-owned
+mirror of exactly those files, never the frame's browser, sign-in or companion
+code. `tvos/gradlew` (Gradle 8.11.1) remains only for the separate `probe4k`
+project. The build runs in the admitted NAS Android runtime with two Gradle workers,
+bootstrapping API 37 into a disposable workspace SDK from pinned archives:
 
 ```sh
 bash tvos/tools/nas-build.sh
@@ -80,15 +88,18 @@ bash tvos/tools/nas-build.sh
 
 The script runs JVM tests, two source-only negative checks of URL security,
 and a source-only negative check of partial-row remote navigation. It restores
-exact source bytes, reruns the tests, compiles an **unsigned** debug APK,
-and runs Android lint. It emits source hashes, APK identity and test/lint logs.
+exact source bytes, reruns the tests (Frame TV's and the shared screens' suite in
+`:touchframe`), compiles an **unsigned** debug APK, and runs Android lint on
+Frame TV and `:frame-ui`. It emits source hashes, APK identity and test/lint logs.
+The Home Assistant capture script's tests run with `node --test
+tools/ha-weather-snapshot.test.cjs` where Node is available.
 No signing key or household configuration belongs in the NAS snapshot. Signing
 is a separate local step.
 
-For NAS transport, retain an exact committed `tvos` subtree plus the repository
-LICENSE in a dedicated build-only Git commit, recording the original integration
-commit and verifying the subtree object ID matches. This avoids transferring the
-unrelated frame/server deployment tree. Never merge that reduced build snapshot
+For NAS transport, retain exact committed `frameos` and `tvos` subtrees plus the
+repository LICENSE in a dedicated build-only Git commit, recording the original
+integration commit and verifying the subtree object IDs match. This avoids
+transferring the unrelated server deployment tree. Never merge that reduced build snapshot
 back into the full repository. Land implementation branches using Git merge.
 
 Device acceptance must separately check D-pad focus, app/HDMI launches, Back/Home,
@@ -191,3 +202,26 @@ Calendar directly loads the configured `/wall-panel/calendar?kiosk` route using
 the existing sign-in profile. The month view was verified on the Sony without
 first visiting the Home dashboard. HA's frontend still loads to display Calendar.
 No Home Assistant server/dashboard configuration was changed.
+
+### Shared Weather page and Ocean (0.5.0)
+
+The full-screen Weather page is FrameOS's shared Weather screen, the one the
+Lenovo and Touch frames show: the sky now with wind, humidity, UV, sunrise or
+sunset and pressure; the next 24 hours as one temperature curve over day and night
+bands with rain bars beneath; and the week as a band between each day's high and
+low. It reads the same forecast the home panel does. Open-Meteo is asked for those
+facts too, and the Home dashboard capture now carries Home Assistant's own
+condition words, rain amounts, units and `sun.sun` times, still reading only
+forecast values and never authentication. Nothing on the page animates; it
+re-derives "Now" every five minutes. Back returns home and Menu still chooses the
+source. The shared screens are laid out for an 800 dp panel, so on this 540 dp
+Sony they render at the lower density that gives them that height, as on the
+Lenovo frame.
+
+Ocean is a new native card: Main Beach in Laguna Beach from Ebbward's public
+conditions (no account or token), with air and sky, water temperature and swell,
+and the next 24 hours of tide over moving water. Fresh conditions are reused for
+ten minutes and a failed read retries in a minute, only while the page is open;
+the water moves only while the page is in front. The last good conditions are
+kept in app storage so a Wi-Fi drop shows them with their time.
+

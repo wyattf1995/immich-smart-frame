@@ -16,7 +16,7 @@ FORECAST_SOURCE = ROOT / "app/src/main/java/com/wyattfleming/frametv/WeatherFore
 RESULTS = ROOT / "app/build/test-results/testDebugUnitTest"
 VALIDATION = ROOT / "validation"
 TEST_CLASS = "com.wyattfleming.frametv.WeatherForecastTest"
-GRADLE = ["./gradlew", "--no-daemon", "--max-workers=2", ":app:testDebugUnitTest"]
+GRADLE = ["../frameos/gradlew", "-p", "../frameos", "--no-daemon", "--max-workers=2", ":frametv:testDebugUnitTest"]
 
 def run(command: list[str], log_path: Path) -> int:
     with log_path.open("wb") as log:
@@ -49,8 +49,8 @@ def combine_logs(paths: tuple[Path, ...], destination: Path) -> None:
             if path.exists(): combined.write(path.read_bytes())
 
 def main() -> int:
-    if not SOURCE.is_file() or not FORECAST_SOURCE.is_file() or not (ROOT / "gradlew").is_file():
-        print("Run from the tvos directory containing gradlew and app/.", file=sys.stderr)
+    if not SOURCE.is_file() or not FORECAST_SOURCE.is_file() or not (ROOT.parent / "frameos/gradlew").is_file():
+        print("Run from the tvos directory, beside frameos/ (Frame TV builds there as :frametv).", file=sys.stderr)
         return 2
     VALIDATION.mkdir(exist_ok=True)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
