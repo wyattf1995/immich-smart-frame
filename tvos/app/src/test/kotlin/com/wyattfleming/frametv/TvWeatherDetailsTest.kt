@@ -13,7 +13,7 @@ import java.time.ZoneId
 import java.util.Locale
 
 class TvWeatherDetailsTest {
-    private val now = 1_792_872_000_000L // 2026-10-24 22:00 UTC, 3 PM in Laguna Beach
+    private val now = 1_792_872_000_000L // 2026-10-24 20:00 UTC, 1 PM in Laguna Beach
     private val hour = 3_600L
     private val start = now / 1000
 
@@ -26,8 +26,8 @@ class TvWeatherDetailsTest {
          "hourly_units":{"precipitation":"inch"},
          "hourly":{"time":[$start,${start + hour},${start + 2 * hour}],"temperature_2m":[71,69,66],"weather_code":[0,0,61],
                    "precipitation_probability":[0,5,40],"is_day":[1,0,0],"precipitation":$precipitation},
-         "daily":{"time":[${start - 15 * hour},${start + 9 * hour}],"temperature_2m_max":[74,77],"temperature_2m_min":[58,60],
-                  "weather_code":[0,3],"sunrise":[${start - 8 * hour},${start + 16 * hour}],"sunset":[${start + 3 * hour},${start + 27 * hour}],
+         "daily":{"time":[${start - 13 * hour},${start + 11 * hour}],"temperature_2m_max":[74,77],"temperature_2m_min":[58,60],
+                  "weather_code":[0,3],"sunrise":[${start - 6 * hour},${start + 18 * hour}],"sunset":[${start + 5 * hour},${start + 29 * hour}],
                   "precipitation_sum":[0.0,0.31],"precipitation_probability_max":[1,45]}}
     """.trimIndent()
 
@@ -39,7 +39,7 @@ class TvWeatherDetailsTest {
          "current_units":{"wind_speed_10m":"mph","pressure_msl":"inHg","precipitation":"in"},
          "hourly":{"time":[$start,${start + hour}],"temperature_2m":[70,68],"weather_code":[2,null],"condition":["partlycloudy","clear-night"],
                    "precipitation_probability":[null,null],"is_day":[null,0],"precipitation":[0,0.04]},
-         "daily":{"time":[${start - 15 * hour}],"temperature_2m_max":[73],"temperature_2m_min":[57],"weather_code":[61],
+         "daily":{"time":[${start - 13 * hour}],"temperature_2m_max":[73],"temperature_2m_min":[57],"weather_code":[61],
                   "condition":["rainy"],"precipitation_sum":[0.2],"precipitation_probability_max":[null]},
          "sun":{"next_rising":${start + 16 * hour},"next_setting":${start + 3 * hour}}}
     """.trimIndent()
@@ -65,8 +65,8 @@ class TvWeatherDetailsTest {
         assertEquals(60.0, details.snapshot.daily[1].templow!!, 0.0)
         assertEquals(45, details.snapshot.daily[1].precipitationProbability)
         // The first sunrise and sunset still ahead of now, not today's earlier sunrise.
-        assertEquals((start + 16 * hour) * 1000, details.sun!!.nextRisingMillis)
-        assertEquals((start + 3 * hour) * 1000, details.sun!!.nextSettingMillis)
+        assertEquals((start + 18 * hour) * 1000, details.sun!!.nextRisingMillis)
+        assertEquals((start + 5 * hour) * 1000, details.sun.nextSettingMillis)
     }
 
     @Test fun homeAssistantWordsWinOverCodesAndKeepItsUnits() {
@@ -83,7 +83,7 @@ class TvWeatherDetailsTest {
         assertEquals(WeatherCondition.RAINY, details.snapshot.daily.single().condition)
         assertEquals(0.2, details.snapshot.daily.single().precipitation!!, 0.0)
         assertEquals((start + 16 * hour) * 1000, details.sun!!.nextRisingMillis)
-        assertEquals((start + 3 * hour) * 1000, details.sun!!.nextSettingMillis)
+        assertEquals((start + 3 * hour) * 1000, details.sun.nextSettingMillis)
     }
 
     @Test fun misalignedOptionalSeriesIsIgnoredNotFatal() {
@@ -131,7 +131,7 @@ class TvWeatherDetailsTest {
         assertEquals("29.96 in", screen.facts.last().value)
         assertEquals(3, screen.hours.size)
         assertEquals(2, screen.days.size)
-        assertEquals("Laguna Beach · Open-Meteo. Updated 2:59 PM", screen.status)
+        assertEquals("Laguna Beach · Open-Meteo. Updated 12:59 PM", screen.status)
     }
 
     @Test fun onlyTheOceanCardSkipsDashboardSetup() {
