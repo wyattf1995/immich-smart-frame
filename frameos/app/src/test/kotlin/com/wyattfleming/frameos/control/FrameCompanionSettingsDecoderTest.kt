@@ -36,6 +36,15 @@ class FrameCompanionSettingsDecoderTest {
         assertFalse(FrameCompanionResponseDecoder.isForDevice(payload.replace("\"schema\":1", "\"schema\":2"), "living-frame"))
     }
 
+    @Test fun `a zero return timer means stay on the page and values under thirty seconds stay rejected`() {
+        val payload = { seconds: Int -> """{"schema":1,"deviceId":"living-frame","settingsRevision":9,"settings":{"modeOrder":["photos","weather"],"quietHours":{"enabled":false,"start":"22:00","end":"07:00","brightness":10},"idleReturnSeconds":$seconds,"profile":"balanced","hiddenHomeSuspend":false,"eventOverlays":false},"commands":[]}""" }
+
+        assertEquals(0, requireNotNull(FrameCompanionSettingsDecoder.decode(payload(0))).idleReturnSeconds)
+        assertNull(FrameCompanionSettingsDecoder.decode(payload(1)))
+        assertNull(FrameCompanionSettingsDecoder.decode(payload(29)))
+        assertEquals(30, requireNotNull(FrameCompanionSettingsDecoder.decode(payload(30))).idleReturnSeconds)
+    }
+
     @Test fun `rejects unsafe settings while allowing an absent settings section`() {
         assertNull(FrameCompanionSettingsDecoder.decode("{\"settingsRevision\":1,\"settings\":{\"modeOrder\":[\"weather\"]}}"))
         assertNull(FrameCompanionSettingsDecoder.decode("{\"commands\":[]}"))
