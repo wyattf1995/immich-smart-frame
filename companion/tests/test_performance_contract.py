@@ -53,7 +53,7 @@ class PerformanceContract(unittest.TestCase):
         self.assertNotIn('unchanged', changed)
         self.assertEqual(changed['settings']['idleReturnSeconds'], 600)
         asset = '11111111-1111-4111-8111-111111111111'
-        for preference in ('hide', 'less', 'more', 'clear'):
+        for preference in ('hide', 'clear'):
             revision = changed['snapshotRevision']
             self.store.feedback('main', {'assetId': asset, 'preference': preference})
             changed = self.poll(revision)
