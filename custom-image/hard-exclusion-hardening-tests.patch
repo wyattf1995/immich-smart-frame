@@ -1,9 +1,9 @@
 diff --git a/internal/routes/routes_hardening_test.go b/internal/routes/routes_hardening_test.go
 new file mode 100644
-index 0000000..413eeca
+index 0000000..b450f47
 --- /dev/null
 +++ b/internal/routes/routes_hardening_test.go
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,148 @@
 +package routes
 +
 +import (
@@ -53,6 +53,16 @@ index 0000000..413eeca
 +	err, calls := tagRequest(t, recentHistoryTestAsset)
 +	requireHTTPCode(t, err, http.StatusNotFound)
 +	require.Zero(t, calls)
++}
++
++func TestTagAssetRefusesOtherSpellingsOfAHardExcludedUUID(t *testing.T) {
++	for _, spelling := range []string{strings.ToUpper(recentHistoryTestAsset), "{" + recentHistoryTestAsset + "}", "urn:uuid:" + recentHistoryTestAsset, strings.ReplaceAll(recentHistoryTestAsset, "-", "")} {
++		t.Run(spelling, func(t *testing.T) {
++			err, calls := tagRequest(t, spelling)
++			requireHTTPCode(t, err, http.StatusNotFound)
++			require.Zero(t, calls)
++		})
++	}
 +}
 +
 +func TestTagAssetRejectsAnIDThatIsNotAnAssetUUID(t *testing.T) {
