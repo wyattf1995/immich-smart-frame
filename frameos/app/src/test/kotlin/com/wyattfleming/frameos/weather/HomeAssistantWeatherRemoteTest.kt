@@ -116,7 +116,9 @@ class HomeAssistantWeatherRemoteTest {
         val primaryRequests = requests.filter {
             it.url.startsWith("https://home.example.invalid:8123/")
         }
-        assertEquals(3, primaryRequests.size)
+        // The first primary failure cancels the rest of its batch, so one to three primary requests go out depending on
+        // thread timing (L12 saw fewer than three). Every one carries the token; the fallback ones below never do.
+        assertTrue(primaryRequests.size in 1..3)
         assertTrue(primaryRequests.all { it.headers["Authorization"] == "Bearer $token" })
 
         val fallbackRequests = requests.filter {
