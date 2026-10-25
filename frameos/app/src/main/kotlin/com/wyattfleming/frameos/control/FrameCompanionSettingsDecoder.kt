@@ -29,7 +29,7 @@ object FrameCompanionSettingsDecoder {
             modeOrder = modes(settings.getJSONArray("modeOrder")),
             quietHours = quietHours(settings.getJSONObject("quietHours")),
             idleReturnSeconds = settings.getInt("idleReturnSeconds")
-                .also { require(it in FrameExperienceSettings.MIN_IDLE_RETURN_SECONDS..FrameExperienceSettings.MAX_IDLE_RETURN_SECONDS) },
+                .also { require(it == FrameExperienceSettings.NEVER_IDLE_RETURN || it in FrameExperienceSettings.MIN_IDLE_RETURN_SECONDS..FrameExperienceSettings.MAX_IDLE_RETURN_SECONDS) },
             profile = settings.getString("profile")
                 .also { require(FrameRemoteControlPolicy.acceptsProfile(it)) },
             hiddenHomeSuspend = settings.getBoolean("hiddenHomeSuspend"),
