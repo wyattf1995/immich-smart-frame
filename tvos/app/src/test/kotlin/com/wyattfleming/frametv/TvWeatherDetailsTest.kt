@@ -13,7 +13,7 @@ import java.time.ZoneId
 import java.util.Locale
 
 class TvWeatherDetailsTest {
-    private val now = 1_792_872_000_000L // 2026-10-24 20:00 UTC, 1 PM in Laguna Beach
+    private val now = 1_792_872_000_000L // 2026-10-24 20:00 UTC, 1 PM Pacific
     private val hour = 3_600L
     private val start = now / 1000
 
