@@ -105,7 +105,7 @@ def static_contract() -> dict[str, object]:
         "bounded foreground media render deadline": "armRenderDeadline(renderDeadline.beginLoading(load, active))",
         "media deadline session fence": "token.load.sessionGeneration == sessionGeneration",
         "cross URL media session replacement": "TouchMediaLoadState.Decision.REPLACE_DOCUMENT_SESSION -> {",
-        "Camera palette accessible accent": "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
+        "Camera palette accessible accent": "accent = theme.accent, accentInk = theme.onAccent,",
         "Camera label prefix collapse": "return tokens.take(repeatedPrefixLength) + tokens.drop(repeatedPrefixLength * 2)",
         "pause lifecycle gate": "if (closed || !resumed) return\n            resumed = false",
         "Photos-active fallback gate": "active = value && attachment != null",
@@ -153,17 +153,19 @@ source_bytes = {name: source.read_bytes() for name, (source, _, _) in suites.ite
 source_hashes = {name: hashlib.sha256(value).hexdigest() for name, value in source_bytes.items()}
 test_hashes = {str(test.relative_to(root)): digest(test) for _, (_, test, _) in suites.items()}
 expected_tests = sum(test_count(test) for _, (_, test, _) in suites.items())
+# `--rerun` reruns the tests every time; Gradle still recompiles whatever a mutation changed. Rebuilding every
+# task from scratch (`--rerun-tasks`) tripled each of the ~60 runs and pushed the job past the one-hour runner limit.
 command = [
-    "./gradlew", "--no-daemon", "--max-workers=2", "--rerun-tasks", ":touchframe:testDebugUnitTest",
+    "./gradlew", "--no-daemon", "--max-workers=2", ":touchframe:testDebugUnitTest", "--rerun",
     *[arg for _, (_, _, klass) in suites.items() for arg in ("--tests", klass)],
 ]
 bridge_command = [
-    "./gradlew", "--no-daemon", "--max-workers=2", "--rerun-tasks", ":frame-shared:testDebugUnitTest",
+    "./gradlew", "--no-daemon", "--max-workers=2", ":frame-shared:testDebugUnitTest", "--rerun",
     "--tests", bridge_class,
 ]
 repository_climate_case = "failed refresh makes previously confirmed climate read-only"
 repository_case_command = [
-    "./gradlew", "--no-daemon", "--max-workers=2", "--rerun-tasks", ":touchframe:testDebugUnitTest",
+    "./gradlew", "--no-daemon", "--max-workers=2", ":touchframe:testDebugUnitTest", "--rerun",
     "--tests", f"{suites['repository'][2]}.{repository_climate_case}",
 ]
 
@@ -425,9 +427,9 @@ try:
     )
     rail_viewport_red = mutate(
         "rail-scroll-viewport-red", "shell",
-        "railViewport.addView(rail, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))",
-        "addView(rail, LayoutParams(dp(80), LayoutParams.MATCH_PARENT, Gravity.START))",
-        {"short rails attach through a fill viewport"},
+        "tabViewport.addView(tabs, FrameLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))",
+        "bar.addView(tabs, LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))",
+        {"navigation tabs attach through a horizontal fill viewport"},
     )
     shell_contrast_red = mutate(
         "shell-contrast-red", "shell",
@@ -515,8 +517,8 @@ try:
     )
     camera_palette_red = mutate(
         "camera-palette-contrast-red", "camera_palette",
-        "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFF101722.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
-        "accent = 0xFF4F9F9A.toInt(), accentInk = 0xFFF1EDE4.toInt(),\n                disabledSurface = 0xFFD7D5CE.toInt(),",
+        "accent = theme.accent, accentInk = theme.onAccent,",
+        "accent = theme.accent, accentInk = theme.accent,",
         {"camera controls keep readable foregrounds on each explicit palette"},
     )
     camera_label_red = mutate(

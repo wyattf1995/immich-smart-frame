@@ -21,6 +21,8 @@ final class WeatherSource {
     interface Listener {
         void onWeather(WeatherForecast forecast, String label, long fetchedAt, String provider);
         void onStatus(String title, String detail, String provider);
+        default void onLoading(String title, String provider) { onStatus(title, "Loading hourly and daily weather…", provider); }
+        default void onUnconfigured() { onStatus("Weather", "Press Select to use Home Assistant or choose a city.", "Hourly and daily forecast"); }
     }
     private static final int MAX_RESPONSE_BYTES = 128 * 1024;
     // The native panels show a short forecast. Keep untrusted JSON arrays bounded even
@@ -69,6 +71,13 @@ final class WeatherSource {
         if (connection != null) connection.disconnect();
     }
 
+    /** Asks again now, as leaving and reopening the screen would. */
+    public void retry() {
+        if (closed || !resumed) return;
+        pause();
+        resume();
+    }
+
     public void close() {
         if (closed) return;
         closed = true;
@@ -96,12 +105,12 @@ final class WeatherSource {
         String sourceKey = location.sourceKey();
         boolean usable = WeatherCachePolicy.isUsable(sourceKey, preferences.cachedSource(), preferences.fetchedAt(), now);
         if (!usable) {
-            listener.onStatus(location.label, "Loading hourly and daily weather…", "Open-Meteo");
+            listener.onLoading(location.label, "Open-Meteo");
             if (!loading) fetch(location);
             return;
         }
         parseCachedForecast(preferences.cachedJson(), location.label, preferences.fetchedAt(), "Open-Meteo", sourceKey, () -> {
-            listener.onStatus(location.label, "Loading hourly and daily weather…", "Open-Meteo");
+            listener.onLoading(location.label, "Open-Meteo");
             fetch(location);
         }, () -> {
             if (WeatherCachePolicy.shouldRefresh(preferences.fetchedAt(), System.currentTimeMillis())) fetch(location);
@@ -163,10 +172,10 @@ final class WeatherSource {
     private String requestForecast(WeatherLocation location) throws Exception {
         String address = "https://api.open-meteo.com/v1/forecast?latitude=" + location.latitude
                 + "&longitude=" + location.longitude
-                + "&current=temperature_2m,weather_code"
-                + "&hourly=temperature_2m,weather_code,precipitation_probability,is_day"
-                + "&daily=temperature_2m_max,temperature_2m_min,weather_code"
-                + "&timezone=auto&timeformat=unixtime&temperature_unit=fahrenheit&forecast_days=5";
+                + "&current=temperature_2m,weather_code,is_day,relative_humidity_2m,apparent_temperature,wind_speed_10m,wind_direction_10m,pressure_msl,uv_index"
+                + "&hourly=temperature_2m,weather_code,precipitation_probability,is_day,precipitation"
+                + "&daily=temperature_2m_max,temperature_2m_min,weather_code,sunrise,sunset,precipitation_sum,precipitation_probability_max"
+                + "&timezone=auto&timeformat=unixtime&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&forecast_days=6";
         HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
         activeConnection = connection;
         connection.setConnectTimeout(7000);
@@ -193,7 +202,7 @@ final class WeatherSource {
     }
 
     private void showUnconfigured() {
-        listener.onStatus("Weather", "Press Select to use Home Assistant or choose a city.", "Hourly and daily forecast");
+        listener.onUnconfigured();
     }
 
     private void resultError(WeatherLocation location, String message) {
@@ -228,7 +237,8 @@ final class WeatherSource {
                 longAt(dayTimes, i, -1), numberAt(highs, i), numberAt(lows, i), integerAt(dayCodes, i)));
         String id = root.optString("timezone", "UTC");
         TimeZone zone = TimeZone.getTimeZone(id);
-        return new WeatherForecast(numberAt(current, "temperature_2m"), integerAt(current, "weather_code"), hours, days, zone);
+        return new WeatherForecast(numberAt(current, "temperature_2m"), integerAt(current, "weather_code"), hours, days, zone,
+                TvWeatherDetails.from(root, System.currentTimeMillis()));
     }
 
     /** Required and optional series must describe the same bounded timeline. */

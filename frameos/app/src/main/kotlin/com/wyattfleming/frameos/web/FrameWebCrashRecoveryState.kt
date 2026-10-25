@@ -20,4 +20,10 @@ class FrameWebCrashRecoveryState {
         requiresReopen = false
         return true
     }
+
+    /** A caller replaced the GeckoSession outright, so the prior session cannot be reopened. */
+    fun markFreshSessionOpened() {
+        generation += 1
+        requiresReopen = false
+    }
 }

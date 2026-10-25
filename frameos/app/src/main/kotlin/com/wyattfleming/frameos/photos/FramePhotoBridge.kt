@@ -450,6 +450,46 @@ class FramePhotoBridge(
     private fun isTrustedSender(scope: FramePhotoScope, sender: Sender): Boolean =
         sender.session === configuredSession && sender.topLevel && sender.contentScript && sender.url == scope.photosUrl
 
+    /**
+     * Converts every native-message outcome to Gecko's supported bundle response type.
+     * WebExtension callbacks reject JSONObject values, even though received messages use them.
+     */
+    internal fun handleNativeMessage(
+        nativeApp: String,
+        message: Any,
+        sender: Sender?,
+        onCaptureComplete: (GeckoBundle) -> Unit,
+    ): GeckoBundle? {
+        if (nativeApp != NATIVE_APP || sender == null) return acceptedResponse(false)
+        if ((message as? JSONObject)?.optString("type") == DIAGNOSTIC_TYPE) {
+            return acceptedResponse(acceptDiagnostic(message, sender))
+        }
+        if ((message as? JSONObject)?.optString("type") in setOf(SHARED_STATE_TYPE, SHARED_SETTLED_TYPE)) {
+            return acceptedResponse(acceptSharedPlayback(message, sender))
+        }
+        val capture = captureFrom(message, sender) ?: return acceptedResponse(false)
+        try {
+            decodeWorker.execute {
+                val accepted = reserve.persist(capture.assetId, capture.image, capture.capturedAt, capture.scope.key) { canCommit(capture) } && reportIfCurrent(capture)
+                onCaptureComplete(acceptedBundle(accepted))
+            }
+        } catch (_: RejectedExecutionException) {
+            return acceptedBundle(false)
+        }
+        return null
+    }
+
+    private fun nativeMessageResponse(nativeApp: String, message: Any, sender: Sender?): GeckoResult<Any> {
+        val result = GeckoResult<Any>()
+        val immediate = handleNativeMessage(nativeApp, message, sender, result::complete)
+        return immediate?.let { GeckoResult.fromValue<Any>(it) } ?: result
+    }
+
+    private fun acceptedResponse(accepted: Boolean): GeckoBundle = acceptedBundle(accepted)
+
+    /** The companion helper is the one FramePhotoBridgeCallbackResponseTest pins; both merged fixes built the same bundle. */
+    private fun acceptedBundle(accepted: Boolean): GeckoBundle = acceptanceResponse(accepted)
+
     private fun boundedWholeNumber(value: Number, maximum: Long): Boolean =
         value.toDouble().isFinite() && value.toDouble() == value.toLong().toDouble() && value.toLong() in 0L..maximum
 
@@ -489,34 +529,13 @@ class FramePhotoBridge(
 
         override fun onMessage(nativeApp: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
             val senderSession = sender.session
-            if (nativeApp != NATIVE_APP || senderSession == null) return GeckoResult.fromValue(acceptanceResponse(false))
             val trustedSender = Sender(
-                session = senderSession,
+                session = senderSession ?: return nativeMessageResponse(nativeApp, message, null),
                 url = sender.url,
                 topLevel = sender.isTopLevel,
                 contentScript = sender.environmentType == WebExtension.MessageSender.ENV_TYPE_CONTENT_SCRIPT,
             )
-            if ((message as? JSONObject)?.optString("type") == DIAGNOSTIC_TYPE) {
-                return GeckoResult.fromValue(acceptanceResponse(acceptDiagnostic(message, trustedSender)))
-            }
-            if ((message as? JSONObject)?.optString("type") in setOf(SHARED_STATE_TYPE, SHARED_SETTLED_TYPE)) {
-                return GeckoResult.fromValue(acceptanceResponse(acceptSharedPlayback(message, trustedSender)))
-            }
-            val capture = captureFrom(
-                message,
-                trustedSender,
-            )
-            if (capture == null) return GeckoResult.fromValue(acceptanceResponse(false))
-            val result = GeckoResult<Any>()
-            try {
-                decodeWorker.execute {
-                    val accepted = reserve.persist(capture.assetId, capture.image, capture.capturedAt, capture.scope.key) { canCommit(capture) } && reportIfCurrent(capture)
-                    result.complete(acceptanceResponse(accepted))
-                }
-            } catch (_: RejectedExecutionException) {
-                result.complete(acceptanceResponse(false))
-            }
-            return result
+            return nativeMessageResponse(nativeApp, message, trustedSender)
         }
     }
 

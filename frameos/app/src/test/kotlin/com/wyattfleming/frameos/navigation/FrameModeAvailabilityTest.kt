@@ -11,7 +11,7 @@ class FrameModeAvailabilityTest {
         val availability = FrameModeAvailability(birdsUrl = null)
 
         assertEquals(
-            listOf(FrameMode.PHOTOS, FrameMode.HOME, FrameMode.WEATHER, FrameMode.CAMERAS, FrameMode.CALENDAR),
+            listOf(FrameMode.PHOTOS, FrameMode.HOME, FrameMode.WEATHER, FrameMode.OCEAN, FrameMode.CAMERAS, FrameMode.CALENDAR),
             availability.cycleModes,
         )
         assertEquals(FrameMode.PHOTOS, availability.resolve(FrameMode.BIRDS))
@@ -29,6 +29,7 @@ class FrameModeAvailabilityTest {
                 FrameMode.PHOTOS,
                 FrameMode.HOME,
                 FrameMode.WEATHER,
+                FrameMode.OCEAN,
                 FrameMode.BIRDS,
                 FrameMode.CAMERAS,
                 FrameMode.CALENDAR,
@@ -38,13 +39,28 @@ class FrameModeAvailabilityTest {
     }
 
     @Test
+    fun `the living room's household order gets Ocean after Weather because the companion cannot name it yet`() {
+        val availability = FrameModeAvailability(
+            birdsUrl = null,
+            requestedModes = listOf(FrameMode.PHOTOS, FrameMode.HOME, FrameMode.WEATHER, FrameMode.BIRDS, FrameMode.CAMERAS, FrameMode.CALENDAR),
+        )
+
+        assertEquals(
+            listOf(FrameMode.PHOTOS, FrameMode.HOME, FrameMode.WEATHER, FrameMode.OCEAN, FrameMode.CAMERAS, FrameMode.CALENDAR),
+            availability.cycleModes,
+        )
+        assertEquals(FrameMode.OCEAN, availability.resolve(FrameMode.OCEAN))
+    }
+
+    @Test
     fun `requested photo weather order supports parents preset`() {
         val availability = FrameModeAvailability(
             birdsUrl = null,
             requestedModes = listOf(FrameMode.PHOTOS, FrameMode.WEATHER),
         )
 
-        assertEquals(listOf(FrameMode.PHOTOS, FrameMode.WEATHER), availability.cycleModes)
+        assertEquals("a hand-picked list never gains Ocean", listOf(FrameMode.PHOTOS, FrameMode.WEATHER), availability.cycleModes)
         assertEquals(FrameMode.PHOTOS, availability.resolve(FrameMode.HOME))
+        assertEquals(FrameMode.PHOTOS, availability.resolve(FrameMode.OCEAN))
     }
 }

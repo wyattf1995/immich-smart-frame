@@ -36,11 +36,18 @@ public final class WeatherForecast {
     public final List<Hour> hourly;
     public final List<Day> daily;
     public final TimeZone timeZone;
+    /** The full-screen page's richer model from the same payload; null when it has nothing to show. */
+    public final TvWeatherDetails details;
 
     public WeatherForecast(Double currentTemperature, Integer currentCode, List<Hour> hourly, List<Day> daily) {
         this(currentTemperature, currentCode, hourly, daily, TimeZone.getTimeZone("UTC"));
     }
     public WeatherForecast(Double currentTemperature, Integer currentCode, List<Hour> hourly, List<Day> daily, TimeZone timeZone) {
+        this(currentTemperature, currentCode, hourly, daily, timeZone, null);
+    }
+    public WeatherForecast(Double currentTemperature, Integer currentCode, List<Hour> hourly, List<Day> daily, TimeZone timeZone,
+            TvWeatherDetails details) {
+        this.details = details;
         this.currentTemperature = currentTemperature;
         this.currentCode = currentCode;
         this.hourly = hourly == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(hourly));

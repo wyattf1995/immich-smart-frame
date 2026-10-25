@@ -47,4 +47,13 @@ class WeatherRenderCadenceTest {
             ),
         )
     }
+
+    @Test
+    fun `with Android animations off an animated scene holds still and wakes only for the hourly page`() {
+        assertEquals(
+            5_750L,
+            WeatherRenderCadence.nextDelayMillis(sceneAnimated = true, hourlyItemCount = 24, pageElapsedMillis = 4_250L, motionEnabled = false),
+        )
+        assertNull(WeatherRenderCadence.nextDelayMillis(sceneAnimated = true, hourlyItemCount = 12, pageElapsedMillis = 0L, motionEnabled = false))
+    }
 }

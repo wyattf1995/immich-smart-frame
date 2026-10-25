@@ -19,6 +19,8 @@ sealed interface FrameSurfaceTarget {
 
     data object NativeWeather : FrameSurfaceTarget
 
+    data object NativeOcean : FrameSurfaceTarget
+
     data class Unavailable(val mode: FrameMode) : FrameSurfaceTarget
 }
 
@@ -36,6 +38,7 @@ class FrameSurfaceRouter(configuration: FrameConfiguration) {
         FrameMode.ART -> artUrl?.let { url -> FrameSurfaceTarget.Web(FrameWebSlot.ART, url) }
             ?: FrameSurfaceTarget.Unavailable(FrameMode.ART)
         FrameMode.WEATHER -> FrameSurfaceTarget.NativeWeather
+        FrameMode.OCEAN -> FrameSurfaceTarget.NativeOcean
         FrameMode.HOME, FrameMode.CALENDAR -> FrameSurfaceTarget.Web(
             slot = FrameWebSlot.HOME_ASSISTANT,
             url = requireNotNull(HomeAssistantRoute.urlFor(homeAssistantWrapperUrl, mode)),

@@ -4,7 +4,6 @@ import android.view.KeyEvent
 
 sealed interface ContextualFrameAction {
     data class PhotoStep(val forward: Boolean) : ContextualFrameAction
-    data class WeatherPageStep(val forward: Boolean) : ContextualFrameAction
     data class ForwardToWeb(val keyCode: Int) : ContextualFrameAction
     data object PrimaryAction : ContextualFrameAction
 }
@@ -14,7 +13,8 @@ class ContextualInputMapper {
         if (keyCode == KeyEvent.KEYCODE_TAB) {
             return when (mode) {
                 FrameMode.PHOTOS -> ContextualFrameAction.PhotoStep(forward = !shiftPressed)
-                FrameMode.WEATHER -> ContextualFrameAction.WeatherPageStep(forward = !shiftPressed)
+                // The Weather page shows all 24 hours at once; Ocean is a single page.
+                FrameMode.WEATHER, FrameMode.OCEAN -> null
                 FrameMode.ART, FrameMode.HOME, FrameMode.CAMERAS, FrameMode.CALENDAR, FrameMode.BIRDS ->
                     ContextualFrameAction.ForwardToWeb(KeyEvent.KEYCODE_TAB)
             }

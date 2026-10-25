@@ -22,7 +22,7 @@ class TouchHomeCache(private val preferences: SharedPreferences) {
 
 /** No URLs, credentials, or raw Home Assistant responses are persisted. */
 internal object TouchHomeCacheCodec {
-    private const val SCHEMA = 1
+    private const val SCHEMA = 2
     private const val MAX_BYTES = 256 * 1024
     private const val MAX_EVENTS = 80
     private const val MAX_TEXT = 1_024
@@ -54,7 +54,10 @@ internal object TouchHomeCacheCodec {
             require(climate.modes.size <= MAX_MODES && climate.modes.all { it.length <= MAX_MODE_TEXT })
             JSONObject().put("entity", climate.entityId).put("current", climate.currentTemperature ?: JSONObject.NULL)
                 .put("target", climate.targetTemperature ?: JSONObject.NULL).put("unit", climate.unit).put("mode", climate.mode)
-                .put("modes", JSONArray(climate.modes)).put("min", climate.minTemperature).put("max", climate.maxTemperature).put("step", climate.step ?: JSONObject.NULL)
+                .put("modes", JSONArray(climate.modes)).put("min", climate.minTemperature ?: JSONObject.NULL)
+                .put("max", climate.maxTemperature ?: JSONObject.NULL).put("step", climate.step ?: JSONObject.NULL)
+                .put("targetLow", climate.targetTemperatureLow ?: JSONObject.NULL).put("targetHigh", climate.targetTemperatureHigh ?: JSONObject.NULL)
+                .put("canSetTarget", climate.canSetTarget).put("canSetMode", climate.canSetMode)
         } ?: JSONObject.NULL)
         root.toString().takeIf { it.toByteArray(Charsets.UTF_8).size <= MAX_BYTES }
     }.getOrNull()
@@ -81,7 +84,21 @@ internal object TouchHomeCacheCodec {
             val unit = value.getString("unit")
             val mode = value.getString("mode")
             require(entity.length <= MAX_TEXT && unit.length <= 32 && mode.length <= MAX_MODE_TEXT)
-            TouchClimate(entity, value.optDoubleOrNull("current"), value.optDoubleOrNull("target"), unit, mode, modes, value.getDouble("min"), value.getDouble("max"), value.optDoubleOrNull("step"))
+            TouchClimate(
+                entityId = entity,
+                currentTemperature = value.optDoubleOrNull("current"),
+                targetTemperature = value.optDoubleOrNull("target"),
+                targetTemperatureLow = value.optDoubleOrNull("targetLow"),
+                targetTemperatureHigh = value.optDoubleOrNull("targetHigh"),
+                unit = unit,
+                mode = mode,
+                modes = modes,
+                minTemperature = value.optDoubleOrNull("min"),
+                maxTemperature = value.optDoubleOrNull("max"),
+                step = value.optDoubleOrNull("step"),
+                canSetTarget = value.getBoolean("canSetTarget"),
+                canSetMode = value.getBoolean("canSetMode"),
+            )
         }
         TouchHomeModel(weather, temperature, events, climate, TouchConnection.OFFLINE, root.optLongOrNull("updated"))
     }.getOrNull()

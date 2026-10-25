@@ -5,6 +5,7 @@ enum class FrameMode(val label: String) {
     ART("Art"),
     HOME("Home"),
     WEATHER("Weather"),
+    OCEAN("Ocean"),
     CAMERAS("Cameras"),
     CALENDAR("Calendar"),
     BIRDS("Birds"),
@@ -18,7 +19,7 @@ enum class FrameMode(val label: String) {
         fun cycleModes(birdsConfigured: Boolean, artConfigured: Boolean = false): List<FrameMode> = buildList {
             add(PHOTOS)
             if (artConfigured) add(ART)
-            addAll(listOf(HOME, WEATHER))
+            addAll(listOf(HOME, WEATHER, OCEAN))
             if (birdsConfigured) add(BIRDS)
             addAll(listOf(CAMERAS, CALENDAR))
         }

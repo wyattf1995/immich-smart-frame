@@ -29,16 +29,28 @@
             android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="com.wyattfleming.touchframe.PROVISION" />
+                <action android:name="com.wyattfleming.touchframe.SET_WEATHER_LOCATION" />
             </intent-filter>
         </receiver>
+        <!-- stateNotNeeded keeps Touch's place when the low-memory killer takes it on
+             screen, so Android starts it again the way it restarts a Home app instead
+             of resuming whatever task sits behind it. Touch keeps no instance state. -->
         <activity
             android:name=".TouchFrameActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize"
             android:exported="true"
-            android:launchMode="singleTask">
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- This makes Touch an ordinary user-selectable Home app. Android sends
+                 MAIN/HOME after boot and when the user presses Home. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
     </application>

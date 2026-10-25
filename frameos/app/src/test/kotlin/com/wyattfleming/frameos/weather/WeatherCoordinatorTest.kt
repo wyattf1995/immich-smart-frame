@@ -49,6 +49,30 @@ class WeatherCoordinatorTest {
         assertEquals(0, remote.calls)
     }
 
+    @Test
+    fun `screens that draw the forecast get the load itself and the token that fetched it`() {
+        val remote = RecordingRemote(snapshot)
+        val coordinator = WeatherCoordinator(
+            accessTokenProvider = WeatherAccessTokenProvider { "renewed-access" },
+            repository = WeatherRepository(remote = remote, cache = EmptyCache, clock = { 1_000L }, freshForMillis = 60_000L),
+            presenter = WeatherPresenter(ZoneId.of("America/Los_Angeles"), Locale.US),
+            entityId = "weather.home",
+        )
+
+        val display = coordinator.refreshForDisplay()
+
+        assertEquals(WeatherLoadResult.Fresh(snapshot), display.load)
+        assertEquals("renewed-access", display.accessToken)
+        val signedOut = WeatherCoordinator(
+            accessTokenProvider = WeatherAccessTokenProvider { null },
+            repository = WeatherRepository(remote = remote, cache = EmptyCache, clock = { 1_000L }, freshForMillis = 60_000L),
+            presenter = WeatherPresenter(ZoneId.of("America/Los_Angeles"), Locale.US),
+            entityId = "weather.home",
+        ).refreshForDisplay()
+        assertEquals(WeatherLoadResult.AuthRequired, signedOut.load)
+        assertEquals(null, signedOut.accessToken)
+    }
+
     private class RecordingRemote(
         private val snapshot: WeatherSnapshot,
     ) : WeatherRemote {

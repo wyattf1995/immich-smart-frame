@@ -2,9 +2,11 @@ package com.wyattfleming.touchframe.control
 
 import com.wyattfleming.touchframe.data.TouchConfiguration
 
-/** Non-secret, one-time bootstrap input accepted by the DUMP-protected receiver. */
+/** Non-secret, one-time bootstrap input accepted by the DUMP-protected receiver, and the later weather-location update. */
 internal object TouchProvisionContract {
     const val ACTION_PROVISION = "com.wyattfleming.touchframe.PROVISION"
+    /** Changes only the weather location label on a frame that is already provisioned. */
+    const val ACTION_SET_WEATHER_LOCATION = "com.wyattfleming.touchframe.SET_WEATHER_LOCATION"
 
     const val EXTRA_PHOTOS_URL = "photos_url"
     const val EXTRA_HOME_ASSISTANT_URL = "home_assistant_url"
@@ -21,6 +23,7 @@ internal object TouchProvisionContract {
     const val RESULT_FAILED = 2
 
     private const val MAX_URL_CHARS = 4096
+    private const val MAX_LABEL_CHARS = 256
     private const val MAX_ENTITY_CHARS = 128
     private const val MAX_CALENDARS = 4
     private const val MAX_CAMERAS = 4
@@ -39,7 +42,7 @@ internal object TouchProvisionContract {
         if (!requiredUrl(photosUrl) || !requiredUrl(homeAssistantUrl) || !requiredEntity(weatherEntityId)) return null
         if (artUrl != null && artUrl.length > MAX_URL_CHARS) return null
         if (birdsUrl != null && birdsUrl.length > MAX_URL_CHARS) return null
-        if (weatherLocationLabel != null && weatherLocationLabel.length > 256) return null
+        if (weatherLocationLabel != null && weatherLocationLabel.length > MAX_LABEL_CHARS) return null
         if (climateEntityId != null && !boundedEntity(climateEntityId)) return null
         if (!boundedEntities(calendarEntityIds, MAX_CALENDARS) || !boundedEntities(cameraEntityIds, MAX_CAMERAS)) return null
         return TouchConfiguration.from(
@@ -53,6 +56,12 @@ internal object TouchProvisionContract {
             calendarEntityIds = calendarEntityIds ?: TouchConfiguration.DEFAULT_CALENDAR_ENTITY_IDS,
             cameraEntityIds = cameraEntityIds ?: TouchConfiguration.DEFAULT_CAMERA_ENTITY_IDS,
         )
+    }
+
+    /** [current] with a new weather location label (blank clears it), or null for a missing or over-long label. */
+    fun withWeatherLocation(current: TouchConfiguration, label: String?): TouchConfiguration? {
+        if (label == null || label.length > MAX_LABEL_CHARS) return null
+        return current.copy(weatherLocationLabel = TouchConfiguration.locationLabel(label))
     }
 
     private fun requiredUrl(value: String?): Boolean = value != null && value.length <= MAX_URL_CHARS && value.isNotBlank()

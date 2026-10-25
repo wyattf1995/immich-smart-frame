@@ -105,6 +105,11 @@ class CompanionTests(unittest.TestCase):
         for _ in range(16): self.store.command('main',{'type':'photo_next'})
         with self.assertRaises(module.FrameError) as e:self.store.command('main',{'type':'photo_next'})
         self.assertEqual(e.exception.status,429)
+    def test_touch_pages_are_commandable_by_name_but_never_part_of_the_mode_order(self):
+        self.poll()
+        for page in ('ocean','power'):
+            self.assertEqual(self.store.command('main',{'type':'show_mode','mode':page})['mode'],page)
+        with self.assertRaises(module.FrameError): self.store.settings('main',{'modeOrder':['photos','ocean']})
     def test_status_drops_unknown_secrets_and_bounds_strings(self):
         self.store.poll('main',{'status':{'mode':'photos','token':'secret','lastError':'x'*10000,'lastPaintAt':self.clock+999999999},'acks':[]})
         status=self.store.state()['devices'][0]['status'];self.assertNotIn('token',status);self.assertLessEqual(len(status.get('lastError','')),80);self.assertIsNone(status.get('lastPaintAt'))

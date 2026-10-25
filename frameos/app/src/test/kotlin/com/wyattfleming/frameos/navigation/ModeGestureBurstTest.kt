@@ -5,7 +5,8 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ModeGestureBurstTest {
-    private val modes = FrameMode.cycleModes(birdsConfigured = true)
+    // An explicit cycle: these cases are about burst accumulation, not which modes a frame cycles.
+    private val modes = listOf(FrameMode.PHOTOS, FrameMode.HOME, FrameMode.WEATHER, FrameMode.BIRDS, FrameMode.CAMERAS, FrameMode.CALENDAR)
 
     @Test
     fun `rapid gestures accumulate a logical destination without rendering intermediate modes`() {

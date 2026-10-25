@@ -23,7 +23,7 @@ android {
         // Retain 1: the verified signed 0.2.8 rollback artifact uses it, and
         // direct-device rollback installs must remain possible.
         versionCode = 1
-        versionName = "0.2.11"
+        versionName = "0.2.18"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -47,9 +47,10 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-        // The NIO flavor covers the existing java.time and java.nio.file uses
-        // on the API23 legacy target. Modern keeps its current platform behavior.
-        isCoreLibraryDesugaringEnabled = legacyArmv7
+        // The NIO flavor covers the existing java.time and java.nio.file uses on the API23 legacy target. :frame-ui
+        // (the shared Weather and Ocean screens, minSdk 23) requires its consumers to desugar too; at the modern
+        // target's minSdk 29 these APIs are native, so D8 rewrites nothing and platform behaviour is unchanged.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     testOptions {
@@ -63,6 +64,9 @@ android {
         // AGP 9.1.1 requires Gradle 9.3.1; it is also within Kotlin 2.4's fully
         // supported range. Keep the checksum-pinned wrapper until that stack moves.
         disable += "AndroidGradlePluginVersion"
+        // These sources are also compiled at minSdk 23 (the legacy target and :frame-shared for FrameOS Touch), where
+        // the version checks and the values-v27 folder are required; at the modern minSdk 29 lint calls them obsolete.
+        disable += "ObsoleteSdkInt"
     }
 }
 
@@ -78,10 +82,11 @@ dependencies {
             "org.mozilla.geckoview:geckoview-arm64-v8a:154.0.20260814215756"
         },
     )
-    if (legacyArmv7) {
-        // Android's documented Java 11 NIO desugaring artifact for API23.
-        coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.1")
-    }
+    // Android's documented Java 11 NIO desugaring artifact (API23 legacy, and :frame-ui's requirement).
+    //noinspection GradleDependency
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.1")
+    // FrameOS's shared native screens: the new Weather page and Ocean.
+    implementation(project(":frame-ui"))
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20260814")

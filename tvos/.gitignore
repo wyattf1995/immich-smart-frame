@@ -3,3 +3,5 @@
 local.properties
 *.jks
 *.keystore
+.nas-frametv/
+/validation/

@@ -51,6 +51,7 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
 dependencies {
     compileOnly("androidx.annotation:annotation:1.11.0")
     implementation(project(":frame-shared"))
+    implementation(project(":frame-ui"))
     // Keep the shared API23 Java11 NIO compatibility pin until a separately
     // validated dependency migration; lint must not silently force an upgrade.
     //noinspection GradleDependency

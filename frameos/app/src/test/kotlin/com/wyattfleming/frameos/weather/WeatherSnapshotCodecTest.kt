@@ -30,6 +30,25 @@ class WeatherSnapshotCodecTest {
     }
 
     @Test
+    fun `round trips rain amounts, hourly UV and the rain unit`() {
+        val entry = CachedWeatherSnapshot(
+            snapshot = WeatherSnapshot(
+                current = current().copy(precipitationUnit = "in"),
+                daily = emptyList(),
+                hourly = listOf(forecast(WeatherForecastType.HOURLY, 3).copy(precipitation = 0.04, uvIndex = 1.2)),
+                alert = null,
+            ),
+            savedAtEpochMillis = 1_725_000_000_000L,
+        )
+
+        val decoded = codec.decode("weather.home", codec.encode("weather.home", entry))
+
+        assertEquals("in", decoded?.snapshot?.current?.precipitationUnit)
+        assertEquals(listOf(0.04), decoded?.snapshot?.hourly?.map { it.precipitation })
+        assertEquals(listOf(1.2), decoded?.snapshot?.hourly?.map { it.uvIndex })
+    }
+
+    @Test
     fun `rejects corrupt payload and cache entries whose entity does not match`() {
         assertNull(codec.decode("weather.home", "not a weather cache"))
         assertNull(codec.decode("weather.office", codec.encode("weather.home", CachedWeatherSnapshot(

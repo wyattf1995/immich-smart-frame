@@ -51,6 +51,7 @@ val syncSharedMainSources by tasks.registering(SharedInputSync::class) {
             "com/wyattfleming/frameos/photos/FrameSharedPlaybackMetadata.kt",
             "com/wyattfleming/frameos/ui/WeatherContentView.kt",
             "com/wyattfleming/frameos/web/FrameOAuthWebSurface.kt",
+            "com/wyattfleming/frameos/web/FrameTextureGeckoView.kt",
         )
     }
     generatedDirectory.set(layout.buildDirectory.dir("generated/shared/main/kotlin"))
@@ -73,6 +74,7 @@ val syncSharedTestSources by tasks.registering(SharedInputSync::class) {
             "com/wyattfleming/frameos/photos/FrameSharedPlaybackMetadataTest.kt",
             "com/wyattfleming/frameos/control/FrameCompanionEventStoreTest.kt",
             "com/wyattfleming/frameos/ui/WeatherHeaderLayoutTest.kt",
+            "com/wyattfleming/frameos/web/FrameTextureFrameGateTest.kt",
         )
     }
     generatedDirectory.set(layout.buildDirectory.dir("generated/shared/test/kotlin"))

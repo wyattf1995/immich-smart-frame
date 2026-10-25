@@ -9,7 +9,7 @@ class ContextualInputMapperTest {
     private val mapper = ContextualInputMapper()
 
     @Test
-    fun `tab and shift tab step photos and weather in opposite directions`() {
+    fun `tab and shift tab step photos in opposite directions`() {
         assertEquals(
             ContextualFrameAction.PhotoStep(forward = true),
             mapper.map(FrameMode.PHOTOS, KeyEvent.KEYCODE_TAB, shiftPressed = false),
@@ -18,14 +18,15 @@ class ContextualInputMapperTest {
             ContextualFrameAction.PhotoStep(forward = false),
             mapper.map(FrameMode.PHOTOS, KeyEvent.KEYCODE_TAB, shiftPressed = true),
         )
-        assertEquals(
-            ContextualFrameAction.WeatherPageStep(forward = true),
-            mapper.map(FrameMode.WEATHER, KeyEvent.KEYCODE_TAB, shiftPressed = false),
-        )
-        assertEquals(
-            ContextualFrameAction.WeatherPageStep(forward = false),
-            mapper.map(FrameMode.WEATHER, KeyEvent.KEYCODE_TAB, shiftPressed = true),
-        )
+    }
+
+    @Test
+    fun `volume does nothing on Weather and Ocean, which show everything on one page`() {
+        listOf(FrameMode.WEATHER, FrameMode.OCEAN).forEach { mode ->
+            assertEquals(null, mapper.map(mode, KeyEvent.KEYCODE_TAB, shiftPressed = false))
+            assertEquals(null, mapper.map(mode, KeyEvent.KEYCODE_TAB, shiftPressed = true))
+            assertEquals(ContextualFrameAction.PrimaryAction, mapper.mapStarRelease(mode))
+        }
     }
 
     @Test

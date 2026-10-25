@@ -9,6 +9,17 @@ import java.io.File
 
 class TouchShellLayoutTest {
     @Test
+    fun `tab labels keep their own word width and never hyphenate`() {
+        // Seen on the 1280 PF1007 (API 23): a param-less label in a stacked tab became MATCH_PARENT,
+        // was squeezed to the icon's width and hyphenated to "Pho-", "Weat", "Cal-".
+        val source = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayout.kt").readText()
+        val label = source.substringAfter("private fun label(").substringBefore("\n    }\n")
+        assertTrue(label.contains("layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)"))
+        assertTrue(label.contains("hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE"))
+        assertTrue(label.contains("isSingleLine = true"))
+    }
+
+    @Test
     fun `only media destinations accept a qualified left edge reveal`() {
         assertTrue(TouchShellGesture.shouldReveal(TouchDestination.PHOTOS, 24f, 420f, 104f, 430f, 48))
         assertTrue(TouchShellGesture.shouldReveal(TouchDestination.ART, 48f, 420f, 104f, 430f, 48))
@@ -67,20 +78,20 @@ class TouchShellLayoutTest {
     }
 
     @Test
-    fun `wide layouts use the intended rail width`() {
-        assertEquals(80, TouchShellLayout.railWidthDpFor(1399))
-        assertEquals(96, TouchShellLayout.railWidthDpFor(1400))
+    fun `wide frames use the taller navigation bar`() {
+        assertEquals(68, TouchShellLayout.barHeightDpFor(1399))
+        assertEquals(80, TouchShellLayout.barHeightDpFor(1400))
     }
 
     @Test
-    fun `short rails attach through a fill viewport`() {
+    fun `navigation tabs attach through a horizontal fill viewport`() {
         val source = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayout.kt").readText()
 
-        assertTrue(source.contains("private val railViewport = ScrollView(context).apply {\n        isFillViewport = true\n    }"))
-        assertTrue(source.contains("railViewport.addView(rail, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))"))
-        assertFalse(source.contains("ScrollView.LayoutParams"))
-        assertTrue(source.contains("const val RAIL_BUTTON_HEIGHT_DP = 68"))
-        assertTrue(source.contains("LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(RAIL_BUTTON_HEIGHT_DP))"))
+        assertTrue(source.contains("private val tabViewport = HorizontalScrollView(context).apply {\n        isFillViewport = true"))
+        assertTrue(source.contains("tabViewport.addView(tabs, FrameLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))"))
+        assertTrue(source.contains("bar.addView(tabViewport, LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))"))
+        assertFalse(source.contains("HorizontalScrollView.LayoutParams"))
+        assertTrue(source.contains("const val PANEL_BAR_HEIGHT_DP = 68"))
     }
 
     @Test

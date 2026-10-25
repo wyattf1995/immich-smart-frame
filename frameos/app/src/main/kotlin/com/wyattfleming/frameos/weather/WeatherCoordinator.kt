@@ -8,6 +8,8 @@ interface DeadlineAwareWeatherAccessTokenProvider : WeatherAccessTokenProvider {
     fun validAccessToken(deadline: WeatherRequestDeadline): String?
 }
 
+data class WeatherDisplayLoad(val load: WeatherLoadResult, val accessToken: String?)
+
 class WeatherCoordinator(
     private val accessTokenProvider: WeatherAccessTokenProvider,
     private val repository: WeatherRepository,
@@ -27,6 +29,18 @@ class WeatherCoordinator(
     }
 
     fun cachedPresentation(): WeatherPresentation? = repository.cached(entityId)?.let(presenter::present)
+
+    /**
+     * For screens that draw the forecast themselves (the shared Weather page): the load itself, and the token that
+     * fetched it so a related read (sunrise and sunset) can reuse it within the same refresh.
+     */
+    fun refreshForDisplay(): WeatherDisplayLoad {
+        val deadline = WeatherRequestDeadline(timeoutMillis = refreshTimeoutMillis)
+        val token = validAccessToken(deadline).orEmpty()
+        return WeatherDisplayLoad(repository.refresh(entityId, token, deadline), token.ifBlank { null })
+    }
+
+    fun cachedLoad(): WeatherLoadResult? = repository.cached(entityId)
 
     fun cancel() = repository.cancel()
 

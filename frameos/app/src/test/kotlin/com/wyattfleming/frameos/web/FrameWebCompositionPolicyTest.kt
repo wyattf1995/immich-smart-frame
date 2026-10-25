@@ -61,5 +61,10 @@ class FrameWebCompositionPolicyTest {
             FrameWebForeground.NATIVE_WEATHER,
             FrameWebCompositionPolicy.forMode(FrameMode.WEATHER).foreground,
         )
+        assertEquals(
+            "Ocean is native too and keeps the same warm Home Assistant surface",
+            FrameWebCompositionPolicy.forMode(FrameMode.WEATHER),
+            FrameWebCompositionPolicy.forMode(FrameMode.OCEAN),
+        )
     }
 }
