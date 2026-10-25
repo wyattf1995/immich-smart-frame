@@ -25,6 +25,11 @@ TERMINAL = {'applied', 'dispatched', 'rejected', 'failed', 'expired'}
 IDENTIFIER = re.compile(r'^[a-zA-Z0-9_-]{1,48}$')
 ASSET_ID = re.compile(r'^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$')
 CLOCK = re.compile(r'^(?:[01][0-9]|2[0-3]):[0-5][0-9]$')
+APP_VERSION = re.compile(r'^([0-9]{1,4})\.([0-9]{1,4})\.([0-9]{1,4})$')
+# idleReturnSeconds 0 keeps a frame on the page it was left on. Older FrameOS rejects the
+# whole settings payload when it sees 0, so a frame that reports one is refused it.
+STAY_ON_PAGE = 0
+STAY_ON_PAGE_SINCE = (0, 2, 19)
 MAX_BODY = 32 * 1024
 EXPORT_STATE = 'preferences'
 EXPORT_RETRY_INITIAL_SECONDS = 1.0
@@ -63,7 +68,7 @@ def settings_patch(existing, patch, profiles):
         elif key == 'quietHours':
             valid = isinstance(value, dict) and set(value) == {'enabled', 'start', 'end', 'brightness'} and isinstance(value['enabled'], bool) and all(isinstance(value[x], str) and CLOCK.fullmatch(value[x]) for x in ('start','end')) and integer(value['brightness'], 10, 30) and value['start'] != value['end']
         elif key == 'idleReturnSeconds':
-            valid = integer(value, 30, 3600)
+            valid = (integer(value, STAY_ON_PAGE, STAY_ON_PAGE) or integer(value, 30, 3600))
         elif key == 'profile':
             valid = isinstance(value, str) and value in profiles
         else:
@@ -309,6 +314,11 @@ class FrameStore:
         with self.db() as db:
             row=self._device(db,device)
             updated=settings_patch(json.loads(row['settings']),patch,self.profiles)
+            if isinstance(patch,dict) and patch.get('idleReturnSeconds')==STAY_ON_PAGE and updated['idleReturnSeconds']==STAY_ON_PAGE:
+                reported=(json.loads(row['status'] or '{}') or {}).get('appVersion')
+                version=APP_VERSION.fullmatch(reported) if isinstance(reported,str) else None
+                if version and tuple(int(x) for x in version.groups())<STAY_ON_PAGE_SINCE:
+                    raise FrameError(f"{row['label'] or device} runs FrameOS {reported}; update it to 0.2.19 or newer before choosing Never",409)
             db.execute('UPDATE devices SET settings=?,revision=revision+1 WHERE id=?',(json.dumps(updated),device))
             return {'settings':updated,'settingsRevision':row['revision']+1}
 
@@ -333,7 +343,8 @@ class FrameStore:
             return [dict(row) for row in db.execute('SELECT asset AS assetId,preference,updated FROM preferences WHERE device=? ORDER BY updated DESC',(device,))]
 
     def feedback(self, device, payload):
-        if not isinstance(payload,dict) or set(payload)!={'assetId','preference'} or not isinstance(payload['assetId'],str) or not ASSET_ID.fullmatch(payload['assetId']) or payload['preference'] not in ('more','less','hide','clear'): raise FrameError('Invalid photo preference')
+        if isinstance(payload,dict) and payload.get('preference') in ('more','less'): raise FrameError('More often and Less often were retired; use Never on this frame, or clear the choice')
+        if not isinstance(payload,dict) or set(payload)!={'assetId','preference'} or not isinstance(payload['assetId'],str) or not ASSET_ID.fullmatch(payload['assetId']) or payload['preference'] not in ('hide','clear'): raise FrameError('Invalid photo preference')
         with self.db() as db:
             self._device(db,device)
             if payload['preference']=='clear': db.execute('DELETE FROM preferences WHERE device=? AND asset=?',(device,payload['assetId']))
