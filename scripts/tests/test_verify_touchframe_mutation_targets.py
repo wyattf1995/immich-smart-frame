@@ -26,7 +26,7 @@ class TouchFrameMutationTargetPreflightTest(unittest.TestCase):
         for target in targets:
             by_kind[target.kind] = by_kind.get(target.kind, 0) + 1
         self.assertEqual(
-            {"mutate": 48, "repository": 1, "bridge": 1, "activity": 1, "calendar": 2, "packaging": 1, "design": 101},
+            {"mutate": 48, "repository": 1, "bridge": 1, "activity": 1, "calendar": 2, "packaging": 1, "design": 106},
             by_kind,
         )
 

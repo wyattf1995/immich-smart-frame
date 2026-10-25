@@ -77,6 +77,7 @@ CLASSES = {
     "media-tap": ("com.wyattfleming.touchframe.ui.TouchMediaTapTest", tests / "ui/TouchMediaTapTest.kt"),
     "disclosure": ("com.wyattfleming.touchframe.ui.TouchDisclosureTest", tests / "ui/TouchDisclosureTest.kt"),
     "shell": ("com.wyattfleming.touchframe.ui.TouchShellLayoutTest", tests / "ui/TouchShellLayoutTest.kt"),
+    "settings-gate": ("com.wyattfleming.touchframe.ui.TouchSystemSettingsGateTest", tests / "ui/TouchSystemSettingsGateTest.kt"),
     "weather": ("com.wyattfleming.touchframe.weather.TouchWeatherPresentationTest", tests / "weather/TouchWeatherPresentationTest.kt"),
     "weather-colors": ("com.wyattfleming.touchframe.weather.TouchWeatherColorsTest", tests / "weather/TouchWeatherColorsTest.kt"),
     "weather-sun": ("com.wyattfleming.touchframe.weather.TouchSunRepositoryTest", tests / "weather/TouchSunRepositoryTest.kt"),
@@ -439,6 +440,23 @@ MUTATIONS = [
     ("weather-codec-rain-red", shared_main / "weather/WeatherSnapshotCodec.kt",
      ".putNullable(\"precipitation\", forecast.precipitation)", ".putNullable(\"precipitation\", null)", "weather-codec",
      {"round trips rain amounts, hourly UV and the rain unit"}),
+    # 10/24: wall Settings explains on a tap, warns on a hold and opens Android settings only on the confirmation;
+    # frames where live video cannot start (API 23) offer the snapshot instead of Watch live.
+    ("settings-tap-opens-red", main / "ui/TouchSystemSettingsGate.kt",
+     "    fun tap() = notice(Notice(HOLD_HINT, Tone.INFO))", "    fun tap() = hold()", "settings-gate",
+     {"a tap explains the hold and never opens Settings"}),
+    ("settings-confirm-ignored-red", main / "ui/TouchSystemSettingsGate.kt",
+     "        if (!open()) notice(Notice(RETURN_BUTTON_OFF, Tone.WARNING))", "        notice(Notice(RETURN_BUTTON_OFF, Tone.WARNING))", "settings-gate",
+     {"a hold warns and opens Settings only when the warning is confirmed", "a refused open says how to enable the return button"}),
+    ("settings-long-press-is-a-tap-red", main / "ui/TouchShellLayout.kt",
+     "        setOnLongClickListener { onSettingsHold(); true }", "        setOnLongClickListener { onSettings(); true }", "settings-gate",
+     {"the shell sends a tap and a hold separately and the activity opens Settings only through the gate"}),
+    ("camera-live-api23-red", main / "media/TouchCameraView.kt",
+     "    fun supported(sdk: Int): Boolean = sdk >= MIN_SDK", "    fun supported(sdk: Int): Boolean = sdk >= 0", "camera",
+     {"liveVideoIsOfferedOnlyWhereGeckoCanStartIt"}),
+    ("camera-snapshot-offer-red", main / "media/TouchCameraView.kt",
+     "            Stage.LiveReady -> if (!liveVideo) fillEmpty(", "            Stage.LiveReady -> if (false) fillEmpty(", "camera",
+     {"aFrameWithoutLiveVideoOffersTheSnapshotInsteadOfWatchLive"}),
 ]
 
 
