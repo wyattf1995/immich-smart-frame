@@ -98,6 +98,12 @@ COPY live-sync-20261013.patch /tmp/live-sync-20261013.patch
 COPY live-sync-20261013-tests.patch /tmp/live-sync-20261013-tests.patch
 COPY slide-timer.patch /tmp/slide-timer.patch
 COPY slide-timer-tests.patch /tmp/slide-timer-tests.patch
+# 10/24: the recent-photo ledger can survive a restart (FRAME_RECENT_HISTORY_FILE), and the tag route, offline
+# history and webhook payloads respect the hard exclusion list.
+COPY recent-history.patch /tmp/recent-history.patch
+COPY recent-history-tests.patch /tmp/recent-history-tests.patch
+COPY hard-exclusion-hardening.patch /tmp/hard-exclusion-hardening.patch
+COPY hard-exclusion-hardening-tests.patch /tmp/hard-exclusion-hardening-tests.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -272,7 +278,15 @@ RUN cd /src \
 		&& git apply --check /tmp/slide-timer.patch \
 		&& git apply /tmp/slide-timer.patch \
 		&& git apply --check /tmp/slide-timer-tests.patch \
-		&& git apply /tmp/slide-timer-tests.patch
+		&& git apply /tmp/slide-timer-tests.patch \
+		&& git apply --check /tmp/recent-history.patch \
+		&& git apply /tmp/recent-history.patch \
+		&& git apply --check /tmp/recent-history-tests.patch \
+		&& git apply /tmp/recent-history-tests.patch \
+		&& git apply --check /tmp/hard-exclusion-hardening.patch \
+		&& git apply /tmp/hard-exclusion-hardening.patch \
+		&& git apply --check /tmp/hard-exclusion-hardening-tests.patch \
+		&& git apply /tmp/hard-exclusion-hardening-tests.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
