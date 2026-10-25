@@ -11,6 +11,10 @@ reset when it is replaced. Render and recovery sensors use the existing private
 companion snapshot; the last failure is historical, including recovered outages.
 Provision it separately for each Home Assistant installation.
 
+Include `frame_lenovo_health.yaml` with `frame_companion.yaml` to be told when a FrameOS frame stops
+checking in for 20 minutes, shows the same photo for 25 minutes while on Photos, or when Home Assistant
+cannot read the remote for 30 minutes. Alerts go through `script.notify_household`.
+
 Add `homeassistant: { packages: !include_dir_named packages }` to `configuration.yaml`, place `frame_companion.yaml` in `packages/`, and add these secret values to `secrets.yaml`:
 
 ```yaml
