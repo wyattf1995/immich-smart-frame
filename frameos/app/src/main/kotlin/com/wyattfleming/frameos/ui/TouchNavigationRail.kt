@@ -17,19 +17,22 @@ class TouchNavigationRail private constructor(
     defStyleAttr: Int,
     private val onOpenSettings: () -> Unit,
     private val onOpenMode: (FrameMode) -> Unit,
+    private val onSettingsHint: () -> Unit,
 ) : LinearLayout(context, attrs, defStyleAttr) {
-    constructor(context: Context) : this(context, null, 0, {}, {})
+    constructor(context: Context) : this(context, null, 0, {}, {}, {})
 
-    constructor(context: Context, attrs: AttributeSet?) : this(context, attrs, 0, {}, {})
+    constructor(context: Context, attrs: AttributeSet?) : this(context, attrs, 0, {}, {}, {})
 
     constructor(context: Context, attrs: AttributeSet?, defStyleAttr: Int) :
-        this(context, attrs, defStyleAttr, {}, {})
+        this(context, attrs, defStyleAttr, {}, {}, {})
 
+    /** Android Settings can turn off Wi-Fi, change the date or uninstall the app, so a tap only explains and a hold opens it. */
     constructor(
         context: Context,
         onOpenSettings: () -> Unit,
         onOpenMode: (FrameMode) -> Unit,
-    ) : this(context, null, 0, onOpenSettings, onOpenMode)
+        onSettingsHint: () -> Unit,
+    ) : this(context, null, 0, onOpenSettings, onOpenMode, onSettingsHint)
 
     private var style = TouchDashboardStyle.forHour(12)
     private var selected: FrameMode? = null
@@ -69,15 +72,16 @@ class TouchNavigationRail private constructor(
         removeAllViews(); items.removeAllViews(); setBackgroundColor(style.background)
         addView(scroller, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
         modes.forEach { mode -> items.addView(item(mode, mode.label, selected == mode) { onOpenMode(mode) }) }
-        items.addView(item(null, "Settings", false) { onOpenSettings() })
+        items.addView(item(null, "Settings", false, onHold = { onOpenSettings() }) { onSettingsHint() })
     }
-    private fun item(mode: FrameMode?, label: String, active: Boolean, action: () -> Unit): View =
+    private fun item(mode: FrameMode?, label: String, active: Boolean, onHold: (() -> Unit)? = null, action: () -> Unit): View =
         LinearLayout(context).apply {
             orientation = VERTICAL; gravity = Gravity.CENTER; minimumTouchTarget(context)
             contentDescription = label; isFocusable = true; isClickable = true
             background = style.card(context.dp(16).toFloat(), active)
             setPadding(context.dp(6), context.dp(6), context.dp(6), context.dp(6))
             setOnClickListener { action() }
+            onHold?.let { hold -> setOnLongClickListener { hold(); true } }
             addView(TouchModeIconView(context, mode).apply { tint = if (active) style.selectedInk else style.accent },
                 LayoutParams(context.dp(28), context.dp(28)))
             addView(TextView(context).apply {

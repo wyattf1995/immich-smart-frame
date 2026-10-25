@@ -6,6 +6,10 @@ or device results do not apply automatically.
 
 ## Unreleased — initial development candidate
 
+- Settings on the wall explains on a tap; a press and hold warns that Android settings can
+  turn off Wi-Fi, change the date or remove the app, and only confirming opens them.
+- Frames where live video cannot start (API 23, or no Gecko runtime) offer the camera
+  snapshot instead of a Watch live button that always failed.
 - Calendar starts in Week with dated event columns and locally paged day details.
   Agenda and Month remain available; Home Assistant supplies calendar events.
 - Native Home uses the gallery-wall day/night theme and a persistent, horizontally

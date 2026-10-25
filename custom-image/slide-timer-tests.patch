@@ -1,0 +1,264 @@
+diff --git a/ci/performance-nas.sh b/ci/performance-nas.sh
+index 3d1cd5e..532907d 100755
+--- a/ci/performance-nas.sh
++++ b/ci/performance-nas.sh
+@@ -295,6 +295,7 @@ run_step go-version "$go_bin" version
+ run_step frontend-install bash -c 'cd frontend && npm ci'
+ [[ -x "$ESBUILD_BINARY" ]] || { printf 'npm ci did not install lockfile-pinned esbuild\n' >&2; exit 66; }
+ run_step frontend-shared-playback bash -c 'frontend/node_modules/.bin/esbuild frontend/tests/shared-playback.test.ts --bundle --platform=node --format=esm --alias:htmx.org=./frontend/tests/htmx.mock.ts --outfile="$TMPDIR/shared-playback.test.mjs" && node --test "$TMPDIR/shared-playback.test.mjs"'
++run_step frontend-polling bash -c 'for t in polling-timer polling-recovery; do frontend/node_modules/.bin/esbuild "frontend/tests/$t.test.ts" --bundle --platform=node --format=esm --alias:htmx.org=./frontend/tests/htmx.mock.ts --outfile="$TMPDIR/$t.test.mjs" && node --test "$TMPDIR/$t.test.mjs" || exit 1; done'
+ run_step frontend-typecheck bash -c 'cd frontend && node_modules/.bin/tsc --noEmit'
+ run_step frontend-css bash -c 'cd frontend && node_modules/.bin/esbuild --minify --bundle --loader:.css=css --external:*.woff --external:*.woff2 --external:*.ttf --target=chrome106,edge106,firefox107,safari12.1,opera92 src/css/kiosk.css --outfile=./public/assets/css/kiosk.css'
+ run_step frontend-kiosk-js bash -c 'cd frontend && node_modules/.bin/esbuild src/ts/kiosk.ts --format=iife --global-name=kiosk --bundle --minify --target=es6 --outfile=./public/assets/js/kiosk.js'
+diff --git a/ci/shared-playback-browser.mjs b/ci/shared-playback-browser.mjs
+index 6cc4b87..5bb7324 100644
+--- a/ci/shared-playback-browser.mjs
++++ b/ci/shared-playback-browser.mjs
+@@ -142,9 +142,16 @@ try{
+  }
+  const before=(await (await a.request.get(`${ready.url}/fixture/stats`)).json()).independentRequests;
+  assert.equal(before,0,'shared views never use independent asset routes');
+- const soloContext=await browser.newContext();contexts.push(soloContext);const solo=await soloContext.newPage();await solo.goto(ready.url);
++ const soloContext=await browser.newContext();contexts.push(soloContext);
++ // Count animation-frame requests: the old photo progress loop asked for one every frame (~60 a second here).
++ await soloContext.addInitScript(()=>{window.rafCalls=0;const raf=window.requestAnimationFrame.bind(window);window.requestAnimationFrame=cb=>{window.rafCalls++;return raf(cb);};});
++ const solo=await soloContext.newPage();await solo.goto(ready.url);
+  await eventually(async()=>((await (await a.request.get(`${ready.url}/fixture/stats`)).json()).independentRequests)>before,'independent home still starts existing HTMX slideshow');
+  report.tests.push('shared mode skips independent endpoints; existing independent mode retained');
++ const rafBefore=await solo.evaluate(()=>window.rafCalls);await delay(3000);const rafAfter=await solo.evaluate(()=>window.rafCalls);
++ report.soloAnimationFramesIn3s=rafAfter-rafBefore;
++ assert.ok(rafAfter-rafBefore<20,`independent photo slide requested ${rafAfter-rafBefore} animation frames in 3 s; a still photo should need almost none`);
++ report.tests.push('an independent photo slide does not redraw every frame');
+  }
+  assert.deepEqual(errors,[],'browser JavaScript errors');
+  report.status='passed';
+diff --git a/frontend/tests/htmx.mock.ts b/frontend/tests/htmx.mock.ts
+index 7488a2f..7581ed6 100644
+--- a/frontend/tests/htmx.mock.ts
++++ b/frontend/tests/htmx.mock.ts
+@@ -1,11 +1,18 @@
+ const triggers: Array<{ element: HTMLElement; event: string }> = [];
+ 
++let found: unknown = null;
++
++/** What htmx.find returns next (the progress bar in the polling tests). */
++export function setFindResult(element: unknown) {
++    found = element;
++}
++
+ const htmx = {
+     addClass(element: HTMLElement, className: string) {
+         element.classList.add(className);
+     },
+     find() {
+-        return null;
++        return found;
+     },
+     removeClass(element: HTMLElement, className: string) {
+         element.classList.remove(className);
+diff --git a/frontend/tests/polling-recovery.test.ts b/frontend/tests/polling-recovery.test.ts
+index 71057c7..d64d6e5 100644
+--- a/frontend/tests/polling-recovery.test.ts
++++ b/frontend/tests/polling-recovery.test.ts
+@@ -17,10 +17,10 @@ class FakeClassList {
+     }
+ }
+ 
+-test("polling stays single-loop and recovers only while active", async () => {
+-    let nextFrameId = 1;
+-    const scheduledFrames = new Map<number, FrameRequestCallback>();
+-    const cancelledFrames: number[] = [];
++test("polling keeps one slide schedule and recovers only while active", async () => {
++    let nextTimerId = 1;
++    const timers = new Map<number, () => void>();
++    const cleared: number[] = [];
+     const body = { classList: new FakeClassList() };
+     const fakeDocument = {
+         body,
+@@ -29,23 +29,23 @@ test("polling stays single-loop and recovers only while active", async () => {
+     };
+ 
+     Object.defineProperties(globalThis, {
+-        cancelAnimationFrame: {
++        clearTimeout: {
+             configurable: true,
+-            value: (frameId: number) => {
+-                cancelledFrames.push(frameId);
+-                scheduledFrames.delete(frameId);
++            value: (timerId: number) => {
++                cleared.push(timerId);
++                timers.delete(timerId);
+             },
+         },
+         document: {
+             configurable: true,
+             value: fakeDocument,
+         },
+-        requestAnimationFrame: {
++        setTimeout: {
+             configurable: true,
+-            value: (callback: FrameRequestCallback) => {
+-                const frameId = nextFrameId++;
+-                scheduledFrames.set(frameId, callback);
+-                return frameId;
++            value: (callback: () => void) => {
++                const timerId = nextTimerId++;
++                timers.set(timerId, callback);
++                return timerId;
+             },
+         },
+     });
+@@ -56,37 +56,28 @@ test("polling stays single-loop and recovers only while active", async () => {
+ 
+     polling.initPolling(45_000, kiosk, menu);
+     polling.startPolling();
+-    assert.equal(scheduledFrames.size, 1);
+-    const initialFrameId = [...scheduledFrames.keys()][0];
++    assert.equal(timers.size, 1);
++    const initialTimerId = [...timers.keys()][0];
+ 
+     polling.startPolling();
+-    assert.equal(
+-        scheduledFrames.size,
+-        1,
+-        "duplicate start created another loop",
+-    );
+-    assert.equal([...scheduledFrames.keys()][0], initialFrameId);
++    assert.equal(timers.size, 1, "duplicate start created another schedule");
++    assert.equal([...timers.keys()][0], initialTimerId);
+ 
+     polling.recoverPollingIfVisible();
+-    assert.deepEqual(cancelledFrames, [initialFrameId]);
+-    assert.equal(
+-        scheduledFrames.size,
+-        1,
+-        "visible recovery must replace one loop",
+-    );
++    assert.equal(timers.size, 1, "visible recovery must keep one schedule");
+ 
+     polling.stopPolling();
+-    assert.equal(scheduledFrames.size, 0);
++    assert.equal(timers.size, 0);
+     fakeDocument.visibilityState = "hidden";
+     polling.recoverPollingIfVisible();
+-    assert.equal(scheduledFrames.size, 0, "hidden slideshow was restarted");
++    assert.equal(timers.size, 0, "hidden slideshow was restarted");
+ 
+     fakeDocument.visibilityState = "visible";
+     polling.recoverPollingIfVisible();
+-    assert.equal(scheduledFrames.size, 1, "active slideshow did not recover");
++    assert.equal(timers.size, 1, "active slideshow did not recover");
+ 
+     polling.pausePolling(false);
+-    assert.equal(scheduledFrames.size, 0);
++    assert.equal(timers.size, 0);
+     polling.recoverPollingIfVisible();
+-    assert.equal(scheduledFrames.size, 0, "intentional pause was overridden");
++    assert.equal(timers.size, 0, "intentional pause was overridden");
+ });
+diff --git a/frontend/tests/polling-timer.test.ts b/frontend/tests/polling-timer.test.ts
+new file mode 100644
+index 0000000..f7291f9
+--- /dev/null
++++ b/frontend/tests/polling-timer.test.ts
+@@ -0,0 +1,100 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++import { resetTriggers, setFindResult, triggerCount } from "./htmx.mock";
++
++/**
++ * Photo slides advance on one timer per slide (FrameOS Touch, 10/17): the per-frame progress loop redrew an
++ * unchanged photo ~24 times a second on the frames, 90% of a core around the clock. The rules the loop kept still
++ * hold: one schedule at a time, no advance while the page is hidden, a pause keeps the remaining time.
++ */
++class FakeClassList {
++    private readonly values = new Set<string>();
++    add(...names: string[]) { for (const n of names) this.values.add(n); }
++    remove(...names: string[]) { for (const n of names) this.values.delete(n); }
++    contains(name: string) { return this.values.has(name); }
++}
++
++let clock = 0;
++let nextTimer = 1;
++const timers = new Map<number, { at: number; fn: () => void; delay: number }>();
++let frames = 0;
++const fakeDocument = { body: { classList: new FakeClassList() }, getElementById: () => null, visibilityState: "visible" };
++const bar = { style: { transform: "", transition: "" }, classList: new FakeClassList(), offsetWidth: 1 };
++
++Object.defineProperties(globalThis, {
++    document: { configurable: true, value: fakeDocument },
++    performance: { configurable: true, value: { now: () => clock } },
++    requestAnimationFrame: { configurable: true, value: () => ++frames },
++    cancelAnimationFrame: { configurable: true, value: () => undefined },
++    setTimeout: {
++        configurable: true,
++        value: (fn: () => void, delay: number) => {
++            const id = nextTimer++;
++            timers.set(id, { at: clock + delay, fn, delay });
++            return id;
++        },
++    },
++    clearTimeout: { configurable: true, value: (id: number) => timers.delete(id) },
++});
++
++function advance(ms: number) {
++    clock += ms;
++    for (const [id, timer] of [...timers]) {
++        if (timer.at <= clock) {
++            timers.delete(id);
++            timer.fn();
++        }
++    }
++}
++
++setFindResult(bar);
++const polling = await import("../src/ts/polling.ts");
++const kiosk = { classList: new FakeClassList() } as unknown as HTMLElement;
++const menu = { classList: new FakeClassList() } as unknown as HTMLElement;
++polling.initPolling(7_000, kiosk, menu);
++
++test("a photo slide arms one timer and asks for no animation frames", () => {
++    polling.startPolling();
++    polling.startPolling();
++    assert.equal(timers.size, 1, "one schedule per slide");
++    assert.equal([...timers.values()][0].delay, 7_000);
++    assert.equal(frames, 0, "no per-frame loop for photos");
++    assert.match(bar.style.transition, /7000ms linear/, "the bar animates once on the compositor");
++    assert.match(bar.style.transform, /scaleX\(1\)/);
++});
++
++test("the slide advances when its time is up and the page is visible", () => {
++    resetTriggers();
++    advance(7_000);
++    assert.equal(triggerCount(), 1, "kiosk-new-asset fired once");
++    assert.equal(timers.size, 0, "triggering a new asset stops the old schedule");
++});
++
++test("a slide that falls due while the page is hidden waits for the page to come back", () => {
++    polling.startPolling();
++    resetTriggers();
++    fakeDocument.visibilityState = "hidden";
++    advance(7_000);
++    assert.equal(triggerCount(), 0, "no advance while hidden");
++    polling.recoverPollingIfVisible();
++    assert.equal(triggerCount(), 0, "still hidden");
++    fakeDocument.visibilityState = "visible";
++    polling.recoverPollingIfVisible();
++    assert.equal(triggerCount(), 1, "advances on return, as the frame loop did");
++});
++
++test("a pause keeps the remaining time and a resume arms only the remainder", () => {
++    polling.stopPolling();
++    timers.clear();
++    polling.startPolling();
++    advance(3_000);
++    polling.pausePolling(false);
++    assert.equal(timers.size, 0, "paused: nothing scheduled");
++    assert.match(bar.style.transition, /none/, "the bar freezes where it is");
++    advance(60_000);
++    polling.resumePolling();
++    assert.equal(timers.size, 1);
++    assert.equal([...timers.values()][0].delay, 4_000, "7 s slide, 3 s shown before the pause");
++    polling.recoverPollingIfVisible();
++    assert.equal(timers.size, 1, "recovery never duplicates the schedule");
++});

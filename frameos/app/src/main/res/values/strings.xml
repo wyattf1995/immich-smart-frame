@@ -8,4 +8,5 @@
     <string name="configuration_footer">No account credentials are stored in the app package.</string>
     <string name="return_to_frameos">Return to FrameOS</string>
     <string name="mode_position_with_hint">%1$s\n%2$s</string>
+    <string name="frame_settings_hold_hint">Press and hold Settings to open Android settings</string>
 </resources>

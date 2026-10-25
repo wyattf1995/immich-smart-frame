@@ -1,0 +1,184 @@
+diff --git a/internal/routes/routes_hardening_test.go b/internal/routes/routes_hardening_test.go
+new file mode 100644
+index 0000000..b450f47
+--- /dev/null
++++ b/internal/routes/routes_hardening_test.go
+@@ -0,0 +1,148 @@
++package routes
++
++import (
++	"bytes"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/damongolding/immich-kiosk/internal/webhooks"
++	"github.com/klauspost/compress/zstd"
++	"github.com/labstack/echo/v5"
++	"github.com/stretchr/testify/require"
++	"github.com/vmihailenco/msgpack/v5"
++)
++
++func tagRequest(t *testing.T, assetID string) (error, int) {
++	t.Helper()
++	calls := 0
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls++
++		http.Error(w, "refused tags must not reach Immich", http.StatusTeapot)
++	}))
++	t.Cleanup(server.Close)
++	cfg := newCancellationTestConfig(server.URL)
++	cfg.ExcludedAssets = []string{recentHistoryTestAsset}
++	form := url.Values{"assetID": {assetID}, "tagName": {"Frame/Never"}}
++	req := httptest.NewRequest(http.MethodPost, "/asset/tag", strings.NewReader(form.Encode()))
++	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
++	err := TagAsset(cfg, common.New())(echo.New().NewContext(req, httptest.NewRecorder()))
++	return err, calls
++}
++
++func requireHTTPCode(t *testing.T, err error, code int) {
++	t.Helper()
++	httpErr, ok := err.(*echo.HTTPError)
++	require.True(t, ok, "expected an HTTP error, got %v", err)
++	require.Equal(t, code, httpErr.Code)
++}
++
++func TestTagAssetRefusesHardExcludedAssetsWithoutCallingImmich(t *testing.T) {
++	err, calls := tagRequest(t, recentHistoryTestAsset)
++	requireHTTPCode(t, err, http.StatusNotFound)
++	require.Zero(t, calls)
++}
++
++func TestTagAssetRefusesOtherSpellingsOfAHardExcludedUUID(t *testing.T) {
++	for _, spelling := range []string{strings.ToUpper(recentHistoryTestAsset), "{" + recentHistoryTestAsset + "}", "urn:uuid:" + recentHistoryTestAsset, strings.ReplaceAll(recentHistoryTestAsset, "-", "")} {
++		t.Run(spelling, func(t *testing.T) {
++			err, calls := tagRequest(t, spelling)
++			requireHTTPCode(t, err, http.StatusNotFound)
++			require.Zero(t, calls)
++		})
++	}
++}
++
++func TestTagAssetRejectsAnIDThatIsNotAnAssetUUID(t *testing.T) {
++	err, calls := tagRequest(t, "../albums/everything")
++	requireHTTPCode(t, err, http.StatusBadRequest)
++	require.Zero(t, calls)
++}
++
++func TestTagAssetDoesNotWriteInDemoMode(t *testing.T) {
++	calls := 0
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls++
++		http.Error(w, "demo mode must not tag", http.StatusTeapot)
++	}))
++	defer server.Close()
++	cfg := newCancellationTestConfig(server.URL)
++	cfg.Kiosk.DemoMode = true
++	form := url.Values{"assetID": {"22222222-2222-4222-8222-222222222222"}, "tagName": {"Frame/Never"}}
++	req := httptest.NewRequest(http.MethodPost, "/asset/tag", strings.NewReader(form.Encode()))
++	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
++	rec := httptest.NewRecorder()
++	require.NoError(t, TagAsset(cfg, common.New())(echo.New().NewContext(req, rec)))
++	require.Equal(t, http.StatusOK, rec.Code)
++	require.Zero(t, calls)
++}
++
++func writeOfflineHistoryRecord(t *testing.T, filename string, viewData common.ViewData) {
++	t.Helper()
++	var encoded bytes.Buffer
++	require.NoError(t, msgpack.NewEncoder(&encoded).Encode(viewData))
++	file, err := os.Create(filename)
++	require.NoError(t, err)
++	writer, err := zstd.NewWriter(file)
++	require.NoError(t, err)
++	_, err = writer.Write(encoded.Bytes())
++	require.NoError(t, err)
++	require.NoError(t, writer.Close())
++	require.NoError(t, file.Close())
++}
++
++func TestOfflineHistoryRefusesARecordThatIsNowHardExcluded(t *testing.T) {
++	dir := t.TempDir()
++	oldWD, err := os.Getwd()
++	require.NoError(t, err)
++	require.NoError(t, os.Chdir(dir))
++	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
++	require.NoError(t, os.Mkdir(OfflineAssetsPath, 0o700))
++
++	requestConfig := *newCancellationTestConfig("http://immich.test")
++	requestConfig.ExcludedAssets = []string{recentHistoryTestAsset}
++	offlineScopeMu.Lock()
++	require.NoError(t, ensureOfflineCacheScope(requestConfig, "frame-1"))
++	offlineScopeMu.Unlock()
++
++	record := filepath.Join(OfflineAssetsPath, generateCacheFilename(recentHistoryTestAsset))
++	writeOfflineHistoryRecord(t, record, common.ViewData{Assets: []common.ViewImageData{{ImmichAsset: immich.Asset{ID: recentHistoryTestAsset}}}})
++
++	req := httptest.NewRequest(http.MethodPost, "/asset/previous", nil)
++	rec := httptest.NewRecorder()
++	requestData := &common.RouteRequestData{RequestConfig: requestConfig, DeviceID: "frame-1", RequestID: "offline-history"}
++	err = historyAssetOffline(echo.New().NewContext(req, rec), requestData, []string{recentHistoryTestAsset}, requestConfig, common.New(), webhooks.PreviousHistoryOfflineAsset)
++	requireHTTPCode(t, err, http.StatusNotFound)
++	require.NotContains(t, rec.Body.String(), recentHistoryTestAsset)
++}
++
++func TestOfflineHistoryChecksThePoolScopeBeforeReading(t *testing.T) {
++	dir := t.TempDir()
++	oldWD, err := os.Getwd()
++	require.NoError(t, err)
++	require.NoError(t, os.Chdir(dir))
++	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
++	require.NoError(t, os.Mkdir(OfflineAssetsPath, 0o700))
++
++	// A pool written for another device must not answer this frame's history.
++	requestConfig := *newCancellationTestConfig("http://immich.test")
++	offlineScopeMu.Lock()
++	require.NoError(t, ensureOfflineCacheScope(requestConfig, "other-frame"))
++	offlineScopeMu.Unlock()
++	record := filepath.Join(OfflineAssetsPath, generateCacheFilename(recentHistoryTestAsset))
++	writeOfflineHistoryRecord(t, record, common.ViewData{Assets: []common.ViewImageData{{ImmichAsset: immich.Asset{ID: recentHistoryTestAsset}}}})
++
++	req := httptest.NewRequest(http.MethodPost, "/asset/previous", nil)
++	rec := httptest.NewRecorder()
++	requestData := &common.RouteRequestData{RequestConfig: requestConfig, DeviceID: "frame-1", RequestID: "offline-history-scope"}
++	err = historyAssetOffline(echo.New().NewContext(req, rec), requestData, []string{recentHistoryTestAsset}, requestConfig, common.New(), webhooks.PreviousHistoryOfflineAsset)
++	require.Error(t, err)
++	_, statErr := os.Stat(record)
++	require.ErrorIs(t, statErr, os.ErrNotExist, "the other device's pool is cleared, as the main offline path does")
++}
+diff --git a/internal/webhooks/webhooks_payload_redaction_test.go b/internal/webhooks/webhooks_payload_redaction_test.go
+new file mode 100644
+index 0000000..5fb2946
+--- /dev/null
++++ b/internal/webhooks/webhooks_payload_redaction_test.go
+@@ -0,0 +1,24 @@
++package webhooks
++
++import (
++	"testing"
++
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/stretchr/testify/require"
++)
++
++// The hard deny-list can hold thousands of private asset IDs (2,935 on 10/24); a webhook receiver needs none of them.
++func TestWebhookPayloadLeavesOutTheHardExclusionList(t *testing.T) {
++	excluded := "11111111-1111-4111-8111-111111111111"
++	requestConfig := config.New()
++	requestConfig.ExcludedAssets = []string{excluded}
++	requestData := &common.RouteRequestData{DeviceID: "frame-1", ClientName: "frame", RequestConfig: *requestConfig}
++
++	payload, err := prepareWebhookPayload(requestData, "test", NewAsset, "event-1", common.ViewData{})
++
++	require.NoError(t, err)
++	require.NotContains(t, string(payload), excluded)
++	require.Contains(t, string(payload), `"deviceID":"frame-1"`)
++	require.Equal(t, []string{excluded}, requestData.RequestConfig.ExcludedAssets, "the request keeps its own policy")
++}

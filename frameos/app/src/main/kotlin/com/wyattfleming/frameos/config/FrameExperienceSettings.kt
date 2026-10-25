@@ -20,12 +20,18 @@ data class FrameExperienceSettings(
         require(orderedEnabledModes.isNotEmpty())
         require(orderedEnabledModes.first() == FrameMode.PHOTOS) { "Photos must remain first" }
         require(orderedEnabledModes.distinct().size == orderedEnabledModes.size)
-        require(idleReturnSeconds in MIN_IDLE_RETURN_SECONDS..MAX_IDLE_RETURN_SECONDS)
+        require(idleReturnSeconds == NEVER_IDLE_RETURN || idleReturnSeconds in MIN_IDLE_RETURN_SECONDS..MAX_IDLE_RETURN_SECONDS)
         require(settingsRevision >= NO_SETTINGS_REVISION)
     }
 
+    /** How long another view stays up before Photos returns; null when the remote chose Never. */
+    val idleReturnMillis: Long?
+        get() = if (idleReturnSeconds == NEVER_IDLE_RETURN) null else idleReturnSeconds * 1_000L
+
     companion object {
         const val NO_SETTINGS_REVISION = -1L
+        /** The remote's "Never (stay on the page)": the frame stays on whatever view it was left on. */
+        const val NEVER_IDLE_RETURN = 0
         const val DEFAULT_IDLE_RETURN_SECONDS = 15 * 60
         const val MIN_IDLE_RETURN_SECONDS = 30
         const val MAX_IDLE_RETURN_SECONDS = 24 * 60 * 60

@@ -399,11 +399,54 @@ class CompanionTests(unittest.TestCase):
         config['devices']['main']['token']=config['operatorToken']
         with self.assertRaises(module.FrameError):module.FrameAuth(config)
     def test_feedback_is_separate_reversible_and_scoped(self):
-        self.store.feedback('main',{'assetId':'11111111-1111-4111-8111-111111111111','preference':'less'})
-        self.assertEqual(self.store.preferences('main')[0]['preference'],'less')
+        self.store.feedback('main',{'assetId':'11111111-1111-4111-8111-111111111111','preference':'hide'})
+        self.assertEqual(self.store.preferences('main')[0]['preference'],'hide')
         self.store.feedback('main',{'assetId':'11111111-1111-4111-8111-111111111111','preference':'clear'})
         self.assertEqual(self.store.preferences('main'),[])
         with self.assertRaises(module.FrameError):self.store.feedback('main',{'assetId':'../../etc','preference':'hide'})
+
+    def test_retired_more_and_less_choices_are_refused_with_a_reason(self):
+        for preference in ('more','less'):
+            with self.subTest(preference=preference):
+                with self.assertRaises(module.FrameError) as error:
+                    self.store.feedback('main',{'assetId':'11111111-1111-4111-8111-111111111111','preference':preference})
+                self.assertEqual(error.exception.status,400)
+                self.assertIn('Never on this frame',str(error.exception))
+        self.assertEqual(self.store.preferences('main'),[])
+
+    def poll_version(self, version):
+        status={'mode':'photos','photosPaused':False,'lastPaintAt':self.clock}
+        if version is not None: status['appVersion']=version
+        return self.store.poll('main',{'schema':1,'status':status,'acks':[]})
+
+    def test_never_return_needs_a_frame_that_understands_it(self):
+        self.poll_version('0.2.18')
+        with self.assertRaises(module.FrameError) as error:self.store.settings('main',{'idleReturnSeconds':0})
+        self.assertEqual(error.exception.status,409)
+        self.assertIn('0.2.19',str(error.exception))
+        self.assertIn('Living room',str(error.exception))
+        self.assertEqual(self.store.state()['devices'][0]['settings']['idleReturnSeconds'],300)
+        self.poll_version('0.2.19')
+        self.assertEqual(self.store.settings('main',{'idleReturnSeconds':0})['settings']['idleReturnSeconds'],0)
+        self.poll_version('0.10.0')
+        self.assertEqual(self.store.settings('main',{'idleReturnSeconds':0})['settings']['idleReturnSeconds'],0)
+
+    def test_never_return_is_allowed_before_a_frame_reports_a_version(self):
+        self.assertEqual(self.store.settings('main',{'idleReturnSeconds':0})['settings']['idleReturnSeconds'],0)
+
+    def test_return_timer_still_refuses_values_between_never_and_thirty_seconds(self):
+        for value in (1,29,3601,-1,True):
+            with self.subTest(value=value):
+                with self.assertRaises(module.FrameError):self.store.settings('main',{'idleReturnSeconds':value})
+
+    def test_remote_page_offers_never_ocean_and_only_the_hide_choice(self):
+        page=(MODULE.parent/'index.html').read_text()
+        self.assertIn('<option value="0">Never (stay on the page)</option>',page)
+        self.assertNotIn('data-feedback="more"',page)
+        self.assertNotIn('data-feedback="less"',page)
+        self.assertIn('<button data-feedback="hide">Never on this frame</button>',page)
+        self.assertIn("ocean:'Ocean'",page)
+        self.assertIn("command({type:'show_mode',mode:'ocean'})",page)
 
     def test_device_receives_its_full_hidden_snapshot_for_offline_reserve(self):
         asset='11111111-1111-4111-8111-111111111111'

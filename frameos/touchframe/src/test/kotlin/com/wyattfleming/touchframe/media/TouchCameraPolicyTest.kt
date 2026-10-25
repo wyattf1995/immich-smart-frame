@@ -1,11 +1,27 @@
 package com.wyattfleming.touchframe.media
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class TouchCameraPolicyTest {
+    /** Live video never started on the API 23 frame: Gecko's WebRTC offer timed out every time (10/14), and the native WebRTC probe was cut. */
+    @Test fun liveVideoIsOfferedOnlyWhereGeckoCanStartIt() {
+        assertFalse(TouchLiveVideoSupport.supported(23))
+        assertTrue(TouchLiveVideoSupport.supported(24))
+        assertTrue(TouchLiveVideoSupport.supported(27))
+    }
+
+    @Test fun aFrameWithoutLiveVideoOffersTheSnapshotInsteadOfWatchLive() {
+        val view = File("touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchCameraView.kt").readText()
+        assertTrue(view.contains("private val liveVideo = runtime != null && TouchLiveVideoSupport.supported(Build.VERSION.SDK_INT)"))
+        assertTrue(view.contains("Stage.LiveReady -> if (!liveVideo) fillEmpty(kit, context.getString(R.string.touch_camera_snapshot_title, name),\n" +
+            "                context.getString(R.string.touch_camera_snapshot_detail), context.getString(R.string.touch_camera_snapshot), TouchKit.Emphasis.PRIMARY) { requestSnapshot() }"))
+    }
+
     @Test fun snapshotPathUsesOnlyConfiguredCameraIds() {
         val policy = TouchCameraPolicy("https://home.example", listOf("camera.entryway"))
         assertEquals("/api/camera_proxy/camera.entryway", policy.snapshotUrl("camera.entryway")?.path)

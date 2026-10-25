@@ -7,6 +7,10 @@ release claim; exact APK hashes and device evidence identify accepted builds.
 
 ## Unreleased
 
+- 0.2.19: the remote's return timer can be Never (`idleReturnSeconds` 0), which
+  keeps a view up until someone changes it; values between 1 and 29 stay refused.
+- 0.2.19: on touchscreen frames the rail's Settings item explains on a tap and opens
+  Android settings only on a press and hold.
 - Explicit legacy API23/ARMv7 target alongside the default API29/ARM64 target.
 - Touch navigation and an immersive Photos/Art menu in the existing shell.
 - Separate Art mode and a consolidated Home view with calendar and weather work.

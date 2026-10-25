@@ -1,0 +1,125 @@
+# FrameOS (Lenovo) field health (10/24). Include as a package alongside frame_companion.yaml, which defines
+# sensor.frame_companion. The Lenovo frames poll the companion every 5 seconds while FrameOS is in front, so that
+# sensor (read every 30 s) carries each frame's lastSeenAt and lastPhotoAt in the companion's own clock (serverTime).
+# Before this nothing noticed when the Living room frame showed one frozen photo for 27 hours (10/14-15, FrameOS
+# 0.2.11), and nothing would have noticed the parents' frame going quiet.
+# Alerts go through script.notify_household, so warnings respect its quiet hours.
+
+template:
+  - binary_sensor:
+      - name: FrameOS frames reporting
+        unique_id: frameos_frames_reporting
+        device_class: connectivity
+        # A missing companion reading is frame_remote_unreachable's alert, not every frame being down.
+        state: >-
+          {% set devices = state_attr('sensor.frame_companion', 'devices') %}
+          {% set server = state_attr('sensor.frame_companion', 'serverTime') | int(0) %}
+          {% set ns = namespace(stale=0) %}
+          {% if devices is iterable and devices is not string and server > 0 %}
+            {% for d in devices if server - (d.get('lastSeenAt') or 0) | int(0) > 600000 %}{% set ns.stale = ns.stale + 1 %}{% endfor %}
+          {% endif %}
+          {{ ns.stale == 0 }}
+        attributes:
+          stale: >-
+            {% set devices = state_attr('sensor.frame_companion', 'devices') %}
+            {% set server = state_attr('sensor.frame_companion', 'serverTime') | int(0) %}
+            {% set ns = namespace(names=[]) %}
+            {% if devices is iterable and devices is not string and server > 0 %}
+              {% for d in devices if server - (d.get('lastSeenAt') or 0) | int(0) > 600000 %}{% set ns.names = ns.names + [d.get('label') or d.get('id')] %}{% endfor %}
+            {% endif %}
+            {{ ns.names | join(', ') }}
+
+      - name: FrameOS photos stuck
+        unique_id: frameos_photos_stuck
+        device_class: problem
+        # Checking in, on Photos, not paused or held, not on its offline reserve, and no new photo for 15 minutes.
+        # Since 0.2.12 the only old readings are the first seconds back on Photos after another view.
+        state: >-
+          {% set devices = state_attr('sensor.frame_companion', 'devices') %}
+          {% set server = state_attr('sensor.frame_companion', 'serverTime') | int(0) %}
+          {% set ns = namespace(stuck=0) %}
+          {% if devices is iterable and devices is not string and server > 0 %}
+            {% for d in devices %}
+              {% set s = d.get('status') or {} %}
+              {% if server - (d.get('lastSeenAt') or 0) | int(0) <= 600000 and s.get('mode') == 'photos'
+                    and not s.get('photosPaused', false) and not s.get('offline', false)
+                    and (s.get('lastPhotoAt') or 0) | int(0) > 0 and server - s.get('lastPhotoAt') | int(0) > 900000 %}
+                {% set ns.stuck = ns.stuck + 1 %}
+              {% endif %}
+            {% endfor %}
+          {% endif %}
+          {{ ns.stuck > 0 }}
+        attributes:
+          frames: >-
+            {% set devices = state_attr('sensor.frame_companion', 'devices') %}
+            {% set server = state_attr('sensor.frame_companion', 'serverTime') | int(0) %}
+            {% set ns = namespace(names=[]) %}
+            {% if devices is iterable and devices is not string and server > 0 %}
+              {% for d in devices %}
+                {% set s = d.get('status') or {} %}
+                {% if server - (d.get('lastSeenAt') or 0) | int(0) <= 600000 and s.get('mode') == 'photos'
+                      and not s.get('photosPaused', false) and not s.get('offline', false)
+                      and (s.get('lastPhotoAt') or 0) | int(0) > 0 and server - s.get('lastPhotoAt') | int(0) > 900000 %}
+                  {% set ns.names = ns.names + [d.get('label') or d.get('id')] %}
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+            {{ ns.names | join(', ') }}
+
+automation:
+  - id: frameos_frame_stopped_reporting
+    alias: FrameOS frame stopped reporting
+    description: A Lenovo frame has not checked in with the remote for 20 minutes.
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.frameos_frames_reporting
+        to: 'off'
+        for: {minutes: 10}
+    actions:
+      - action: script.notify_household
+        data:
+          title: Frame stopped reporting
+          message: >-
+            {{ state_attr('binary_sensor.frameos_frames_reporting', 'stale') or 'A frame' }} has not checked in for
+            20 minutes. It may be off, off the network, or showing another app.
+          severity: warning
+          notification_id: frameos_frame_stopped_reporting
+
+  - id: frameos_photos_stuck
+    alias: FrameOS photos stuck
+    description: A Lenovo frame on Photos has shown the same photo for 25 minutes (the 10/14 stall on FrameOS 0.2.11).
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.frameos_photos_stuck
+        to: 'on'
+        for: {minutes: 10}
+    actions:
+      - action: script.notify_household
+        data:
+          title: Frame photos stuck
+          message: >-
+            {{ state_attr('binary_sensor.frameos_photos_stuck', 'frames') or 'A frame' }} has shown the same photo for
+            25 minutes. Restarting FrameOS on it clears this; FrameOS 0.2.12 and newer recover on their own.
+          severity: warning
+          notification_id: frameos_photos_stuck
+
+  - id: frame_remote_unreachable
+    alias: Frame remote unreachable
+    description: Home Assistant has not read the frame remote for 30 minutes, so the two alerts above cannot see the frames.
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: sensor.frame_companion
+        to: unavailable
+        for: {minutes: 30}
+    actions:
+      - action: script.notify_household
+        data:
+          title: Frame remote unreachable
+          message: >-
+            Home Assistant has not reached the frame remote for 30 minutes. The frames keep showing photos, but the
+            phone remote and the frame alerts are off until it is back.
+          severity: warning
+          notification_id: frameos_frame_remote_unreachable

@@ -3,6 +3,7 @@ package com.wyattfleming.touchframe.media
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -36,6 +37,8 @@ class TouchCameraView(
 ) : FrameLayout(context) {
     var onSignIn: (() -> Unit)? = null
     private val policy = TouchCameraPolicy(origin, cameraIds)
+    /** Where live video can't start, the empty stage offers the snapshot instead of a Watch live that always fails. */
+    private val liveVideo = runtime != null && TouchLiveVideoSupport.supported(Build.VERSION.SDK_INT)
     private val refreshGate = TouchCameraRefreshGate()
     private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "touch-camera").apply { isDaemon = true }
@@ -398,7 +401,9 @@ class TouchCameraView(
         list.findViewWithTag<View>(REFRESH_TAG)?.visibility = if (showLive || startingLive) View.GONE else View.VISIBLE
         emptyState.removeAllViews()
         when (val state = stageState) {
-            Stage.LiveReady -> fillEmpty(kit, context.getString(R.string.touch_camera_live_title, name),
+            Stage.LiveReady -> if (!liveVideo) fillEmpty(kit, context.getString(R.string.touch_camera_snapshot_title, name),
+                context.getString(R.string.touch_camera_snapshot_detail), context.getString(R.string.touch_camera_snapshot), TouchKit.Emphasis.PRIMARY) { requestSnapshot() }
+            else fillEmpty(kit, context.getString(R.string.touch_camera_live_title, name),
                 context.getString(R.string.touch_camera_live_detail), context.getString(R.string.touch_camera_watch_live), TouchKit.Emphasis.PRIMARY) { watchLive() }
             Stage.Connecting -> fillEmpty(kit, context.getString(R.string.touch_camera_live_connecting_title),
                 context.getString(R.string.touch_camera_live_connecting_detail), null, TouchKit.Emphasis.SECONDARY) { }
@@ -649,6 +654,16 @@ internal class TouchCameraLiveStatusGate {
 
     @Synchronized fun shouldRestore(surfaceGeneration: Long, status: TouchLiveCameraBridge.Status): Boolean =
         activeGeneration == surfaceGeneration && (status == TouchLiveCameraBridge.Status.FAILED || status.isFailure())
+}
+
+/**
+ * Live video never started on the API 23 frame: Gecko's WebRTC offer timed out every time (10/14), and the native
+ * WebRTC probe meant to replace it was cut. Those frames keep snapshots.
+ */
+internal object TouchLiveVideoSupport {
+    private const val MIN_SDK = 24
+
+    fun supported(sdk: Int): Boolean = sdk >= MIN_SDK
 }
 
 internal class TouchCameraPolicy(origin: String, cameraIds: List<String>) {

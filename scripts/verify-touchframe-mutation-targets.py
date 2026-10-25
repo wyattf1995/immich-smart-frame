@@ -9,6 +9,9 @@ import sys
 
 
 RUNNER = Path("scripts/verify-touchframe-proof.py")
+# The design proof refuses the same mistakes in its own preflight, but only after the NAS queue, upload and SDK
+# bootstrap (builds 19, 20, 22, 27, 28 and 38). Checking its MUTATIONS here fails the build in seconds instead.
+DESIGN_RUNNER = Path("scripts/verify-touchframe-design-proof.py")
 
 
 @dataclass(frozen=True)
@@ -160,7 +163,31 @@ def discover(root: Path) -> list[Target]:
     if len(calls(tree, "mutate_repository_case")) != 1 or len(calls(tree, "mutate_bridge")) != 1:
         raise ValueError("expected exactly one repository and one bridge mutation")
     targets.extend(helper_targets(tree, names, suites))
+    targets.extend(design_targets(root))
     return targets
+
+
+def design_targets(root: Path) -> list[Target]:
+    runner = root / DESIGN_RUNNER
+    if not runner.is_file() or runner.is_symlink():
+        raise ValueError(f"design runner is not a regular file: {runner}")
+    tree = ast.parse(runner.read_text(encoding="utf-8"), filename=str(runner))
+    names = assignment_map(tree, root)
+    mutations = next(
+        (node.value for node in tree.body
+         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "MUTATIONS"),
+        None,
+    )
+    if not isinstance(mutations, (ast.List, ast.Tuple)):
+        raise ValueError("design MUTATIONS must be a literal sequence")
+    result = []
+    for index, element in enumerate(mutations.elts, start=1):
+        if not isinstance(element, ast.Tuple) or len(element.elts) < 4:
+            raise ValueError(f"design mutation {index} must start with name, source, before and after")
+        name = literal(element.elts[0], f"design mutation {index} name")
+        source = expression(element.elts[1], names, root, name)
+        result.append(Target(name, source, literal(element.elts[2], f"{name} before"), literal(element.elts[3], f"{name} after"), "design"))
+    return result
 
 
 def validate(targets: list[Target], root: Path) -> None:
@@ -173,6 +200,8 @@ def validate(targets: list[Target], root: Path) -> None:
         if not source.is_file() or source.is_symlink():
             raise ValueError(f"{target.name} source is not a regular file: {source}")
         text = source.read_text(encoding="utf-8")
+        if not target.after:
+            raise ValueError(f"{target.name} replacement is empty; an empty string always occurs, so give a removal a comment instead")
         occurrences = text.count(target.before)
         if occurrences != 1:
             raise ValueError(f"{target.name} needle must occur exactly once in {source}: found {occurrences}")

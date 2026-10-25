@@ -71,13 +71,26 @@ behaviors bound repetition:
   hour before picking a photo inside it, so a thousand-frame burst afternoon
   carries no more weight per pick than a single photo from another day.
 
-Frame selection also keeps its own bounded history: the last 24 accepted
-assets per frame. `FRAME_CAPTURE_BURST_SECONDS` defaults to `300`, rejecting a
-different photo captured within that window of a recent selection; set it to
-`0` to disable that capture-time check. Assets with no `localDateTime` remain
-eligible. `FRAME_CROSS_FRAME_REPEAT_SUPPRESSION=true` additionally rejects the
-last 24 selected asset IDs across frames. Both repeat checks relax only on the
-final bounded selection attempt; a `hide` preference is never relaxed.
+Frame selection also keeps its own bounded history: the last 384 accepted
+photos per frame (and per shared group), matched by asset ID, checksum or
+duplicate ID so copies count as repeats. `FRAME_CAPTURE_BURST_SECONDS` defaults
+to `300`, rejecting a different photo captured within that window of the most
+recent selection; set it to `0` to disable that capture-time check. Assets with
+no `localDateTime` remain eligible. `FRAME_CROSS_FRAME_REPEAT_SUPPRESSION=true`
+additionally rejects the last 384 photos selected on any frame. Both repeat
+checks relax only on the final bounded selection attempt; a `hide` preference is
+never relaxed.
+
+The history is in memory unless `FRAME_RECENT_HISTORY_FILE` names a file; then
+it is read once after a restart and written a few seconds after each change and
+at shutdown, so a restart no longer brings recent photos straight back. Mount a
+writable directory for it (the image root is read-only), owned by the Kiosk user
+`65532` with mode `0700`, for example `./frame-state:/frame-state` with
+`FRAME_RECENT_HISTORY_FILE=/frame-state/recent-history.json`. The file holds
+frame IDs, asset IDs, checksums, duplicate IDs and capture times, and must stay
+mode `0600`; a file that is shared, too large or damaged is ignored with a
+warning and the ledger starts empty. History counts photos the backend admitted,
+including prefetched ones, not confirmed on-screen displays.
 
 The authenticated aggregate metrics endpoint reports
 `date_pool_widenings_total` and `date_pool_last_effective_days`. These describe
