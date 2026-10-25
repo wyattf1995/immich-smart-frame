@@ -1,0 +1,85 @@
+diff --git a/internal/routes/routes_asset.go b/internal/routes/routes_asset.go
+index 07a244d..3981247 100644
+--- a/internal/routes/routes_asset.go
++++ b/internal/routes/routes_asset.go
+@@ -11,6 +11,7 @@ import (
+ 	"time"
+ 
+ 	"charm.land/log/v2"
++	"github.com/google/uuid"
+ 	"github.com/labstack/echo/v5"
+ 
+ 	"github.com/damongolding/immich-kiosk/internal/common"
+@@ -332,6 +333,21 @@ func TagAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 			return echo.NewHTTPError(http.StatusBadRequest, "Tag name is required")
+ 		}
+ 
++		// The sibling like and hide routes never write in demo mode; tagging now matches them, accepts only an
++		// asset UUID, and refuses an asset on the server-wide hard deny-list before anything reaches Immich.
++		if requestConfig.Kiosk.DemoMode {
++			return c.String(http.StatusOK, "SUCCESS")
++		}
++		parsedID, parseErr := uuid.Parse(assetID)
++		if parseErr != nil {
++			return echo.NewHTTPError(http.StatusBadRequest, "Asset ID must be an Immich asset UUID")
++		}
++		// uuid.Parse also accepts upper case, braces, urn: and undashed forms; check and send the canonical one.
++		assetID = parsedID.String()
++		if requestConfig.IsHardExcludedAsset(assetID) {
++			return echo.NewHTTPError(http.StatusNotFound, "Asset not found")
++		}
++
+ 		mutationCtx, cancel := requestContextWithShutdown(c.Request().Context(), com.Context(), requestConfig.Kiosk.HTTPTimeout, routeHandlerTimeout)
+ 		defer cancel()
+ 
+diff --git a/internal/routes/routes_previous_asset.go b/internal/routes/routes_previous_asset.go
+index d939783..7e80561 100644
+--- a/internal/routes/routes_previous_asset.go
++++ b/internal/routes/routes_previous_asset.go
+@@ -392,11 +392,23 @@ func historyAssetOffline(c *echo.Context, requestData *common.RouteRequestData,
+ 
+ 	filename = path.Join(OfflineAssetsPath, filename)
+ 
++	// The same checks as the main offline path: a pool written for another device or policy is cleared first, and a
++	// record whose photo has since been hidden on this frame or hard-excluded is refused.
++	offlineScopeMu.Lock()
++	scopeErr := ensureOfflineCacheScope(requestConfig, requestData.DeviceID)
++	offlineScopeMu.Unlock()
++	if scopeErr != nil {
++		return scopeErr
++	}
++
+ 	viewData, loadMsgpackErr := loadMsgpackZstd(filename)
+ 	if loadMsgpackErr != nil {
+ 		log.Error("OfflineMode: loadMsgpackZstd", "picked", filename, "err", loadMsgpackErr)
+ 		return loadMsgpackErr
+ 	}
++	if !frameViewDataVisibleWithConfig(requestConfig, requestData.DeviceID, viewData) {
++		return echo.NewHTTPError(http.StatusNotFound, "That photo is no longer shown on this frame")
++	}
+ 
+ 	viewData.KioskVersion = KioskVersion
+ 	viewData.RequestID = requestData.RequestID
+diff --git a/internal/webhooks/webhooks_dispatcher.go b/internal/webhooks/webhooks_dispatcher.go
+index d3caf5d..259b957 100644
+--- a/internal/webhooks/webhooks_dispatcher.go
++++ b/internal/webhooks/webhooks_dispatcher.go
+@@ -184,6 +184,9 @@ func prepareWebhookPayload(requestData *common.RouteRequestData, kioskVersion st
+ 		assets[i] = image.ImmichAsset
+ 	}
+ 
++	// The hard deny-list can hold thousands of private asset IDs; receivers get the rest of the config without it.
++	payloadConfig := requestData.RequestConfig
++	payloadConfig.ExcludedAssets = nil
+ 	snapshot := webhookPayloadSnapshot{
+ 		assets:        assets,
+ 		clientName:    requestData.ClientName,
+@@ -191,7 +194,7 @@ func prepareWebhookPayload(requestData *common.RouteRequestData, kioskVersion st
+ 		event:         event,
+ 		eventID:       eventID,
+ 		kioskVersion:  kioskVersion,
+-		requestConfig: requestData.RequestConfig,
++		requestConfig: payloadConfig,
+ 		timestamp:     time.Now().Format(time.RFC3339),
+ 	}
+ 	return json.Marshal(Payload{

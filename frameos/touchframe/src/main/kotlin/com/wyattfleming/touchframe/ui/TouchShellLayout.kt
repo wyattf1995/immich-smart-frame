@@ -29,6 +29,7 @@ import kotlin.math.pow
 class TouchShellLayout(
     context: Context,
     private val onNavigate: (TouchDestination) -> Unit,
+    private val onSettingsHold: () -> Unit,
     private val onSettings: () -> Unit,
 ) : FrameLayout(context) {
     val content: FrameLayout = FrameLayout(context).apply {
@@ -428,6 +429,7 @@ class TouchShellLayout(
         background = insetChip(rounded(palette.settings, palette.settingsStroke), 0)
         setPadding(dp(20), 0, dp(20), 0)
         setOnClickListener { onSettings() }
+        setOnLongClickListener { onSettingsHold(); true }
         addView(icon(R.drawable.ic_touch_settings, palette.settingsInk, large))
         addView(label("Settings", palette.settingsInk, large))
     }.also { view ->

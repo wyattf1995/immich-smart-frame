@@ -13,6 +13,16 @@ class FrameExperienceSettingsTest {
         assertEquals(listOf(FrameMode.PHOTOS, FrameMode.WEATHER), FrameExperienceSettings.PARENTS_PHOTOS_WEATHER.orderedEnabledModes)
     }
 
+    @Test fun `Never keeps a frame on the page it was left on`() {
+        val never = FrameExperienceSettings(idleReturnSeconds = FrameExperienceSettings.NEVER_IDLE_RETURN)
+        assertEquals(0, FrameExperienceSettings.NEVER_IDLE_RETURN)
+        assertNull(never.idleReturnMillis)
+        assertEquals(300_000L, FrameExperienceSettings(idleReturnSeconds = 300).idleReturnMillis)
+        listOf(1, 29, 24 * 60 * 60 + 1, -1).forEach { seconds ->
+            assertTrue("$seconds", runCatching { FrameExperienceSettings(idleReturnSeconds = seconds) }.isFailure)
+        }
+    }
+
     @Test fun `quiet hours cross midnight and never override a manual value`() {
         val quiet = QuietHours(LocalTime.of(22, 0), LocalTime.of(7, 0), 10)
         assertTrue(quiet.isActiveAt(LocalTime.of(23, 0)))

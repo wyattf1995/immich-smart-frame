@@ -128,6 +128,7 @@ class TouchFrameActivity : Activity() {
     private val oceanRepository by lazy { TouchOceanRepository(java.io.File(filesDir, "touch-ocean/conditions.json")) }
     private var calendarState = TouchCalendarState(TouchCalendarWeekPresentation.DEFAULT_MODE, java.time.LocalDate.now(), java.time.LocalDate.now(), TouchCalendarRange.forMode(TouchCalendarWeekPresentation.DEFAULT_MODE, java.time.LocalDate.now()), emptyList(), TouchCalendarConnection.OFFLINE, null)
     private lateinit var settingsReturn: TouchSettingsReturn
+    private lateinit var settingsGate: TouchSystemSettingsGate
     private var media: TouchMediaView? = null
     private var cameras: TouchCameraView? = null
     private var authorization: FrameOAuthWebSurface? = null
@@ -189,12 +190,13 @@ class TouchFrameActivity : Activity() {
         photoStore = TouchOfflinePhotoStore(this)
         configuration?.let { photoStore.activateScope(it.photosUrl, photoProfile(it)) }
         settingsReturn = TouchSettingsReturn(this)
+        settingsGate = TouchSystemSettingsGate({ notice(it) }) { settingsReturn.open() }
         root = FrameLayout(this)
         shell = TouchShellLayout(this, { next ->
             navigate(next)
             if (next.isImmersiveMedia && destination == next) maybeShowEdgeHint()
-        }) {
-            if (!settingsReturn.open()) message("Turn on the FrameOS Touch return button before opening Android Settings.", TouchShellLayout.NoticeTone.ERROR)
+        }, onSettingsHold = { settingsGate.hold() }) {
+            settingsGate.tap()
         }
         shell.onMediaTap = ::maybeShowTapHint
         home = TouchHomeView(this, { route ->
@@ -1206,6 +1208,14 @@ class TouchFrameActivity : Activity() {
         actionLabel: String? = null,
         action: (() -> Unit)? = null,
     ) = shell.showNotice(value, tone, actionLabel, action)
+
+    /** The Settings warning stays up like an error (30 s, dismissable) so there is time to read it before confirming. */
+    private fun notice(notice: TouchSystemSettingsGate.Notice) = message(
+        notice.message,
+        if (notice.tone == TouchSystemSettingsGate.Tone.WARNING) TouchShellLayout.NoticeTone.ERROR else TouchShellLayout.NoticeTone.INFO,
+        notice.actionLabel,
+        notice.action,
+    )
 
     /** A tap on the photo usually means "where are the controls?": point at the edge, at most every ten minutes. */
     private fun maybeShowTapHint() {

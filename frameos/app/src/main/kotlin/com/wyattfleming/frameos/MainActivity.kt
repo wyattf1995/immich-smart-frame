@@ -835,6 +835,7 @@ class MainActivity : Activity() {
             touchRail = TouchNavigationRail(this,
                 onOpenSettings = { openAndroidSettings() },
                 onOpenMode = { showMode(it, announceHud = false) },
+                onSettingsHint = { showHud(getString(R.string.frame_settings_hold_hint)) },
             ).also {
                 it.setModes(TouchNavigationRailPolicy.ordered(availableModes()))
                 it.updateTime(ZonedDateTime.now())
@@ -1994,7 +1995,7 @@ class MainActivity : Activity() {
         handler.removeCallbacks(expireIdle)
         // Idle return applies to other views; Photos pause/hold owns its own lifetime.
         if (state.mode != FrameMode.PHOTOS && !state.mode.persistsAcrossIdle) {
-            handler.postDelayed(expireIdle, experienceSettings.idleReturnSeconds * 1_000L)
+            experienceSettings.idleReturnMillis?.let { handler.postDelayed(expireIdle, it) }
         }
     }
 

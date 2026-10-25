@@ -1,0 +1,2860 @@
+diff --git a/ci/backend-perf-proof.sh b/ci/backend-perf-proof.sh
+new file mode 100755
+index 0000000..0e18a28
+--- /dev/null
++++ b/ci/backend-perf-proof.sh
+@@ -0,0 +1,100 @@
++#!/usr/bin/env bash
++# Source-only negative checks for the bounded album path. The tests are hashed
++# before and after every mutation and all source bytes are restored in finally.
++set -euo pipefail
++python3 - <<'PY'
++from pathlib import Path
++import hashlib, json, subprocess
++
++root=Path.cwd()
++out=root/'reports/backend-perf'
++out.mkdir(parents=True, exist_ok=True)
++tests=[
++ 'internal/immich/immich_album_cursor_test.go',
++	'internal/immich/immich_classification_gate_test.go',
++ 'internal/config/config_hard_exclusion_policy_test.go',
++ 'internal/routes/routes_shared_playback_test.go',
++]
++def hashes(): return {p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in tests}
++results=[]
++def proof(name, file, old, new, command, marker):
++ p=root/file; original=p.read_bytes(); text=original.decode()
++ assert text.count(old)==1, (name, 'source needle drift')
++ before=hashes()
++ def run(label):
++  r=subprocess.run(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
++  (out/(name+'-'+label+'.log')).write_text(r.stdout)
++  return r
++ green_before=run('green-before'); assert green_before.returncode==0, (name,'baseline failed')
++ try:
++  p.write_text(text.replace(old,new))
++  red=run('red'); assert red.returncode!=0 and marker in red.stdout, (name,'guard did not fail')
++ finally:
++  p.write_bytes(original)
++ assert p.read_bytes()==original, (name,'source restore mismatch')
++ green_after=run('green-after'); assert green_after.returncode==0, (name,'restored source failed')
++ after=hashes(); assert before==after, (name,'tests changed during proof')
++ results.append({'name':name,'redExit':red.returncode,'greenBeforeExit':green_before.returncode,'greenAfterExit':green_after.returncode,'testsUnchanged':before==after,'testSha256Before':before,'testSha256After':after})
++ (out/'source-negative-proof.json').write_text(json.dumps({'status':'in-progress','proofs':results},indent=2))
++
++proof('explicit-album-first-page', 'internal/immich/immich_album_cursor.go',
++ 'metadataFirstPage = 1', 'metadataFirstPage = 0',
++ ['go','test','-count=1','./internal/immich','-run','^TestFetchMetadataPageUsesOneExplicitPageRequest$'],
++ '--- FAIL: TestFetchMetadataPageUsesOneExplicitPageRequest')
++proof('immutable-hard-exclusion', 'internal/config/config.go',
++ 'if c.hardExclusions != nil {\n\t\treturn c.hardExclusions\n\t}', 'if c.hardExclusions != nil {\n\t\treturn nil\n\t}',
++ ['go','test','-count=1','./internal/config','-run','^TestSnapshotSharesImmutableHardExclusionPolicyAndRestoresBindBaseline$'],
++ '--- FAIL: TestSnapshotSharesImmutableHardExclusionPolicyAndRestoresBindBaseline')
++proof('candidate-tags-fast-path', 'internal/immich/immich_helpers.go',
++ 'if a.Tags == nil || a.requestConfig.Kiosk.RequireAICaption {', 'if true {',
++ ['go','test','-count=1','./internal/immich','-run','^TestCandidateTagsAvoidDetailFetchWhenMetadataIncludedThem$'],
++ '--- FAIL: TestCandidateTagsAvoidDetailFetchWhenMetadataIncludedThem')
++proof('shared-live-hard-policy', 'internal/routes/routes_shared_playback.go',
++ 'selection.AdoptHardExclusionsFrom(livePolicy)', 'selection.ExcludedAssets = append([]string(nil), livePolicy.ExcludedAssets...)',
++ ['go','test','-count=1','./internal/routes','-run','^TestSharedSelectionConfigRefreshesOnlyServerDenyLists$'],
++ '--- FAIL: TestSharedSelectionConfigRefreshesOnlyServerDenyLists')
++proof('hard-policy-bind-detach', 'internal/config/config.go',
++ '\tc.ExcludedAssets = nil', '\t// detached field removed',
++ ['go','test','-count=1','./internal/config','-run','^TestSnapshotSharesImmutableHardExclusionPolicyAndRestoresBindBaseline$'],
++ '--- FAIL: TestSnapshotSharesImmutableHardExclusionPolicyAndRestoresBindBaseline')
++# Retain apiURL as a compile-time use so the mutant reaches the behavioral guard.
++proof('album-page-cache-key', 'internal/immich/immich_album.go',
++ 'apiCacheKey := cache.APICacheKey(apiURL, deviceID, a.requestConfig.SelectedUser)', 'apiCacheKey := cache.APICacheKey(apiURL[:0]+"page-one", deviceID, a.requestConfig.SelectedUser)',
++ ['go','test','-count=1','./internal/immich','-run','^TestAssetFromAlbumKeepsDistinctPageCachesAcrossWrap$'],
++ '--- FAIL: TestAssetFromAlbumKeepsDistinctPageCachesAcrossWrap')
++proof('filter-newest-first-page', 'internal/immich/immich_album.go',
++ 'if filterNewest {\n\t\t// FilterNewest is a global newest-N policy.  It must stay on the', 'if filterNewest && false {\n\t\t// FilterNewest is a global newest-N policy.  It must stay on the',
++ ['go','test','-count=1','./internal/immich','-run','^TestAssetFromAlbumFilterNewest(StaysWithinFirstDescendingPage|CachedSortedDoesNotReachOlderPage)$'],
++ '--- FAIL: TestAssetFromAlbumFilterNewestStaysWithinFirstDescendingPage')
++proof('uncached-sorted-page-residual', 'internal/immich/immich_album.go',
++ 'albumPageCursors.advanceCandidateIfCurrent(album.pageCursorKey, album.cursorLease, candidateOffset+assetIndex+1, pageSize, album.hasNextPage)', 'albumPageCursors.advanceIfCurrent(album.pageCursorKey, album.cursorLease, album.hasNextPage)',
++ ['go','test','-count=1','./internal/immich','-run','^TestAssetFromAlbumWithoutCacheConsumesSortedPageBeforeAdvancing$'],
++ '--- FAIL: TestAssetFromAlbumWithoutCacheConsumesSortedPageBeforeAdvancing')
++proof('older-album-cursor-coverage', 'internal/immich/immich_album_cursor.go',
++ '// signal to wrap; this is what lets older album pages eventually surface.\n\tif !hasNextPage {\n\t\tentry.page, entry.offset = metadataFirstPage, 0\n\t} else {', '// signal to wrap; this is what lets older album pages eventually surface.\n\tif !hasNextPage || entry.page >= MaxPages {\n\t\tentry.page, entry.offset = metadataFirstPage, 0\n\t} else {',
++ ['go','test','-count=1','./internal/immich','-run','^TestAlbumPageCursorCanReachPastTheFormerAggregateRequestLimit$'],
++ '--- FAIL: TestAlbumPageCursorCanReachPastTheFormerAggregateRequestLimit')
++proof('strict-classification-detail', 'internal/immich/immich_helpers.go',
++ 'if a.Tags == nil || a.requestConfig.Kiosk.RequireAICaption {', 'if a.Tags == nil || (a.requestConfig.Kiosk.RequireAICaption && !a.HasMetadata) {',
++ ['go','test','-count=1','./internal/immich','-run','^TestStrictClassificationFetchesDetailEvenWhenSearchClaimsMetadata$'],
++ '--- FAIL: TestStrictClassificationFetchesDetailEvenWhenSearchClaimsMetadata')
++proof('same-key-selection-gate', 'internal/immich/immich_album_cursor.go',
++ 'case <-ctx.Done():\n\t\treturn nil, ctx.Err()', 'case <-ctx.Done():\n\t\treturn func() {}, nil',
++ ['go','test','-count=1','./internal/immich','-run','^TestAlbumSelectionGateRejectsCanceledWaiter$'],
++ '--- FAIL: TestAlbumSelectionGateRejectsCanceledWaiter')
++proof('stale-cursor-lease', 'internal/immich/immich_album_cursor.go',
++ 'func (r *albumPageCursorRegistry) advanceCandidateIfCurrent(key albumPageCursorKey, expected albumPageCursorLease, consumed, pageSize int, hasNextPage bool) bool {\n\tr.mu.Lock()\n\tdefer r.mu.Unlock()\n\tentry, ok := r.entries[key]\n\tif !ok || entry.page != expected.page || entry.offset != expected.offset || entry.version != expected.version {',
++ 'func (r *albumPageCursorRegistry) advanceCandidateIfCurrent(key albumPageCursorKey, expected albumPageCursorLease, consumed, pageSize int, hasNextPage bool) bool {\n\tr.mu.Lock()\n\tdefer r.mu.Unlock()\n\tentry, ok := r.entries[key]\n\tif !ok {',
++ ['go','test','-count=1','./internal/immich','-run','^TestAlbumPageCursorRejectsStaleLeaseAfterAnotherSelectionAdvances$'],
++ '--- FAIL: TestAlbumPageCursorRejectsStaleLeaseAfterAnotherSelectionAdvances')
++proof('same-key-transaction-serialization', 'internal/immich/immich_album.go',
++ 'defer release()', 'release()',
++ ['go','test','-count=1','./internal/immich','-run','^TestAssetFromAlbumSerializesConcurrentCachedResiduals$'],
++ '--- FAIL: TestAssetFromAlbumSerializesConcurrentCachedResiduals')
++proof('cursor-lease-aba', 'internal/immich/immich_album_cursor.go',
++ 'func (r *albumPageCursorRegistry) advanceIfCurrent(key albumPageCursorKey, expected albumPageCursorLease, hasNextPage bool) bool {\n\tr.mu.Lock()\n\tdefer r.mu.Unlock()\n\tentry, ok := r.entries[key]\n\tif !ok || entry.page != expected.page || entry.offset != expected.offset || entry.version != expected.version {',
++ 'func (r *albumPageCursorRegistry) advanceIfCurrent(key albumPageCursorKey, expected albumPageCursorLease, hasNextPage bool) bool {\n\tr.mu.Lock()\n\tdefer r.mu.Unlock()\n\tentry, ok := r.entries[key]\n\tif !ok {',
++ ['go','test','-count=1','./internal/immich','-run','^TestAlbumPageCursorLeaseNeverReusesVersionAfterClearOrEviction$'],
++ '--- FAIL: TestAlbumPageCursorLeaseNeverReusesVersionAfterClearOrEviction')
++(out/'source-negative-proof.json').write_text(json.dumps({'status':'passed','proofs':results},indent=2))
++PY
+diff --git a/ci/performance-finalization-contract.test.py b/ci/performance-finalization-contract.test.py
+new file mode 100755
+index 0000000..2cabd5a
+--- /dev/null
++++ b/ci/performance-finalization-contract.test.py
+@@ -0,0 +1,127 @@
++#!/usr/bin/env python3
++"""Lightweight contracts for performance validation finalization and reports."""
++from __future__ import annotations
++
++import json
++import os
++from pathlib import Path
++import shutil
++import subprocess
++import tempfile
++
++ROOT = Path(__file__).resolve().parent.parent
++RUNNER = ROOT / "ci/performance-nas.sh"
++SHARED_RUNNER = ROOT / "ci/shared-playback-nas.sh"
++REPORTER = ROOT / "ci/shared-playback-report.mjs"
++
++
++def require(condition: bool, message: str) -> None:
++    if not condition:
++        raise AssertionError(message)
++
++
++def static_runner_contract() -> None:
++    source = RUNNER.read_text()
++    require(source.index("trap early_exit EXIT") < source.index("manifest \"$source_manifest_before\""),
++            "early sanitizer trap must cover source manifest and acquisition")
++    require("if ! finalize_report" not in source,
++            "finalizer must not run in an errexit-suppressed conditional")
++    require("local original_status=$?" in source,
++            "exit trap must retain the original command status")
++    require("if [[ $status -eq 0 && $finalization_status -ne 0 ]]; then" in source,
++            "finalization may replace only a successful original status")
++    require("manifest \"$source_manifest_after\" || return 1" in source,
++            "failed post-validation manifest must fail finalization")
++    require("--status \"$report_status\"" in source,
++            "reporter must receive guard-derived final status")
++    require("text.endswith('_templ.go') and (root / (text[:-len('_templ.go')] + '.templ')).is_file()" in source,
++            "only generated companions of transported templates may be excluded")
++    assets = source.index("run_step frontend-css")
++    templates = source.index("run_step templ-generate")
++    backend_proof = source.index("run_step backend-performance-proof env CI=1")
++    require(assets < templates < backend_proof,
++            "frontend embedded assets and templ output must precede backend route proofs")
++    require("run_step go-mod-download env CI=1 \"$go_bin\" mod download" in source,
++            "templ must use the pinned Go tool module graph")
++    require("generated_templates_manifest \"$generated_template_manifest\"" in source,
++            "generated template output must have a separate hash manifest")
++    require("shared-playback-report.mjs --status passed" in SHARED_RUNNER.read_text(),
++            "the completed shared-playback runner must provide its authoritative report status")
++
++
++def write_executable(path: Path, body: str) -> None:
++    path.write_text(body)
++    path.chmod(0o700)
++
++
++def run_report(status: str, commands: str, browser_available: bool = True) -> tuple[dict[str, object], int]:
++    node = shutil.which("node")
++    require(node is not None, "node is required for this lightweight report contract")
++    with tempfile.TemporaryDirectory(prefix="performance-finalization-") as temporary:
++        root = Path(temporary)
++        runtime = root / "runtime"
++        package = runtime / "package.json"
++        playwright = runtime / "node_modules/playwright"
++        playwright_core = runtime / "node_modules/playwright-core"
++        playwright.mkdir(parents=True)
++        playwright_core.mkdir(parents=True)
++        package.write_text('{"name":"synthetic-runtime"}\n')
++        (playwright / "package.json").write_text('{"name":"playwright","version":"0.0.0-test"}\n')
++        (playwright_core / "package.json").write_text('{"name":"playwright-core","exports":{"./package.json":"./package.json"}}\n')
++        (playwright_core / "browsers.json").write_text('{"browsers":[{"name":"chromium-headless-shell","revision":"1243"}]}\n')
++        browser_root = root / "ms-playwright"
++        if browser_available:
++            browser = browser_root / "chromium_headless_shell-1243" / "chrome-headless-shell-linux64" / "chrome-headless-shell"
++            browser.parent.mkdir(parents=True)
++            write_executable(browser, "#!/bin/sh\necho Chromium 0.0.0-test\n")
++        go = root / "go"
++        write_executable(go, "#!/bin/sh\necho 'go version go1.26.6 synthetic'\n")
++        report = root / "report"
++        report.mkdir()
++        identity = root / "source-identity.json"
++        identity.write_text('{"status":"failed","schema":1}\n')
++        command_file = root / "commands.tsv"
++        command_file.write_text(commands)
++        log = root / "sanitized.log"
++        log.write_text("synthetic\n")
++        archive = root / "report.zip"
++        environment = os.environ | {"PLAYWRIGHT_RUNTIME_PACKAGE": str(package), "PLAYWRIGHT_BROWSERS_PATH": str(browser_root)}
++        completed = subprocess.run(
++            [node, str(REPORTER), "--status", status,
++             "--report-dir", str(report), "--source-identity", str(identity),
++             "--commands", str(command_file), "--log", str(log),
++             "--node", node, "--go", str(go), "--zip", str(archive)],
++            cwd=ROOT,
++            env=environment,
++            text=True,
++            capture_output=True,
++        )
++        require(archive.is_file() and archive.stat().st_size > 0, "report archive missing")
++        return json.loads((report / "summary.json").read_text()), completed.returncode
++
++
++def report_status_contract() -> None:
++    # A direct postcondition/receipt guard can fail without a failed run_step row.
++    guard_failed, guard_exit = run_report("failed", "all-steps\tpassed\tsynthetic\n")
++    require(guard_exit == 0, "a verified runtime may archive a preexisting failed validation")
++    require(guard_failed["status"] == "failed", "guard-derived failure must govern summary status")
++    require(guard_failed["requestedStatus"] == "failed", "summary must retain requested status")
++    require(guard_failed["failedCommands"] == [], "fixture intentionally has no failed command row")
++    files = guard_failed["reportFiles"]
++    require("tools.json" in files, "runtime receipt must be included in report inventory")
++    require(guard_failed["browserProbeStatus"] == "verified", "installed headless shell must be recorded")
++
++    unavailable, unavailable_exit = run_report("passed", "all-steps\tpassed\tsynthetic\n", browser_available=False)
++    require(unavailable_exit != 0, "unavailable browser probe must fail the report step after evidence is saved")
++    require(unavailable["status"] == "failed", "missing headless shell must fail closed without discarding the receipt")
++    require(unavailable["browserProbeStatus"] == "unavailable", "unavailable browser probe must be explicit")
++
++    command_failed, command_exit = run_report("passed", "step\tfailed\tsynthetic\n")
++    require(command_exit == 0, "verified runtime must preserve command failure in the summary without masking it")
++    require(command_failed["status"] == "failed", "failed command still governs a nominally passed report")
++
++
++if __name__ == "__main__":
++    static_runner_contract()
++    report_status_contract()
++    print("performance finalization contracts passed")
+diff --git a/ci/performance-nas.sh b/ci/performance-nas.sh
+new file mode 100755
+index 0000000..3d1cd5e
+--- /dev/null
++++ b/ci/performance-nas.sh
+@@ -0,0 +1,344 @@
++#!/usr/bin/env bash
++# Pinned, credential-free NAS validation for approved Immich backend and decoder
++# performance work. The admitted source archive intentionally has no .git metadata
++# or /run identity mount; this runner records a full transport manifest for the
++# external agent-nas receipt to bind after export.
++set -euo pipefail
++umask 077
++
++readonly NODE_VERSION='26.7.0'
++readonly NODE_SHA256='982aa24dd8be4c889c6a8ab337ddff3b0896645b20f4239356e80552c16277ee'
++readonly NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
++readonly GO_VERSION='1.26.6'
++readonly GO_SHA256='708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89'
++readonly GO_URL="https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
++
++readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
++cd "$root_dir"
++readonly workspace_dir="$root_dir/.nas-performance"
++readonly tools_dir="$workspace_dir/toolchains"
++readonly cache_dir="$workspace_dir/cache"
++readonly temp_dir="$workspace_dir/tmp"
++readonly report_dir="$root_dir/reports/performance"
++readonly report_zip="$root_dir/reports/performance-validation.zip"
++readonly raw_log="$workspace_dir/validation.raw.log"
++readonly sanitized_log="$report_dir/sanitized.log"
++readonly command_report="$report_dir/commands.tsv"
++readonly source_manifest_before="$report_dir/transport-source-manifest-before.json"
++readonly source_manifest_after="$report_dir/transport-source-manifest-after.json"
++readonly generated_template_manifest="$report_dir/generated-template-manifest.json"
++readonly source_identity="$report_dir/source-identity.json"
++
++mkdir -p "$tools_dir" "$cache_dir/npm" "$cache_dir/go-build" "$cache_dir/gomod" \
++  "$cache_dir/config" "$cache_dir/system" "$workspace_dir/gopath" "$temp_dir" "$report_dir"
++shopt -s nullglob
++chmod 700 "$workspace_dir" "$tools_dir" "$cache_dir" "$temp_dir" "$report_dir"
++: > "$raw_log"
++: > "$command_report"
++chmod 600 "$raw_log" "$command_report"
++
++sanitize_log() {
++  python3 - "$raw_log" "$sanitized_log" <<'PY'
++import re, sys
++source, destination = map(__import__('pathlib').Path, sys.argv[1:])
++text = source.read_text(errors='replace')
++text = re.sub(r'(?i)\b(authorization|password|token|secret)\b(\s*[:=]\s*)\S+', r'\1\2[REDACTED]', text)
++destination.write_text(text)
++PY
++  chmod 600 "$sanitized_log"
++}
++
++# Keep early acquisition/preflight failures sanitized and visible. This trap is
++# replaced by on_exit once the pinned toolchains are available for full reports.
++early_exit() {
++  local status=$?
++  sanitize_log >/dev/null 2>&1 || true
++  if [[ $status -ne 0 && -f "$sanitized_log" ]]; then
++    tail -n 90 "$sanitized_log" >&2 || true
++  fi
++  exit "$status"
++}
++trap early_exit EXIT
++
++for dependency in bash curl sha256sum tar xz python3; do
++  command -v "$dependency" >/dev/null 2>&1 || {
++    printf 'missing required runtime dependency: %s\n' "$dependency" >&2
++    exit 64
++  }
++done
++[[ -f frontend/package-lock.json && -f go.mod && -f ci/backend-perf-proof.sh && \
++  -f ci/verify-decode-frame-proof.py && -f ci/shared-playback-browser.mjs && \
++  -f ci/shared-photo-quality-browser.mjs ]] || {
++  printf 'materialized source is missing a required performance validation input\n' >&2
++  exit 66
++}
++
++manifest() {
++  local output="$1"
++  python3 - "$root_dir" "$output" <<'PY'
++import hashlib, json, os, sys
++from pathlib import Path
++root, output = map(Path, sys.argv[1:])
++excluded_root_names = {'.git', '.nas-performance', 'reports', 'dist', 'node_modules', 'lost+found'}
++excluded_prefixes = ('frontend/public/assets/css/',)
++excluded_files = {
++    'frontend/public/assets/js/kiosk.js',
++    'frontend/public/assets/js/url-builder.js',
++}
++
++def excluded(relative: Path) -> bool:
++    text = relative.as_posix()
++    # templ emits only the adjacent ignored companion for a transported .templ.
++    # Keep every authored Go file in the integrity manifest.
++    generated_template = text.endswith('_templ.go') and (root / (text[:-len('_templ.go')] + '.templ')).is_file()
++    return (any(part in excluded_root_names for part in relative.parts) or
++            generated_template or
++            text in excluded_files or
++            text.startswith(excluded_prefixes))
++files = {}
++for parent_text, directories, names in os.walk(root, topdown=True, followlinks=False):
++    parent = Path(parent_text)
++    retained = []
++    for name in directories:
++        candidate = parent / name
++        relative = candidate.relative_to(root)
++        if excluded(relative):
++            continue
++        if candidate.is_symlink():
++            raise SystemExit(f'unexpected source directory symlink: {relative}')
++        retained.append(name)
++    directories[:] = retained
++    for name in names:
++        candidate = parent / name
++        relative = candidate.relative_to(root)
++        if excluded(relative):
++            continue
++        if candidate.is_symlink():
++            raise SystemExit(f'unexpected source file symlink: {relative}')
++        if not candidate.is_file():
++            raise SystemExit(f'unexpected source entry: {relative}')
++        files[relative.as_posix()] = hashlib.sha256(candidate.read_bytes()).hexdigest()
++payload = {'schema': 1, 'files': files}
++encoded = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()
++payload['sha256'] = hashlib.sha256(encoded).hexdigest()
++output.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
++PY
++}
++
++generated_templates_manifest() {
++  local output="$1"
++  python3 - "$root_dir" "$output" <<'PY'
++import hashlib, json, os, sys
++from pathlib import Path
++root, output = map(Path, sys.argv[1:])
++files = {}
++excluded = {'.git', '.nas-performance', 'reports', 'dist', 'node_modules', 'lost+found'}
++for parent_text, directories, names in os.walk(root, topdown=True, followlinks=False):
++    parent = Path(parent_text)
++    directories[:] = [name for name in directories if name not in excluded]
++    for name in names:
++        if not name.endswith('.templ'):
++            continue
++        source = parent / name
++        generated = source.with_name(source.name[:-len('.templ')] + '_templ.go')
++        if generated.is_file() and not generated.is_symlink():
++            files[generated.relative_to(root).as_posix()] = hashlib.sha256(generated.read_bytes()).hexdigest()
++if not files:
++    raise SystemExit('templ generated no companion Go files')
++payload = {'schema': 1, 'files': files}
++encoded = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()
++payload['sha256'] = hashlib.sha256(encoded).hexdigest()
++output.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
++PY
++}
++
++run_step() {
++  local name="$1"
++  shift
++  printf '%s\tstarted\t%s\n' "$name" "$*" >> "$command_report"
++  if "$@" >> "$raw_log" 2>&1; then
++    printf '%s\tpassed\t%s\n' "$name" "$*" >> "$command_report"
++  else
++    local status=$?
++    printf '%s\tfailed\t%s\n' "$name" "$*" >> "$command_report"
++    return "$status"
++  fi
++}
++
++download_and_verify() {
++  local url="$1" sha="$2" output="$3"
++  run_step "download-$(basename "$output")" curl --fail --location --silent --show-error --output "$output" "$url"
++  printf '%s  %s\n' "$sha" "$output" | sha256sum --check --strict >> "$raw_log" 2>&1
++}
++
++finalize_report() {
++  local requested_status="$1"
++  local report_status="$requested_status"
++  local -a artifact_args=()
++  local -a artifacts=(
++    'dist/kiosk'
++    'frontend/public/assets/css/kiosk.css'
++    'frontend/public/assets/js/kiosk.js'
++    'frontend/public/assets/js/url-builder.js'
++  )
++  local artifact
++  for artifact in "${artifacts[@]}"; do
++    if [[ -s "$artifact" ]]; then
++      artifact_args+=(--artifact "$artifact")
++    else
++      printf 'artifact-integrity\tfailed\tmissing %s\n' "$artifact" >> "$command_report" || return 1
++      report_status='failed'
++    fi
++  done
++  sanitize_log || return 1
++  manifest "$source_manifest_after" || return 1
++  python3 - "$source_manifest_before" "$source_manifest_after" "$source_identity" "$report_status" <<'PY' || return 1
++import hashlib, json, sys
++before_path, after_path, output = map(__import__('pathlib').Path, sys.argv[1:4])
++status = sys.argv[4]
++before = json.loads(before_path.read_text())
++after = json.loads(after_path.read_text())
++if before != after:
++    raise SystemExit('source bytes changed during validation; source restoration failed')
++def digest(path): return hashlib.sha256(path.read_bytes()).hexdigest()
++payload = {
++  'schema': 1,
++  'status': status,
++  'transportSourceManifest': before,
++  'postValidationSourceManifest': after,
++  'externalReceiptBinding': {
++    'required': True,
++    'reason': 'agent-nas admission and commit receipt are external to this source-only container',
++    'matchManifestSha256': before['sha256'],
++  },
++  'sourceRestored': True,
++  'files': {
++    'transport-source-manifest-before.json': digest(before_path),
++    'transport-source-manifest-after.json': digest(after_path),
++  },
++}
++output.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
++PY
++  "$node_bin" ci/shared-playback-report.mjs \
++    --status "$report_status" \
++    --report-dir "$report_dir" --source-identity "$source_identity" \
++    --commands "$command_report" --log "$sanitized_log" --node "$node_bin" --go "$go_bin" \
++    --zip "$report_zip" "${artifact_args[@]}" || return 1
++  [[ "$requested_status" == "$report_status" ]] || return 1
++}
++
++on_exit() {
++  local original_status=$?
++  local finalization_status=0
++  if [[ -x "${node_bin:-}" && -x "${go_bin:-}" ]]; then
++    set +e
++    finalize_report "$([[ $original_status -eq 0 ]] && printf passed || printf failed)"
++    finalization_status=$?
++    set -e
++  elif [[ -f "$raw_log" ]]; then
++    sanitize_log || finalization_status=$?
++  fi
++  local status="$original_status"
++  if [[ $status -eq 0 && $finalization_status -ne 0 ]]; then
++    status=70
++  fi
++  if [[ $finalization_status -ne 0 ]]; then
++    printf 'performance validation report finalization failed (exit %s)\n' "$finalization_status" >&2
++  fi
++  if [[ $status -ne 0 ]]; then
++    if [[ -f "$sanitized_log" ]]; then
++      tail -n 90 "$sanitized_log" >&2 || true
++    elif [[ -f "$raw_log" ]]; then
++      tail -n 90 "$raw_log" >&2 || true
++    fi
++  fi
++  exit "$status"
++}
++
++manifest "$source_manifest_before"
++node_archive="$workspace_dir/node-v${NODE_VERSION}-linux-x64.tar.xz"
++go_archive="$workspace_dir/go${GO_VERSION}.linux-amd64.tar.gz"
++download_and_verify "$NODE_URL" "$NODE_SHA256" "$node_archive"
++download_and_verify "$GO_URL" "$GO_SHA256" "$go_archive"
++tar -xJf "$node_archive" -C "$tools_dir"
++tar -xzf "$go_archive" -C "$tools_dir"
++
++readonly node_bin="$tools_dir/node-v${NODE_VERSION}-linux-x64/bin/node"
++readonly npm_bin="$tools_dir/node-v${NODE_VERSION}-linux-x64/bin/npm"
++readonly go_bin="$tools_dir/go/bin/go"
++[[ -x "$node_bin" && -x "$npm_bin" && -x "$go_bin" ]] || {
++  printf 'toolchain extraction failed\n' >&2
++  exit 66
++}
++export PATH="$tools_dir/node-v${NODE_VERSION}-linux-x64/bin:$tools_dir/go/bin:$PATH"
++export TMPDIR="$temp_dir"
++export npm_config_cache="$cache_dir/npm"
++export GOCACHE="$cache_dir/go-build"
++export GOMODCACHE="$cache_dir/gomod"
++export GOPATH="$workspace_dir/gopath"
++# Tool-owned metadata (including Go telemetry) belongs with excluded build caches,
++# never beside the transported source. Keep the runner's HOME untouched.
++export XDG_CONFIG_HOME="$cache_dir/config"
++export XDG_CACHE_HOME="$cache_dir/system"
++export GOFLAGS='-p=2'
++export GOMAXPROCS=2
++export NODE_BINARY="$node_bin"
++export ESBUILD_BINARY="$root_dir/frontend/node_modules/.bin/esbuild"
++export DECODE_FRAME_PROOF_REPORT_DIR="$report_dir"
++
++trap on_exit EXIT
++
++run_step go-telemetry-off "$go_bin" telemetry off
++run_step node-version "$node_bin" --version
++run_step npm-version "$npm_bin" --version
++run_step go-version "$go_bin" version
++run_step frontend-install bash -c 'cd frontend && npm ci'
++[[ -x "$ESBUILD_BINARY" ]] || { printf 'npm ci did not install lockfile-pinned esbuild\n' >&2; exit 66; }
++run_step frontend-shared-playback bash -c 'frontend/node_modules/.bin/esbuild frontend/tests/shared-playback.test.ts --bundle --platform=node --format=esm --alias:htmx.org=./frontend/tests/htmx.mock.ts --outfile="$TMPDIR/shared-playback.test.mjs" && node --test "$TMPDIR/shared-playback.test.mjs"'
++run_step frontend-typecheck bash -c 'cd frontend && node_modules/.bin/tsc --noEmit'
++run_step frontend-css bash -c 'cd frontend && node_modules/.bin/esbuild --minify --bundle --loader:.css=css --external:*.woff --external:*.woff2 --external:*.ttf --target=chrome106,edge106,firefox107,safari12.1,opera92 src/css/kiosk.css --outfile=./public/assets/css/kiosk.css'
++run_step frontend-kiosk-js bash -c 'cd frontend && node_modules/.bin/esbuild src/ts/kiosk.ts --format=iife --global-name=kiosk --bundle --minify --target=es6 --outfile=./public/assets/js/kiosk.js'
++run_step frontend-url-builder-js bash -c 'cd frontend && node_modules/.bin/esbuild src/ts/url-builder.ts --format=iife --global-name=urlBuilder --bundle --minify --target=es6 --outfile=./public/assets/js/url-builder.js'
++run_step go-mod-download env CI=1 "$go_bin" mod download
++run_step templ-generate env CI=1 "$go_bin" tool templ generate
++generated_templates_manifest "$generated_template_manifest"
++run_step decoder-proof python3 ci/verify-decode-frame-proof.py "$root_dir"
++run_step backend-performance-proof env CI=1 bash ci/backend-perf-proof.sh
++[[ -s reports/backend-perf/source-negative-proof.json ]] || { printf 'backend performance proof receipt missing\n' >&2; exit 66; }
++cp reports/backend-perf/source-negative-proof.json "$report_dir/backend-perf-proof.json"
++for evidence in reports/backend-perf/*.log; do
++  cp "$evidence" "$report_dir/backend-$(basename "$evidence")"
++done
++run_step concurrency-backend-proof env CI=1 python3 ci/verify-concurrency-backend-proof.py
++[[ -s reports/concurrency-backend/source-negative-proof.json ]] || { printf 'concurrency backend proof receipt missing\n' >&2; exit 66; }
++cp reports/concurrency-backend/source-negative-proof.json "$report_dir/concurrency-backend-proof.json"
++for evidence in reports/concurrency-backend/*.log; do
++  cp "$evidence" "$report_dir/concurrency-$(basename "$evidence")"
++done
++run_step go-webhook-tests env CI=1 "$go_bin" test -timeout=60s -race -count=1 ./internal/webhooks
++run_step go-performance-tests env CI=1 "$go_bin" test -count=1 ./internal/config ./internal/immich ./internal/playback ./internal/routes
++run_step go-race-album-selection env CI=1 "$go_bin" test -race -count=1 ./internal/immich -run '^(TestAlbumPageCursor|TestAssetFromAlbumSerializesConcurrentCachedResiduals$|TestAssetFromAlbumCancelsWhileWaitingForSameKeyGate$|TestAlbumSelectionGate)'
++run_step go-build env CI=1 bash -c 'CGO_ENABLED=0 go build -a -installsuffix cgo -o dist/kiosk .'
++run_step browser-shared-playback "$node_bin" ci/shared-playback-browser.mjs
++run_step browser-photo-quality "$node_bin" ci/shared-photo-quality-browser.mjs
++[[ -s reports/shared-playback/shared-browser.json && -s reports/shared-playback/photo-quality/photo-quality.json ]] || {
++  printf 'browser acceptance receipts are missing\n' >&2
++  exit 66
++}
++compgen -G 'reports/shared-playback/*.png' >/dev/null || { printf 'shared browser screenshot missing\n' >&2; exit 66; }
++compgen -G 'reports/shared-playback/photo-quality/*.png' >/dev/null || { printf 'photo-quality screenshot missing\n' >&2; exit 66; }
++cp reports/shared-playback/shared-browser.json "$report_dir/shared-browser.json"
++cp reports/shared-playback/shared-browser-fixture.log "$report_dir/shared-browser-fixture.log"
++cp reports/shared-playback/photo-quality/photo-quality.json "$report_dir/photo-quality.json"
++cp reports/shared-playback/photo-quality/fixture.log "$report_dir/photo-quality-fixture.log"
++for evidence in reports/shared-playback/*.png; do
++  cp "$evidence" "$report_dir/$(basename "$evidence")"
++done
++for evidence in reports/shared-playback/photo-quality/*.png; do
++  cp "$evidence" "$report_dir/photo-quality-$(basename "$evidence")"
++done
++
++[[ -s "$report_dir/decode-frame-proof.json" ]] || { printf 'decoder proof receipt missing\n' >&2; exit 66; }
++[[ -s "$report_dir/backend-perf-proof.json" ]] || { printf 'backend performance proof receipt missing\n' >&2; exit 66; }
++[[ -s "$report_dir/shared-browser.json" && -s "$report_dir/photo-quality.json" ]] || { printf 'collected browser receipt missing\n' >&2; exit 66; }
++printf 'Immich performance validation passed\n' >> "$raw_log"
+diff --git a/ci/shared-playback-browser.mjs b/ci/shared-playback-browser.mjs
+index 3a6ac73..6cc4b87 100644
+--- a/ci/shared-playback-browser.mjs
++++ b/ci/shared-playback-browser.mjs
+@@ -84,13 +84,35 @@ try{
+  };
+  // Observe actual independently decoded transitions, with no local asset selection.
+  const first=await id(a);
+- await eventually(async()=>{const aa=await a.evaluate(()=>window.sharedSettles),bb=await b.evaluate(()=>window.sharedSettles);const pairs=aa.filter(x=>x.id!==first).map(x=>({a:x,b:bb.find(y=>x.id===y.id)})).filter(x=>x.b);if(pairs.length<3)return false;report.transitions=pairs;return true;},'three automatic synchronized transitions',45000);
+- for(const pair of report.transitions){assert.ok(Math.abs(pair.a.at-pair.b.at)<700,'scheduled transitions differ by less than 700ms');assert.ok(pair.a.decoded&&pair.b.decoded);assert.equal(pair.a.history,pair.b.history);assert.equal(typeof pair.a.paused,'boolean');}
+- await a.keyboard.press('p');
+- await eventually(async()=>{const s=await state();return s.paused&&await a.locator('#kiosk').getAttribute('data-shared-playback-paused')==='true'&&await b.locator('#kiosk').getAttribute('data-shared-playback-paused')==='true'},'shared pause');
+- await eventually(async()=>await id(a)===await id(b),'paused settled match');
+- const pausedId=await id(a),pausedPhoto=await photo(a);await delay(11000);assert.equal(await id(a),pausedId);assert.equal(await id(b),pausedId);
+- report.tests.push('pause on one browser holds both beyond the configured interval');
++	 await eventually(async()=>{const aa=await a.evaluate(()=>window.sharedSettles),bb=await b.evaluate(()=>window.sharedSettles);const pairs=aa.filter(x=>x.id!==first).map(x=>({a:x,b:bb.find(y=>x.id===y.id)})).filter(x=>x.b);if(pairs.length<3)return false;report.transitions=pairs;return true;},'three automatic synchronized transitions',45000);
++	 for(const pair of report.transitions){assert.ok(Math.abs(pair.a.at-pair.b.at)<700,'scheduled transitions differ by less than 700ms');assert.ok(pair.a.decoded&&pair.b.decoded);assert.equal(pair.a.history,pair.b.history);assert.equal(typeof pair.a.paused,'boolean');}
++	 const beforeForcedPause=await state();assert.ok(beforeForcedPause.version>=1,'shared state has a version before forced pause conflict');
++	 const controlPath='**/api/playback/shared-test/control',pauseRequests=[],pauseResponses=[];
++	 a.on('request',request=>{if(request.url().endsWith('/api/playback/shared-test/control')){const command=JSON.parse(request.postData()??'{}');if(command.action==='pause')pauseRequests.push(command);}});
++	 a.on('response',response=>{if(response.url().endsWith('/api/playback/shared-test/control')&&response.request().method()==='POST')pauseResponses.push(response.status());});
++	 let forcedConflictState;
++	 const forceFirstPauseConflict=async route=>{
++	  const request=route.request(),command=JSON.parse(request.postData()??'{}');
++	  assert.equal(command.action,'pause','forced request keeps the keyboard pause action');
++	  assert.equal(await request.headerValue('origin'),ready.url,'forced request keeps same-origin control');
++	  const response=await route.fetch({postData:JSON.stringify({...command,expectedVersion:0})});
++	  assert.equal(response.status(),409,'forced stale version receives the server conflict response');
++	  const body=await response.text();forcedConflictState=JSON.parse(body);
++	  assert.equal(forcedConflictState.sessionId,beforeForcedPause.sessionId,'409 stays in the active shared session');
++	  assert.ok(forcedConflictState.version>=beforeForcedPause.version,'409 returns an authoritative version at or after the snapshot');
++	  await route.fulfill({response,body});
++	 };
++	 await a.route(controlPath,forceFirstPauseConflict,{times:1});
++	 await a.keyboard.press('p');
++	 await eventually(()=>pauseResponses.length===2,'forced 409 followed by real retry');
++	 assert.deepEqual(pauseResponses,[409,200],'pause conflict is followed by one successful retry');
++	 assert.equal(pauseRequests.length,2,'pause sends exactly the conflict request and one retry');
++	 assert.equal(pauseRequests[1].expectedVersion,forcedConflictState.version,'retry binds the authoritative conflict version');
++	 report.forcedPauseConflict={forcedExpectedVersion:0,authoritativeVersion:forcedConflictState.version,responseStatuses:pauseResponses};
++	 await eventually(async()=>{const s=await state();return s.paused&&await a.locator('#kiosk').getAttribute('data-shared-playback-paused')==='true'&&await b.locator('#kiosk').getAttribute('data-shared-playback-paused')==='true'},'shared pause');
++	 await eventually(async()=>await id(a)===await id(b),'paused settled match');
++	 const pausedId=await id(a),pausedPhoto=await photo(a);await delay(11000);assert.equal(await id(a),pausedId);assert.equal(await id(b),pausedId);
++	 report.tests.push('forced 409 pause conflict retries once against the fixture and holds both beyond the configured interval');
+  await eventually(async()=>Boolean((await state()).next),'prepared next');
+  const cas=await state();const simultaneous=await Promise.all([apiCommand('next',cas),apiCommand('next',cas)]);
+  assert.deepEqual(simultaneous.map(x=>x.status).sort(),[200,409]);
+diff --git a/ci/shared-playback-import-contract.test.py b/ci/shared-playback-import-contract.test.py
+new file mode 100755
+index 0000000..72bc4f6
+--- /dev/null
++++ b/ci/shared-playback-import-contract.test.py
+@@ -0,0 +1,18 @@
++#!/usr/bin/env python3
++"""Contract: production TypeScript source must not require allowImportingTsExtensions."""
++from __future__ import annotations
++
++from pathlib import Path
++
++root = Path(__file__).resolve().parent.parent
++source = (root / "frontend/src/ts/shared-playback.ts").read_text()
++tsconfig = (root / "frontend/tsconfig.json").read_text()
++
++expected = "import { decodeFrame as decodeFrameWithBounds } from './decode-frame';"
++if expected not in source:
++    raise AssertionError("shared playback must use an extensionless production decoder import")
++if "from './decode-frame.ts'" in source:
++    raise AssertionError("shared playback must not require allowImportingTsExtensions")
++if '"allowImportingTsExtensions"' in tsconfig:
++    raise AssertionError("the compiler contract must remain independent of allowImportingTsExtensions")
++print("shared playback import contract passed")
+diff --git a/ci/shared-playback-nas.sh b/ci/shared-playback-nas.sh
+index 955bda4..03d4b1b 100755
+--- a/ci/shared-playback-nas.sh
++++ b/ci/shared-playback-nas.sh
+@@ -112,7 +112,7 @@ run_step go-test env CI=1 "$go_bin" test "${go_test_packages[@]}"
+ # large-photo deadline fixtures exceed their protected one-second budgets on
+ # this runner. Keep those tests and budgets intact; race-check the changed
+ # shared routes plus existing render-gate/cancellation paths separately.
+-run_step go-race-routes bash -c 'CI=1 go test -race ./internal/routes -run "SharedPlayback|HistoryRender|Cancellation|Cancel"'
++run_step go-race-routes bash -c 'CI=1 go test -race ./internal/routes -run "SharedPlayback|SharedPhoto|FrameSelection|FrameRecent|HistoryRender|Cancellation|Cancel|HardExclu"'
+ run_step go-race-playback bash -c 'CI=1 go test -race ./internal/playback'
+ source_commit="$($node_bin -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync("/run/agent-source-identity.json", "utf8")); if (!/^[0-9a-f]{40}$/.test(value.commit)) process.exit(64); process.stdout.write(value.commit)')"
+ run_step go-build bash -c "CGO_ENABLED=0 go build -a -installsuffix cgo -ldflags '-X main.version=${source_commit} -s -w' -o dist/kiosk ."
+@@ -127,9 +127,9 @@ compgen -G "$report_dir/*proof*.json" >/dev/null || { printf 'required source-ne
+ cat > "$report_dir/resource-ledger.md" <<'EOF'
+ # Task-owned resource ledger
+ 
+-Owner task: shared-playback photo-quality NAS validation
+-Source worktree: <private-workspace>/upstream
+-Source branch: sync-photo-quality-20260914
++Owner task: slideshow coverage and paid-work exclusion NAS validation (2026-10-12)
++Source worktree: <private-workspace>/immich-slideshow-release-20261012
++Source branch: codex/slideshow-release-20261012
+ Disposable NAS workspace: /workspace/.nas-shared-playback
+ 
+ | Resource | Exact identifier/path | Why needed | Closeout proof |
+@@ -139,5 +139,5 @@ Disposable NAS workspace: /workspace/.nas-shared-playback
+ EOF
+ chmod 600 "$report_dir/resource-ledger.md"
+ 
+-run_step reports "$node_bin" ci/shared-playback-report.mjs --report-dir "$report_dir" --source-identity "$report_dir/source-identity.json" --commands "$command_report" --log "$sanitized_log" --node "$node_bin" --go "$go_bin" --zip "$report_zip" --artifact dist/kiosk --artifact frontend/public/assets/css/kiosk.css --artifact frontend/public/assets/js/kiosk.js --artifact frontend/public/assets/js/url-builder.js
++run_step reports "$node_bin" ci/shared-playback-report.mjs --status passed --report-dir "$report_dir" --source-identity "$report_dir/source-identity.json" --commands "$command_report" --log "$sanitized_log" --node "$node_bin" --go "$go_bin" --zip "$report_zip" --artifact dist/kiosk --artifact frontend/public/assets/css/kiosk.css --artifact frontend/public/assets/js/kiosk.js --artifact frontend/public/assets/js/url-builder.js
+ [[ -s dist/kiosk && -s "$report_zip" ]] || { printf 'expected artifacts are missing\n' >&2; exit 66; }
+diff --git a/ci/shared-playback-proof.sh b/ci/shared-playback-proof.sh
+index 26749d2..b92f672 100755
+--- a/ci/shared-playback-proof.sh
++++ b/ci/shared-playback-proof.sh
+@@ -7,8 +7,14 @@ from pathlib import Path
+ import hashlib,json,subprocess,shutil
+ root=Path.cwd();out=root/'reports/shared-playback';out.mkdir(parents=True,exist_ok=True)
+ results=[]
++identity=json.loads(Path('/run/agent-source-identity.json').read_text())
++guard_paths=sorted(p for p in identity['files'] if p.endswith('_test.go') or p.startswith('frontend/tests/') or p in ('ci/shared-playback-browser.mjs','ci/shared-photo-quality-browser.mjs'))
++assert guard_paths, 'guarding test inventory is empty'
++def guard_hashes():
++ return {p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in guard_paths}
+ def proof(name,file,old,new,count,test,failed_marker,browser=False):
+  p=root/file;original=p.read_bytes();text=original.decode();assert text.count(old)==count,(name,'guard drift')
++ tests_before=guard_hashes()
+  def run(label):
+   result=subprocess.run(test,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+   (out/(name+'-'+label+'.log')).write_text(result.stdout)
+@@ -24,7 +30,8 @@ def proof(name,file,old,new,count,test,failed_marker,browser=False):
+   p.write_bytes(original)
+  assert p.read_bytes()==original
+  green=run('green-after');assert green.returncode==0,(name,'restored guard failed')
+- results.append({'name':name,'testCommand':test,'redExit':negative.returncode,'greenBeforeExit':green_before.returncode,'greenAfterExit':green.returncode,'restoredSha256':hashlib.sha256(original).hexdigest(),'testsUnchanged':True})
++ tests_after=guard_hashes();assert tests_before==tests_after,(name,'guarding tests changed during proof')
++ results.append({'name':name,'testCommand':test,'redExit':negative.returncode,'greenBeforeExit':green_before.returncode,'greenAfterExit':green.returncode,'restoredSha256':hashlib.sha256(original).hexdigest(),'testsUnchanged':tests_before==tests_after,'testSha256Before':tests_before,'testSha256After':tests_after})
+  (out/'source-negative-proof.json').write_text(json.dumps({'status':'in-progress','proofs':results},indent=2))
+ proof('coordinator-cas','internal/playback/coordinator.go',
+  'if command.ExpectedEpoch != s.epoch || command.ExpectedVersion != s.version {','if false {',2,
+@@ -34,6 +41,38 @@ proof('control-origin','internal/routes/routes_shared_playback.go',
+  'if !sameOriginPlaybackControl(c.Request()) {','if false && !sameOriginPlaybackControl(c.Request()) {',1,
+  ['go','test','-count=1','./internal/routes','-run','^TestSharedPlaybackControlRejectsCrossOriginAndMalformedJSON$/missing_origin$'],
+  '--- FAIL: TestSharedPlaybackControlRejectsCrossOriginAndMalformedJSON')
++proof('hard-asset-exclusion','internal/immich/immich_helpers.go',
++ 'if !restrictions.allowsAsset(a.ID) {','if false {',1,
++ ['go','test','-count=1','./internal/immich','-run','^TestHardExcludedAssetRejectsBeforeAlbumMembershipLookup$'],
++ '--- FAIL: TestHardExcludedAssetRejectsBeforeAlbumMembershipLookup')
++proof('hard-asset-bind-immutability','internal/config/config.go',
++ 'c.ExcludedAssets = mandatoryExcludedAssets','_ = mandatoryExcludedAssets',1,
++ ['go','test','-count=1','./internal/config','-run','^TestExcludedAssetsRemainServerPolicyAcrossJSONBinding$'],
++ '--- FAIL: TestExcludedAssetsRemainServerPolicyAcrossJSONBinding')
++proof('hard-album-baseline-union','internal/config/config.go',
++ 'c.ExcludedAlbums = unionMandatoryExclusions(mandatoryExcludedAlbums, c.ExcludedAlbums)','_ = mandatoryExcludedAlbums',1,
++ ['go','test','-count=1','./internal/config','-run','^TestExcludedAlbumsRetainConfiguredBaselineAcrossOverrides$'],
++ '--- FAIL: TestExcludedAlbumsRetainConfiguredBaselineAcrossOverrides')
++proof('recent-history-window','internal/routes/routes_preferences.go',
++ 'frameRecentAssetLimit    = 384','frameRecentAssetLimit    = 24',1,
++ ['go','test','-count=1','./internal/routes','-run','^TestFrameRecentHistoryRetainsExpandedWindow$'],
++ '--- FAIL: TestFrameRecentHistoryRetainsExpandedWindow')
++proof('checksum-recurrence','internal/routes/routes_preferences.go',
++ 'if prior.checksum != "" && prior.checksum == strings.TrimSpace(asset.Checksum) {','if false {',1,
++ ['go','test','-count=1','./internal/routes','-run','^TestFrameSelectionSuppressesEquivalentChecksumsAndDuplicateIDs$'],
++ '--- FAIL: TestFrameSelectionSuppressesEquivalentChecksumsAndDuplicateIDs')
++proof('duplicate-recurrence','internal/routes/routes_preferences.go',
++ 'return prior.duplicateID != "" && prior.duplicateID == duplicateIdentity(asset.DuplicateID)','return false',1,
++ ['go','test','-count=1','./internal/routes','-run','^TestFrameSelectionSuppressesEquivalentChecksumsAndDuplicateIDs$'],
++ '--- FAIL: TestFrameSelectionSuppressesEquivalentChecksumsAndDuplicateIDs')
++proof('shared-copy-suppression','internal/routes/routes_shared_playback_assets.go',
++ 'if !sharedRecentSelectionAllowed(identity, &asset, attempt) {','if false {',1,
++ ['go','test','-count=1','./internal/routes','-run','^TestSharedPlaybackSuppressesCopiedAssetsByBoundedIdentityLedger$'],
++ '--- FAIL: TestSharedPlaybackSuppressesCopiedAssetsByBoundedIdentityLedger')
++frontend_test=['bash','-c','tmpdir=$(mktemp -d); trap "rm -rf ${tmpdir}" EXIT; frontend/node_modules/.bin/esbuild frontend/tests/shared-playback.test.ts --bundle --platform=node --format=esm --outfile="${tmpdir}/shared-playback.test.mjs" && node --test --test-name-pattern="confirmed pause and resume conflicts retry once with the authoritative version" "${tmpdir}/shared-playback.test.mjs"']
++proof('confirmed-pause-conflict','frontend/src/ts/shared-playback.ts',
++ 'const retry = result.conflict && retriesRemaining > 0 && desiredPaused !== undefined && accepted &&','const retry = false && retriesRemaining > 0 && desiredPaused !== undefined && accepted &&',1,
++ frontend_test,'confirmed pause and resume conflicts retry once with the authoritative version')
+ # Rebuild the actual browser bundle for each source-only mutation. The focused
+ # real-browser path exercises both initial decode and displayed-slide metadata.
+ browser_test=['bash','-c','frontend/node_modules/.bin/esbuild frontend/src/ts/kiosk.ts --format=iife --global-name=kiosk --bundle --minify --target=es6 --outfile=frontend/public/assets/js/kiosk.js && FRAME_SYNC_METADATA_ONLY=1 node ci/shared-playback-browser.mjs']
+diff --git a/ci/shared-playback-report.mjs b/ci/shared-playback-report.mjs
+index 0c3c642..4c2b71b 100755
+--- a/ci/shared-playback-report.mjs
++++ b/ci/shared-playback-report.mjs
+@@ -1,11 +1,13 @@
+ #!/usr/bin/env node
+ import { createHash } from 'node:crypto';
+-import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
++import { readFile, readdir, stat, writeFile, access } from 'node:fs/promises';
++import { constants as fsConstants } from 'node:fs';
++import { createRequire } from 'node:module';
+ import path from 'node:path';
+ import { spawnSync } from 'node:child_process';
+ 
+ function usage() {
+-  throw new Error('usage: shared-playback-report.mjs --report-dir DIR --source-identity FILE --commands FILE --log FILE --node FILE --go FILE --zip FILE');
++  throw new Error('usage: shared-playback-report.mjs --status passed|failed --report-dir DIR --source-identity FILE --commands FILE --log FILE --node FILE --go FILE --zip FILE');
+ }
+ 
+ const args = process.argv.slice(2);
+@@ -17,9 +19,11 @@ for (let index = 0; index < args.length; index += 2) {
+   if (key === 'artifact') artifacts.push(args[index + 1]);
+   else values.set(key, args[index + 1]);
+ }
+-for (const key of ['report-dir', 'source-identity', 'commands', 'log', 'node', 'go', 'zip']) {
++for (const key of ['status', 'report-dir', 'source-identity', 'commands', 'log', 'node', 'go', 'zip']) {
+   if (!values.has(key)) usage();
+ }
++const requestedStatus = values.get('status');
++if (requestedStatus !== 'passed' && requestedStatus !== 'failed') usage();
+ 
+ const sha256 = async file => createHash('sha256').update(await readFile(file)).digest('hex');
+ const version = executable => {
+@@ -68,13 +72,54 @@ const nodeExecutable = path.resolve(values.get('node'));
+ const goExecutable = path.resolve(values.get('go'));
+ const zip = path.resolve(values.get('zip'));
+ 
++const browserRuntimePackage = process.env.PLAYWRIGHT_RUNTIME_PACKAGE || '/opt/launchpad-browser-runtime/package.json';
++const browserRuntimeRequire = createRequire(browserRuntimePackage);
++const playwrightVersion = browserRuntimeRequire('playwright/package.json').version;
++const browserRoot = process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/ms-playwright';
++const playwrightCorePackagePath = browserRuntimeRequire.resolve('playwright-core/package.json');
++const browserMetadata = JSON.parse(await readFile(path.join(path.dirname(playwrightCorePackagePath), 'browsers.json'), 'utf8'));
++const headlessShellMetadata = browserMetadata.browsers.find(browser => browser.name === 'chromium-headless-shell');
++const browserProbe = async () => {
++  // The runtime image intentionally installs only Playwright's headless shell.
++  // chromium.executablePath() names the full Chromium binary, which is absent.
++  // Resolve the installed shell from the pinned package metadata, rather than
++  // inferring a layout from whatever happens to be in the cache directory.
++  if (!headlessShellMetadata?.revision) {
++    return { status: 'unavailable', error: 'pinned Playwright metadata has no chromium headless shell revision' };
++  }
++  const executable = path.join(
++    browserRoot,
++    `chromium_headless_shell-${headlessShellMetadata.revision}`,
++    'chrome-headless-shell-linux64',
++    'chrome-headless-shell',
++  );
++  try {
++    await access(executable, fsConstants.X_OK);
++    const result = spawnSync(executable, ['--version'], { encoding: 'utf8' });
++    if (result.status !== 0 || !result.stdout.trim()) {
++      return { status: 'unavailable', executable, error: 'headless shell version probe failed' };
++    }
++    return {
++      status: 'verified',
++      executable,
++      version: result.stdout.trim(),
++      sha256: await sha256(executable),
++    };
++  } catch (error) {
++    return { status: 'unavailable', executable, error: `headless shell probe failed: ${error instanceof Error ? error.name : 'unknown'}` };
++  }
++};
++const browser = await browserProbe();
++
+ const tools = {
+   node: { executable: nodeExecutable, version: version(nodeExecutable), sha256: await sha256(nodeExecutable) },
+   go: { executable: goExecutable, version: version(goExecutable), sha256: await sha256(goExecutable) },
++  browser: { runtimePackage: browserRuntimePackage, playwrightVersion, browserRoot, headlessShellRevision: headlessShellMetadata?.revision ?? null, ...browser },
+ };
+ await writeFile(path.join(reportDir, 'tools.json'), `${JSON.stringify(tools, null, 2)}\n`, { mode: 0o600 });
+ const commandLines = (await readFile(commands, 'utf8')).trimEnd().split('\n').filter(Boolean);
+ const failed = commandLines.filter(line => /\tfailed\t/.test(line));
++const status = requestedStatus === 'failed' || failed.length > 0 || browser.status !== 'verified' ? 'failed' : 'passed';
+ const sourceIdentityValue = JSON.parse(await readFile(sourceIdentity, 'utf8'));
+ const reportFiles = Object.fromEntries(await Promise.all((await readdir(reportDir)).sort().map(async name => {
+   const file = path.join(reportDir, name);
+@@ -83,9 +128,11 @@ const reportFiles = Object.fromEntries(await Promise.all((await readdir(reportDi
+   return [name, { bytes: details.size, sha256: await sha256(file) }];
+ })));
+ const summary = {
+-  status: failed.length === 0 ? 'passed' : 'failed',
++  status,
++  requestedStatus,
+   commandCount: commandLines.length,
+   failedCommands: failed,
++  browserProbeStatus: browser.status,
+   sourceIdentitySha256: await sha256(sourceIdentity),
+   sourceIdentity: sourceIdentityValue,
+   sanitizedLogSha256: await sha256(log),
+@@ -106,3 +153,7 @@ for (const name of (await readdir(reportDir)).sort()) {
+   entries.push({ name, file });
+ }
+ await writeStoredZip(zip, entries);
++// The report and archive are already durable.  Make a missing or inconsistent
++// browser receipt fail the reporting step so a nominally successful run cannot
++// become a false successful validation.
++if (browser.status !== 'verified') process.exitCode = 1;
+diff --git a/ci/verify-concurrency-backend-proof.py b/ci/verify-concurrency-backend-proof.py
+new file mode 100755
+index 0000000..d1b2264
+--- /dev/null
++++ b/ci/verify-concurrency-backend-proof.py
+@@ -0,0 +1,157 @@
++#!/usr/bin/env python3
++"""Source-only red/green proof for the C6/C7 backend concurrency guards.
++
++Run this only in the guarded NAS backend validation environment. It mutates one
++source guard at a time, runs its focused Go test, restores byte-identical source,
++and records hashes plus red/green logs under reports/concurrency-backend.
++"""
++from __future__ import annotations
++
++import hashlib
++import json
++from dataclasses import dataclass
++from pathlib import Path
++import subprocess
++import sys
++
++ROOT = Path(__file__).resolve().parent.parent
++OUT = ROOT / "reports" / "concurrency-backend"
++TESTS = (
++    Path("internal/config/config_offline_parallel_test.go"),
++    Path("internal/routes/routes_offline_worker_limit_test.go"),
++    Path("internal/webhooks/webhooks_dispatcher_test.go"),
++)
++
++
++@dataclass(frozen=True)
++class Proof:
++    name: str
++    source: Path
++    old: str
++    new: str
++    command: tuple[str, ...]
++    expected_failure: str
++
++
++def sha256(path: Path) -> str:
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def test_hashes() -> dict[str, str]:
++    return {str(path): sha256(ROOT / path) for path in TESTS}
++
++
++def run(proof: Proof, label: str) -> subprocess.CompletedProcess[str]:
++    result = subprocess.run(proof.command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
++    (OUT / f"{proof.name}-{label}.log").write_text(result.stdout)
++    return result
++
++
++def execute(proof: Proof) -> dict[str, object]:
++    source = ROOT / proof.source
++    original = source.read_bytes()
++    original_text = original.decode("utf-8")
++    if original_text.count(proof.old) != 1:
++        raise AssertionError(f"{proof.name}: mutation marker must occur exactly once")
++
++    before = test_hashes()
++    green_before = run(proof, "green-before")
++    if green_before.returncode != 0:
++        raise AssertionError(f"{proof.name}: focused baseline failed")
++
++    red: subprocess.CompletedProcess[str] | None = None
++    try:
++        source.write_text(original_text.replace(proof.old, proof.new))
++        red = run(proof, "red")
++        if red.returncode == 0 or proof.expected_failure not in red.stdout:
++            raise AssertionError(f"{proof.name}: expected guard {proof.expected_failure!r} did not fail")
++    finally:
++        source.write_bytes(original)
++
++    if source.read_bytes() != original:
++        raise AssertionError(f"{proof.name}: source restore mismatch")
++
++    green_after = run(proof, "green-after")
++    if green_after.returncode != 0:
++        raise AssertionError(f"{proof.name}: restored source failed")
++
++    after = test_hashes()
++    if before != after:
++        raise AssertionError(f"{proof.name}: proof changed a guarding test")
++
++    assert red is not None
++    return {
++        "name": proof.name,
++        "source": str(proof.source),
++        "redExit": red.returncode,
++        "greenBeforeExit": green_before.returncode,
++        "greenAfterExit": green_after.returncode,
++        "expectedFailure": proof.expected_failure,
++        "sourceRestored": True,
++        "testsUnchanged": True,
++        "testSha256Before": before,
++        "testSha256After": after,
++    }
++
++
++def main() -> int:
++    OUT.mkdir(parents=True, exist_ok=True)
++    proofs = (
++        Proof(
++            "offline-runtime-worker-cap",
++            Path("internal/routes/routes_offline.go"),
++            "if workers > config.MaxOfflineParallelDownloads {",
++            "if false {",
++            ("go", "test", "-timeout=30s", "-count=1", "./internal/routes", "-run", "^TestOfflineWorkerLimitKeepsOneSafeWorker$"),
++            "--- FAIL: TestOfflineWorkerLimitKeepsOneSafeWorker",
++        ),
++        Proof(
++            "offline-config-worker-cap",
++            Path("internal/config/config_validation.go"),
++            "if c.OfflineMode.ParallelDownloads > MaxOfflineParallelDownloads {",
++            "if false {",
++            ("go", "test", "-timeout=30s", "-count=1", "./internal/config", "-run", "^TestOfflineParallelDownloadsClampsToOneWorker$"),
++            "--- FAIL: TestOfflineParallelDownloadsClampsToOneWorker",
++        ),
++        Proof(
++            "webhook-rejects-before-payload",
++            Path("internal/webhooks/webhooks_dispatcher.go"),
++            "reservation, admitted := dispatcher.reserveWithContextAndTimeout(ctx, key, timeout)\n\t\tif !admitted {",
++            "_, _ = preparePayload(requestData, kioskVersion, event, eventID, viewData)\n\t\treservation, admitted := dispatcher.reserveWithContextAndTimeout(ctx, key, timeout)\n\t\tif !admitted {",
++            ("go", "test", "-timeout=30s", "-count=1", "./internal/webhooks", "-run", "^TestEnqueueWebhookRejectsBeforePayloadPreparation$"),
++            "a full dispatcher must reject before payload preparation",
++        ),
++        Proof(
++            "webhook-prepare-error-releases-slot",
++            Path("internal/webhooks/webhooks_dispatcher.go"),
++            "if err != nil {\n\t\t\tlog.Error(\"webhook marshal\", \"event\", event, \"eventID\", eventID, \"err\", err)\n\t\t\treservation.releaseSlot()\n\t\t\tcontinue\n\t\t}",
++            "if err != nil {\n\t\t\tlog.Error(\"webhook marshal\", \"event\", event, \"eventID\", eventID, \"err\", err)\n\t\t\tcontinue\n\t\t}",
++            ("go", "test", "-timeout=30s", "-count=1", "./internal/webhooks", "-run", "^TestWebhookPreparationErrorReleasesReservation$"),
++            "--- FAIL: TestWebhookPreparationErrorReleasesReservation",
++        ),
++        Proof(
++            "webhook-immutable-payload-before-return",
++            Path("internal/webhooks/webhooks_dispatcher.go"),
++            '\t\tjsonPayload, err := preparePayload(requestData, kioskVersion, event, eventID, viewData)\n\t\tif err != nil {\n\t\t\tlog.Error("webhook marshal", "event", event, "eventID", eventID, "err", err)\n\t\t\treservation.releaseSlot()\n\t\t\tcontinue\n\t\t}\n\t\tif err := reservation.ctx.Err(); err != nil {\n\t\t\tlogDispatchOutcome("webhook preparation", err, "event", event, "eventID", eventID, "host", parsedURL.Host)\n\t\t\treservation.releaseSlot()\n\t\t\tcontinue\n\t\t}\n\n\t\treservation.start(func(workerCtx context.Context) {\n\t\t\tdeliverWebhook(workerCtx, webhook, parsedURL, jsonPayload, event, eventID)\n\t\t})',
++            '\t\treservation.start(func(workerCtx context.Context) {\n\t\t\tjsonPayload, err := preparePayload(requestData, kioskVersion, event, eventID, viewData)\n\t\t\tif err != nil { return }\n\t\t\tdeliverWebhook(workerCtx, webhook, parsedURL, jsonPayload, event, eventID)\n\t\t})',
++            ("go", "test", "-timeout=30s", "-count=1", "./internal/webhooks", "-run", "^TestEnqueueWebhookWorkerUsesImmutableConfigSnapshot$"),
++            "enqueue returned before immutable payload preparation completed",
++        ),
++    )
++
++    results: list[dict[str, object]] = []
++    receipt = OUT / "source-negative-proof.json"
++    try:
++        for proof in proofs:
++            results.append(execute(proof))
++            receipt.write_text(json.dumps({"status": "in-progress", "proofs": results}, indent=2) + "\n")
++    except Exception:
++        receipt.write_text(json.dumps({"status": "failed", "proofs": results}, indent=2) + "\n")
++        raise
++
++    receipt.write_text(json.dumps({"status": "passed", "proofs": results}, indent=2) + "\n")
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/ci/verify-decode-frame-proof.py b/ci/verify-decode-frame-proof.py
+new file mode 100755
+index 0000000..ea7866b
+--- /dev/null
++++ b/ci/verify-decode-frame-proof.py
+@@ -0,0 +1,99 @@
++#!/usr/bin/env python3
++"""Source-only red/green proof for the bounded frame decoder.
++
++The lockfile-pinned esbuild binary bundles the dependency-free decoder fixtures;
++this deliberately avoids npx/tsx downloads or undeclared runtime dependencies.
++"""
++import hashlib
++import json
++import os
++import shutil
++import subprocess
++import sys
++import tempfile
++from pathlib import Path
++
++root = Path(sys.argv[1]).resolve()
++source = root / "frontend/src/ts/decode-frame.ts"
++tests = (
++    root / "frontend/tests/shared-playback-decode-behavior.test.ts",
++    root / "frontend/tests/shared-playback-decode-contract.test.ts",
++    root / "frontend/tests/shared-playback-decode-sync-contract.test.ts",
++)
++reports = Path(os.environ.get("DECODE_FRAME_PROOF_REPORT_DIR", root / "reports")).resolve()
++node_value = os.environ.get("NODE_BINARY") or shutil.which("node")
++if node_value is None:
++    raise RuntimeError("NODE_BINARY must name an executable Node runtime")
++node = Path(node_value)
++esbuild = Path(os.environ.get("ESBUILD_BINARY", root / "frontend/node_modules/.bin/esbuild"))
++if not node.is_file() or not node.stat().st_mode & 0o111:
++    raise RuntimeError("NODE_BINARY must name an executable Node runtime")
++if not esbuild.is_file() or not esbuild.stat().st_mode & 0o111:
++    raise RuntimeError("ESBUILD_BINARY must name lockfile-installed esbuild")
++reports.mkdir(parents=True, exist_ok=True)
++original = source.read_bytes()
++test_hashes = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in tests}
++needle = b'''try {
++        decoded = image.decode();
++    } catch {
++        decoded = Promise.reject(new Error("image decode invocation failed"));
++    }'''
++if original.count(needle) != 1:
++    raise AssertionError("sync-decode fallback mutation needle must occur exactly once")
++
++
++def run_fixtures(label: str) -> subprocess.CompletedProcess[str]:
++    # Contract fixtures resolve ../src from import.meta.url. Keep generated bundles
++    # beside the source tests so that contract remains true during proof execution.
++    output_dir = root / "frontend/tests"
++    outputs: list[Path] = []
++    try:
++        bundle_output: list[str] = []
++        bundle_errors: list[str] = []
++        for index, test in enumerate(tests):
++            with tempfile.NamedTemporaryFile(prefix=f".decode-frame-proof-{index}-", suffix=".mjs", dir=output_dir, delete=False) as handle:
++                output = Path(handle.name)
++            outputs.append(output)
++            bundle = subprocess.run(
++                [str(esbuild), str(test), "--bundle", "--platform=node", "--format=esm", f"--outfile={output}"],
++                cwd=root,
++                text=True,
++                capture_output=True,
++            )
++            bundle_output.append(bundle.stdout)
++            bundle_errors.append(bundle.stderr)
++            if bundle.returncode != 0:
++                result = bundle
++                break
++        else:
++            result = subprocess.run([str(node), "--test", *map(str, outputs)], cwd=root, text=True, capture_output=True)
++        result.stdout = "".join(bundle_output) + result.stdout
++        result.stderr = "".join(bundle_errors) + result.stderr
++        (reports / f"decode-frame-{label}.log").write_text(result.stdout + result.stderr)
++        return result
++    finally:
++        for output in outputs:
++            output.unlink(missing_ok=True)
++
++try:
++    source.write_bytes(original.replace(needle, b"decoded = image.decode();"))
++    red = run_fixtures("red")
++    if red.returncode == 0 or "sync throw falls back to load" not in red.stdout + red.stderr:
++        raise AssertionError("removing the sync fallback did not fail its behavioral fixture")
++finally:
++    source.write_bytes(original)
++if source.read_bytes() != original:
++    raise AssertionError("decoder proof did not restore exact source bytes")
++green = run_fixtures("green")
++if green.returncode != 0:
++    raise AssertionError("restored decoder did not pass its focused tests")
++if {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in tests} != test_hashes:
++    raise AssertionError("proof changed a test file")
++(reports / "decode-frame-proof.json").write_text(json.dumps({
++    "passed": True,
++    "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
++    "test_hashes": test_hashes,
++    "runner": {"node": str(node), "esbuild": str(esbuild)},
++    "red": "removing sync decode fallback failed the sync-throw behavioral fixture",
++    "green": "restored source passed all bundled decoder fixtures",
++}, indent=2) + "\n")
+diff --git a/ci/verify-performance-finalization-proof.py b/ci/verify-performance-finalization-proof.py
+new file mode 100755
+index 0000000..3dfbc24
+--- /dev/null
++++ b/ci/verify-performance-finalization-proof.py
+@@ -0,0 +1,33 @@
++#!/usr/bin/env python3
++"""Source-only red/green proof for final performance report status handling."""
++from __future__ import annotations
++
++import hashlib
++from pathlib import Path
++import subprocess
++import sys
++
++root = Path(__file__).resolve().parent.parent
++source = root / "ci/shared-playback-report.mjs"
++test = root / "ci/performance-finalization-contract.test.py"
++original = source.read_bytes()
++test_hash = hashlib.sha256(test.read_bytes()).hexdigest()
++needle = b"requestedStatus === 'failed' ||"
++if original.count(needle) != 1:
++    raise AssertionError("report status mutation needle must occur exactly once")
++
++try:
++    source.write_bytes(original.replace(needle, b"false ||"))
++    red = subprocess.run([sys.executable, str(test)], cwd=root, text=True, capture_output=True)
++    if red.returncode == 0 or "guard-derived failure must govern summary status" not in red.stdout + red.stderr:
++        raise AssertionError("removing requested failure handling did not fail its behavioral fixture")
++finally:
++    source.write_bytes(original)
++if source.read_bytes() != original:
++    raise AssertionError("proof did not restore exact report source bytes")
++green = subprocess.run([sys.executable, str(test)], cwd=root, text=True, capture_output=True)
++if green.returncode != 0:
++    raise AssertionError(green.stdout + green.stderr)
++if hashlib.sha256(test.read_bytes()).hexdigest() != test_hash:
++    raise AssertionError("proof changed its test fixture")
++print("performance finalization source proof passed")
+diff --git a/ci/verify-shared-playback-decode-proof.py b/ci/verify-shared-playback-decode-proof.py
+new file mode 100755
+index 0000000..c21b290
+--- /dev/null
++++ b/ci/verify-shared-playback-decode-proof.py
+@@ -0,0 +1,8 @@
++#!/usr/bin/env python3
++"""Compatibility entrypoint for the decoder proof after helper extraction."""
++import subprocess
++import sys
++from pathlib import Path
++
++root = Path(sys.argv[1]).resolve()
++subprocess.run([sys.executable, str(root / "ci/verify-decode-frame-proof.py"), str(root)], check=True)
+diff --git a/ci/verify-shared-playback-import-proof.py b/ci/verify-shared-playback-import-proof.py
+new file mode 100755
+index 0000000..f5f3942
+--- /dev/null
++++ b/ci/verify-shared-playback-import-proof.py
+@@ -0,0 +1,32 @@
++#!/usr/bin/env python3
++"""Source-only red/green proof for the shared-playback TypeScript import."""
++from __future__ import annotations
++
++import hashlib
++from pathlib import Path
++import subprocess
++import sys
++
++root = Path(__file__).resolve().parent.parent
++source = root / "frontend/src/ts/shared-playback.ts"
++test = root / "ci/shared-playback-import-contract.test.py"
++original = source.read_bytes()
++test_hash = hashlib.sha256(test.read_bytes()).hexdigest()
++needle = b"from './decode-frame';"
++if original.count(needle) != 1:
++    raise AssertionError("extensionless decoder import proof needle must occur exactly once")
++try:
++    source.write_bytes(original.replace(needle, b"from './decode-frame.ts';"))
++    red = subprocess.run([sys.executable, str(test)], cwd=root, text=True, capture_output=True)
++    if red.returncode == 0 or "extensionless production decoder import" not in red.stdout + red.stderr:
++        raise AssertionError("restoring the .ts extension did not fail its guarding contract")
++finally:
++    source.write_bytes(original)
++if source.read_bytes() != original:
++    raise AssertionError("import proof did not restore exact source bytes")
++green = subprocess.run([sys.executable, str(test)], cwd=root, text=True, capture_output=True)
++if green.returncode != 0:
++    raise AssertionError(green.stdout + green.stderr)
++if hashlib.sha256(test.read_bytes()).hexdigest() != test_hash:
++    raise AssertionError("import proof changed its guarding test")
++print("shared playback import source proof passed")
+diff --git a/frontend/tests/shared-playback-decode-behavior.test.ts b/frontend/tests/shared-playback-decode-behavior.test.ts
+new file mode 100644
+index 0000000..3480dac
+--- /dev/null
++++ b/frontend/tests/shared-playback-decode-behavior.test.ts
+@@ -0,0 +1,112 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++import { decodeFrame } from "../src/ts/decode-frame.ts";
++
++(globalThis as any).performance = { now: () => 0 };
++let timers = new Map<number, () => void>();
++let nextTimer = 1;
++(globalThis as any).window = {
++    setTimeout: (callback: () => void) => {
++        const id = nextTimer++;
++        timers.set(id, callback);
++        return id;
++    },
++    clearTimeout: (id: number) => timers.delete(id),
++};
++
++function image(decode: () => Promise<void>) {
++    const listeners = new Map<string, () => void>();
++    return {
++        decode,
++        complete: false,
++        naturalWidth: 0,
++        naturalHeight: 0,
++        addEventListener: (name: string, callback: () => void) => listeners.set(name, callback),
++        removeEventListener: (name: string) => listeners.delete(name),
++        fire: (name: string) => listeners.get(name)?.(),
++        listenerCount: () => listeners.size,
++    };
++}
++
++function frame(...images: any[]) {
++    return { querySelectorAll: () => images } as any;
++}
++
++test("sync throw falls back to load", async () => {
++    const current = image(() => { throw new Error("sync"); });
++    const promise = decodeFrame(frame(current), new AbortController().signal, 100);
++    current.complete = true;
++    current.naturalWidth = 1;
++    current.fire("load");
++    await promise;
++});
++
++test("completed valid image skips a non-settling decode", async () => {
++    let calls = 0;
++    const current = image(() => {
++        calls += 1;
++        return new Promise<void>(() => {});
++    });
++    current.complete = true;
++    current.naturalWidth = 1;
++    await decodeFrame(frame(current), new AbortController().signal, 100);
++    assert.equal(calls, 0, "a valid completed image has no decode wait");
++});
++
++test("completed broken image rejects without waiting for an event that already passed", async () => {
++    const current = image(() => new Promise<void>(() => {}));
++    current.complete = true;
++    await assert.rejects(decodeFrame(frame(current), new AbortController().signal, 100), /image decode failed/);
++});
++
++test("abort and timeout settle a never-decoding image", async () => {
++    let current = image(() => new Promise<void>(() => {}));
++    const controller = new AbortController();
++    const aborted = decodeFrame(frame(current), controller.signal, 100);
++    controller.abort();
++    await assert.rejects(aborted, /aborted/);
++
++    current = image(() => new Promise<void>(() => {}));
++    const timedOut = decodeFrame(frame(current), new AbortController().signal, 100);
++    [...timers.values()].pop()?.();
++    await assert.rejects(timedOut, /timed out/);
++});
++
++test("decode rejection falls back to load and consumes late rejection", async () => {
++    let reject!: () => void;
++    const abortedImage = image(() => new Promise<void>((_, rejectDecode) => { reject = rejectDecode; }));
++    const controller = new AbortController();
++    const aborted = decodeFrame(frame(abortedImage), controller.signal, 100);
++    controller.abort();
++    await assert.rejects(aborted, /aborted/);
++    reject();
++    await Promise.resolve();
++
++    const fallbackImage = image(() => Promise.reject(new Error("decode")));
++    const fallback = decodeFrame(frame(fallbackImage), new AbortController().signal, 100);
++    fallbackImage.complete = true;
++    fallbackImage.naturalWidth = 1;
++    await Promise.resolve();
++    fallbackImage.fire("load");
++    await fallback;
++});
++
++test("fallback listeners clean up and an abort between stages settles", async () => {
++    let reject!: () => void;
++    const current = image(() => new Promise<void>((_, rejectDecode) => { reject = rejectDecode; }));
++    const controller = new AbortController();
++    const pending = decodeFrame(frame(current), controller.signal, 100);
++    reject();
++    for (let index = 0; index < 4; index += 1) await Promise.resolve();
++    controller.abort();
++    await assert.rejects(pending, /aborted/);
++    assert.equal(current.listenerCount(), 0, "abort removes fallback load and error listeners");
++});
++
++test("a failed image aborts sibling waits and cleans their listeners", async () => {
++    const broken = image(() => new Promise<void>(() => {}));
++    broken.complete = true;
++    const sibling = image(() => new Promise<void>(() => {}));
++    await assert.rejects(decodeFrame(frame(broken, sibling), new AbortController().signal, 100), /image decode failed/);
++    assert.equal(sibling.listenerCount(), 0, "the rejected sibling does not retain an abort listener or deadline");
++});
+diff --git a/frontend/tests/shared-playback-decode-contract.test.ts b/frontend/tests/shared-playback-decode-contract.test.ts
+new file mode 100644
+index 0000000..96089cf
+--- /dev/null
++++ b/frontend/tests/shared-playback-decode-contract.test.ts
+@@ -0,0 +1,12 @@
++import assert from "node:assert/strict";
++import fs from "node:fs";
++import test from "node:test";
++
++test("image decode uses the existing abort signal and shared deadline helper", () => {
++    const source = fs.readFileSync(new URL("../src/ts/decode-frame.ts", import.meta.url), "utf8");
++    assert.match(source, /void decoded\.catch\(\(\) => undefined\)/);
++    assert.match(source, /signal\.addEventListener\("abort", abort, \{ once: true \}\)/);
++    assert.match(source, /window\.setTimeout\(\(\) => \{/);
++    assert.match(source, /reject\(new Error\("image decode timed out"\)\)/);
++    assert.match(source, /const remaining = timeoutMs - \(performance\.now\(\) - started\)/);
++});
+diff --git a/frontend/tests/shared-playback-decode-sync-contract.test.ts b/frontend/tests/shared-playback-decode-sync-contract.test.ts
+new file mode 100644
+index 0000000..2f76911
+--- /dev/null
++++ b/frontend/tests/shared-playback-decode-sync-contract.test.ts
+@@ -0,0 +1,9 @@
++import assert from "node:assert/strict";
++import fs from "node:fs";
++import test from "node:test";
++
++test("sync decode throws retain fallback promise path", () => {
++    const source = fs.readFileSync(new URL("../src/ts/decode-frame.ts", import.meta.url), "utf8");
++    assert.match(source, /try \{\s*decoded = image\.decode\(\);\s*\} catch/);
++    assert.match(source, /Promise\.reject\(new Error\("image decode invocation failed"\)\)/);
++});
+diff --git a/frontend/tests/shared-playback.test.ts b/frontend/tests/shared-playback.test.ts
+index 0f879cf..763ac96 100644
+--- a/frontend/tests/shared-playback.test.ts
++++ b/frontend/tests/shared-playback.test.ts
+@@ -4,6 +4,7 @@ import test from "node:test";
+ import {
+     SharedPlaybackController,
+     type SharedPlaybackAction,
++    type SharedPlaybackCommandResult,
+     type SharedPlaybackPorts,
+     type SharedPlaybackState,
+ } from "../src/ts/shared-playback.ts";
+@@ -20,6 +21,8 @@ async function settle(): Promise<void> {
+     for (let i = 0; i < 8; i++) await Promise.resolve();
+ }
+ 
++const commandResult = (value: SharedPlaybackState, conflict = false): SharedPlaybackCommandResult => ({ state: value, conflict });
++
+ function harness(states: Array<SharedPlaybackState | Error>) {
+     let now = 1_000;
+     let nextTimer = 1;
+@@ -28,7 +31,7 @@ function harness(states: Array<SharedPlaybackState | Error>) {
+     const prepared: string[] = [];
+     const statuses: string[] = [];
+     const commands: Array<{ action: SharedPlaybackAction; version: number; sessionId: string }> = [];
+-    let commandResult: SharedPlaybackState | Error = state({ version: 2 });
++    let commandResults: Array<SharedPlaybackCommandResult | Error> = [commandResult(state({ version: 2 }))];
+     const ports: SharedPlaybackPorts = {
+         now: () => now,
+         setTimer: (fn, delay) => {
+@@ -44,8 +47,9 @@ function harness(states: Array<SharedPlaybackState | Error>) {
+         },
+         sendCommand: async (action, version, sessionId) => {
+             commands.push({ action, version, sessionId });
+-            if (commandResult instanceof Error) throw commandResult;
+-            return commandResult;
++            const result = commandResults.shift() ?? new Error("unexpected command");
++            if (result instanceof Error) throw result;
++            return result;
+         },
+         prepare: async (value) => { prepared.push(value.id); return { id: value.id }; },
+         render: (value) => rendered.push(value.id),
+@@ -55,7 +59,7 @@ function harness(states: Array<SharedPlaybackState | Error>) {
+     return {
+         controller: new SharedPlaybackController(ports), commands, prepared, rendered, statuses, timers,
+         setNow: (value: number) => { now = value; },
+-        setCommandResult: (value: SharedPlaybackState | Error) => { commandResult = value; },
++        setCommandResults: (values: Array<SharedPlaybackCommandResult | Error>) => { commandResults = values; },
+         runNextTimer: () => { const item = timers.entries().next().value; if (item) { timers.delete(item[0]); item[1](); } },
+     };
+ }
+@@ -96,7 +100,7 @@ test("a failing next prefetch does not delay the decoded current photo", async (
+     const controller = new SharedPlaybackController({
+         now: () => 1_000,
+         setTimer: () => 1 as unknown as ReturnType<typeof setTimeout>, clearTimer: () => undefined,
+-        fetchState: async () => state(), sendCommand: async () => state(),
++        fetchState: async () => state(), sendCommand: async () => commandResult(state()),
+         prepare: async (value) => {
+             if (value.id === "b") throw new Error("next unavailable");
+             return { id: value.id };
+@@ -125,7 +129,7 @@ test("stale fetches, hidden pages, and disposal cannot render newer work", async
+     const controller = new SharedPlaybackController({
+         now: () => 0, setTimer: () => 1 as unknown as ReturnType<typeof setTimeout>, clearTimer: () => undefined,
+         fetchState: () => new Promise((resolve) => { resolveState = resolve; }),
+-        sendCommand: async () => state(), prepare: async (value) => ({ id: value.id }),
++        sendCommand: async () => commandResult(state()), prepare: async (value) => ({ id: value.id }),
+         render: () => { rendered++; }, status: () => undefined, paused: () => undefined,
+     });
+     controller.start(); controller.setVisible(false); resolveState(state()); await settle();
+@@ -147,7 +151,7 @@ test("a late lower-version poll cannot replace a command response", async () =>
+             calls++;
+             return calls === 1 ? Promise.resolve(state()) : new Promise((resolve) => { resolvePoll = resolve; });
+         },
+-        sendCommand: async () => state({ version: 2, current: slide("b"), next: slide("c", 2_000) }),
++        sendCommand: async () => commandResult(state({ version: 2, current: slide("b"), next: slide("c", 2_000) })),
+         prepare: async (value) => ({ id: value.id }), render: (value) => rendered.push(value.id),
+         status: () => undefined, paused: () => undefined,
+     });
+@@ -167,3 +171,96 @@ test("duplicate commands use one compare-and-swap version and session resets dec
+     assert.deepEqual(h.prepared, ["a", "b", "x", "y"]);
+     assert.deepEqual(h.rendered, ["a", "x"]);
+ });
++
++test("confirmed pause and resume conflicts retry once with the authoritative version", async () => {
++    const h = harness([state()]);
++    h.controller.start(); await settle();
++
++    h.setCommandResults([
++        commandResult(state({ version: 2 }), true),
++        commandResult(state({ version: 3, paused: true })),
++    ]);
++    h.controller.command("pause"); await settle();
++    assert.deepEqual(h.commands, [
++        { action: "pause", version: 1, sessionId: "one" },
++        { action: "pause", version: 2, sessionId: "one" },
++    ]);
++    assert.equal(h.controller.isPaused(), true);
++
++    h.setCommandResults([
++        commandResult(state({ version: 4, paused: true }), true),
++        commandResult(state({ version: 5, paused: false })),
++    ]);
++    h.controller.command("resume"); await settle();
++    assert.deepEqual(h.commands.slice(2), [
++        { action: "resume", version: 3, sessionId: "one" },
++        { action: "resume", version: 4, sessionId: "one" },
++    ]);
++    assert.equal(h.controller.isPaused(), false);
++});
++
++test("pause conflict retries at most once and stops when the returned state is already paused", async () => {
++    const h = harness([state()]);
++    h.controller.start(); await settle();
++
++    h.setCommandResults([
++        commandResult(state({ version: 2 }), true),
++        commandResult(state({ version: 3 }), true),
++    ]);
++    h.controller.command("pause"); await settle();
++    assert.deepEqual(h.commands, [
++        { action: "pause", version: 1, sessionId: "one" },
++        { action: "pause", version: 2, sessionId: "one" },
++    ]);
++
++    h.setCommandResults([commandResult(state({ version: 4, paused: true }), true)]);
++    h.controller.command("pause"); await settle();
++    assert.deepEqual(h.commands.slice(2), [{ action: "pause", version: 3, sessionId: "one" }]);
++    assert.equal(h.controller.isPaused(), true);
++});
++
++test("conflicts never retry next or previous and network failures send one command", async () => {
++    const h = harness([state()]);
++    h.controller.start(); await settle();
++
++    h.setCommandResults([commandResult(state({ version: 2 }), true)]);
++    h.controller.command("next"); await settle();
++    h.setCommandResults([commandResult(state({ version: 3 }), true)]);
++    h.controller.command("previous"); await settle();
++    h.setCommandResults([new Error("offline")]);
++    h.controller.command("pause"); await settle();
++
++    assert.deepEqual(h.commands, [
++        { action: "next", version: 1, sessionId: "one" },
++        { action: "previous", version: 2, sessionId: "one" },
++        { action: "pause", version: 3, sessionId: "one" },
++    ]);
++});
++
++test("session changes and hidden or disposed controllers do not retry a conflict", async () => {
++    const changedSession = harness([state()]);
++    changedSession.controller.start(); await settle();
++    changedSession.setCommandResults([commandResult(state({ sessionId: "two", version: 1 }), true)]);
++    changedSession.controller.command("pause"); await settle();
++    assert.equal(changedSession.commands.length, 1);
++
++    for (const action of ["hidden", "disposed"] as const) {
++        let resolveCommand!: (value: SharedPlaybackCommandResult) => void;
++        const commands: SharedPlaybackAction[] = [];
++        const controller = new SharedPlaybackController({
++            now: () => 1_000,
++            setTimer: () => 1 as unknown as ReturnType<typeof setTimeout>, clearTimer: () => undefined,
++            fetchState: async () => state(),
++            sendCommand: async (value) => {
++                commands.push(value);
++                return new Promise((resolve) => { resolveCommand = resolve; });
++            },
++            prepare: async (value) => ({ id: value.id }), render: () => undefined,
++            status: () => undefined, paused: () => undefined,
++        });
++        controller.start(); await settle(); controller.command("pause");
++        if (action === "hidden") controller.setVisible(false); else controller.dispose();
++        resolveCommand(commandResult(state({ version: 2 }), true)); await settle();
++        assert.deepEqual(commands, ["pause"]);
++    }
++});
+diff --git a/internal/config/config_excluded_assets_test.go b/internal/config/config_excluded_assets_test.go
+new file mode 100644
+index 0000000..e8ecc8e
+--- /dev/null
++++ b/internal/config/config_excluded_assets_test.go
+@@ -0,0 +1,115 @@
++package config
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/labstack/echo/v5"
++	"github.com/stretchr/testify/require"
++)
++
++func TestExcludedAssetsRemainServerPolicyWhenURLOverridesAreApplied(t *testing.T) {
++	cfg := New()
++	cfg.ExcludedAssets = []string{"protected-asset"}
++	req := httptest.NewRequest(http.MethodGet, "/?excluded_assets=none&excluded_asset=other-asset", nil)
++	context := echo.New().NewContext(req, httptest.NewRecorder())
++
++	require.NoError(t, cfg.ConfigWithOverrides(context.QueryParams(), context))
++	require.Equal(t, []string{"protected-asset"}, cfg.ExcludedAssets)
++}
++
++func TestExcludedAssetsRemainServerPolicyAcrossJSONBinding(t *testing.T) {
++	for _, body := range []string{
++		`{"excludedAssets":[]}`,
++		`{"excludedAssets":["request-injected-asset","request-injected-second"]}`,
++	} {
++		// Two elements force encoding/json to exercise the shared backing-array
++		// overwrite path, rather than only replacing a zero-length destination.
++		baseline := []string{"protected-asset", "protected-second"}
++		cfg := New()
++		cfg.ExcludedAssets = append([]string(nil), baseline...)
++		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
++		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
++		context := echo.New().NewContext(req, httptest.NewRecorder())
++
++		require.NoError(t, cfg.ConfigWithOverrides(context.QueryParams(), context), body)
++		require.Equal(t, baseline, cfg.ExcludedAssets, body)
++		require.Equal(t, []string{"protected-asset", "protected-second"}, baseline, "binding must not mutate the cloned baseline")
++	}
++}
++
++func TestExcludedAssetsRemainServerPolicyAfterMalformedJSONBinding(t *testing.T) {
++	baseline := []string{"protected-asset", "protected-second"}
++	cfg := New()
++	cfg.ExcludedAssets = append([]string(nil), baseline...)
++	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"excludedAssets":["request-injected",42]}`))
++	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
++	context := echo.New().NewContext(req, httptest.NewRecorder())
++
++	require.Error(t, cfg.ConfigWithOverrides(context.QueryParams(), context))
++	require.Equal(t, baseline, cfg.ExcludedAssets, "a partial bind must restore the full hard policy")
++}
++
++func TestExcludedAlbumsRetainConfiguredBaselineAcrossOverrides(t *testing.T) {
++	tests := []struct {
++		name   string
++		method string
++		target string
++		body   string
++		want   []string
++	}{
++		{name: "query none", method: http.MethodGet, target: "/?excluded_album=none", want: []string{"protected-album"}},
++		{name: "query addition", method: http.MethodGet, target: "/?exclude_album=request-album", want: []string{"protected-album", "request-album"}},
++		{name: "JSON clear", method: http.MethodPost, target: "/", body: `{"excluded_albums":[]}`, want: []string{"protected-album"}},
++		{name: "JSON replacement", method: http.MethodPost, target: "/", body: `{"excluded_albums":["request-album"]}`, want: []string{"protected-album", "request-album"}},
++	}
++
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			cfg := New()
++			cfg.ExcludedAlbums = []string{"protected-album"}
++			req := httptest.NewRequest(test.method, test.target, strings.NewReader(test.body))
++			if test.body != "" {
++				req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
++			}
++			context := echo.New().NewContext(req, httptest.NewRecorder())
++
++			require.NoError(t, cfg.ConfigWithOverrides(context.QueryParams(), context))
++			require.Equal(t, test.want, cfg.ExcludedAlbums)
++		})
++	}
++}
++
++func TestExcludedAssetsFingerprintIsOrderIndependentAndContentSensitive(t *testing.T) {
++	left := Config{ExcludedAssets: []string{"asset-b", "asset-a"}}
++	right := Config{ExcludedAssets: []string{"asset-a", "asset-b"}}
++	different := Config{ExcludedAssets: []string{"asset-a", "asset-c"}}
++
++	require.Equal(t, left.ExcludedAssetsFingerprint(), right.ExcludedAssetsFingerprint())
++	require.NotEqual(t, left.ExcludedAssetsFingerprint(), different.ExcludedAssetsFingerprint())
++}
++
++func TestExcludedAssetsAreRedactedFromSerializedConfig(t *testing.T) {
++	config := Config{ExcludedAssets: []string{"hard-excluded-private-id"}}
++
++	serialized := config.SanitizedYaml()
++	require.NotContains(t, serialized, "hard-excluded-private-id")
++}
++
++func TestDebugConfigStringRedactsHardExclusionsAndSecrets(t *testing.T) {
++	config := Config{
++		ExcludedAssets:     []string{"hard-excluded-private-id"},
++		ImmichAPIKey:       "private-api-key",
++		ImmichUsersAPIKeys: map[string]string{"private-user": "private-user-key"},
++	}
++	config.Kiosk.DebugVerbose = true
++
++	serialized := config.String()
++	for _, privateValue := range []string{"hard-excluded-private-id", "private-api-key", "private-user", "private-user-key"} {
++		require.NotContains(t, serialized, privateValue)
++	}
++	require.Contains(t, serialized, "excludedAssets", "the public config shape remains useful for debugging")
++	require.Contains(t, serialized, "REDACTED", "redacted fields retain the existing marker")
++}
+diff --git a/internal/config/config_hard_exclusion_policy_test.go b/internal/config/config_hard_exclusion_policy_test.go
+new file mode 100644
+index 0000000..5cefe00
+--- /dev/null
++++ b/internal/config/config_hard_exclusion_policy_test.go
+@@ -0,0 +1,50 @@
++package config
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/labstack/echo/v5"
++	"github.com/stretchr/testify/require"
++)
++
++func TestSnapshotSharesImmutableHardExclusionPolicyAndRestoresBindBaseline(t *testing.T) {
++	cfg := New()
++	cfg.ExcludedAssets = []string{"protected", "protected-second"}
++	cfg.compileHardExclusions()
++	snapshot := cfg.Snapshot()
++	require.Same(t, cfg.hardExclusions, snapshot.hardExclusions)
++	require.Same(t, &cfg.ExcludedAssets[0], &snapshot.ExcludedAssets[0])
++
++	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"excludedAssets":["request-overwrite","request-overwrite-second"]}`))
++	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
++	context := echo.New().NewContext(req, httptest.NewRecorder())
++	require.NoError(t, snapshot.ConfigWithOverrides(context.QueryParams(), context))
++	require.True(t, snapshot.IsHardExcludedAsset("protected"))
++	require.Equal(t, []string{"protected", "protected-second"}, snapshot.ExcludedAssets)
++	require.Equal(t, []string{"protected", "protected-second"}, cfg.ExcludedAssets, "request binding must not overwrite the loaded shared backing array")
++}
++
++func TestReloadReplacementKeepsExistingHardExclusionSnapshotStable(t *testing.T) {
++	cfg := New()
++	cfg.ExcludedAssets = []string{"old-protected", "old-second"}
++	cfg.compileHardExclusions()
++	oldSnapshot := cfg.Snapshot()
++
++	replacement := New()
++	replacement.ExcludedAssets = []string{"new-protected"}
++	replacement.compileHardExclusions()
++	// Match reloadConfig's replacement operation while retaining its stable lock.
++	replacement.mu = cfg.mu
++	cfg.mu.Lock()
++	*cfg = *replacement
++	cfg.mu.Unlock()
++
++	require.Equal(t, []string{"old-protected", "old-second"}, oldSnapshot.ExcludedAssets)
++	require.True(t, oldSnapshot.IsHardExcludedAsset("old-protected"))
++	require.False(t, oldSnapshot.IsHardExcludedAsset("new-protected"))
++	require.Equal(t, []string{"new-protected"}, cfg.ExcludedAssets)
++	require.True(t, cfg.IsHardExcludedAsset("new-protected"))
++}
+diff --git a/internal/config/config_offline_parallel_test.go b/internal/config/config_offline_parallel_test.go
+new file mode 100644
+index 0000000..490ff00
+--- /dev/null
++++ b/internal/config/config_offline_parallel_test.go
+@@ -0,0 +1,21 @@
++package config
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestOfflineParallelDownloadsClampsToOneWorker(t *testing.T) {
++	for _, configured := range []int{-4, 0, 1, 2, 64} {
++		t.Run("configured", func(t *testing.T) {
++			c := New()
++			c.OfflineMode.Enabled = true
++			c.OfflineMode.ParallelDownloads = configured
++
++			c.checkOffline()
++
++			require.Equal(t, MaxOfflineParallelDownloads, c.OfflineMode.ParallelDownloads)
++		})
++	}
++}
+diff --git a/internal/immich/immich_album_cursor_test.go b/internal/immich/immich_album_cursor_test.go
+new file mode 100644
+index 0000000..78fa2bf
+--- /dev/null
++++ b/internal/immich/immich_album_cursor_test.go
+@@ -0,0 +1,472 @@
++package immich
++
++import (
++	"context"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/cache"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/stretchr/testify/require"
++)
++
++func TestAlbumPageCursorStartsExplicitlyAndWrapsAtTerminalPage(t *testing.T) {
++	now := time.Unix(2_000, 0)
++	registry := newAlbumPageCursorRegistry(2, func() time.Time { return now })
++	key := albumPageCursorKey("album")
++	require.Equal(t, metadataFirstPage, registry.page(key))
++	require.True(t, registry.advanceIfCurrent(key, registry.position(key), true))
++	require.Equal(t, metadataFirstPage+1, registry.page(key))
++	require.True(t, registry.advanceIfCurrent(key, registry.position(key), false))
++	require.Equal(t, metadataFirstPage, registry.page(key))
++}
++
++func TestAlbumPageCursorCanReachPastTheFormerAggregateRequestLimit(t *testing.T) {
++	registry := newAlbumPageCursorRegistry(2, time.Now)
++	key := albumPageCursorKey("older-album")
++	registry.position(key)
++	for range MaxPages + 1 {
++		require.True(t, registry.advanceIfCurrent(key, registry.position(key), true))
++	}
++	require.Equal(t, metadataFirstPage+MaxPages+1, registry.page(key), "one-page requests must retain eventual access to older album pages")
++}
++
++func TestAlbumPageCursorSeparatesSelectionIdentitiesAndRetainsSortedResidual(t *testing.T) {
++	now := time.Unix(2_000, 0)
++	registry := newAlbumPageCursorRegistry(4, func() time.Time { return now })
++	config := config.Config{ImmichURL: "https://photos.example", AlbumOrder: string(Asc)}
++	first := albumPageKey(config, "album", false, "display-one")
++	second := albumPageKey(config, "album", false, "display-two")
++	require.NotEqual(t, first, second, "different displays must not consume each other's uncached page position")
++	firstLease := registry.position(first)
++	registry.position(second)
++	require.True(t, registry.advanceCandidateIfCurrent(first, firstLease, 1, 3, true))
++	lease := registry.position(first)
++	require.Equal(t, metadataFirstPage, lease.page)
++	require.Equal(t, 1, lease.offset)
++	lease = registry.position(second)
++	require.Equal(t, metadataFirstPage, lease.page)
++	require.Zero(t, lease.offset)
++}
++
++func TestAlbumPageCursorRejectsStaleLeaseAfterAnotherSelectionAdvances(t *testing.T) {
++	registry := newAlbumPageCursorRegistry(2, time.Now)
++	key := albumPageCursorKey("same-selection")
++	first := registry.position(key)
++	require.True(t, registry.advanceCandidateIfCurrent(key, first, 2, 2, true))
++	require.False(t, registry.advanceCandidateIfCurrent(key, first, 1, 2, true), "a stale page-one completion must not alter page two")
++	current := registry.position(key)
++	require.Equal(t, metadataFirstPage+1, current.page)
++	require.Zero(t, current.offset)
++}
++
++func TestAlbumPageCursorLeaseNeverReusesVersionAfterClearOrEviction(t *testing.T) {
++	t.Run("clear", func(t *testing.T) {
++		registry := newAlbumPageCursorRegistry(2, time.Now)
++		key := albumPageCursorKey("same-selection")
++		stale := registry.position(key)
++		registry.clear()
++		recreated := registry.position(key)
++		require.NotEqual(t, stale.version, recreated.version)
++		require.False(t, registry.advanceIfCurrent(key, stale, true))
++	})
++	t.Run("eviction", func(t *testing.T) {
++		registry := newAlbumPageCursorRegistry(1, time.Now)
++		key := albumPageCursorKey("same-selection")
++		stale := registry.position(key)
++		registry.position(albumPageCursorKey("evict-this-entry"))
++		recreated := registry.position(key)
++		require.NotEqual(t, stale.version, recreated.version)
++		require.False(t, registry.advanceIfCurrent(key, stale, true))
++	})
++}
++
++func TestAssetFromAlbumSerializesConcurrentCachedResiduals(t *testing.T) {
++	cache.Initialize()
++	cache.Flush()
++	t.Cleanup(cache.Flush)
++
++	firstStarted := make(chan struct{})
++	releaseFirst := make(chan struct{})
++	secondRequest := make(chan struct{}, 1)
++	var calls atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		call := calls.Add(1)
++		if call == 1 {
++			close(firstStarted)
++			<-releaseFirst
++		} else {
++			secondRequest <- struct{}{}
++		}
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"first","type":"IMAGE","tags":[]},{"id":"second","type":"IMAGE","tags":[]}],"nextPage":"","total":2}}`))
++	}))
++	defer server.Close()
++	var workers sync.WaitGroup
++	defer func() {
++		select {
++		case <-releaseFirst:
++		default:
++			close(releaseFirst)
++		}
++		done := make(chan struct{})
++		go func() { workers.Wait(); close(done) }()
++		select {
++		case <-done:
++		case <-time.After(time.Second):
++			t.Errorf("album selection workers did not drain")
++		}
++	}()
++
++	cfg := config.Config{ImmichURL: server.URL, AlbumOrder: string(Asc), Kiosk: config.KioskSettings{Cache: true, FetchedAssetsSize: 2}}
++	randomCfg := cfg
++	randomCfg.AlbumOrder = string(Rand)
++	require.Equal(t, albumSelectionGateKey(cfg, "album", "display"), albumSelectionGateKey(randomCfg, "album", "display"), "ascending and random presentation share the upstream ascending metadata cache")
++	firstDone := make(chan error, 1)
++	first := New(context.Background(), cfg)
++	workers.Add(1)
++	go func() {
++		defer workers.Done()
++		firstDone <- first.AssetFromAlbum("album", "first", "display")
++	}()
++	<-firstStarted
++	secondDone := make(chan error, 1)
++	second := New(context.Background(), randomCfg)
++	workers.Add(1)
++	go func() {
++		defer workers.Done()
++		secondDone <- second.AssetFromAlbum("album", "second", "display")
++	}()
++	select {
++	case <-secondRequest:
++		t.Fatal("same-key selection reached the API before the first residual was committed")
++	case <-time.After(100 * time.Millisecond):
++	}
++	close(releaseFirst)
++	require.NoError(t, <-firstDone)
++	require.NoError(t, <-secondDone)
++	require.NotEqual(t, first.ID, second.ID, "concurrent callers must consume distinct cached residuals")
++	require.EqualValues(t, 1, calls.Load(), "the second selection must use the committed residual")
++}
++
++func TestAlbumSelectionGateRejectsCanceledWaiter(t *testing.T) {
++	gates := newAlbumSelectionGates()
++	release, err := gates.acquire(context.Background(), albumPageCursorKey("same-selection"))
++	require.NoError(t, err)
++	defer release()
++
++	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
++	defer cancel()
++	blockedRelease, err := gates.acquire(ctx, albumPageCursorKey("same-selection"))
++	require.Nil(t, blockedRelease)
++	require.ErrorIs(t, err, context.DeadlineExceeded)
++}
++
++func TestAssetFromAlbumCancelsWhileWaitingForSameKeyGate(t *testing.T) {
++	cache.Initialize()
++	cache.Flush()
++	t.Cleanup(cache.Flush)
++
++	firstStarted := make(chan struct{})
++	releaseFirst := make(chan struct{})
++	var calls atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		close(firstStarted)
++		<-releaseFirst
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"first","type":"IMAGE","tags":[]}],"nextPage":"","total":1}}`))
++	}))
++	defer server.Close()
++	var workers sync.WaitGroup
++	defer func() {
++		select {
++		case <-releaseFirst:
++		default:
++			close(releaseFirst)
++		}
++		done := make(chan struct{})
++		go func() { workers.Wait(); close(done) }()
++		select {
++		case <-done:
++		case <-time.After(time.Second):
++			t.Errorf("album selection worker did not drain")
++		}
++	}()
++
++	cfg := config.Config{ImmichURL: server.URL, AlbumOrder: string(Asc), Kiosk: config.KioskSettings{Cache: true, FetchedAssetsSize: 1}}
++	firstDone := make(chan error, 1)
++	first := New(context.Background(), cfg)
++	workers.Add(1)
++	go func() {
++		defer workers.Done()
++		firstDone <- first.AssetFromAlbum("album", "first", "display")
++	}()
++	<-firstStarted
++
++	waitingCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
++	defer cancel()
++	second := New(waitingCtx, cfg)
++	err := second.AssetFromAlbum("album", "second", "display")
++	require.ErrorIs(t, err, context.DeadlineExceeded)
++	require.EqualValues(t, 1, calls.Load(), "the canceled waiter must not start a second same-key request")
++	close(releaseFirst)
++	require.NoError(t, <-firstDone)
++}
++
++func TestAssetFromAlbumKeepsPageResidualsBoundToTheirFetchedPage(t *testing.T) {
++	cache.Initialize()
++	cache.Flush()
++	previousCursors := albumPageCursors
++	albumPageCursors = newAlbumPageCursorRegistry(16, time.Now)
++	t.Cleanup(func() {
++		cache.Flush()
++		albumPageCursors = previousCursors
++	})
++
++	var calls atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		var body SearchRandomBody
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
++		w.Header().Set("Content-Type", "application/json")
++		switch body.Page {
++		case 1:
++			_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"hard-excluded","type":"IMAGE","tags":[]}],"nextPage":"2","total":3}}`))
++		case 2:
++			_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"page-two-first","type":"IMAGE","tags":[]},{"id":"page-two-second","type":"IMAGE","tags":[]}],"nextPage":"","total":3}}`))
++		default:
++			t.Fatalf("unexpected metadata page %d", body.Page)
++		}
++	}))
++	defer server.Close()
++
++	cfg := config.Config{
++		ImmichURL:      server.URL,
++		ExcludedAssets: []string{"hard-excluded"},
++		AlbumOrder:     string(Asc),
++		Kiosk:          config.KioskSettings{Cache: true, FetchedAssetsSize: 2},
++	}
++	first := New(context.Background(), cfg)
++	require.NoError(t, first.AssetFromAlbum("album", "first", "display"))
++	require.Equal(t, "page-two-first", first.ID)
++
++	second := New(context.Background(), cfg)
++	require.NoError(t, second.AssetFromAlbum("album", "second", "display"))
++	require.Equal(t, "page-two-second", second.ID, "the second request must consume page two's residual, not reselect its first asset")
++	require.EqualValues(t, 2, calls.Load(), "page one is rejected once and page two is fetched once; residual reuse must not refetch or misbind")
++}
++
++func TestAssetFromAlbumKeepsDistinctPageCachesAcrossWrap(t *testing.T) {
++	cache.Initialize()
++	cache.Flush()
++	previousCursors := albumPageCursors
++	albumPageCursors = newAlbumPageCursorRegistry(16, time.Now)
++	t.Cleanup(func() {
++		cache.Flush()
++		albumPageCursors = previousCursors
++	})
++
++	var calls atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		var body SearchRandomBody
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
++		w.Header().Set("Content-Type", "application/json")
++		switch body.Page {
++		case 1:
++			_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"page-one-first","type":"IMAGE","tags":[]},{"id":"page-one-second","type":"IMAGE","tags":[]}],"nextPage":"2","total":4}}`))
++		case 2:
++			_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"page-two-first","type":"IMAGE","tags":[]},{"id":"page-two-second","type":"IMAGE","tags":[]}],"nextPage":"","total":4}}`))
++		default:
++			t.Fatalf("unexpected metadata page %d", body.Page)
++		}
++	}))
++	defer server.Close()
++
++	cfg := config.Config{
++		ImmichURL:  server.URL,
++		AlbumOrder: string(Asc),
++		Kiosk:      config.KioskSettings{Cache: true, FetchedAssetsSize: 2},
++	}
++	cursorKey := albumPageKey(cfg, "album", false, "display")
++
++	first := New(context.Background(), cfg)
++	require.NoError(t, first.AssetFromAlbum("album", "first", "display"))
++	require.Equal(t, "page-one-first", first.ID)
++	require.True(t, albumPageCursors.advanceIfCurrent(cursorKey, albumPageCursors.position(cursorKey), true), "the test moves traversal only after page one's residual is cached")
++
++	second := New(context.Background(), cfg)
++	require.NoError(t, second.AssetFromAlbum("album", "second", "display"))
++	require.Equal(t, "page-two-first", second.ID, "page two must not read page one's cached residual")
++	require.True(t, albumPageCursors.advanceIfCurrent(cursorKey, albumPageCursors.position(cursorKey), false), "the terminal page wraps to page one")
++
++	third := New(context.Background(), cfg)
++	require.NoError(t, third.AssetFromAlbum("album", "third", "display"))
++	require.Equal(t, "page-one-second", third.ID, "returning to page one must consume only page one's cached residual")
++	require.EqualValues(t, 2, calls.Load(), "each page is fetched once; revisiting page one reuses its page-specific residual")
++}
++
++func TestAssetFromAlbumWithoutCacheConsumesSortedPageBeforeAdvancing(t *testing.T) {
++	previousCursors := albumPageCursors
++	albumPageCursors = newAlbumPageCursorRegistry(16, time.Now)
++	t.Cleanup(func() { albumPageCursors = previousCursors })
++
++	var pages []int
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		var body SearchRandomBody
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
++		pages = append(pages, body.Page)
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"first","type":"IMAGE","tags":[]},{"id":"second","type":"IMAGE","tags":[]}],"nextPage":"2","total":4}}`))
++	}))
++	defer server.Close()
++
++	cfg := config.Config{ImmichURL: server.URL, AlbumOrder: string(Asc), Kiosk: config.KioskSettings{Cache: false, FetchedAssetsSize: 2}}
++	first := New(context.Background(), cfg)
++	require.NoError(t, first.AssetFromAlbum("album", "first", "display"))
++	second := New(context.Background(), cfg)
++	require.NoError(t, second.AssetFromAlbum("album", "second", "display"))
++	require.Equal(t, "first", first.ID)
++	require.Equal(t, "second", second.ID)
++	require.Equal(t, []int{1, 1}, pages, "cache-disabled sorted playback must retain the page until every candidate is consumed")
++}
++
++func TestFetchMetadataPageUsesOneExplicitPageRequest(t *testing.T) {
++	var calls atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		var body SearchRandomBody
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
++		require.Equal(t, 1, body.Page)
++		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"candidate","type":"IMAGE","tags":[]}],"nextPage":"2","total":300}}`))
++	}))
++	defer server.Close()
++
++	parsed, err := url.Parse(server.URL)
++	require.NoError(t, err)
++	asset := New(context.Background(), config.Config{ImmichURL: server.URL})
++	page, err := asset.fetchMetadataPage(parsed, SearchRandomBody{Page: metadataFirstPage, Size: 1}, "request", "device")
++	require.NoError(t, err)
++	require.EqualValues(t, 1, calls.Load(), "a foreground refill must not aggregate every album page")
++	require.True(t, page.HasNextPage)
++	require.Equal(t, 300, page.Total)
++	require.Len(t, page.Assets, 1)
++}
++
++func TestCandidateTagsAvoidDetailFetchWhenMetadataIncludedThem(t *testing.T) {
++	var calls atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		http.Error(w, "detail should not be needed", http.StatusInternalServerError)
++	}))
++	defer server.Close()
++	asset := New(context.Background(), config.Config{ImmichURL: server.URL})
++	asset.Tags = Tags{}
++	require.True(t, asset.hasValidTags("request", "device"))
++	require.Zero(t, calls.Load())
++}
++
++func TestCandidateTagsFallbackToCachedDetailWhenMetadataIsMissing(t *testing.T) {
++	var calls atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		_, _ = w.Write([]byte(`{"id":"candidate","type":"IMAGE","tags":[]}`))
++	}))
++	defer server.Close()
++	asset := New(context.Background(), config.Config{ImmichURL: server.URL})
++	asset.ID = "candidate"
++	require.True(t, asset.hasValidTags("request", "device"))
++	require.EqualValues(t, 1, calls.Load())
++}
++
++func TestAssetFromAlbumFilterNewestStaysWithinFirstDescendingPage(t *testing.T) {
++	cache.Initialize()
++	cache.Flush()
++	previousCursors := albumPageCursors
++	albumPageCursors = newAlbumPageCursorRegistry(16, time.Now)
++	t.Cleanup(func() {
++		cache.Flush()
++		albumPageCursors = previousCursors
++	})
++
++	var requests []SearchRandomBody
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		var body SearchRandomBody
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
++		requests = append(requests, body)
++		w.Header().Set("Content-Type", "application/json")
++		switch body.Page {
++		case metadataFirstPage:
++			// Simulate the first 10 of 350 newest candidates: all are videos
++			// and therefore ineligible while video display is disabled.
++			_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"newest-ineligible","type":"VIDEO","tags":[]}],"nextPage":"2","total":350}}`))
++		case metadataFirstPage + 1:
++			t.Fatal("filter_newest must never widen selection into an older page")
++		default:
++			t.Fatalf("unexpected metadata page %d", body.Page)
++		}
++	}))
++	defer server.Close()
++
++	asset := New(context.Background(), config.Config{
++		ImmichURL: server.URL, FilterNewest: 10, AlbumOrder: string(Asc),
++		Kiosk: config.KioskSettings{Cache: false, FetchedAssetsSize: 150},
++	})
++	require.Error(t, asset.AssetFromAlbum("album", "newest", "display"))
++	require.Len(t, requests, MaxRetries)
++	for _, request := range requests {
++		require.Equal(t, metadataFirstPage, request.Page)
++		require.Equal(t, 10, request.Size)
++		require.Equal(t, string(Desc), request.Order)
++	}
++}
++
++func TestAssetFromAlbumFilterNewestCachedSortedDoesNotReachOlderPage(t *testing.T) {
++	cache.Initialize()
++	cache.Flush()
++	previousCursors := albumPageCursors
++	albumPageCursors = newAlbumPageCursorRegistry(16, time.Now)
++	t.Cleanup(func() {
++		cache.Flush()
++		albumPageCursors = previousCursors
++	})
++
++	var requests []SearchRandomBody
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		var body SearchRandomBody
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
++		requests = append(requests, body)
++		w.Header().Set("Content-Type", "application/json")
++		switch body.Page {
++		case metadataFirstPage:
++			_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"newest-one","type":"IMAGE","tags":[]},{"id":"newest-two","type":"IMAGE","tags":[]}],"nextPage":"2","total":350}}`))
++		case metadataFirstPage + 1:
++			t.Fatal("cached filter_newest residuals must not advance to older candidates")
++		default:
++			t.Fatalf("unexpected metadata page %d", body.Page)
++		}
++	}))
++	defer server.Close()
++
++	cfg := config.Config{
++		ImmichURL: server.URL, FilterNewest: 10, AlbumOrder: string(Asc),
++		Kiosk: config.KioskSettings{Cache: true, FetchedAssetsSize: 150},
++	}
++	first := New(context.Background(), cfg)
++	require.NoError(t, first.AssetFromAlbum("album", "first", "display"))
++	second := New(context.Background(), cfg)
++	require.NoError(t, second.AssetFromAlbum("album", "second", "display"))
++	require.Equal(t, "newest-one", first.ID)
++	require.Equal(t, "newest-two", second.ID)
++	require.Len(t, requests, 1, "the cached page-one residual must satisfy the second sorted selection")
++	require.Equal(t, metadataFirstPage, requests[0].Page)
++	require.Equal(t, 10, requests[0].Size)
++	require.Equal(t, string(Desc), requests[0].Order)
++}
+diff --git a/internal/immich/immich_album_fast_path_test.go b/internal/immich/immich_album_fast_path_test.go
+index 673c303..7a55ecb 100644
+--- a/internal/immich/immich_album_fast_path_test.go
++++ b/internal/immich/immich_album_fast_path_test.go
+@@ -9,6 +9,7 @@ import (
+ 
+ 	"github.com/damongolding/immich-kiosk/internal/config"
+ 	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
+ )
+ 
+ func TestHasValidAlbumsSkipsMembershipRequestWithoutRestrictions(t *testing.T) {
+@@ -39,6 +40,21 @@ func TestHasValidAlbumsSkipsMembershipRequestWithoutRestrictions(t *testing.T) {
+ 	assert.EqualValues(t, 2, calls.Load())
+ }
+ 
++func TestHardExcludedAssetRejectsBeforeAlbumMembershipLookup(t *testing.T) {
++	var calls atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = w.Write([]byte("[]"))
++	}))
++	defer server.Close()
++
++	asset := New(context.Background(), config.Config{ImmichURL: server.URL, ExcludedAssets: []string{"hard-excluded"}})
++	asset.ID = "hard-excluded"
++	require.False(t, asset.hasValidAlbums("request", "device"))
++	require.Zero(t, calls.Load(), "hard asset exclusions must reject before cached or fresh album membership work")
++}
++
+ func TestSelectedAlbumRestrictionsCompilesExcludedIDs(t *testing.T) {
+ 	restrictions := selectedAlbumRestrictions(config.Config{ExcludedAlbums: []string{"one", "two"}})
+ 	assert.False(t, restrictions.allows(Albums{{ID: "two"}}, "asset", "request"))
+diff --git a/internal/immich/immich_classification_gate_test.go b/internal/immich/immich_classification_gate_test.go
+index 1b5964e..143b60c 100644
+--- a/internal/immich/immich_classification_gate_test.go
++++ b/internal/immich/immich_classification_gate_test.go
+@@ -2,6 +2,9 @@ package immich
+ 
+ import (
+ 	"context"
++	"net/http"
++	"net/http/httptest"
++	"sync/atomic"
+ 	"testing"
+ 
+ 	"github.com/damongolding/immich-kiosk/internal/config"
+@@ -41,6 +44,24 @@ func TestHasValidTagsFailsClosedWhenAssetMetadataCannotBeRead(t *testing.T) {
+ 	require.False(t, asset.hasValidTags("request", "device"))
+ }
+ 
++func TestStrictClassificationFetchesDetailEvenWhenSearchClaimsMetadata(t *testing.T) {
++	var calls atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		require.Equal(t, "/api/assets/candidate", r.URL.Path)
++		_, _ = w.Write([]byte(`{"id":"candidate","type":"IMAGE","tags":[],"exifInfo":{"description":"[AI] A beach photograph [/AI]"},"originalFileName":"IMG_1001.jpg"}`))
++	}))
++	defer server.Close()
++
++	asset := New(context.Background(), config.Config{ImmichURL: server.URL, Kiosk: config.KioskSettings{RequireAICaption: true}})
++	asset.ID = "candidate"
++	asset.Tags = Tags{}
++	asset.HasMetadata = true
++	asset.OriginalFileName = "search-result.jpg"
++	require.True(t, asset.hasValidTags("request", "display"))
++	require.EqualValues(t, 1, calls.Load(), "strict classification must not trust a search response's hasMetadata flag as proof that description was supplied")
++}
++
+ func TestClassificationGateRequiresCompleteNonemptyAICaption(t *testing.T) {
+ 	cfg := config.Config{Kiosk: config.KioskSettings{RequireAICaption: true}}
+ 	for _, testCase := range []struct {
+diff --git a/internal/immich/immich_test.go b/internal/immich/immich_test.go
+index b4247d1..db05514 100644
+--- a/internal/immich/immich_test.go
++++ b/internal/immich/immich_test.go
+@@ -1,11 +1,13 @@
+ package immich
+ 
+ import (
++	"encoding/json"
+ 	"slices"
+ 	"testing"
+ 
+ 	"github.com/damongolding/immich-kiosk/internal/kiosk"
+ 	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
+ )
+ 
+ // TestArchiveLogic tests the handling of archived and trashed assets
+@@ -219,6 +221,12 @@ func TestRemoveExcludedAlbums(t *testing.T) {
+ 	}
+ }
+ 
++func TestAssetDecodesDuplicateIDForRecentSelection(t *testing.T) {
++	var asset Asset
++	require.NoError(t, json.Unmarshal([]byte(`{"id":"asset-a","duplicateId":"duplicate-group"}`), &asset))
++	require.Equal(t, "duplicate-group", asset.DuplicateID)
++}
++
+ func TestExtractDays(t *testing.T) {
+ 	tests := []struct {
+ 		name    string
+diff --git a/internal/routes/routes_classification_gate_test.go b/internal/routes/routes_classification_gate_test.go
+index ae0d34d..d1e1e4c 100644
+--- a/internal/routes/routes_classification_gate_test.go
++++ b/internal/routes/routes_classification_gate_test.go
+@@ -67,3 +67,11 @@ func TestOfflineScopeChangesWhenClassificationGateIsEnabled(t *testing.T) {
+ 	after := offlineCacheScope(cfg, "classification-offline")
+ 	require.NotEqual(t, before, after, "enabling the gate must invalidate an offline pool created without it")
+ }
++
++func TestOfflineScopeChangesWhenHardAssetPolicyChanges(t *testing.T) {
++	cfg := *newCancellationTestConfig("http://immich.test")
++	before := offlineCacheScope(cfg, "hard-exclusion-offline")
++	cfg.ExcludedAssets = []string{"hard-excluded"}
++	after := offlineCacheScope(cfg, "hard-exclusion-offline")
++	require.NotEqual(t, before, after, "a hard-exclusion change must replace an offline pool")
++}
+diff --git a/internal/routes/routes_offline_worker_limit_test.go b/internal/routes/routes_offline_worker_limit_test.go
+new file mode 100644
+index 0000000..f0c0cca
+--- /dev/null
++++ b/internal/routes/routes_offline_worker_limit_test.go
+@@ -0,0 +1,26 @@
++package routes
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestOfflineWorkerLimitKeepsOneSafeWorker(t *testing.T) {
++	for _, tc := range []struct {
++		name              string
++		parallelDownloads int
++		numberOfAssets    int
++		want              int
++	}{
++		{name: "validated default", parallelDownloads: 1, numberOfAssets: 100, want: 1},
++		{name: "runtime high value", parallelDownloads: 99, numberOfAssets: 100, want: 1},
++		{name: "runtime zero", parallelDownloads: 0, numberOfAssets: 100, want: 1},
++		{name: "runtime negative", parallelDownloads: -5, numberOfAssets: 100, want: 1},
++		{name: "empty asset count", parallelDownloads: 1, numberOfAssets: 0, want: 1},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			require.Equal(t, tc.want, offlineWorkerLimit(tc.parallelDownloads, tc.numberOfAssets))
++		})
++	}
++}
+diff --git a/internal/routes/routes_preferences_test.go b/internal/routes/routes_preferences_test.go
+index fce6cb6..5783575 100644
+--- a/internal/routes/routes_preferences_test.go
++++ b/internal/routes/routes_preferences_test.go
+@@ -8,6 +8,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
+ 	"github.com/damongolding/immich-kiosk/internal/immich"
+ 	"github.com/stretchr/testify/require"
+ )
+@@ -83,6 +84,12 @@ func TestFrameViewDataRechecksHideAtServeTime(t *testing.T) {
+ 	require.False(t, frameViewDataVisible("main", viewData), "cached and offline records must be filtered again when served")
+ }
+ 
++func TestFrameViewDataRechecksHardExclusionFromCurrentConfig(t *testing.T) {
++	viewData := common.ViewData{Config: config.Config{}, Assets: []common.ViewImageData{{ImmichAsset: immich.Asset{ID: "hard-excluded"}}}}
++	current := config.Config{ExcludedAssets: []string{"hard-excluded"}}
++	require.False(t, frameViewDataVisibleWithConfig(current, "main", viewData), "cached and offline records must use the current hard exclusion policy")
++}
++
+ func TestFrameSelectionSuppressesCaptureBurstsAndCanBeDisabled(t *testing.T) {
+ 	previous := frameRecentAssets
+ 	frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset{}}
+@@ -119,6 +126,40 @@ func TestFrameSelectionCanSuppressRecentIDsAcrossFramesWithinBounds(t *testing.T
+ 	require.LessOrEqual(t, len(frameRecentAssets.global), frameRecentAssetLimit)
+ }
+ 
++func TestFrameSelectionSuppressesEquivalentChecksumsAndDuplicateIDs(t *testing.T) {
++	previous := frameRecentAssets
++	frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset{}}
++	t.Cleanup(func() { frameRecentAssets = previous })
++	t.Setenv("FRAME_CAPTURE_BURST_SECONDS", "0")
++	t.Setenv("FRAME_CROSS_FRAME_REPEAT_SUPPRESSION", "true")
++
++	frameRecentAssets.remember("frame-a", &immich.Asset{ID: "first", Checksum: "same-checksum", DuplicateID: "duplicate-a"}, true)
++	require.False(t, frameSelectionAllowed("frame-a", &immich.Asset{ID: "second", Checksum: "same-checksum"}, 0), "checksums suppress copied assets with different IDs")
++	require.False(t, frameSelectionAllowed("frame-b", &immich.Asset{ID: "third", DuplicateID: "duplicate-a"}, 0), "duplicate groups suppress across frames")
++	require.True(t, frameSelectionAllowed("frame-b", &immich.Asset{ID: "fourth"}, 0), "empty duplicate identities must not suppress unrelated assets")
++	frameRecentAssets.remember("frame-c", &immich.Asset{ID: "numeric-first", DuplicateID: float64(7)}, false)
++	require.True(t, frameSelectionAllowed("frame-c", &immich.Asset{ID: "numeric-second", DuplicateID: float64(7)}, 0), "unknown duplicate-ID types must not become an identity group")
++	require.True(t, frameSelectionAllowed("frame-a", &immich.Asset{ID: "second", Checksum: "same-checksum"}, finalSelectionAttempt), "the final retry must preserve starvation fallback for recency only")
++}
++
++func TestFrameRecentHistoryRetainsExpandedWindow(t *testing.T) {
++	const requiredHistory = 384
++	previous := frameRecentAssets
++	frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset{}}
++	t.Cleanup(func() { frameRecentAssets = previous })
++	t.Setenv("FRAME_CAPTURE_BURST_SECONDS", "0")
++
++	for index := range requiredHistory {
++		frameRecentAssets.remember("frame-a", &immich.Asset{ID: fmt.Sprintf("asset-%03d", index)}, false)
++	}
++	require.Len(t, frameRecentAssets.devices["frame-a"], requiredHistory)
++	require.False(t, frameSelectionAllowed("frame-a", &immich.Asset{ID: "asset-000"}, 0), "the oldest retained asset must remain suppressed")
++
++	frameRecentAssets.remember("frame-a", &immich.Asset{ID: "asset-384"}, false)
++	require.Len(t, frameRecentAssets.devices["frame-a"], requiredHistory, "the per-frame history must evict only after its fixed 384-item window")
++	require.True(t, frameSelectionAllowed("frame-a", &immich.Asset{ID: "asset-000"}, 0), "the 385th admission must evict the oldest retained asset")
++}
++
+ func TestFrameCaptureBurstChecksOnlyTheMostRecentlyAcceptedAsset(t *testing.T) {
+ 	previous := frameRecentAssets
+ 	frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset{}}
+diff --git a/internal/routes/routes_shared_playback_test.go b/internal/routes/routes_shared_playback_test.go
+index ad0b84e..ea6c3c4 100644
+--- a/internal/routes/routes_shared_playback_test.go
++++ b/internal/routes/routes_shared_playback_test.go
+@@ -13,6 +13,7 @@ import (
+ 
+ 	"github.com/damongolding/immich-kiosk/internal/common"
+ 	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/immich"
+ 	"github.com/damongolding/immich-kiosk/internal/playback"
+ 	"github.com/labstack/echo/v5"
+ 	"github.com/stretchr/testify/require"
+@@ -209,3 +210,100 @@ func TestSharedPlaybackSlideRendersWithStrictDimensionsWhenURLOverridesDisabled(
+ 		require.Equal(t, "private, no-store", rec.Header().Get("Cache-Control"))
+ 	}
+ }
++
++func TestSharedPlaybackSuppressesCopiedAssetsByBoundedIdentityLedger(t *testing.T) {
++	previous := frameRecentAssets
++	frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset{}}
++	t.Cleanup(func() { frameRecentAssets = previous })
++	t.Setenv("FRAME_CAPTURE_BURST_SECONDS", "0")
++	t.Setenv("FRAME_CROSS_FRAME_REPEAT_SUPPRESSION", "false")
++
++	assets := []immich.Asset{
++		func() immich.Asset { asset := testImageAsset("first"); asset.Checksum = "same-copy"; return asset }(),
++		func() immich.Asset { asset := testImageAsset("copied"); asset.Checksum = "same-copy"; return asset }(),
++		testImageAsset("distinct"),
++	}
++	assetsByID := make(map[string]immich.Asset, len(assets))
++	for _, asset := range assets {
++		assetsByID[asset.ID] = asset
++	}
++	var requests atomic.Int32
++	photoSource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch {
++		case r.URL.Path == "/api/search/random":
++			index := int(requests.Add(1)) - 1
++			if index >= len(assets) {
++				http.Error(w, "unexpected extra selection", http.StatusInternalServerError)
++				return
++			}
++			w.Header().Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
++			require.NoError(t, json.NewEncoder(w).Encode([]immich.Asset{assets[index]}))
++		case strings.HasPrefix(r.URL.Path, "/api/assets/"):
++			asset, ok := assetsByID[strings.TrimPrefix(r.URL.Path, "/api/assets/")]
++			if !ok {
++				http.NotFound(w, r)
++				return
++			}
++			w.Header().Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
++			require.NoError(t, json.NewEncoder(w).Encode(asset))
++		default:
++			http.NotFound(w, r)
++		}
++	}))
++	t.Cleanup(photoSource.Close)
++
++	base := newCancellationTestConfig(photoSource.URL)
++	base.ImmichUsersAPIKeys = map[string]string{"default": "test-api-key"}
++	base.Curation.Profiles = map[string]config.CurationProfile{
++		"balanced": {Sources: []config.CuratedSource{{Type: "random", Weight: 1}}},
++	}
++	request := playback.LoadRequest{Group: playback.GroupConfig{ID: "downstairs", SelectionKey: "balanced"}}
++
++	first, err := loadSharedPhoto(t.Context(), *base, request)
++	require.NoError(t, err)
++	require.Equal(t, "first", first.ID)
++	second, err := loadSharedPhoto(t.Context(), *base, request)
++	require.NoError(t, err)
++	require.Equal(t, "distinct", second.ID, "the copied asset must be rejected before the bounded retry selects a distinct candidate")
++	require.Equal(t, int32(3), requests.Load())
++	require.Len(t, frameRecentAssets.devices["sync:downstairs"], 2, "only admitted shared selections enter the bounded group ledger")
++}
++
++func TestSharedRecentSelectionAllowsFinalRetryFallback(t *testing.T) {
++	previous := frameRecentAssets
++	frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset{}}
++	t.Cleanup(func() { frameRecentAssets = previous })
++	t.Setenv("FRAME_CAPTURE_BURST_SECONDS", "0")
++
++	frameRecentAssets.remember("sync:downstairs", &immich.Asset{ID: "first", Checksum: "same-copy"}, false)
++	candidate := &immich.Asset{ID: "copied", Checksum: "same-copy"}
++	require.False(t, sharedRecentSelectionAllowed("sync:downstairs", candidate, 0))
++	require.True(t, sharedRecentSelectionAllowed("sync:downstairs", candidate, finalSelectionAttempt))
++}
++
++func TestSharedSelectionConfigRefreshesOnlyServerDenyLists(t *testing.T) {
++	frozen := config.New()
++	frozen.ExcludedAlbums = []string{"frozen-album"}
++	frozen.Curation.Profiles = map[string]config.CurationProfile{
++		"balanced": {Sources: []config.CuratedSource{{Type: "random", Weight: 1}}, AlbumPenalties: []config.AlbumPenalty{}},
++	}
++	frozen.Kiosk.SyncGroups = map[string]config.SyncGroupSettings{
++		"downstairs": {CurationProfile: "balanced", Duration: 45},
++	}
++	live := frozen.Snapshot()
++	live.ExcludedAlbums = []string{"newly-excluded-album"}
++	live.ExcludedAssets = []string{"newly-hard-excluded"}
++	// Model a normalized reload: its hard policy is an immutable compiled object,
++	// not a fallback that a selection may recreate from a copied slice.
++	live.AdoptHardExclusionsFrom(live)
++	live.Curation.Profiles["balanced"] = config.CurationProfile{Sources: []config.CuratedSource{{Type: "album", Value: "must-not-replace", Weight: 1}}}
++	live.Kiosk.SyncGroups["downstairs"] = config.SyncGroupSettings{CurationProfile: "must-not-replace", Duration: 1}
++
++	selection := sharedSelectionConfig(*frozen, &live)
++	require.Equal(t, []string{"newly-excluded-album"}, selection.ExcludedAlbums)
++	require.Equal(t, []string{"newly-hard-excluded"}, selection.ExcludedAssets)
++	require.True(t, selection.IsHardExcludedAsset("newly-hard-excluded"), "fresh deny-list must replace the frozen compiled policy")
++	require.Same(t, live.HardExclusions(), selection.HardExclusions(), "selection must reuse the immutable live hard policy rather than recreate it from a copied slice")
++	require.Equal(t, frozen.Curation.Profiles, selection.Curation.Profiles, "live config reload must not alter frozen shared source policy")
++	require.Equal(t, frozen.Kiosk.SyncGroups, selection.Kiosk.SyncGroups, "live config reload must not alter frozen group controls")
++}
+diff --git a/internal/routes/routes_test.go b/internal/routes/routes_test.go
+index 44d2389..f83d78e 100644
+--- a/internal/routes/routes_test.go
++++ b/internal/routes/routes_test.go
+@@ -14,6 +14,7 @@ import (
+ 	"github.com/damongolding/immich-kiosk/internal/kiosk"
+ 	"github.com/damongolding/immich-kiosk/internal/utils"
+ 	"github.com/damongolding/immich-kiosk/internal/video"
++	"github.com/damongolding/immich-kiosk/internal/webhooks"
+ 	"github.com/labstack/echo/v5"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+@@ -73,6 +74,46 @@ func TestRawImage(t *testing.T) {
+ 	}
+ }
+ 
++func TestImageWithIDRejectsHardExcludedAssetBeforePreviewFetch(t *testing.T) {
++	e := echo.New()
++	req := httptest.NewRequest(http.MethodGet, "/image/hard-excluded", nil)
++	context := e.NewContext(req, httptest.NewRecorder())
++	context.SetPath("/image/:imageID")
++	context.SetPathValues(echo.PathValues{{Name: "imageID", Value: "hard-excluded"}})
++	baseConfig := newCancellationTestConfig("http://immich.test")
++	baseConfig.ExcludedAssets = []string{"hard-excluded"}
++
++	err := ImageWithID(baseConfig, common.New())(context)
++	httpErr, ok := err.(*echo.HTTPError)
++	require.True(t, ok)
++	require.Equal(t, http.StatusNotFound, httpErr.Code)
++}
++
++func TestWebhookRejectsHardExcludedHistoryBeforeAssetInfo(t *testing.T) {
++	metadataRequests := 0
++	photoSource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		metadataRequests++
++		http.Error(w, "excluded history must not fetch metadata", http.StatusInternalServerError)
++	}))
++	t.Cleanup(photoSource.Close)
++
++	baseConfig := newCancellationTestConfig(photoSource.URL)
++	baseConfig.Kiosk.DisableURLQueries = true
++	baseConfig.ExcludedAssets = []string{"hard-excluded"}
++	com := common.New()
++	req := httptest.NewRequest(http.MethodPost, "/webhooks?history=hard-excluded:user-a", http.NoBody)
++	req.Header.Set("X-Timestamp", "1700000000")
++	req.Header.Set("X-Signature", utils.CalculateSignature(com.Secret(), "1700000000"))
++	req.Header.Set("kiosk-webhook-event", webhooks.UserLikeInfoOverlay.String())
++	context := echo.New().NewContext(req, httptest.NewRecorder())
++
++	err := Webhooks(baseConfig, com)(context)
++	httpErr, ok := err.(*echo.HTTPError)
++	require.True(t, ok)
++	require.Equal(t, http.StatusNotFound, httpErr.Code)
++	require.Zero(t, metadataRequests)
++}
++
+ func TestTrimHistory(t *testing.T) {
+ 	testCases := []struct {
+ 		name      string
+diff --git a/internal/webhooks/webhooks_dispatcher_test.go b/internal/webhooks/webhooks_dispatcher_test.go
+index a6b422a..24d6c68 100644
+--- a/internal/webhooks/webhooks_dispatcher_test.go
++++ b/internal/webhooks/webhooks_dispatcher_test.go
+@@ -2,13 +2,23 @@ package webhooks
+ 
+ import (
+ 	"context"
++	"encoding/json"
++	"errors"
++	"io"
++	"net/http"
++	"net/http/httptest"
+ 	"os"
+ 	"path/filepath"
+ 	"regexp"
+ 	"strings"
++	"sync"
++	"sync/atomic"
+ 	"testing"
+ 	"time"
+ 
++	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
++	"github.com/damongolding/immich-kiosk/internal/immich"
+ 	"github.com/stretchr/testify/require"
+ )
+ 
+@@ -106,9 +116,15 @@ func TestProcessWideWebhookDispatcherContract(t *testing.T) {
+ 	require.NotContains(t, text, "LoadOrStore(timeout", "webhook dispatch must not key dispatcher selection by timeout")
+ 	require.Regexp(
+ 		t,
+-		regexp.MustCompile(`(?s)webhookDispatcher\.scheduleWithContextAndTimeout\(\s*ctx,\s*key,\s*timeout,`),
++		regexp.MustCompile(`(?s)func enqueueWebhook\([^)]*\) \{\s*enqueueWebhookWithDispatcher\([^)]*webhookDispatcher, prepareWebhookPayload\)`),
+ 		text,
+-		"webhook enqueue must use the process-wide dispatcher with a per-job timeout",
++		"webhook enqueue must use the process-wide dispatcher",
++	)
++	require.Regexp(
++		t,
++		regexp.MustCompile(`(?s)dispatcher\.reserveWithContextAndTimeout\(ctx, key, timeout\)`),
++		text,
++		"webhook enqueue must reserve one shared dispatcher slot before payload preparation",
+ 	)
+ 
+ 	webhooksSource, err := os.ReadFile(filepath.Join("webhooks.go"))
+@@ -116,3 +132,186 @@ func TestProcessWideWebhookDispatcherContract(t *testing.T) {
+ 	require.NotContains(t, string(webhooksSource), "newDispatcher(", "webhook trigger entrypoints must not create per-request dispatchers")
+ 	require.True(t, strings.Contains(string(webhooksSource), "enqueueWebhook("), "trigger should still delegate enqueue to the shared dispatcher path")
+ }
++
++func awaitWebhookTestSignal(t *testing.T, signal <-chan struct{}) {
++	t.Helper()
++	select {
++	case <-signal:
++	case <-time.After(2 * time.Second):
++		t.Fatal("webhook fixture did not reach expected barrier")
++	}
++}
++
++func drainWebhookTest(t *testing.T, d *dispatcher) {
++	t.Helper()
++	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
++	defer cancel()
++	require.True(t, d.drain(ctx), "webhook fixture must release all owned work")
++}
++
++func TestEnqueueWebhookRejectsBeforePayloadPreparation(t *testing.T) {
++	dispatcher := newDispatcher(1, time.Second)
++	started := make(chan struct{})
++	release := make(chan struct{})
++	var releaseOnce sync.Once
++	releaseWork := func() { releaseOnce.Do(func() { close(release) }) }
++	t.Cleanup(releaseWork)
++	require.True(t, dispatcher.scheduleWithContext(context.Background(), "occupied", func(context.Context) {
++		close(started)
++		<-release
++	}))
++	awaitWebhookTestSignal(t, started)
++
++	requestConfig := config.New()
++	requestConfig.Webhooks = config.Webhooks{{Event: string(NewAsset), URL: "http://127.0.0.1:1"}}
++	requestData := &common.RouteRequestData{RequestConfig: *requestConfig}
++	var marshalCalls atomic.Int32
++
++	enqueueWebhookWithDispatcher(context.Background(), requestData, "test", NewAsset, common.ViewData{}, dispatcher, func(*common.RouteRequestData, string, WebhookEvent, string, common.ViewData) ([]byte, error) {
++		marshalCalls.Add(1)
++		return []byte(`{}`), nil
++	})
++
++	require.Zero(t, marshalCalls.Load(), "a full dispatcher must reject before payload preparation")
++	releaseWork()
++	drainWebhookTest(t, dispatcher)
++}
++
++func TestEnqueueWebhookWorkerUsesImmutableConfigSnapshot(t *testing.T) {
++	dispatcher := newDispatcher(1, time.Second)
++	body := make(chan []byte, 1)
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		defer r.Body.Close()
++		data, err := io.ReadAll(r.Body)
++		if err == nil {
++			body <- data
++		}
++		w.WriteHeader(http.StatusNoContent)
++	}))
++	defer server.Close()
++
++	requestConfig := config.New()
++	requestConfig.Kiosk.HTTPTimeout = 7
++	requestConfig.Kiosk.AllowedOrigins = []string{"https://before.example"}
++	requestConfig.Webhooks = config.Webhooks{{Event: string(NewAsset), URL: server.URL}}
++	requestData := &common.RouteRequestData{
++		DeviceID:      "frame-1",
++		ClientName:    "frame",
++		RequestConfig: *requestConfig,
++	}
++	viewData := common.ViewData{Assets: []common.ViewImageData{{
++		ImmichAsset: immich.Asset{People: []immich.Person{{Name: "before", Faces: []immich.Face{{ImageWidth: 100}}}}},
++	}}}
++	prepared := make(chan struct{})
++	release := make(chan struct{})
++	var releaseOnce sync.Once
++	releaseWork := func() { releaseOnce.Do(func() { close(release) }) }
++	t.Cleanup(releaseWork)
++	done := make(chan struct{})
++
++	go func() {
++		defer close(done)
++		enqueueWebhookWithDispatcher(context.Background(), requestData, "test", NewAsset, viewData, dispatcher, func(data *common.RouteRequestData, version string, event WebhookEvent, eventID string, captured common.ViewData) ([]byte, error) {
++			payload, err := prepareWebhookPayload(data, version, event, eventID, captured)
++			close(prepared)
++			<-release
++			return payload, err
++		})
++	}()
++
++	awaitWebhookTestSignal(t, prepared)
++	select {
++	case <-done:
++		t.Error("enqueue returned before immutable payload preparation completed")
++	case <-time.After(25 * time.Millisecond):
++	}
++	requestData.RequestConfig.Kiosk.AllowedOrigins[0] = "https://after.example"
++	requestData.RequestConfig.Webhooks[0].URL = "http://changed.invalid"
++	viewData.Assets[0].ImmichAsset.People[0].Name = "after"
++	viewData.Assets[0].ImmichAsset.People[0].Faces[0].ImageWidth = 200
++	releaseWork()
++	awaitWebhookTestSignal(t, done)
++
++	select {
++	case data := <-body:
++		var payload Payload
++		require.NoError(t, json.Unmarshal(data, &payload))
++		require.Equal(t, "https://before.example", payload.Config.Kiosk.AllowedOrigins[0])
++		require.Equal(t, server.URL, payload.Config.Webhooks[0].URL)
++		require.Equal(t, "before", payload.Assets[0].People[0].Name)
++		require.Equal(t, 100, payload.Assets[0].People[0].Faces[0].ImageWidth)
++		require.NotEmpty(t, payload.EventID)
++		require.Equal(t, string(NewAsset), payload.Event)
++	case <-time.After(time.Second):
++		t.Fatal("admitted webhook did not deliver its immutable payload")
++	}
++	drainWebhookTest(t, dispatcher)
++}
++
++func TestWebhookPreparationErrorReleasesReservation(t *testing.T) {
++	dispatcher := newDispatcher(1, time.Second)
++	requestConfig := config.New()
++	requestConfig.Webhooks = config.Webhooks{{Event: string(NewAsset), URL: "http://127.0.0.1:1"}}
++	requestData := &common.RouteRequestData{RequestConfig: *requestConfig}
++
++	enqueueWebhookWithDispatcher(context.Background(), requestData, "test", NewAsset, common.ViewData{}, dispatcher, func(*common.RouteRequestData, string, WebhookEvent, string, common.ViewData) ([]byte, error) {
++		return nil, errors.New("marshal failed")
++	})
++
++	started := make(chan struct{})
++	require.True(t, dispatcher.scheduleWithContext(context.Background(), "after-preparation-error", func(context.Context) {
++		close(started)
++	}))
++	awaitWebhookTestSignal(t, started)
++	drainWebhookTest(t, dispatcher)
++}
++
++func TestDispatcherDrainWaitsForReservedWebhookPreparation(t *testing.T) {
++	dispatcher := newDispatcher(1, time.Second)
++	requestConfig := config.New()
++	requestConfig.Webhooks = config.Webhooks{{Event: string(NewAsset), URL: "http://127.0.0.1:1"}}
++	requestData := &common.RouteRequestData{RequestConfig: *requestConfig}
++	prepared := make(chan struct{})
++	release := make(chan struct{})
++	var releaseOnce sync.Once
++	releaseWork := func() { releaseOnce.Do(func() { close(release) }) }
++	t.Cleanup(releaseWork)
++	done := make(chan struct{})
++
++	go func() {
++		defer close(done)
++		enqueueWebhookWithDispatcher(context.Background(), requestData, "test", NewAsset, common.ViewData{}, dispatcher, func(*common.RouteRequestData, string, WebhookEvent, string, common.ViewData) ([]byte, error) {
++			close(prepared)
++			<-release
++			return nil, errors.New("marshal failed")
++		})
++	}()
++	awaitWebhookTestSignal(t, prepared)
++
++	drainCtx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
++	defer cancel()
++	require.False(t, dispatcher.drain(drainCtx), "drain must wait for an admitted synchronous preparation")
++	releaseWork()
++	awaitWebhookTestSignal(t, done)
++	drainWebhookTest(t, dispatcher)
++}
++
++func TestWebhookPreparationCancellationReleasesReservation(t *testing.T) {
++	dispatcher := newDispatcher(1, time.Second)
++	requestConfig := config.New()
++	requestConfig.Webhooks = config.Webhooks{{Event: string(NewAsset), URL: "http://127.0.0.1:1"}}
++	requestData := &common.RouteRequestData{RequestConfig: *requestConfig}
++	parent, cancel := context.WithCancel(context.Background())
++
++	enqueueWebhookWithDispatcher(parent, requestData, "test", NewAsset, common.ViewData{}, dispatcher, func(*common.RouteRequestData, string, WebhookEvent, string, common.ViewData) ([]byte, error) {
++		cancel()
++		return []byte(`{}`), nil
++	})
++
++	started := make(chan struct{})
++	require.True(t, dispatcher.scheduleWithContext(context.Background(), "after-preparation-cancel", func(context.Context) {
++		close(started)
++	}))
++	awaitWebhookTestSignal(t, started)
++	drainWebhookTest(t, dispatcher)
++}

@@ -30,7 +30,7 @@ class TouchDashboardContractTest {
         assertTrue(rail.contains("fun setSelection(mode: FrameMode?)"))
         assertTrue(rail.contains("fun updateTime(now: ZonedDateTime)"))
         assertTrue(rail.contains("onOpenSettings()"))
-        assertTrue(rail.contains("item(null, \"Settings\", false)"))
+        assertTrue(rail.contains("item(null, \"Settings\", false, onHold = { onOpenSettings() })"))
         assertTrue(rail.contains("if (this.modes == next) return"))
         assertTrue(rail.contains("if (selected == mode) return"))
         assertFalse("Birds is never added independently of setModes", rail.contains("FrameMode.BIRDS"))

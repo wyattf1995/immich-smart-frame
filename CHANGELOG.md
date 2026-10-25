@@ -14,6 +14,29 @@ changes will still be called out explicitly.
 
 ## [Unreleased]
 
+### Added
+
+- Kiosk keeps its 384-photo recent ledger across restarts when
+  `FRAME_RECENT_HISTORY_FILE` names a private file (opt-in; see docs/curation.md).
+- Companion: the return timer offers Never (refused for frames older than FrameOS
+  0.2.19), and frames on FrameOS 0.2.12+ get an Ocean button.
+- Home Assistant package `frame_lenovo_health.yaml` alerts when a FrameOS frame stops
+  checking in, shows one photo for 25 minutes on Photos, or the remote is unreadable.
+
+### Changed
+
+- The custom-image stack now reproduces the deployed Kiosk: upstream v0.42.0 plus 91
+  patches builds a binary byte-identical to the live slide-timer build before this
+  round's changes.
+- Companion retires More often / Less often; Hide reads Never on this frame.
+- The Touch mutation-target preflight also checks every design-proof mutation.
+
+### Security
+
+- Kiosk: the tag route accepts only a canonical asset UUID, skips demo mode, and refuses
+  hard-excluded assets; offline Previous/Next rechecks pool scope and visibility; webhook
+  payloads no longer include the hard exclusion list.
+
 ### Fixed
 
 - FrameOS 0.2.12 returns supported GeckoBundle payloads from its native photo

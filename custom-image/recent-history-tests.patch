@@ -1,0 +1,159 @@
+diff --git a/internal/routes/routes_recent_history_test.go b/internal/routes/routes_recent_history_test.go
+new file mode 100644
+index 0000000..1d78f97
+--- /dev/null
++++ b/internal/routes/routes_recent_history_test.go
+@@ -0,0 +1,153 @@
++package routes
++
++import (
++	"encoding/json"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/immich"
++	"github.com/stretchr/testify/require"
++)
++
++const recentHistoryTestAsset = "11111111-1111-4111-8111-111111111111"
++
++func withRecentHistoryFile(t *testing.T) string {
++	t.Helper()
++	path := filepath.Join(t.TempDir(), "recent-history.json")
++	t.Setenv(frameRecentHistoryFileEnv, path)
++	t.Setenv("FRAME_CAPTURE_BURST_SECONDS", "0")
++	previous := frameRecentAssets
++	frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset{}}
++	t.Cleanup(func() {
++		_ = frameRecentHistoryWriter.flush()
++		frameRecentAssets = previous
++	})
++	return path
++}
++
++func restartedLedger() *recentFrameAssets {
++	return &recentFrameAssets{devices: map[string][]recentFrameAsset{}}
++}
++
++func TestRecentHistorySurvivesAKioskRestart(t *testing.T) {
++	path := withRecentHistoryFile(t)
++	asset := &immich.Asset{ID: recentHistoryTestAsset, Checksum: "sum-1", LocalDateTime: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)}
++	frameRecentAssets.remember("main", asset, true)
++	require.NoError(t, frameRecentHistoryWriter.flush())
++
++	info, err := os.Stat(path)
++	require.NoError(t, err)
++	require.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the ledger is private to the Kiosk user")
++
++	restarted := restartedLedger()
++	require.True(t, restarted.suppresses("main", &immich.Asset{ID: recentHistoryTestAsset}, 0, false), "a restart must still remember what this frame showed")
++	require.True(t, restarted.suppresses("main", &immich.Asset{ID: "copy", Checksum: "sum-1"}, 0, false), "copies with the same checksum stay suppressed")
++	require.True(t, restarted.suppresses("parents", &immich.Asset{ID: recentHistoryTestAsset}, 0, true), "the cross-frame ledger is restored too")
++	require.False(t, restarted.suppresses("parents", &immich.Asset{ID: recentHistoryTestAsset}, 0, false), "another frame's own ledger is separate")
++}
++
++func TestRecentHistoryIsOffWithoutTheEnvironmentVariable(t *testing.T) {
++	directory := t.TempDir()
++	t.Setenv(frameRecentHistoryFileEnv, "")
++	previous := frameRecentAssets
++	frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset{}}
++	t.Cleanup(func() { frameRecentAssets = previous })
++
++	frameRecentAssets.remember("main", &immich.Asset{ID: recentHistoryTestAsset}, false)
++	require.NoError(t, frameRecentHistoryWriter.flush())
++	entries, err := os.ReadDir(directory)
++	require.NoError(t, err)
++	require.Empty(t, entries)
++}
++
++func TestRecentHistoryWritesTheNewestSnapshotOnceAfterABurst(t *testing.T) {
++	path := withRecentHistoryFile(t)
++	for index := 0; index < 50; index++ {
++		frameRecentAssets.remember("main", &immich.Asset{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", index)}, false)
++	}
++	_, err := os.Stat(path)
++	require.ErrorIs(t, err, os.ErrNotExist, "selection never waits for the disk; the write is deferred")
++	require.NoError(t, frameRecentHistoryWriter.flush())
++
++	var saved persistedRecentHistory
++	data, err := os.ReadFile(path)
++	require.NoError(t, err)
++	require.NoError(t, json.Unmarshal(data, &saved))
++	require.Len(t, saved.Devices["main"], 50)
++	require.Equal(t, "00000000-0000-4000-8000-000000000049", saved.Devices["main"][0].ID, "newest first")
++	leftovers, err := filepath.Glob(filepath.Join(filepath.Dir(path), ".recent-history-*"))
++	require.NoError(t, err)
++	require.Empty(t, leftovers, "the temporary file is renamed into place")
++}
++
++func TestRecentHistoryMergeKeepsNewerSelectionsFirstAndStaysBounded(t *testing.T) {
++	path := withRecentHistoryFile(t)
++	persisted := persistedRecentHistory{Version: frameRecentHistoryVersion, Devices: map[string][]persistedRecentAsset{}}
++	for index := 0; index < frameRecentAssetLimit; index++ {
++		persisted.Devices["main"] = append(persisted.Devices["main"], persistedRecentAsset{ID: fmt.Sprintf("old-%d", index)})
++	}
++	require.NoError(t, writeRecentHistory(path, persisted))
++
++	frameRecentAssets.remember("main", &immich.Asset{ID: "new"}, false)
++	items := frameRecentAssets.devices["main"]
++	require.Len(t, items, frameRecentAssetLimit)
++	require.Equal(t, "new", items[0].id)
++	require.Equal(t, "old-0", items[1].id)
++}
++
++func TestRecentHistoryIgnoresUnsafeOrDamagedFiles(t *testing.T) {
++	valid := func() persistedRecentHistory {
++		return persistedRecentHistory{Version: frameRecentHistoryVersion, Devices: map[string][]persistedRecentAsset{"main": {{ID: recentHistoryTestAsset}}}}
++	}
++	cases := map[string]func(t *testing.T, path string){
++		"world readable": func(t *testing.T, path string) {
++			require.NoError(t, writeRecentHistory(path, valid()))
++			require.NoError(t, os.Chmod(path, 0o644))
++		},
++		"symlink": func(t *testing.T, path string) {
++			target := path + ".target"
++			require.NoError(t, writeRecentHistory(target, valid()))
++			require.NoError(t, os.Symlink(target, path))
++		},
++		"newer version": func(t *testing.T, path string) {
++			history := valid()
++			history.Version = frameRecentHistoryVersion + 1
++			require.NoError(t, writeRecentHistory(path, history))
++		},
++		"too many entries": func(t *testing.T, path string) {
++			history := valid()
++			for index := 0; index <= frameRecentAssetLimit; index++ {
++				history.Devices["main"] = append(history.Devices["main"], persistedRecentAsset{ID: fmt.Sprintf("extra-%d", index)})
++			}
++			data, err := json.Marshal(history)
++			require.NoError(t, err)
++			require.NoError(t, os.WriteFile(path, data, 0o600))
++		},
++		"control character key": func(t *testing.T, path string) {
++			history := valid()
++			history.Devices["bad\nkey"] = history.Devices["main"]
++			data, err := json.Marshal(history)
++			require.NoError(t, err)
++			require.NoError(t, os.WriteFile(path, data, 0o600))
++		},
++		"not json": func(t *testing.T, path string) {
++			require.NoError(t, os.WriteFile(path, []byte("{"), 0o600))
++		},
++		"oversized": func(t *testing.T, path string) {
++			require.NoError(t, os.WriteFile(path, []byte(strings.Repeat(" ", maxRecentHistoryFileBytes+1)), 0o600))
++		},
++	}
++	for name, prepare := range cases {
++		t.Run(name, func(t *testing.T) {
++			path := withRecentHistoryFile(t)
++			prepare(t, path)
++			_, err := loadRecentHistory(path)
++			require.Error(t, err)
++			require.False(t, frameRecentAssets.suppresses("main", &immich.Asset{ID: recentHistoryTestAsset}, 0, false), "a rejected file starts an empty ledger")
++		})
++	}
++}

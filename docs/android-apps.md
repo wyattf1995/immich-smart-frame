@@ -85,6 +85,19 @@ runner [`scripts/touchframe-android-nas.sh`](../scripts/touchframe-android-nas.s
 also executes source-only negative/restored-green proofs and retains source,
 SDK and JUnit identities. It builds but does not sign or deploy.
 
+Before submitting a build, run the mutation-target preflight locally. It checks
+every source-proof and design-proof mutation in a few seconds (the needle occurs
+exactly once; the replacement is not empty and not already in the file), the same
+checks the runner would otherwise fail on after queueing and SDK setup:
+
+```sh
+python3 -B scripts/verify-touchframe-mutation-targets.py .
+```
+
+Camera live view needs API 24 or newer; on older frames the camera page offers the
+snapshot instead of a Watch live button. Settings on the wall explains on a tap and
+opens Android settings only after a press and hold and a confirmation.
+
 Touch has independent OAuth and companion provisioning. The source declares an
 ordinary user-selectable Android HOME entry point: explicit HOME starts Photos,
 while ordinary app launch starts native Home. This does not establish launcher or

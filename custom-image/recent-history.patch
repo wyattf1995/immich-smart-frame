@@ -1,0 +1,340 @@
+diff --git a/internal/routes/routes_preferences.go b/internal/routes/routes_preferences.go
+index 5a68938..1f2b76b 100644
+--- a/internal/routes/routes_preferences.go
++++ b/internal/routes/routes_preferences.go
+@@ -191,9 +191,10 @@ func frameViewDataVisibleWithConfig(requestConfig config.Config, deviceID string
+ func framePreferenceRandomInt(n int) int { return rand.IntN(n) }
+ 
+ type recentFrameAssets struct {
+-	mu      sync.Mutex
+-	devices map[string][]recentFrameAsset
+-	global  []recentFrameAsset
++	mu         sync.Mutex
++	devices    map[string][]recentFrameAsset
++	global     []recentFrameAsset
++	loadedPath string // FRAME_RECENT_HISTORY_FILE already merged, see routes_recent_history.go
+ }
+ 
+ type recentFrameAsset struct {
+@@ -208,6 +209,7 @@ var frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset
+ func (r *recentFrameAssets) suppresses(deviceID string, asset *immich.Asset, burst time.Duration, crossFrame bool) bool {
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
++	r.ensureLoadedLocked()
+ 	for index, prior := range r.devices[deviceID] {
+ 		if prior.matches(asset) || (index == 0 && burst > 0 && !asset.LocalDateTime.IsZero() && !prior.capturedAt.IsZero() && asset.LocalDateTime.Sub(prior.capturedAt).Abs() < burst) {
+ 			return true
+@@ -226,6 +228,7 @@ func (r *recentFrameAssets) suppresses(deviceID string, asset *immich.Asset, bur
+ func (r *recentFrameAssets) remember(deviceID string, asset *immich.Asset, crossFrame bool) {
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
++	r.ensureLoadedLocked()
+ 	items := append([]recentFrameAsset{recentFrameAssetFromAsset(asset)}, r.devices[deviceID]...)
+ 	if len(items) > frameRecentAssetLimit {
+ 		items = items[:frameRecentAssetLimit]
+@@ -245,6 +248,9 @@ func (r *recentFrameAssets) remember(deviceID string, asset *immich.Asset, cross
+ 			r.global = r.global[:frameRecentAssetLimit]
+ 		}
+ 	}
++	if path := frameRecentHistoryPath(); path != "" {
++		frameRecentHistoryWriter.schedule(path, r.snapshotLocked())
++	}
+ }
+ 
+ func recentFrameAssetFromAsset(asset *immich.Asset) recentFrameAsset {
+diff --git a/internal/routes/routes_recent_history.go b/internal/routes/routes_recent_history.go
+new file mode 100644
+index 0000000..b123cc8
+--- /dev/null
++++ b/internal/routes/routes_recent_history.go
+@@ -0,0 +1,276 @@
++package routes
++
++import (
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++	"time"
++
++	"charm.land/log/v2"
++)
++
++// Persistent frame recency. The ledger in routes_preferences.go keeps the last 384 admitted photos per frame (and
++// per shared group) only in memory, so every Kiosk restart forgot it and recent photos came straight back. With
++// FRAME_RECENT_HISTORY_FILE set, the ledger is read once before the first selection after a start and written in
++// the background a few seconds after it changes, by atomic replacement; shutdown writes whatever is pending. The
++// file holds frame IDs, asset IDs, checksums, duplicate IDs and capture times only, and must be private (0600).
++const (
++	frameRecentHistoryFileEnv = "FRAME_RECENT_HISTORY_FILE"
++	frameRecentHistoryVersion = 1
++	maxRecentHistoryFileBytes = 8 << 20
++	maxRecentHistoryTextBytes = 128
++)
++
++// frameRecentHistoryWriteDelay coalesces a burst of selections (prefetch admits several at once) into one write.
++var frameRecentHistoryWriteDelay = 5 * time.Second
++
++type persistedRecentAsset struct {
++	ID          string    `json:"id"`
++	Checksum    string    `json:"checksum,omitempty"`
++	DuplicateID string    `json:"duplicateId,omitempty"`
++	CapturedAt  time.Time `json:"capturedAt"`
++}
++
++type persistedRecentHistory struct {
++	Version int                               `json:"version"`
++	Devices map[string][]persistedRecentAsset `json:"devices"`
++	Global  []persistedRecentAsset            `json:"global"`
++}
++
++func frameRecentHistoryPath() string {
++	return strings.TrimSpace(os.Getenv(frameRecentHistoryFileEnv))
++}
++
++// ensureLoadedLocked merges the saved ledger into memory once per configured path. It runs under r.mu: the file is
++// bounded and read once per process, before the first selection, so no selection can race the merge.
++func (r *recentFrameAssets) ensureLoadedLocked() {
++	path := frameRecentHistoryPath()
++	if path == "" || r.loadedPath == path {
++		return
++	}
++	r.loadedPath = path
++	history, err := loadRecentHistory(path)
++	if err != nil {
++		if !errors.Is(err, os.ErrNotExist) {
++			log.Warn("Frame recent history ignored; starting an empty ledger", "path", path, "error", err)
++		}
++		return
++	}
++	if r.devices == nil {
++		r.devices = map[string][]recentFrameAsset{}
++	}
++	for key, assets := range history.Devices {
++		if _, known := r.devices[key]; !known && len(r.devices) >= frameRecentDeviceLimit {
++			continue
++		}
++		r.devices[key] = mergeRecentAssets(r.devices[key], assets)
++	}
++	r.global = mergeRecentAssets(r.global, history.Global)
++}
++
++// mergeRecentAssets keeps selections made since this start first, then the saved ones, within the ledger bound.
++func mergeRecentAssets(current []recentFrameAsset, saved []persistedRecentAsset) []recentFrameAsset {
++	merged := append([]recentFrameAsset(nil), current...)
++	for _, item := range saved {
++		if len(merged) >= frameRecentAssetLimit {
++			break
++		}
++		duplicate := false
++		for _, existing := range merged {
++			if existing.id == item.ID {
++				duplicate = true
++				break
++			}
++		}
++		if !duplicate {
++			merged = append(merged, recentFrameAsset{id: item.ID, checksum: item.Checksum, duplicateID: item.DuplicateID, capturedAt: item.CapturedAt})
++		}
++	}
++	return merged
++}
++
++func (r *recentFrameAssets) snapshotLocked() persistedRecentHistory {
++	history := persistedRecentHistory{
++		Version: frameRecentHistoryVersion,
++		Devices: make(map[string][]persistedRecentAsset, len(r.devices)),
++		Global:  persistRecentAssets(r.global),
++	}
++	for key, assets := range r.devices {
++		history.Devices[key] = persistRecentAssets(assets)
++	}
++	return history
++}
++
++func persistRecentAssets(assets []recentFrameAsset) []persistedRecentAsset {
++	saved := make([]persistedRecentAsset, len(assets))
++	for index, asset := range assets {
++		saved[index] = persistedRecentAsset{ID: asset.id, Checksum: asset.checksum, DuplicateID: asset.duplicateID, CapturedAt: asset.capturedAt}
++	}
++	return saved
++}
++
++func loadRecentHistory(path string) (persistedRecentHistory, error) {
++	info, err := os.Lstat(path)
++	if err != nil {
++		return persistedRecentHistory{}, err
++	}
++	if !info.Mode().IsRegular() {
++		return persistedRecentHistory{}, fmt.Errorf("%s is not a regular file", path)
++	}
++	if info.Mode().Perm()&0o077 != 0 {
++		return persistedRecentHistory{}, fmt.Errorf("%s is readable by other users; it must be mode 0600", path)
++	}
++	if info.Size() > maxRecentHistoryFileBytes {
++		return persistedRecentHistory{}, fmt.Errorf("%s is %d bytes, over the %d byte limit", path, info.Size(), maxRecentHistoryFileBytes)
++	}
++	file, err := os.Open(path)
++	if err != nil {
++		return persistedRecentHistory{}, err
++	}
++	defer file.Close()
++	data, err := io.ReadAll(io.LimitReader(file, maxRecentHistoryFileBytes+1))
++	if err != nil {
++		return persistedRecentHistory{}, err
++	}
++	if len(data) > maxRecentHistoryFileBytes {
++		return persistedRecentHistory{}, fmt.Errorf("%s grew past the %d byte limit while it was read", path, maxRecentHistoryFileBytes)
++	}
++	var history persistedRecentHistory
++	if err := json.Unmarshal(data, &history); err != nil {
++		return persistedRecentHistory{}, fmt.Errorf("parse %s: %w", path, err)
++	}
++	if history.Version != frameRecentHistoryVersion {
++		return persistedRecentHistory{}, fmt.Errorf("%s has version %d; this Kiosk reads version %d", path, history.Version, frameRecentHistoryVersion)
++	}
++	if len(history.Devices) > frameRecentDeviceLimit {
++		return persistedRecentHistory{}, fmt.Errorf("%s holds %d frames, over the %d frame limit", path, len(history.Devices), frameRecentDeviceLimit)
++	}
++	for key, assets := range history.Devices {
++		if !recentHistoryText(key, true) {
++			return persistedRecentHistory{}, fmt.Errorf("%s has an invalid frame ID", path)
++		}
++		if err := validRecentAssets(path, assets); err != nil {
++			return persistedRecentHistory{}, err
++		}
++	}
++	if err := validRecentAssets(path, history.Global); err != nil {
++		return persistedRecentHistory{}, err
++	}
++	return history, nil
++}
++
++func validRecentAssets(path string, assets []persistedRecentAsset) error {
++	if len(assets) > frameRecentAssetLimit {
++		return fmt.Errorf("%s holds %d photos for one ledger, over the %d photo limit", path, len(assets), frameRecentAssetLimit)
++	}
++	for _, asset := range assets {
++		if !recentHistoryText(asset.ID, true) || !recentHistoryText(asset.Checksum, false) || !recentHistoryText(asset.DuplicateID, false) {
++			return fmt.Errorf("%s has an invalid photo entry", path)
++		}
++	}
++	return nil
++}
++
++// recentHistoryText accepts the short printable identifiers the ledger stores and nothing else.
++func recentHistoryText(value string, required bool) bool {
++	if value == "" {
++		return !required
++	}
++	if len(value) > maxRecentHistoryTextBytes {
++		return false
++	}
++	for _, character := range value {
++		if character <= ' ' || character == 0x7f {
++			return false
++		}
++	}
++	return true
++}
++
++func writeRecentHistory(path string, history persistedRecentHistory) error {
++	data, err := json.Marshal(history)
++	if err != nil {
++		return err
++	}
++	if len(data) > maxRecentHistoryFileBytes {
++		return fmt.Errorf("recent history is %d bytes, over the %d byte limit", len(data), maxRecentHistoryFileBytes)
++	}
++	directory := filepath.Dir(path)
++	temp, err := os.CreateTemp(directory, ".recent-history-*.tmp")
++	if err != nil {
++		return err
++	}
++	name := temp.Name()
++	defer func() { _ = os.Remove(name) }() // nothing to remove after the rename
++	if _, err := temp.Write(data); err != nil {
++		_ = temp.Close()
++		return err
++	}
++	if err := temp.Sync(); err != nil {
++		_ = temp.Close()
++		return err
++	}
++	if err := temp.Close(); err != nil {
++		return err
++	}
++	if err := os.Rename(name, path); err != nil {
++		return err
++	}
++	if dir, err := os.Open(directory); err == nil {
++		_ = dir.Sync()
++		_ = dir.Close()
++	}
++	return nil
++}
++
++// recentHistoryWriter keeps only the newest snapshot and writes it after frameRecentHistoryWriteDelay, so selection
++// never waits for the disk. Writes are serialized, so an older snapshot can never land after a newer one.
++type recentHistoryWriter struct {
++	mu      sync.Mutex
++	writing sync.Mutex
++	pending *persistedRecentHistory
++	path    string
++	timer   *time.Timer
++}
++
++var frameRecentHistoryWriter recentHistoryWriter
++
++func (w *recentHistoryWriter) schedule(path string, snapshot persistedRecentHistory) {
++	w.mu.Lock()
++	defer w.mu.Unlock()
++	w.pending, w.path = &snapshot, path
++	if w.timer == nil {
++		w.timer = time.AfterFunc(frameRecentHistoryWriteDelay, func() {
++			if err := w.flush(); err != nil {
++				log.Warn("Frame recent history not saved; it will retry after the next selection", "error", err)
++			}
++		})
++	}
++}
++
++func (w *recentHistoryWriter) flush() error {
++	w.writing.Lock()
++	defer w.writing.Unlock()
++	w.mu.Lock()
++	snapshot, path := w.pending, w.path
++	w.pending = nil
++	if w.timer != nil {
++		w.timer.Stop()
++		w.timer = nil
++	}
++	w.mu.Unlock()
++	if snapshot == nil {
++		return nil
++	}
++	return writeRecentHistory(path, *snapshot)
++}
++
++// FlushFrameRecentHistory writes any pending recent-history snapshot; main calls it after the shutdown drains.
++func FlushFrameRecentHistory() error {
++	return frameRecentHistoryWriter.flush()
++}
+diff --git a/main.go b/main.go
+index f9e865a..f63b114 100644
+--- a/main.go
++++ b/main.go
+@@ -313,6 +313,9 @@ func main() {
+ 		log.Warn("video download drain timed out")
+ 	}
+ 	drainCancel()
++	if err := routes.FlushFrameRecentHistory(); err != nil {
++		log.Warn("frame recent history was not saved at shutdown", "error", err)
++	}
+ 	video.DeleteTmpDir()
+ 
+ 	fmt.Println("")

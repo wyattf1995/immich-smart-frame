@@ -29,6 +29,8 @@ services:
       # optimized slide; Go begins collecting before the 1 GiB hard limit.
       GOMEMLIMIT: ${KIOSK_GOMEMLIMIT:-800MiB}
       FRAME_PREFERENCES_FILE: /frame-preferences/preferences.json
+      # Empty keeps the recent-photo ledger in memory only; see docs/curation.md to keep it across restarts.
+      FRAME_RECENT_HISTORY_FILE: ${FRAME_RECENT_HISTORY_FILE:-}
       KIOSK_METRICS_TOKEN_FILE: /run/secrets/kiosk_metrics_token
     ports:
       - "${KIOSK_PORT:-3000}:3000"
