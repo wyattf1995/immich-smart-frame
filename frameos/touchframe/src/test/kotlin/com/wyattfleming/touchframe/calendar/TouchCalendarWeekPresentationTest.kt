@@ -93,4 +93,23 @@ class TouchCalendarWeekPresentationTest {
         val end = endDay?.let { ZonedDateTime.of(year, month, it, 0, 0, 0, 0, zone).toInstant().toEpochMilli() }
         return TouchCalendarEvent(title, start.toInstant().toEpochMilli(), end, allDay, "primary")
     }
+
+    @Test
+    fun fittedDetailPagesShowOnlyWholeRowsAndKeepEveryEventReachable() {
+        val zone = java.time.ZoneId.of("America/Los_Angeles")
+        val day = java.time.LocalDate.of(2026, 10, 17)
+        val events = (0 until 14).map { index ->
+            TouchCalendarEvent("Event $index", day.atTime(8, 0).plusMinutes(index * 30L).atZone(zone).toInstant().toEpochMilli(), null, false, "calendar.family")
+        }
+        val first = TouchCalendarWeekPresentation.detailsPage(events, requestedPage = 0, pageSize = 8)
+        assertEquals(8, first.events.size)
+        assertEquals(2, first.pageCount)
+        assertEquals(1, first.firstEventNumber)
+        assertEquals(8, first.lastEventNumber)
+        val second = TouchCalendarWeekPresentation.detailsPage(events, requestedPage = 1, pageSize = 8)
+        assertEquals(events.drop(8), second.events)
+        // A larger fitted size never exceeds the verified page cap.
+        assertEquals(TouchCalendarWeekPresentation.DETAILS_PER_PAGE, TouchCalendarWeekPresentation.detailsPage(events, 0, pageSize = 40).events.size)
+        assertEquals(1, TouchCalendarWeekPresentation.detailsPage(events, 0, pageSize = 0).events.size)
+    }
 }

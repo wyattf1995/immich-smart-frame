@@ -10,6 +10,8 @@ enum class TouchDestination(
     ART("Art", "◈"),
     BIRDS("Birds", "♢"),
     WEATHER("Weather", "☀"),
+    OCEAN("Ocean", "≈"),
+    POWER("Power", "⚡"),
     CAMERAS("Cameras", "◉"),
     CALENDAR("Calendar", "▣"),
     ;
@@ -33,9 +35,35 @@ internal object TouchDestinationOrder {
         add(TouchDestination.ART)
         if (birdsConfigured) add(TouchDestination.BIRDS)
         add(TouchDestination.WEATHER)
+        add(TouchDestination.OCEAN)
         add(TouchDestination.CALENDAR)
         add(TouchDestination.CAMERAS)
     }
+
+    /**
+     * Ocean is local to Touch: the companion's mode list predates it, so a remote order never names it. Keep it
+     * right after Weather (or last when Weather is off) instead of letting a remote order hide it.
+     */
+    fun withOcean(order: List<TouchDestination>): List<TouchDestination> {
+        if (TouchDestination.OCEAN in order) return order
+        val weather = order.indexOf(TouchDestination.WEATHER)
+        return if (weather < 0) order + TouchDestination.OCEAN
+        else order.subList(0, weather + 1) + TouchDestination.OCEAN + order.subList(weather + 1, order.size)
+    }
+
+    /**
+     * Power is local to Touch as well: it follows Ocean (or Weather, or the end) and, like Ocean, a remote order
+     * never hides it.
+     */
+    fun withPower(order: List<TouchDestination>): List<TouchDestination> {
+        if (TouchDestination.POWER in order) return order
+        val anchor = order.indexOf(TouchDestination.OCEAN).takeIf { it >= 0 } ?: order.indexOf(TouchDestination.WEATHER)
+        return if (anchor < 0) order + TouchDestination.POWER
+        else order.subList(0, anchor + 1) + TouchDestination.POWER + order.subList(anchor + 1, order.size)
+    }
+
+    /** Both Touch-only screens in their places. */
+    fun withLocal(order: List<TouchDestination>): List<TouchDestination> = withPower(withOcean(order))
 
     fun normalize(remoteOrder: List<TouchDestination>): List<TouchDestination> = buildList {
         add(TouchDestination.HOME)
@@ -55,4 +83,13 @@ internal object TouchDestinationOrder {
         current: TouchDestination,
         available: List<TouchDestination>,
     ): TouchDestination = current.takeIf { it in available } ?: TouchDestination.HOME
+}
+
+/** Touch-only pages the companion can open by name; they have no FrameMode. */
+internal object TouchCompanionPages {
+    fun destination(page: String): TouchDestination? = when (page) {
+        "ocean" -> TouchDestination.OCEAN
+        "power" -> TouchDestination.POWER
+        else -> null
+    }
 }

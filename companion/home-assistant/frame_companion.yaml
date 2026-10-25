@@ -149,10 +149,10 @@ script:
     sequence: [{action: rest_command.postframecommand, data: {payload: {deviceId: main, command: {type: photo_hold, durationSeconds: 600}}}}]
   frame_show_mode:
     alias: Frame show mode
-    fields: {mode: {required: true, selector: {select: {options: [photos, home, weather, birds, cameras, calendar]}}}}
+    fields: {mode: {required: true, selector: {select: {options: [photos, home, weather, birds, cameras, calendar, ocean, power]}}}}
     sequence:
       - condition: template
-        value_template: "{{ mode in ['photos', 'home', 'weather', 'birds', 'cameras', 'calendar'] }}"
+        value_template: "{{ mode in ['photos', 'home', 'weather', 'birds', 'cameras', 'calendar', 'ocean', 'power'] }}"
       - action: rest_command.postframecommand
         data: {payload: {deviceId: main, command: {type: show_mode, mode: "{{ mode }}"}}}
   frame_select_profile:

@@ -61,6 +61,7 @@ class WeatherSnapshotCodec {
         .putNullable("dew_point", current.dewPoint)
         .putNullable("cloud_coverage", current.cloudCoverage)
         .putNullable("uv_index", current.uvIndex)
+        .putNullable("precipitation_unit", current.precipitationUnit)
 
     private fun decodeCurrent(root: JSONObject): WeatherCurrent = WeatherCurrent(
         entityId = root.getString("entity_id"),
@@ -81,6 +82,7 @@ class WeatherSnapshotCodec {
         dewPoint = root.optionalDouble("dew_point"),
         cloudCoverage = root.optionalDouble("cloud_coverage"),
         uvIndex = root.optionalDouble("uv_index"),
+        precipitationUnit = root.optionalString("precipitation_unit"),
     )
 
     private fun encodeForecast(forecast: WeatherForecast): JSONObject = JSONObject()
@@ -95,6 +97,8 @@ class WeatherSnapshotCodec {
         .putNullable("humidity", forecast.humidity)
         .putNullable("wind_speed", forecast.windSpeed)
         .putNullable("wind_bearing", forecast.windBearing)
+        .putNullable("precipitation", forecast.precipitation)
+        .putNullable("uv_index", forecast.uvIndex)
 
     private fun decodeForecast(root: JSONObject): WeatherForecast = WeatherForecast(
         type = WeatherForecastType.valueOf(root.getString("type")),
@@ -108,6 +112,8 @@ class WeatherSnapshotCodec {
         humidity = root.optionalDouble("humidity"),
         windSpeed = root.optionalDouble("wind_speed"),
         windBearing = root.optionalDouble("wind_bearing"),
+        precipitation = root.optionalDouble("precipitation"),
+        uvIndex = root.optionalDouble("uv_index"),
     )
 
     private fun JSONObject.putNullable(key: String, value: Any?): JSONObject = put(key, value ?: JSONObject.NULL)

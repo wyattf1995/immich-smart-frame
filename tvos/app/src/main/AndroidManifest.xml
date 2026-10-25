@@ -12,7 +12,7 @@
     <application android:label="Frame TV" android:icon="@drawable/ic_launcher"
         android:banner="@drawable/tv_banner" android:theme="@style/AppTheme"
         android:allowBackup="false" android:usesCleartextTraffic="true"
-        android:supportsRtl="true">
+        android:supportsRtl="true" android:enableOnBackInvokedCallback="false">
         <activity android:name=".MainActivity" android:exported="true"
             android:launchMode="singleTask" android:screenOrientation="landscape">
             <intent-filter>
@@ -28,6 +28,7 @@
         </activity>
         <activity android:name=".WeatherSetupActivity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".WeatherActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".OceanActivity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".SetupActivity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".DashboardActivity" android:exported="false" android:screenOrientation="landscape" />
     </application>

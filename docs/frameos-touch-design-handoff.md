@@ -10,8 +10,8 @@ FrameOS Touch has two deliberate rendering boundaries:
 
 | Surface | Implementation | Design consequence |
 | --- | --- | --- |
-| Home, Weather, Calendar, Cameras, navigation rail, and Settings return | Native Android Views | These are the primary touch controls. Keep them immediate, readable, and usable with last-known data while a bounded refresh runs. |
-| Photos, Art, and optional Birds | A retained Gecko surface | Photos and Art are immersive and reveal navigation by edge gesture. Birds keeps the rail visible and appears only when configured. Preserve each destination's media/session behavior. |
+| Home, Weather, Calendar, Cameras, top navigation, and Settings return | Native Android Views | These are the primary touch controls. Keep them immediate, readable, and usable with last-known data while a bounded refresh runs. |
+| Photos, Art, and optional Birds | A retained Gecko surface | Photos and Art are immersive and reveal top navigation by edge gesture. Birds keeps top navigation visible and appears only when configured. Preserve each destination's media/session behavior. |
 
 Do not redesign the old Lenovo-oriented FrameOS activity through this work. It
 is a separate product with its own release and interaction model. The Touch app
@@ -27,11 +27,11 @@ navigation wait for the network.
 
 | Area | Primary source | Notes for design work |
 | --- | --- | --- |
-| Native Home | [`TouchHomeView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchHomeView.kt) | Direct climate controls and compact household summaries are native controls, not an embedded HA dashboard. |
+| Native Home | [`TouchHomeView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchHomeView.kt) | Direct climate controls and compact household summaries are native controls, not an embedded HA dashboard. Temperature adjustments remain unavailable unless Home Assistant advertises a safe single target; supported mode controls remain available. |
 | Weather | [`WeatherContentView`](../frameos/app/src/main/kotlin/com/wyattfleming/frameos/ui/WeatherContentView.kt) | Native current conditions and forecast; its optional place label is configured display text, never GPS collection. |
 | Calendar | [`TouchCalendarView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarView.kt) and [`TouchCalendarWeekPresentation`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/calendar/TouchCalendarWeekPresentation.kt) | Week is events-only: seven dates, timed/all-day events, three previews per day, and a locally paged selected-day agenda. Agenda and Month remain available. Tasks are out of scope. |
-| Cameras | [`TouchCameraView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchCameraView.kt) | Authenticated snapshots are the current product surface; do not imply live video controls. |
-| Rail and immersive menu | [`TouchShellLayout`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayout.kt) and [`TouchDestination`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchDestination.kt) | Native destinations retain the rail. Photos and Art use the full viewport; a deliberate edge gesture reveals their menu. |
+| Cameras | [`TouchCameraView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchCameraView.kt) | The source implements an explicit one-camera live surface with a packaged local page and one-shot capability; authenticated snapshots remain its fallback. Physical-frame live acceptance is still required. |
+| Top navigation and immersive menu | [`TouchShellLayout`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchShellLayout.kt) and [`TouchDestination`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchDestination.kt) | Native destinations retain top navigation. Photos and Art use the full viewport; a deliberate left-edge gesture reveals the bar. |
 | Settings return | [`TouchSettingsReturn`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchSettingsReturn.kt) | Android Settings is an intentional escape hatch with a return path; do not hide it behind a new custom settings screen. |
 | Photos, Art, and optional Birds media | [`TouchMediaView`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchMediaView.kt) and [`TouchOfflinePhotos`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/media/TouchOfflinePhotos.kt) | Photos has a scoped offline reserve. Art and Birds never read that reserve; Art must show art-specific unavailable state rather than family-photo fallback. |
 
@@ -58,8 +58,8 @@ visual quality:
 
 - Make direct controls visibly actionable, with generous targets and useful
   selected, pending, offline, and error states.
-- Keep the primary native rail simple and consistent. Avoid a second in-content
-  navigation rail.
+- Keep the primary native top navigation simple and consistent. Avoid a second
+  in-content navigation system.
 - Preserve **Photos as the default experience**. Art is an easy-to-reach,
   separate mode for artwork, not a replacement photo feed.
 - Treat the Week calendar as a visual overview first. All seven weekdays need
@@ -100,16 +100,16 @@ rotation only where the existing product supports them.
 ## Acceptance for a design proposal
 
 A design proposal is ready for implementation review when it supplies native
-layouts for Home, Weather, Week/Agenda/Month Calendar, Cameras, the rail, and
-immersive Photos/Art transitions; documents day/night and loading/offline
+layouts for Home, Weather, Week/Agenda/Month Calendar, Cameras, top navigation,
+and immersive Photos/Art transitions; documents day/night and loading/offline
 states; and identifies the target source seams above. It should also show:
 
 1. a readable 1280×800 reference layout and a 1920×1080 layout without
    assuming either is a universal device guarantee;
 2. direct-touch climate and calendar interactions, including a busy-day
    calendar page and empty/offline states;
-3. an edge-menu path from Photos and Art back to the rail, while keeping media
-   full-screen by default; and
+3. an edge-menu path from Photos and Art back to top navigation, while keeping
+   media full-screen by default; and
 4. no changes to OAuth, configuration persistence, offline photo scoping, or
    Home Assistant service allowlists unless separately reviewed.
 
@@ -117,6 +117,61 @@ Use the existing [Android app build guidance](android-apps.md),
 [release gates](releasing.md), and [compatibility guide](compatibility.md) for
 implementation and validation. Design review is not an APK build, signing, or
 hardware acceptance gate.
+
+## Implemented visual system ("gallery wall", October 2026)
+
+The native screens share one theme in
+[`TouchTheme`](../frameos/touchframe/src/main/kotlin/com/wyattfleming/touchframe/ui/TouchTheme.kt):
+`TouchPalette` (day and night tokens), `TouchScale` (type and spacing per panel
+class), `TouchFonts` and the `TouchKit` component builders. Change tokens there,
+not in individual views; `TouchThemeTest` holds every text pair to 4.5:1 and every
+control boundary to 3:1.
+
+- **Navigation:** a top bar (the graphite moulding `#27302C` along the frame's top
+  edge, 68dp on the 1280 panel, 80dp on the 1920 frame) with horizontally scrolling
+  icon+label tabs, the current time on every screen except Home, and Settings at the
+  right. This top-bar layout preserves the available content width.
+  Photos and Art stay full screen; the left-edge swipe drops the bar down over them.
+- **Day:** stone wall `#E4E1D9`, mat panels `#F6F4EF`, ink `#1D2321`, gallery-green
+  accent `#2E5E50`, control stroke `#827C70`.
+- **Night (19:00–06:59):** black wall, dim warm amber ink `#B39668` with no
+  blue-white surfaces, and selections drawn as an outline on a dim fill rather than
+  a bright block. Screen brightness stays with the per-frame quiet-hours policy.
+- **Type:** bundled Red Hat Display (clock, temperatures, titles) and Red Hat Text
+  (everything else), SIL OFL 1.1, in `assets/fonts` with the licence. Panel class
+  (1280×800) and wall class (1920×1080) differ only in `TouchScale`.
+- **Icons:** 24dp stroke VectorDrawables `ic_touch_*`, tinted at runtime. Every segment after a moveto is written as an explicit `L`/`l`: Android 6 (API 23, the small frame) draws implicit pairs after `M`/`m` as more movetos, so a shorthand chevron rendered blank there while API 27 drew it (`TouchIconPathTest`).
+- **Segmented controls:** every segment starts at the widest label measured in the bold selected face; zero-width weighted segments in a wrap-content row shrink to the average label width on API 24+ and cut "Agenda"/"Month" on the wall frame (`TouchSegmentedWidthTest`).
+- **States:** offline is a pending-tone banner with Try again; signed out is one
+  explicit call to action; loading uses skeleton shapes; a thermostat change is
+  Not sent yet → Sending… → Set to N° or Couldn't set to N° (an unsent draft
+  reverts after 30 s). Notices replace Toasts, dock in a strip under native
+  content, and last 6 s (information) or 30 s/until dismissed (errors).
+- **Home:** the duplicate Explore grid is gone; the weather glance opens Weather
+  and Coming up opens the current week. Coming up groups by day and counts
+  anything that does not fit ("N more events this week").
+- **Calendar:** whole-row selected-day pages (6 on the 1280 panel, 4 with a banner,
+  the 12 cap elsewhere), "Free" days, and a Month tap opens that week. Past days stay
+  visible but greyed (a grey panel by day, an outlined box by night); today is tinted
+  and outlined; today's Week column says "Today", folds finished events into "N
+  earlier" and marks the current one "Now".
+- **Ocean:** conditions at one beach (Main Beach, Laguna Beach by default) from Ebbward's
+  public `/api/v1/ocean` (NOAA blend; no account), over Ebbward's surface scene: sky by the
+  hour, sun or moon, wind streaks, three swell layers that slide one wavelength per swell
+  period, the waterline at the predicted tide on a 6 ft gauge, light shafts by day and a
+  garibaldi. Each moving part is drawn once and only translated, at most 20 updates per
+  second, only while Ocean is on screen, and never when the system animation scale is off;
+  `TouchOceanSceneSourceTest` guards that. The 24-hour tide chart is fitted to its own window
+  (labels carry the real heights) so a day's swing fills it. Wind streaks all drift at the
+  wind's speed so their spacing holds. Below the waterline the conditions, a one- or two-line
+  summary and the tide stack in one column and the chart takes the height that is left, so
+  text never covers it; `TouchOceanViewSourceTest` guards that, explicit layout params on
+  every text, and the °F mark hanging from the numeral's digits. Night dims the scene 60%
+  toward black with the amber night ink. The companion has no Ocean mode yet: a remote order keeps
+  Ocean after Weather, and the status reports Weather while Ocean is shown.
+
+Design rounds, critiques, renders and the rubric are kept outside the repository
+(they include device captures); public examples use synthetic data only.
 
 ## Evidence boundary
 

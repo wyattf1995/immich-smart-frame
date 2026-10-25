@@ -16,15 +16,15 @@ if len(sys.argv) != 2:
     raise SystemExit(f'usage: {Path(sys.argv[0]).name} <tvos-root>')
 
 root = Path(sys.argv[1]).resolve()
-gradle = root / 'app/build.gradle'
+gradle = root / 'app/build.gradle.kts'
 test = root / 'app/src/test/java/com/wyattfleming/frametv/WeatherSourceTest.java'
 report = root / 'app/build/test-results/testDebugUnitTest'
 validation = root / 'validation'
 validation.mkdir(exist_ok=True)
 xml_name = 'TEST-com.wyattfleming.frametv.WeatherSourceTest.xml'
 test_class = 'com.wyattfleming.frametv.WeatherSourceTest'
-command = ['./gradlew', '--no-daemon', '--max-workers=2', '--rerun-tasks', ':app:testDebugUnitTest', '--tests', test_class]
-dependency = b"    testImplementation 'org.json:json:20260814'\n"
+command = ['../frameos/gradlew', '-p', '../frameos', '--no-daemon', '--max-workers=2', '--rerun-tasks', ':frametv:testDebugUnitTest', '--tests', test_class]
+dependency = b'    testImplementation("org.json:json:20260814")\n'
 expected_failures = {
     'rejectsForecastArraysThatExceedNativePresentationBudget',
     'rejectsMismatchedRequiredHourlyArrays',
@@ -32,7 +32,7 @@ expected_failures = {
 expected_cases = expected_failures | {'constructsNetworkForecastBeforeReturningToMainHandler'}
 mocked_json = 'Method getJSONObject in org.json.JSONObject not mocked.'
 
-if not gradle.is_file() or gradle.is_symlink() or not test.is_file() or test.is_symlink() or not (root / 'gradlew').is_file():
+if not gradle.is_file() or gradle.is_symlink() or not test.is_file() or test.is_symlink() or not (root.parent / 'frameos/gradlew').is_file():
     raise RuntimeError('TV Gradle input or WeatherSourceTest must be a regular file')
 original = gradle.read_bytes()
 gradle_hash = hashlib.sha256(original).hexdigest()

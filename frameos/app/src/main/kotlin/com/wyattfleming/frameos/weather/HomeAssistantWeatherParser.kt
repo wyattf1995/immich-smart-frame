@@ -32,6 +32,7 @@ class HomeAssistantWeatherParser {
             dewPoint = attributes.optionalDouble("dew_point"),
             cloudCoverage = attributes.optionalDouble("cloud_coverage"),
             uvIndex = attributes.optionalDouble("uv_index"),
+            precipitationUnit = attributes.optionalString("precipitation_unit"),
         )
     }
 
@@ -62,6 +63,8 @@ class HomeAssistantWeatherParser {
                 humidity = item.optionalDouble("humidity"),
                 windSpeed = item.optionalDouble("wind_speed"),
                 windBearing = item.optionalDouble("wind_bearing"),
+                precipitation = item.optionalDouble("precipitation"),
+                uvIndex = item.optionalDouble("uv_index"),
                 ))
             }
         }

@@ -10,12 +10,46 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 /**
- * DUMP-protected, one-time non-secret configuration bootstrap. It neither accepts nor copies
- * OAuth, companion, or other credentials. A successful result requires an app restart.
+ * DUMP-protected, one-time non-secret configuration bootstrap, plus a later change of the weather location label
+ * alone. It neither accepts nor copies OAuth, companion, or other credentials. A successful result requires an app
+ * restart.
  */
 class TouchProvisionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != TouchProvisionContract.ACTION_PROVISION) return
+        when (intent.action) {
+            TouchProvisionContract.ACTION_PROVISION -> provision(context, intent)
+            TouchProvisionContract.ACTION_SET_WEATHER_LOCATION -> setWeatherLocation(context, intent)
+        }
+    }
+
+    /** Provisioning is write-once, so the label shown beside "Updated" on Weather is changed here instead. */
+    private fun setWeatherLocation(context: Context, intent: Intent) {
+        val pending = goAsync()
+        try {
+            worker.execute {
+                try {
+                    val store = TouchConfigurationStore(context)
+                    val current = store.read()
+                    val updated = current?.let { TouchProvisionContract.withWeatherLocation(current, intent.getStringExtra(TouchProvisionContract.EXTRA_WEATHER_LOCATION_LABEL)) }
+                    when {
+                        current == null -> pending.result(TouchProvisionContract.RESULT_INVALID, "not-provisioned")
+                        updated == null -> pending.result(TouchProvisionContract.RESULT_INVALID, "invalid-request")
+                        store.replaceDurably(updated) -> pending.result(TouchProvisionContract.RESULT_OK, "updated-restart-required")
+                        else -> pending.result(TouchProvisionContract.RESULT_FAILED, "update-failed")
+                    }
+                } catch (_: RuntimeException) {
+                    pending.result(TouchProvisionContract.RESULT_FAILED, "update-failed")
+                } finally {
+                    pending.finish()
+                }
+            }
+        } catch (_: RuntimeException) {
+            pending.result(TouchProvisionContract.RESULT_FAILED, "update-failed")
+            pending.finish()
+        }
+    }
+
+    private fun provision(context: Context, intent: Intent) {
         val configuration = TouchProvisionContract.parse(
             photosUrl = intent.getStringExtra(TouchProvisionContract.EXTRA_PHOTOS_URL),
             homeAssistantUrl = intent.getStringExtra(TouchProvisionContract.EXTRA_HOME_ASSISTANT_URL),

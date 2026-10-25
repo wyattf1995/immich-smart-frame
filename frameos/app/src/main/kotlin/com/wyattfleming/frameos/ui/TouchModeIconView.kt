@@ -57,6 +57,16 @@ internal class TouchModeIconView @JvmOverloads constructor(
                 canvas.drawLine(w * .45f, h * .20f, w * .45f, h * .12f, paint)
                 canvas.drawLine(w * .25f, h * .65f, w * .75f, h * .65f, paint)
             }
+            FrameMode.OCEAN -> {
+                // Three rows of swell, two crests each.
+                for (row in 0..2) {
+                    val y = h * (.36f + row * .15f)
+                    bounds.set(w * .20f, y - h * .06f, w * .50f, y + h * .06f)
+                    canvas.drawArc(bounds, 200f, 140f, false, paint)
+                    bounds.set(w * .50f, y - h * .06f, w * .80f, y + h * .06f)
+                    canvas.drawArc(bounds, 200f, 140f, false, paint)
+                }
+            }
             FrameMode.CAMERAS -> {
                 bounds.set(w * .20f, h * .34f, w * .68f, h * .70f)
                 canvas.drawRoundRect(bounds, p * .2f, p * .2f, paint)

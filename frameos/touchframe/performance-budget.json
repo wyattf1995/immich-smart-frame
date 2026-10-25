@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "owner": "Wyatt Fleming",
+  "apk": {
+    "why": "Measured on builds 30, 36 and 37: 145.51 MB, identical across builds (size has no run-to-run noise). Installs stream the APK over Wi-Fi to frames with little free storage; growth past these numbers means a new dependency or a second ABI and must be seen in review.",
+    "total_bytes": {"max": 150000000, "why": "145.5 MB today plus 3%"},
+    "abis": {"allowed": ["armeabi-v7a"], "why": "Both frames are ARMv7; a second ABI would add about 131 MB"},
+    "native_bytes": {"max": 133000000, "why": "130.7 MB today, 113.3 MB of it GeckoView's libxul.so"},
+    "dex_bytes": {"max": 3000000, "why": "2.68 MB today (Touch, Kotlin, GeckoView Java)"},
+    "gecko_omni_bytes": {"max": 14500000, "why": "assets/omni.ja is Gecko's own: 13.62 MB today"},
+    "other_assets_bytes": {"max": 500000, "why": "fonts and page bridges, 0.2 MB today; catches a large image, font or bundle"},
+    "res_bytes": {"max": 500000, "why": "0.3 MB today"},
+    "new_entry_bytes": {
+      "max": 1000000,
+      "why": "any single entry over 1 MB not listed here is a new heavy dependency",
+      "known": ["lib/armeabi-v7a/libxul.so", "assets/omni.ja", "lib/armeabi-v7a/libgkcodecs.so",
+                "lib/armeabi-v7a/libminidump_analyzer.so", "lib/armeabi-v7a/libcrashhelper.so", "classes.dex",
+                "lib/armeabi-v7a/libnss3.so", "lib/armeabi-v7a/libmozavcodec.so"]
+    }
+  },
+  "device": {
+    "frame": "large 159K: 976 MB RAM, 1920x1080, Android 8.1",
+    "why": "Measured by device/memory_ab.py (60 s windows); see docs/touch-performance-history.md for the runs and the noise floor behind each number.",
+    "photos_idle": {
+      "touch_pss_mb": {"max": 420, "why": "build 41, 5 runs 10/17: median 342, max 362, run-to-run spread 59 MB (Gecko varies with the photo and its caches); max + spread"},
+      "cpu_percent_main_plus_gpu": {"max": 30, "why": "target: a still photo with a 1 s fade every 45 s should cost a few percent. Builds 37-43 measured 90-95 (spread 2.3) because GeckoView's TextureView handed Gecko a new surface after every frame (a redraw loop, not Kiosk); build 44's frame gate measures 17.4 (one run, 10/17)"},
+      "app_frames_per_minute": {"max": 300, "why": "target: one 1 s fade per 45 s slide is under 40 frames a minute, plus Kiosk's swaps; builds 37-43 measured 1,325-1,643 (about 22-27 fps) from the same GeckoView loop; build 44 measures 86 (one run, 10/17)"}
+    },
+    "home_after_3_minutes": {
+      "touch_pss_mb": {"max": 280, "why": "build 41, 5 runs: median 240, max 256, spread 17 MB, with the Photos page released after 2 minutes away; build 37 held 325"}
+    },
+    "latency": {
+      "why": "Wyatt's targets (10/17). Measured by device/latency_sampler.py: raw on-device captures every ~0.8 s for photos, framestats bracketed by the device clock for taps (times after the tap command returned, so a lower bound by up to ~0.3 s).",
+      "photos_picture_after_return_s": {"max": 1.0, "why": "a picture on screen within 1 s of tapping Photos, warm or after the page was released"},
+      "photos_picture_after_cold_start_s": {"max": 3.0, "why": "a picture on screen within 3 s of Touch starting"},
+      "new_screen_after_tap_ms": {"max": 300, "why": "navigation budget for a menu tap to a native screen"}
+    },
+    "touch_process_kills": {"max": 0, "why": "a kernel kill of any Touch process during the check is a regression (10/14 the foreground app was killed)"}
+  }
+}

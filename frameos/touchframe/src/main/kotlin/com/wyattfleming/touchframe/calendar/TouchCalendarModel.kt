@@ -63,6 +63,18 @@ data class TouchCalendarState(
     val partial: Boolean = false,
 )
 
+/** How a Month cell reads at a glance: past days recede, today stands out, upcoming days are panels. */
+enum class TouchCalendarDayTone { PAST, TODAY, UPCOMING, OUTSIDE_MONTH }
+
+object TouchCalendarDayStyle {
+    fun toneFor(date: LocalDate, today: LocalDate, inMonth: Boolean): TouchCalendarDayTone = when {
+        date == today -> TouchCalendarDayTone.TODAY
+        date.isBefore(today) -> TouchCalendarDayTone.PAST
+        !inMonth -> TouchCalendarDayTone.OUTSIDE_MONTH
+        else -> TouchCalendarDayTone.UPCOMING
+    }
+}
+
 /** Pure display bounds so the View never draws days it did not request. */
 object TouchCalendarRenderPlan {
     fun monthWeeks(range: TouchCalendarRange): Int {

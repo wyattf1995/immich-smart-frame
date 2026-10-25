@@ -9,7 +9,7 @@ if not __debug__: raise RuntimeError('optimized Python is not permitted')
 if len(sys.argv) != 2: raise SystemExit(f'usage: {Path(sys.argv[0]).name} <tvos-root>')
 root=Path(sys.argv[1]).resolve(); source=root/'app/src/main/java/com/wyattfleming/frametv/WeatherSource.java'; test=root/'app/src/test/java/com/wyattfleming/frametv/WeatherSourceTest.java'; validation=root/'validation'; validation.mkdir(exist_ok=True)
 if not source.is_file() or source.is_symlink() or not test.is_file() or test.is_symlink(): raise RuntimeError('WeatherSource source/test must be regular files')
-original=source.read_bytes(); source_hash=hashlib.sha256(original).hexdigest(); test_hash=hashlib.sha256(test.read_bytes()).hexdigest(); report=root/'app/build/test-results/testDebugUnitTest'; xml_name='TEST-com.wyattfleming.frametv.WeatherSourceTest.xml'; command=['./gradlew','--no-daemon','--max-workers=2',':app:testDebugUnitTest','--tests','com.wyattfleming.frametv.WeatherSourceTest']
+original=source.read_bytes(); source_hash=hashlib.sha256(original).hexdigest(); test_hash=hashlib.sha256(test.read_bytes()).hexdigest(); report=root/'app/build/test-results/testDebugUnitTest'; xml_name='TEST-com.wyattfleming.frametv.WeatherSourceTest.xml'; command=['../frameos/gradlew','-p','../frameos','--no-daemon','--max-workers=2',':frametv:testDebugUnitTest','--tests','com.wyattfleming.frametv.WeatherSourceTest']
 
 def run(label, failures):
     if report.exists(): shutil.rmtree(report)

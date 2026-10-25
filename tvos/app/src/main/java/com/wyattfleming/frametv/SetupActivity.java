@@ -28,6 +28,7 @@ public final class SetupActivity extends Activity {
         description.setPadding(0, TvUi.dp(this, 12), 0, TvUi.dp(this, 18));
         content.addView(description);
         for (Feature feature : Feature.values()) {
+            if (!feature.addressed) continue;
             content.addView(TvUi.text(this, feature.title, 18, TvUi.TEXT));
             EditText field = new EditText(this);
             field.setId(View.generateViewId());

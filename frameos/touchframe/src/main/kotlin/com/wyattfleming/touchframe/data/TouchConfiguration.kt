@@ -28,6 +28,10 @@ data class TouchConfiguration(
             "camera.living_room_living_room_camera",
         )
 
+        /** One line of at most 80 characters; blank is no label. */
+        fun locationLabel(value: String?): String? =
+            value?.replace(Regex("[\\s\\p{Cc}]+"), " ")?.trim()?.take(80)?.trimEnd()?.ifEmpty { null }
+
         fun from(
             photosUrl: String,
             homeAssistantUrl: String,
@@ -61,8 +65,7 @@ data class TouchConfiguration(
                 weatherEntityId = weather,
                 artUrl = art,
                 birdsUrl = birds,
-                weatherLocationLabel = weatherLocationLabel?.replace(Regex("[\\s\\p{Cc}]+"), " ")
-                    ?.trim()?.take(80)?.trimEnd()?.ifEmpty { null },
+                weatherLocationLabel = locationLabel(weatherLocationLabel),
                 climateEntityId = climate,
                 calendarEntityIds = calendars.ifEmpty { DEFAULT_CALENDAR_ENTITY_IDS },
                 cameraEntityIds = cameras.ifEmpty { DEFAULT_CAMERA_ENTITY_IDS },
@@ -153,6 +156,22 @@ class TouchConfigurationStore(context: Context) {
             .putStringSet(KEY_CAMERA_ENTITY_IDS, configuration.cameraEntityIds.toSet())
             .commit()
         if (committed) InitialWriteResult.WRITTEN else InitialWriteResult.FAILED
+    }
+
+    /** Replaces a configuration already on the frame; `commit()`, so call only from a worker. */
+    fun replaceDurably(value: TouchConfiguration): Boolean = synchronized(preferences) {
+        if (!hasInitialConfiguration()) return false
+        preferences.edit()
+            .putString(KEY_PHOTOS_URL, value.photosUrl)
+            .putString(KEY_HOME_ASSISTANT_URL, value.homeAssistantUrl)
+            .putString(KEY_WEATHER_ENTITY_ID, value.weatherEntityId)
+            .putString(KEY_WEATHER_LOCATION_LABEL, value.weatherLocationLabel)
+            .putString(KEY_ART_URL, value.artUrl)
+            .putString(KEY_BIRDS_URL, value.birdsUrl)
+            .putString(KEY_CLIMATE_ENTITY_ID, value.climateEntityId)
+            .putStringSet(KEY_CALENDAR_ENTITY_IDS, value.calendarEntityIds.toSet())
+            .putStringSet(KEY_CAMERA_ENTITY_IDS, value.cameraEntityIds.toSet())
+            .commit()
     }
 
     private fun hasInitialConfiguration(): Boolean = INITIAL_KEYS.any(preferences::contains)

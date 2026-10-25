@@ -24,6 +24,16 @@ readonly touch_mapping="$frameos_dir/touchframe/build/outputs/mapping/release/ma
 export ANDROID_SDK_HOME="$work_dir/android-preferences"
 export ANDROID_USER_HOME="$ANDROID_SDK_HOME/.android"
 mkdir -p "$work_dir/tmp" "$work_dir/gradle-home" "$report_dir" "$ANDROID_USER_HOME"
+# A failed run keeps a redacted copy of its log in reports/: agent-nas export refuses the dot directory the raw log is
+# written in, so without this a failed job's only diagnosis is whatever files happen to sit in plain build folders.
+keep_failed_log() {
+  local status=$?
+  if (( status != 0 )) && [[ -f "$raw_log" ]]; then
+    python3 -c 'import re,sys; from pathlib import Path; t=Path(sys.argv[1]).read_text(errors="replace"); Path(sys.argv[2]).write_text(re.sub(r"(?i)\b(authorization|password|token|secret)\b(\s*[:=]\s*)\S+", r"\1\2[REDACTED]", t))' "$raw_log" "$report_dir/validation-failed.log" || true
+  fi
+  return "$status"
+}
+trap keep_failed_log EXIT
 export TMPDIR="$work_dir/tmp"
 export GRADLE_USER_HOME="$work_dir/gradle-home"
 export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Djava.io.tmpdir=$TMPDIR"
@@ -106,17 +116,45 @@ write_source_inventory "$manifest"
 
 # Fail fast on release compilation/lint before the source-mutation matrix.
 # The final source-inventory comparison still verifies exact byte restoration.
-run_step touchframe-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:lintRelease"
+run_step touchframe-lint-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:lintRelease :frame-ui:lintRelease"
 # Catch ordinary shared and Touch regressions before the costly mutation matrix.
 # Run them again after the focused proof because its targeted Gradle invocations
 # replace JUnit XML inventory used by the final retained summary.
 run_step touchframe-shared-tests-preflight bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :frame-shared:testDebugUnitTest"
 run_step touchframe-tests-preflight bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:testDebugUnitTest"
-run_step touchframe-source-proof python3 "$root_dir/scripts/verify-touchframe-proof.py" "$root_dir"
-run_step weather-header-source-proof python3 "$root_dir/scripts/verify-weather-header-layout-proof.py" "$root_dir"
+# A transport carrying proof-scope.json is a fast-lane device build: it runs only the design
+# mutations whose source or guarding test changed since the named full-proof baseline and skips
+# the other proof suites. The full matrix (no scope file) must still pass before any merge.
+readonly proof_scope="$root_dir/proof-scope.json"
+lane=full
+if [[ -f "$proof_scope" ]]; then
+  python3 - "$proof_scope" <<'PY'
+import json,re,sys
+from pathlib import Path
+d=json.loads(Path(sys.argv[1]).read_text())
+ok=(d.get('schema')==1 and d.get('mode')=='fast' and re.fullmatch(r'[0-9a-f]{40}',str(d.get('baseline',''))) and isinstance(d.get('changed'),list)
+    and all(isinstance(p,str) and p and not p.startswith('/') and '..' not in p.split('/') for p in d['changed']))
+if not ok: raise SystemExit('invalid proof-scope.json')
+PY
+  lane=fast
+  printf '\n== fast-lane ==\nFAST LANE: proofs only for files changed since the full-proof baseline; the full proof matrix must pass before merge\n' | tee -a "$raw_log"
+  run_step touchframe-design-source-proof env TOUCHFRAME_PROOF_SCOPE="$proof_scope" python3 "$root_dir/scripts/verify-touchframe-design-proof.py" "$root_dir"
+else
+  run_step touchframe-startup-source-proof python3 "$root_dir/scripts/verify-touch-startup-proof.py" "$root_dir"
+  run_step touchframe-climate-source-proof python3 "$root_dir/scripts/verify-touch-climate-proof.py" "$root_dir"
+  run_step touchframe-live-camera-source-proof python3 "$root_dir/scripts/verify-touch-live-camera-proof.py" "$root_dir" --run-jvm --report-dir "$root_dir/reports/touch-live-camera"
+  run_step touchframe-source-proof python3 "$root_dir/scripts/verify-touchframe-proof.py" "$root_dir"
+  run_step weather-header-source-proof python3 "$root_dir/scripts/verify-weather-header-layout-proof.py" "$root_dir"
+  run_step touchframe-design-source-proof python3 "$root_dir/scripts/verify-touchframe-design-proof.py" "$root_dir"
+fi
 run_step touchframe-shared-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :frame-shared:testDebugUnitTest"
 run_step touchframe-tests bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:testDebugUnitTest"
 run_step touchframe-assemble-release bash -c "cd '$frameos_dir' && ./gradlew --no-daemon --max-workers=2 :touchframe:assembleRelease"
+# Size budgets (frameos/touchframe/performance-budget.json): the self-test proves the check fails each regression kind,
+# then the real APK is measured; a breach fails the build and names the metric, budget, value and entry.
+# -B: no __pycache__ in the source tree, which the closing source-inventory check would count as a change (build 39).
+run_step touchframe-size-budget-selftest python3 -B "$root_dir/scripts/tests/test_verify_touchframe_size_budget.py"
+run_step touchframe-size-budget python3 -B "$root_dir/scripts/verify-touchframe-size-budget.py" "$touch_apk" "$frameos_dir/touchframe/performance-budget.json" "$report_dir/size-budget.json"
 
 write_source_inventory "$post_manifest"
 cmp -- "$manifest" "$post_manifest" || { printf 'extracted transport source inventory changed during TouchFrame validation\n' >&2; exit 73; }
@@ -160,11 +198,15 @@ PY
 python3 - "$root_dir" "$report_zip" <<'PY'
 import sys,zipfile
 from pathlib import Path
-root,out=map(Path,sys.argv[1:]); include=[root/'reports/frameos-weather-header',root/'reports/touchframe-android',root/'frameos/touchframe/build/reports',root/'frameos/touchframe/build/test-results',root/'frameos/frame-shared/build/reports',root/'frameos/frame-shared/build/test-results']
+root,out=map(Path,sys.argv[1:]); include=[root/'reports/frameos-weather-header',root/'reports/touchframe-design',root/'reports/touchframe-android',root/'reports/touch-climate',root/'reports/touch-live-camera',root/'frameos/touchframe/build/reports',root/'frameos/touchframe/build/test-results',root/'frameos/frame-shared/build/reports',root/'frameos/frame-shared/build/test-results']
 with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
  for base in include:
   if base.exists():
    for p in sorted(base.rglob('*')):
     if p.is_file() and p.suffix in {'.html','.json','.txt','.xml','.log'}: z.write(p,p.relative_to(root))
 PY
-printf 'TouchFrame NAS validation passed\n' | tee -a "$log_file"
+if [[ "$lane" == fast ]]; then
+  printf 'TouchFrame NAS validation passed (fast lane)\n' | tee -a "$log_file"
+else
+  printf 'TouchFrame NAS validation passed\n' | tee -a "$log_file"
+fi

@@ -13,11 +13,68 @@ class TouchHomeParserTest {
     fun `climate parser keeps valid card when target step is absent`() {
         val climate = parser.parseClimate(
             "climate.entryway_entryway",
-            """{"entity_id":"climate.entryway_entryway","state":"heat","attributes":{"temperature_unit":"°F","min_temp":50,"max_temp":85}}""",
+            """{"entity_id":"climate.entryway_entryway","state":"heat","attributes":{"temperature":71,"temperature_unit":"°F","supported_features":1,"min_temp":50,"max_temp":85}}""",
         )
         assertEquals(null, climate?.step)
         assertEquals(50.0, climate?.minTemperature)
         assertEquals(85.0, climate?.maxTemperature)
+        assertTrue(climate?.canSetTarget == true)
+    }
+
+    @Test
+    fun `climate parser uses only a recognized config unit when old HA omits the entity unit`() {
+        val state = """{"entity_id":"climate.entryway_entryway","state":"heat","attributes":{"current_temperature":70,"temperature":71,"supported_features":1,"hvac_modes":["off","heat"],"min_temp":50,"max_temp":85,"target_temp_step":1}}"""
+
+        assertTrue(parser.requiresConfigTemperatureUnit("climate.entryway_entryway", state))
+        assertEquals("°F", parser.parseConfigTemperatureUnit("""{"unit_system":{"temperature":"°F"}}"""))
+        val climate = parser.parseClimate("climate.entryway_entryway", state, fallbackTemperatureUnit = "°F")!!
+
+        assertEquals("°F", climate.unit)
+        assertTrue(climate.canSetTarget)
+        assertTrue(climate.canSetMode)
+    }
+
+    @Test
+    fun `climate parser keeps a reported range read only without single target capability`() {
+        val climate = parser.parseClimate(
+            "climate.entryway_entryway",
+            """{"entity_id":"climate.entryway_entryway","state":"heat_cool","attributes":{"current_temperature":70,"target_temp_low":68,"target_temp_high":75,"temperature_unit":"°F","supported_features":2,"hvac_modes":["off","heat_cool"],"min_temp":50,"max_temp":85}}""",
+        )!!
+
+        assertEquals(68.0, climate.targetTemperatureLow)
+        assertEquals(75.0, climate.targetTemperatureHigh)
+        assertTrue(!climate.canSetTarget)
+        assertTrue(climate.canSetMode)
+    }
+
+    @Test
+    fun `climate parser keeps dual-feature heat cool ranges read only`() {
+        val climate = parser.parseClimate(
+            "climate.entryway_entryway",
+            """{"entity_id":"climate.entryway_entryway","state":"heat_cool","attributes":{"current_temperature":70,"temperature":72,"target_temp_low":68,"target_temp_high":75,"temperature_unit":"°F","supported_features":3,"hvac_modes":["off","heat_cool"],"min_temp":50,"max_temp":85}}""",
+        )!!
+
+        assertEquals(72.0, climate.targetTemperature)
+        assertEquals(68.0, climate.targetTemperatureLow)
+        assertEquals(75.0, climate.targetTemperatureHigh)
+        assertTrue(!climate.canSetTarget)
+        assertTrue(climate.canSetMode)
+    }
+
+    @Test
+    fun `climate parser retains the observed off thermostat without inventing a target`() {
+        val climate = parser.parseClimate(
+            "climate.entryway_entryway",
+            """{"entity_id":"climate.entryway_entryway","state":"off","attributes":{"min_temp":50,"max_temp":90,"current_temperature":71,"temperature":null,"target_temp_low":null,"target_temp_high":null,"hvac_modes":["heat","cool","heat_cool","off"],"supported_features":411,"hvac_action":"off"}}""",
+            fallbackTemperatureUnit = "°F",
+        )!!
+
+        assertEquals("off", climate.mode)
+        assertEquals(71.0, climate.currentTemperature)
+        assertEquals(null, climate.targetTemperature)
+        assertTrue(!climate.canSetTarget)
+        assertTrue(climate.canSetMode)
+        assertEquals(listOf("heat", "cool", "heat_cool", "off"), climate.modes)
     }
 
     @Test
