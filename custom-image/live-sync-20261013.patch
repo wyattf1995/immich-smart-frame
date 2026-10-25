@@ -1,0 +1,1698 @@
+diff --git a/config.example.yaml b/config.example.yaml
+index 55e1d22..5580317 100644
+--- a/config.example.yaml
++++ b/config.example.yaml
+@@ -40,6 +40,12 @@ album_order: random # random | newest | oldest
+ excluded_albums:
+   - "ALBUM_ID"
+ 
++# Server-wide hard deny-list for individual assets. These IDs are never
++# selectable or served from prefetch/offline/history records, and URL queries
++# cannot clear this policy.
++excluded_assets:
++  - "ASSET_ID"
++
+ ## Date range or ranges to display
+ dates:
+   - "YYYY-MM-DD_to_YYYY-MM-DD"
+@@ -159,7 +165,7 @@ hide_button_action: tag # tag, archive, or both [tag, archive]
+ #   enabled: false
+ #   number_of_assets: 100
+ #   max_size: 0
+-#   parallel_downloads: 1
++#   parallel_downloads: 1 # Fixed safe cap: offline rendering shares one global renderer.
+ #   expiration_hours: 0
+ 
+ ## Options that can NOT be changed via url params
+diff --git a/config.schema.json b/config.schema.json
+index cd187b2..388125a 100644
+--- a/config.schema.json
++++ b/config.schema.json
+@@ -102,6 +102,13 @@
+       },
+       "uniqueItems": true
+     },
++    "excluded_assets": {
++      "type": ["string", "array"],
++      "items": {
++        "type": "string"
++      },
++      "uniqueItems": true
++    },
+     "dates": {
+       "type": ["string", "array"],
+       "items": {
+@@ -626,7 +633,9 @@
+           "type": ["string", "integer"]
+         },
+         "parallel_downloads": {
+-          "type": "integer"
++          "type": "integer",
++          "maximum": 1,
++          "description": "Offline rendering shares one global renderer; values above 1 are not supported."
+         },
+         "expiration_hours": {
+           "type": "integer"
+diff --git a/frontend/src/ts/decode-frame.ts b/frontend/src/ts/decode-frame.ts
+new file mode 100644
+index 0000000..d96933e
+--- /dev/null
++++ b/frontend/src/ts/decode-frame.ts
+@@ -0,0 +1,112 @@
++function abortError(): DOMException {
++    return new DOMException("aborted", "AbortError");
++}
++
++async function waitForDecode(image: HTMLImageElement, signal: AbortSignal, timeoutMs: number): Promise<boolean> {
++    if (signal.aborted) throw abortError();
++
++    let decoded: Promise<void>;
++    try {
++        decoded = image.decode();
++    } catch {
++        decoded = Promise.reject(new Error("image decode invocation failed"));
++    }
++    // A rejected decode can arrive after an abort has already won the race.
++    void decoded.catch(() => undefined);
++
++    return new Promise<boolean>((resolve, reject) => {
++        const finish = () => {
++            signal.removeEventListener("abort", abort);
++            clearTimeout(timeout);
++        };
++        const abort = () => {
++            finish();
++            reject(abortError());
++        };
++        const timeout = window.setTimeout(() => {
++            finish();
++            reject(new Error("image decode timed out"));
++        }, timeoutMs);
++
++        decoded.then(
++            () => {
++                finish();
++                resolve(image.naturalWidth > 0);
++            },
++            () => {
++                finish();
++                resolve(false);
++            },
++        );
++        signal.addEventListener("abort", abort, { once: true });
++        if (signal.aborted) abort();
++    });
++}
++
++async function waitForLoad(image: HTMLImageElement, signal: AbortSignal, timeoutMs: number): Promise<void> {
++    if (signal.aborted) throw abortError();
++
++    await new Promise<void>((resolve, reject) => {
++        const finish = () => {
++            signal.removeEventListener("abort", abort);
++            image.removeEventListener("load", load);
++            image.removeEventListener("error", error);
++            clearTimeout(timeout);
++        };
++        const abort = () => {
++            finish();
++            reject(abortError());
++        };
++        const load = () => {
++            finish();
++            image.naturalWidth > 0 ? resolve() : reject(new Error("image decode failed"));
++        };
++        const error = () => {
++            finish();
++            reject(new Error("image decode failed"));
++        };
++        const timeout = window.setTimeout(() => {
++            finish();
++            reject(new Error("image decode timed out"));
++        }, timeoutMs);
++
++        image.addEventListener("load", load, { once: true });
++        image.addEventListener("error", error, { once: true });
++        signal.addEventListener("abort", abort, { once: true });
++        if (signal.aborted) abort();
++    });
++}
++
++export async function decodeFrame(frame: HTMLElement, signal: AbortSignal, timeoutMs: number): Promise<void> {
++    const siblings = new AbortController();
++    const abortSiblings = () => siblings.abort();
++    if (signal.aborted) abortSiblings();
++    else signal.addEventListener("abort", abortSiblings, { once: true });
++
++    try {
++        await Promise.all(Array.from(frame.querySelectorAll("img")).map(async (image) => {
++            if (siblings.signal.aborted) throw abortError();
++            const started = performance.now();
++            // A completed image will not deliver another load/error event. Avoid a
++            // non-settling decode promise for valid images and reject broken ones.
++            if (image.complete) {
++                if (image.naturalWidth > 0) return;
++                throw new Error("image decode failed");
++            }
++            if (typeof image.decode === "function" && await waitForDecode(image, siblings.signal, timeoutMs)) return;
++            if (siblings.signal.aborted) throw abortError();
++            if (image.complete) {
++                if (image.naturalWidth > 0) return;
++                throw new Error("image decode failed");
++            }
++            const remaining = timeoutMs - (performance.now() - started);
++            if (remaining <= 0) throw new Error("image decode timed out");
++            await waitForLoad(image, siblings.signal, remaining);
++        }));
++    } catch (error) {
++        abortSiblings();
++        throw error;
++    } finally {
++        signal.removeEventListener("abort", abortSiblings);
++    }
++}
+diff --git a/frontend/src/ts/shared-playback.ts b/frontend/src/ts/shared-playback.ts
+index 86307c1..63cde99 100644
+--- a/frontend/src/ts/shared-playback.ts
++++ b/frontend/src/ts/shared-playback.ts
+@@ -1,3 +1,4 @@
++import { decodeFrame as decodeFrameWithBounds } from './decode-frame';
+ import DOMPurify from "dompurify";
+ 
+ export type SharedSlide = {
+@@ -21,6 +22,11 @@ export type SharedPlaybackAction = "next" | "previous" | "pause" | "resume";
+ 
+ export type PreparedSlide = { id: string };
+ 
++export type SharedPlaybackCommandResult = {
++    state: SharedPlaybackState;
++    conflict: boolean;
++};
++
+ export type SharedPlaybackPorts = {
+     now(): number;
+     setTimer(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>;
+@@ -31,7 +37,7 @@ export type SharedPlaybackPorts = {
+         expectedVersion: number,
+         sessionId: string,
+         signal: AbortSignal,
+-    ): Promise<SharedPlaybackState>;
++    ): Promise<SharedPlaybackCommandResult>;
+     prepare(slide: SharedSlide, signal: AbortSignal): Promise<PreparedSlide>;
+     render(prepared: PreparedSlide): void;
+     status(message: "connected" | "offline" | "error"): void;
+@@ -102,11 +108,20 @@ export class SharedPlaybackController {
+         if (this.disposed || !this.visible || this.commandInFlight || !this.state) return;
+         this.commandInFlight = true;
+         const generation = this.generation;
+-        const expectedVersion = this.state.version;
+-        const sessionId = this.state.sessionId;
+-        const requestId = ++this.requestedState;
+-        this.withTimeout((signal) => this.ports.sendCommand(action, expectedVersion, sessionId, signal))
+-            .then((state) => this.accept(state, generation, requestId))
++        const originalSessionId = this.state.sessionId;
++        const desiredPaused = action === "pause" ? true : action === "resume" ? false : undefined;
++        const send = (expectedVersion: number, sessionId: string, retriesRemaining: number): Promise<void> => {
++            const requestId = ++this.requestedState;
++            return this.withTimeout((signal) => this.ports.sendCommand(action, expectedVersion, sessionId, signal))
++                .then((result) => {
++                    const accepted = this.accept(result.state, generation, requestId);
++                    const latest = this.state;
++                    const retry = result.conflict && retriesRemaining > 0 && desiredPaused !== undefined && accepted &&
++                        this.active(generation) && latest?.sessionId === originalSessionId && latest.paused !== desiredPaused;
++                    if (retry) return send(latest.version, latest.sessionId, retriesRemaining - 1);
++                });
++        };
++        send(this.state.version, originalSessionId, 1)
+             .catch(() => {
+                 if (this.active(generation)) this.pollSoon(0);
+             })
+@@ -139,13 +154,13 @@ export class SharedPlaybackController {
+             });
+     }
+ 
+-    private accept(state: SharedPlaybackState, generation: number, requestId: number, offset?: number): void {
+-        if (!this.active(generation) || !validState(state)) return;
+-        if (requestId < this.acceptedState) return;
++    private accept(state: SharedPlaybackState, generation: number, requestId: number, offset?: number): boolean {
++        if (!this.active(generation) || !validState(state)) return false;
++        if (requestId < this.acceptedState) return false;
+         if (
+             this.state && state.sessionId === this.state.sessionId &&
+             state.version < this.state.version
+-        ) return;
++        ) return false;
+         this.acceptedState = requestId;
+         if (offset !== undefined) this.offsetMs = offset;
+         this.retryMs = POLL_MS;
+@@ -178,6 +193,7 @@ export class SharedPlaybackController {
+             if (this.active(generation) && revision === this.revision) this.ports.status("error");
+         });
+         this.pollSoon(POLL_MS);
++        return true;
+     }
+ 
+     private prepare(slide: SharedSlide, generation: number): Promise<PreparedSlide> {
+@@ -309,23 +325,7 @@ function sanitizeFrame(html: string, document: Document, origin = window.locatio
+     return { id: "", frame: frame.cloneNode(true) as HTMLElement, history };
+ }
+ 
+-async function decodeFrame(frame: HTMLElement, signal: AbortSignal): Promise<void> {
+-    await Promise.all(Array.from(frame.querySelectorAll("img")).map(async (image) => {
+-        if (signal.aborted) throw new DOMException("aborted", "AbortError");
+-        if (typeof image.decode === "function") {
+-            try { await image.decode(); if (image.naturalWidth > 0) return; } catch { /* load event below */ }
+-        }
+-        if (image.complete && image.naturalWidth > 0) return;
+-        await new Promise<void>((resolve, reject) => {
+-            const done = () => { signal.removeEventListener("abort", abort); clearTimeout(timeout); };
+-            const abort = () => { done(); reject(new DOMException("aborted", "AbortError")); };
+-            const timeout = window.setTimeout(() => { done(); reject(new Error("image decode timed out")); }, REQUEST_TIMEOUT_MS);
+-            image.addEventListener("load", () => { done(); image.naturalWidth > 0 ? resolve() : reject(new Error("image decode failed")); }, { once: true });
+-            image.addEventListener("error", () => { done(); reject(new Error("image decode failed")); }, { once: true });
+-            signal.addEventListener("abort", abort, { once: true });
+-        });
+-    }));
+-}
++async function decodeFrame(frame: HTMLElement, signal: AbortSignal): Promise<void> { return decodeFrameWithBounds(frame, signal, REQUEST_TIMEOUT_MS); }
+ 
+ /** Starts the browser adapter. Supplying no group is intentionally a no-op. */
+ export function startSharedPlayback(options: StartSharedPlaybackOptions = {}): () => void {
+@@ -348,20 +348,28 @@ export function startSharedPlayback(options: StartSharedPlaybackOptions = {}): (
+         for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
+         return new TextDecoder().decode(result);
+     };
+-    const fetchJSON = async (url: string, init: RequestInit, acceptConflict = false): Promise<SharedPlaybackState> => {
++    const fetchJSON = async (url: string, init: RequestInit): Promise<SharedPlaybackState> => {
+         const response = await fetch(url, { ...init, credentials: "same-origin" });
+         const length = Number(response.headers.get("content-length") ?? 0);
+-        if ((!response.ok && !(acceptConflict && response.status === 409)) || length > 65_536) throw new Error(`playback request failed: ${response.status}`);
++        if (!response.ok || length > 65_536) throw new Error(`playback request failed: ${response.status}`);
+         const body = await readBounded(response, 65_536);
+         return JSON.parse(body) as SharedPlaybackState;
+     };
++    const fetchCommand = async (url: string, init: RequestInit): Promise<SharedPlaybackCommandResult> => {
++        const response = await fetch(url, { ...init, credentials: "same-origin" });
++        const length = Number(response.headers.get("content-length") ?? 0);
++        const conflict = response.status === 409;
++        if ((!response.ok && !conflict) || length > 65_536) throw new Error(`playback request failed: ${response.status}`);
++        const body = await readBounded(response, 65_536);
++        return { state: JSON.parse(body) as SharedPlaybackState, conflict };
++    };
+     const controller = new SharedPlaybackController({
+         now: () => Date.now(), setTimer: (fn, delay) => window.setTimeout(fn, delay), clearTimer: (timer) => window.clearTimeout(timer),
+         fetchState: (signal) => fetchJSON(endpoint, { signal }),
+-        sendCommand: (action, expectedVersion, sessionId, signal) => fetchJSON(`${endpoint}/control`, {
++        sendCommand: (action, expectedVersion, sessionId, signal) => fetchCommand(`${endpoint}/control`, {
+             method: "POST", signal, headers: { "content-type": "application/json" },
+             body: JSON.stringify({ action, expectedVersion, sessionId }),
+-        }, true),
++        }),
+         prepare: async (slide, signal) => {
+             const raw = sameOriginPath(slide.url, origin);
+             if (!raw) throw new Error("unsafe slide URL");
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 0004489..0de5162 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -21,6 +21,8 @@
+ package config
+ 
+ import (
++	"crypto/sha256"
++	"encoding/hex"
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
+@@ -28,6 +30,7 @@ import (
+ 	"net/url"
+ 	"os"
+ 	"reflect"
++	"slices"
+ 	"strings"
+ 	"sync"
+ 	"time"
+@@ -70,6 +73,11 @@ const (
+ 	weatherAPIKeyFileEnv = "KIOSK_WEATHER_API_KEY_FILE"
+ )
+ 
++// MaxOfflineParallelDownloads is deliberately one: offline work shares the
++// global image renderer and retains completed images until compression and disk
++// writes finish. Raise it only with measured memory and foreground-latency evidence.
++const MaxOfflineParallelDownloads = 1
++
+ type OfflineMode struct {
+ 	// MaxSize specifies the maximum storage size for offline assets in a human-readable format e.g. "1GB", "2TB", "500MB"
+ 	MaxSize string `yaml:"max_size" mapstructure:"max_size" default:"0"`
+@@ -295,6 +303,9 @@ type Config struct {
+ 	V *viper.Viper `json:"-" yaml:"-"`
+ 	// mu is a mutex used to ensure thread-safe access to the configuration
+ 	mu *sync.RWMutex `json:"-" yaml:"-"`
++	// hardExclusions is compiled once after a loaded configuration has been
++	// normalized. Request snapshots may share it because it is immutable.
++	hardExclusions *HardExclusionPolicy `json:"-" yaml:"-" immutable:"true"`
+ 
+ 	// ImmichUsersAPIKeys a map of usernames to their respective api keys for accessing Immich
+ 	ImmichUsersAPIKeys map[string]string `json:"-" msgpack:"-" yaml:"immich_users_api_keys" mapstructure:"immich_users_api_keys" default:"{}" redact:"true"`
+@@ -371,6 +382,9 @@ type Config struct {
+ 	// AlbumOrder specifies the order in which album assets are displayed.
+ 	AlbumOrder     string   `json:"album_order" yaml:"album_order" mapstructure:"album_order" query:"album_order" form:"album_order" default:"random"`
+ 	ExcludedAlbums []string `json:"excluded_albums" yaml:"excluded_albums" mapstructure:"excluded_albums" query:"exclude_album" form:"exclude_album" default:"[]" redact:"true"`
++	// ExcludedAssets is a server-wide hard deny-list. It deliberately has no
++	// query or form binding, so viewers cannot erase the configured baseline.
++	ExcludedAssets []string `json:"excludedAssets" yaml:"excluded_assets" mapstructure:"excluded_assets" default:"[]" redact:"true" immutable:"true"`
+ 
+ 	// Dates date ranges
+ 	Dates []string `json:"dates" yaml:"dates" mapstructure:"dates" query:"date" form:"date" default:"[]"`
+@@ -558,6 +572,79 @@ type Config struct {
+ 	Kiosk KioskSettings `json:"kiosk" yaml:"kiosk" mapstructure:"kiosk"`
+ }
+ 
++// HardExclusionPolicy is the immutable, server-configured deny-list used by
++// selection. It intentionally exposes membership only: request code must not
++// retain or serialize private asset identifiers.
++type HardExclusionPolicy struct {
++	generation string
++	assets     map[string]struct{}
++}
++
++func newHardExclusionPolicy(assets []string) *HardExclusionPolicy {
++	ids := append([]string(nil), assets...)
++	slices.Sort(ids)
++	digest := sha256.Sum256([]byte(strings.Join(ids, "\x00")))
++	set := make(map[string]struct{}, len(ids))
++	for _, id := range ids {
++		if id != "" {
++			set[id] = struct{}{}
++		}
++	}
++	return &HardExclusionPolicy{generation: hex.EncodeToString(digest[:]), assets: set}
++}
++
++// HardExclusions returns the loaded immutable policy. Small hand-built test
++// configs do not have a loaded policy, so they compile an equivalent fallback.
++func (c Config) HardExclusions() *HardExclusionPolicy {
++	if c.hardExclusions != nil {
++		return c.hardExclusions
++	}
++	return newHardExclusionPolicy(c.ExcludedAssets)
++}
++
++// HasLoadedHardExclusions distinguishes a normalized runtime configuration
++// from a small hand-built test config, whose fallback remains correct but is
++// intentionally not retained on a value receiver.
++func (c Config) HasLoadedHardExclusions() bool { return c.hardExclusions != nil }
++
++func (p *HardExclusionPolicy) Contains(id string) bool {
++	if p == nil {
++		return false
++	}
++	_, found := p.assets[id]
++	return found
++}
++
++func (p *HardExclusionPolicy) Generation() string {
++	if p == nil {
++		return ""
++	}
++	return p.generation
++}
++
++func (c *Config) compileHardExclusions() {
++	c.hardExclusions = newHardExclusionPolicy(c.ExcludedAssets)
++}
++
++// AdoptHardExclusionsFrom replaces a selection snapshot's hard policy with a
++// freshly loaded server policy. It is used by shared playback, whose curation
++// settings are intentionally frozen while deny-lists remain live.
++func (c *Config) AdoptHardExclusionsFrom(source Config) {
++	c.ExcludedAssets = source.ExcludedAssets
++	c.hardExclusions = source.HardExclusions()
++}
++
++// ExcludedAssetsFingerprint identifies the hard deny-list without exposing its
++// contents in cache manifests or logs. Ordering is not semantically relevant.
++func (c Config) ExcludedAssetsFingerprint() string {
++	return c.HardExclusions().Generation()
++}
++
++// IsHardExcludedAsset reports whether the configured server policy denies id.
++func (c Config) IsHardExcludedAsset(id string) bool {
++	return c.HardExclusions().Contains(id)
++}
++
+ // New returns a new config pointer instance
+ func New() *Config {
+ 	c := &Config{
+@@ -768,6 +855,7 @@ func (c *Config) Load() error {
+ 	c.checkOffline()
+ 	c.checkBurnIn()
+ 	c.checkFilterNewest()
++	c.compileHardExclusions()
+ 
+ 	return nil
+ }
+@@ -813,6 +901,14 @@ func getHistory(queries url.Values) []string {
+ 
+ // ConfigWithOverrides overwrites base config with ones supplied via URL queries
+ func (c *Config) ConfigWithOverrides(queries url.Values, e *echo.Context) error {
++	mandatoryExcludedAlbums := append([]string(nil), c.ExcludedAlbums...)
++	// The loaded policy and backing slice are immutable. Binding may replace the
++	// field on this request snapshot, but never mutates the shared backing data.
++	// Echo's JSON binder may reuse a destination slice's backing array. The
++	// snapshot intentionally shares this immutable loaded slice, so detach it
++	// before binding and retain a request-private copy for restoration.
++	mandatoryExcludedAssets := append([]string(nil), c.ExcludedAssets...)
++
+ 	if c.Kiosk.DisableURLQueries {
+ 		c.History = getHistory(queries)
+ 		return nil
+@@ -837,10 +933,19 @@ func (c *Config) ConfigWithOverrides(queries url.Values, e *echo.Context) error
+ 		c.ExcludedPartners = []string{}
+ 	}
+ 
++	// Detach immediately before bind. The disabled-query path above deliberately
++	// returns the original policy without invoking any binder.
++	c.ExcludedAssets = nil
+ 	err := e.Bind(c)
+ 	if err != nil {
++		c.ExcludedAssets = mandatoryExcludedAssets
+ 		return err
+ 	}
++	// Both lists are server policy. Request binders may add album exclusions,
++	// but cannot remove configured exclusions or replace the hard asset list.
++	// In particular, `excluded_album=none` clears only request-specific values.
++	c.ExcludedAlbums = unionMandatoryExclusions(mandatoryExcludedAlbums, c.ExcludedAlbums)
++	c.ExcludedAssets = mandatoryExcludedAssets
+ 
+ 	c.sanitizeClientData()
+ 	c.checkFilterNewest()
+@@ -858,9 +963,28 @@ func (c *Config) ConfigWithOverrides(queries url.Values, e *echo.Context) error
+ 	return nil
+ }
+ 
++func unionMandatoryExclusions(mandatory, requested []string) []string {
++	combined := make([]string, 0, len(mandatory)+len(requested))
++	seen := make(map[string]struct{}, len(mandatory)+len(requested))
++	for _, values := range [][]string{mandatory, requested} {
++		for _, value := range values {
++			value = strings.TrimSpace(value)
++			if value == "" {
++				continue
++			}
++			if _, exists := seen[value]; exists {
++				continue
++			}
++			seen[value] = struct{}{}
++			combined = append(combined, value)
++		}
++	}
++	return combined
++}
++
+ // String returns a string representation of the Config structure.
+ // If debug_verbose is not enabled, it returns a message prompting to enable it.
+-// Otherwise, it returns a JSON-formatted string of the entire Config structure.
++// Otherwise, it returns a redacted JSON-formatted string of the Config structure.
+ //
+ // This method is useful for debugging and logging purposes, providing a
+ // detailed view of the current configuration when verbose debugging is enabled.
+@@ -873,7 +997,8 @@ func (c *Config) String() string {
+ 		return "use debug_verbose for more info"
+ 	}
+ 
+-	out, err := json.MarshalIndent(c, "", " ")
++	redacted := RedactedCopy(*c)
++	out, err := json.MarshalIndent(redacted, "", " ")
+ 	if err != nil {
+ 		log.Error("", "err", err)
+ 	}
+@@ -934,6 +1059,10 @@ func copyRec(src, dst reflect.Value, seen map[unsafe.Pointer]reflect.Value, reda
+ 				maskValue(fsrc, fdst)
+ 				continue
+ 			}
++			if fieldInfo.Tag.Get("immutable") == "true" && fdst.CanSet() {
++				fdst.Set(fsrc)
++				continue
++			}
+ 			if fdst.CanSet() {
+ 				copyRec(fsrc, fdst, seen, redact)
+ 			}
+diff --git a/internal/config/config_validation.go b/internal/config/config_validation.go
+index b0816dd..7d34ac5 100644
+--- a/internal/config/config_validation.go
++++ b/internal/config/config_validation.go
+@@ -304,6 +304,7 @@ func (c *Config) sanitizeClientData() {
+ func (c *Config) checkAssetBuckets() {
+ 	c.Albums = c.cleanupSlice(c.Albums, "ALBUM_ID")
+ 	c.ExcludedAlbums = c.cleanupSlice(c.ExcludedAlbums, "ALBUM_ID")
++	c.ExcludedAssets = c.cleanupSlice(c.ExcludedAssets, "ASSET_ID")
+ 
+ 	c.People = c.cleanupSlice(c.People, "PERSON_ID")
+ 	c.ExcludedPeople = c.cleanupSlice(c.ExcludedPeople, "PERSON_ID")
+@@ -590,6 +591,10 @@ func (c *Config) checkOffline() {
+ 			log.Warn("Invalid parallel_downloads value. Using default: 1", "parallel_downloads", c.OfflineMode.ParallelDownloads)
+ 			c.OfflineMode.ParallelDownloads = 1
+ 		}
++		if c.OfflineMode.ParallelDownloads > MaxOfflineParallelDownloads {
++			log.Warn("parallel_downloads exceeds the safe offline worker budget. Clamping to 1", "parallel_downloads", c.OfflineMode.ParallelDownloads)
++			c.OfflineMode.ParallelDownloads = MaxOfflineParallelDownloads
++		}
+ 
+ 		if c.OfflineMode.ExpirationHours < 0 {
+ 			log.Warn("Invalid expiration_hours value. Using default: 72", "expiration_hours", c.OfflineMode.ExpirationHours)
+diff --git a/internal/immich/immich.go b/internal/immich/immich.go
+index 3827b2a..daf0144 100644
+--- a/internal/immich/immich.go
++++ b/internal/immich/immich.go
+@@ -161,12 +161,12 @@ type Face struct {
+ 
+ type Asset struct {
+ 	Checksum         string    `json:"checksum"`
+-	DuplicateID      any       `json:"-"`        // `json:"duplicateId"`
++	DuplicateID      any       `json:"duplicateId"`
+ 	Duration         int64     `json:"duration"` // milliseconds
+ 	ExifInfo         ExifInfo  `json:"exifInfo"`
+ 	FileCreatedAt    time.Time `json:"-"` // `json:"fileCreatedAt"`
+ 	FileModifiedAt   time.Time `json:"-"` // `json:"fileModifiedAt"`
+-	HasMetadata      bool      `json:"-"` // `json:"hasMetadata"`
++	HasMetadata      bool      `json:"hasMetadata"`
+ 	ID               string    `json:"id"`
+ 	IsArchived       bool      `json:"isArchived"`
+ 	IsEdited         bool      `json:"isEdited"`
+@@ -228,7 +228,12 @@ type Album struct {
+ 	LastModifiedAssetTimestamp string       `json:"lastModifiedAssetTimestamp"`
+ 
+ 	// Kiosk specific fields
+-	Assets []Asset `json:"assets"`
++	Assets        []Asset `json:"assets"`
++	pageCursorKey albumPageCursorKey
++	cursorLease   albumPageCursorLease
++	cursorOffset  int
++	hasNextPage   bool
++	totalAssets   int
+ }
+ 
+ type Albums []Album
+diff --git a/internal/immich/immich_album.go b/internal/immich/immich_album.go
+index b8e23e0..836b088 100644
+--- a/internal/immich/immich_album.go
++++ b/internal/immich/immich_album.go
+@@ -146,9 +146,26 @@ func (a *Asset) albumAssets(albumID, requestID, deviceID string, favoritesOnly b
+ 		Size:         a.requestConfig.Kiosk.FetchedAssetsSize,
+ 	}
+ 
+-	assetOrder := AlbumOrder(a.requestConfig.AlbumOrder)
+-	if assetOrder != Rand {
+-		requestBody.Order = string(assetOrder)
++	filterNewest := a.requestConfig.FilterNewest > 0
++	if filterNewest {
++		// FilterNewest is a global newest-N policy.  It must stay on the
++		// first descending metadata page instead of walking older pages.
++		requestBody.Size = a.requestConfig.FilterNewest
++		requestBody.Order = string(Desc)
++		requestBody.Page = metadataFirstPage
++	} else {
++		assetOrder := AlbumOrder(a.requestConfig.AlbumOrder)
++		if assetOrder == Rand {
++			// Random presentation still needs a stable upstream traversal so the
++			// cursor can reach older pages. Candidates are shuffled locally below.
++			requestBody.Order = string(Asc)
++		} else {
++			requestBody.Order = string(assetOrder)
++		}
++		cursorKey := albumPageKey(a.requestConfig, albumID, favoritesOnly, deviceID)
++		album.cursorLease = albumPageCursors.position(cursorKey)
++		requestBody.Page, album.cursorOffset = album.cursorLease.page, album.cursorLease.offset
++		album.pageCursorKey = cursorKey
+ 	}
+ 
+ 	// Include videos if show videos is enabled
+@@ -158,19 +175,15 @@ func (a *Asset) albumAssets(albumID, requestID, deviceID string, favoritesOnly b
+ 
+ 	filterDate(&requestBody, a.requestConfig.FilterDate)
+ 
+-	var res PaginatedMetadataResponse
+-
+-	if a.requestConfig.Kiosk.Cache {
+-		res, err = a.fetchPaginatedMetadataWithCache(u, requestBody, requestID, deviceID)
+-	} else {
+-		res, err = a.fetchPaginatedMetadata(u, requestBody, requestID, deviceID)
+-	}
++	res, err := a.fetchMetadataPage(u, requestBody, requestID, deviceID)
+ 	if err != nil {
+ 		return album, res.URL, err
+ 	}
+ 
+ 	album.Assets = res.Assets
+ 	album.ID = albumID
++	album.hasNextPage = res.HasNextPage
++	album.totalAssets = res.Total
+ 
+ 	return album, res.URL, nil
+ }
+@@ -233,6 +246,9 @@ func (a *Asset) AlbumImageCount(albumID string, requestID, deviceID string) (int
+ 		if err != nil {
+ 			return 0, fmt.Errorf("get album assets for album %s: %w", albumID, err)
+ 		}
++		if album.totalAssets > 0 {
++			return album.totalAssets, nil
++		}
+ 		return len(album.Assets), nil
+ 	}
+ }
+@@ -254,8 +270,12 @@ func (a *Asset) AlbumImageCount(albumID string, requestID, deviceID string) (int
+ func (a *Asset) AssetFromAlbum(albumID string, requestID, deviceID string) error {
+ 	filterNewest := a.requestConfig.FilterNewest > 0
+ 	filterFavourites := a.requestConfig.FilterFavorites
+-	var apiCacheKey string
+-
++	selectionKey := albumSelectionGateKey(a.requestConfig, albumID, deviceID)
++	release, err := albumSelections.acquire(a.ctx, selectionKey)
++	if err != nil {
++		return err
++	}
++	defer release()
+ 	for range MaxRetries {
+ 
+ 		album, apiURL, err := a.albumAssets(albumID, requestID, deviceID, filterFavourites)
+@@ -263,25 +283,29 @@ func (a *Asset) AssetFromAlbum(albumID string, requestID, deviceID string) error
+ 			return err
+ 		}
+ 
+-		if apiCacheKey == "" {
+-			apiCacheKey = cache.APICacheKey(apiURL, deviceID, a.requestConfig.SelectedUser)
+-		}
++		// The cursor can move between attempts. Derive this from the page URL on
++		// every pass so a rejected page never deletes or stores another page's
++		// residual candidates.
++		apiCacheKey := cache.APICacheKey(apiURL, deviceID, a.requestConfig.SelectedUser)
+ 
+ 		if len(album.Assets) == 0 {
+ 			log.Debug(requestID+" No assets left in cache. Refreshing and trying again for album", albumID)
+ 			cache.Delete(apiCacheKey)
+-
+-			album, _, err = a.albumAssets(albumID, requestID, deviceID, filterFavourites)
+-			if err != nil || len(album.Assets) == 0 {
+-				return fmt.Errorf("no assets found for album %s after refresh", albumID)
++			if !filterNewest {
++				albumPageCursors.advanceIfCurrent(album.pageCursorKey, album.cursorLease, album.hasNextPage)
+ 			}
+-
+ 			continue
+ 		}
+ 
+ 		if filterNewest && len(album.Assets) > a.requestConfig.FilterNewest {
+ 			album.Assets = album.Assets[:a.requestConfig.FilterNewest]
+ 		}
++		pageSize := len(album.Assets)
++		candidateOffset := 0
++		if !a.requestConfig.Kiosk.Cache && !strings.EqualFold(a.requestConfig.AlbumOrder, config.AlbumOrderRandom) {
++			candidateOffset = min(album.cursorOffset, pageSize)
++			album.Assets = album.Assets[candidateOffset:]
++		}
+ 
+ 		if strings.EqualFold(a.requestConfig.AlbumOrder, config.AlbumOrderRandom) {
+ 			rand.Shuffle(len(album.Assets), func(i, j int) {
+@@ -306,13 +330,17 @@ func (a *Asset) AssetFromAlbum(albumID string, requestID, deviceID string) error
+ 			}
+ 
+ 			if a.requestConfig.Kiosk.Cache {
+-				// from Immich V3 album assets use the PaginatedMetadataResponse type
+-				assetsToCache := PaginatedMetadataResponse{
+-					URL: apiURL,
++				// Keep the cached residual in the same wire shape as a metadata
++				// response so fetchMetadataPage can decode either a fresh or cached
++				// page without a second compatibility path.
++				assetsToCache := SearchMetadataResponse{}
++				assetsToCache.Assets.Total = album.totalAssets
++				if album.hasNextPage {
++					assetsToCache.Assets.NextPage = "cursor"
+ 				}
+ 
+ 				// Remove the current image from the slice
+-				assetsToCache.Assets = slices.Delete(album.Assets, assetIndex, assetIndex+1)
++				assetsToCache.Assets.Items = slices.Delete(album.Assets, assetIndex, assetIndex+1)
+ 
+ 				jsonBytes, marshalErr := json.Marshal(assetsToCache)
+ 				if marshalErr != nil {
+@@ -330,12 +358,26 @@ func (a *Asset) AssetFromAlbum(albumID string, requestID, deviceID string) error
+ 			}
+ 
+ 			*a = asset
++			if !filterNewest && !a.requestConfig.Kiosk.Cache {
++				if strings.EqualFold(a.requestConfig.AlbumOrder, config.AlbumOrderRandom) {
++					albumPageCursors.advanceIfCurrent(album.pageCursorKey, album.cursorLease, album.hasNextPage)
++				} else {
++					albumPageCursors.advanceCandidateIfCurrent(album.pageCursorKey, album.cursorLease, candidateOffset+assetIndex+1, pageSize, album.hasNextPage)
++				}
++			}
+ 
+ 			return nil
+ 		}
+ 
+ 		log.Debug(requestID+" No viable assets left in cache. Refreshing and trying again", "cacheKey", apiCacheKey)
+ 		cache.Delete(apiCacheKey)
++		if !filterNewest {
++			if !a.requestConfig.Kiosk.Cache && !strings.EqualFold(a.requestConfig.AlbumOrder, config.AlbumOrderRandom) {
++				albumPageCursors.advanceCandidateIfCurrent(album.pageCursorKey, album.cursorLease, candidateOffset+len(album.Assets), pageSize, album.hasNextPage)
++			} else {
++				albumPageCursors.advanceIfCurrent(album.pageCursorKey, album.cursorLease, album.hasNextPage)
++			}
++		}
+ 	}
+ 
+ 	return fmt.Errorf("no assets found for '%s'. Max retries reached", albumID)
+diff --git a/internal/immich/immich_album_cursor.go b/internal/immich/immich_album_cursor.go
+new file mode 100644
+index 0000000..33c0693
+--- /dev/null
++++ b/internal/immich/immich_album_cursor.go
+@@ -0,0 +1,250 @@
++package immich
++
++import (
++	"context"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"slices"
++	"sync"
++	"time"
++
++	"github.com/damongolding/immich-kiosk/internal/cache"
++	"github.com/damongolding/immich-kiosk/internal/config"
++)
++
++const (
++	defaultAlbumPageCursorRegistrySize = 256
++	// A fixed stripe count bounds gate state while allowing unrelated album
++	// selections to proceed independently.
++	albumSelectionGateStripes = 64
++	// MetadataSearchDto documents Page as a page number. The prior aggregate
++	// loop omitted zero, then continued with 1..100. Start explicitly at one so
++	// every cursor request has an unambiguous cache key and fixture contract.
++	metadataFirstPage = 1
++)
++
++type albumPageCursorKey string
++
++type albumPageCursorEntry struct {
++	page       int
++	offset     int
++	version    uint64
++	lastAccess time.Time
++}
++
++// albumPageCursorLease identifies the exact cursor state used to fetch a page.
++// A later selection must not update a cursor that another selection has moved.
++type albumPageCursorLease struct {
++	page    int
++	offset  int
++	version uint64
++}
++
++// albumSelectionGates serializes each selection key through a bounded set of
++// cancellation-aware stripes. The gate covers fetch, candidate choice, residual
++// cache replacement, and cursor movement so same-key callers cannot consume the
++// same residual concurrently.
++type albumSelectionGates struct {
++	stripes [albumSelectionGateStripes]chan struct{}
++}
++
++func newAlbumSelectionGates() *albumSelectionGates {
++	gates := &albumSelectionGates{}
++	for index := range gates.stripes {
++		gates.stripes[index] = make(chan struct{}, 1)
++	}
++	return gates
++}
++
++func (g *albumSelectionGates) acquire(ctx context.Context, key albumPageCursorKey) (func(), error) {
++	if ctx == nil {
++		ctx = context.Background()
++	}
++	var hash uint32 = 2166136261
++	for _, value := range key {
++		hash ^= uint32(value)
++		hash *= 16777619
++	}
++	slot := g.stripes[hash%albumSelectionGateStripes]
++	select {
++	case <-ctx.Done():
++		return nil, ctx.Err()
++	case slot <- struct{}{}:
++	}
++	if err := ctx.Err(); err != nil {
++		<-slot
++		return nil, err
++	}
++	return func() { <-slot }, nil
++}
++
++// albumPageCursorRegistry retains only page positions, never assets, URLs, or
++// device identifiers. Cache invalidation starts a fresh coverage pass.
++type albumPageCursorRegistry struct {
++	mu          sync.Mutex
++	entries     map[albumPageCursorKey]albumPageCursorEntry
++	maxEntries  int
++	nextVersion uint64
++	now         func() time.Time
++}
++
++var (
++	albumPageCursors = newAlbumPageCursorRegistry(defaultAlbumPageCursorRegistrySize, time.Now)
++	albumSelections  = newAlbumSelectionGates()
++)
++
++func init() {
++	cache.RegisterInvalidationHook(func() { albumPageCursors.clear() })
++}
++
++func newAlbumPageCursorRegistry(maxEntries int, now func() time.Time) *albumPageCursorRegistry {
++	if maxEntries < 1 {
++		maxEntries = 1
++	}
++	return &albumPageCursorRegistry{entries: make(map[albumPageCursorKey]albumPageCursorEntry, maxEntries), maxEntries: maxEntries, now: now}
++}
++
++// albumSelectionGateKey intentionally groups all presentation variants of one
++// endpoint, device, user, and album. Some variants (for example random and
++// ascending) share the same upstream metadata cache entry, so a narrower cursor
++// key would allow a lost residual update across those variants.
++func albumSelectionGateKey(requestConfig config.Config, albumID, deviceID string) albumPageCursorKey {
++	material := struct {
++		ImmichURL    string `json:"immich_url"`
++		AlbumID      string `json:"album_id"`
++		DeviceID     string `json:"device_id"`
++		SelectedUser string `json:"selected_user"`
++	}{
++		ImmichURL: requestConfig.ImmichURL, AlbumID: albumID,
++		DeviceID: deviceID, SelectedUser: requestConfig.SelectedUser,
++	}
++	encoded, _ := json.Marshal(material)
++	digest := sha256.Sum256(encoded)
++	return albumPageCursorKey(hex.EncodeToString(digest[:]))
++}
++
++func albumPageKey(requestConfig config.Config, albumID string, favoritesOnly bool, selectionIdentity string) albumPageCursorKey {
++	// All fields affect the metadata result. The hard-policy generation avoids
++	// retaining a private asset list in the key while still isolating reloads.
++	excludedAlbums := append([]string(nil), requestConfig.ExcludedAlbums...)
++	// Album deny policy is request-specific, unlike the loaded hard asset
++	// policy. Normalize it before hashing so order does not fragment cursors.
++	slices.Sort(excludedAlbums)
++	material := struct {
++		ImmichURL         string   `json:"immich_url"`
++		AlbumID           string   `json:"album_id"`
++		SelectedUser      string   `json:"selected_user"`
++		CurationProfile   string   `json:"curation_profile"`
++		ExcludedAlbums    []string `json:"excluded_albums"`
++		Order             string   `json:"order"`
++		FilterDate        string   `json:"filter_date"`
++		FavoritesOnly     bool     `json:"favorites_only"`
++		ShowArchived      bool     `json:"show_archived"`
++		ShowVideos        bool     `json:"show_videos"`
++		FetchedSize       int      `json:"fetched_size"`
++		HardGeneration    string   `json:"hard_generation"`
++		SelectionIdentity string   `json:"selection_identity"`
++	}{
++		ImmichURL: requestConfig.ImmichURL, AlbumID: albumID, SelectedUser: requestConfig.SelectedUser,
++		CurationProfile: requestConfig.CurationProfile, ExcludedAlbums: excludedAlbums, Order: requestConfig.AlbumOrder,
++		FilterDate: requestConfig.FilterDate, FavoritesOnly: favoritesOnly,
++		ShowArchived: requestConfig.ShowArchived, ShowVideos: requestConfig.ShowVideos,
++		FetchedSize: requestConfig.Kiosk.FetchedAssetsSize, HardGeneration: requestConfig.HardExclusions().Generation(),
++		SelectionIdentity: selectionIdentity,
++	}
++	encoded, _ := json.Marshal(material)
++	digest := sha256.Sum256(encoded)
++	return albumPageCursorKey(hex.EncodeToString(digest[:]))
++}
++
++func (r *albumPageCursorRegistry) nextLeaseVersion() uint64 {
++	r.nextVersion++
++	return r.nextVersion
++}
++
++func (r *albumPageCursorRegistry) position(key albumPageCursorKey) albumPageCursorLease {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	now := r.now()
++	if entry, ok := r.entries[key]; ok {
++		entry.lastAccess = now
++		r.entries[key] = entry
++		return albumPageCursorLease{page: entry.page, offset: entry.offset, version: entry.version}
++	}
++	if len(r.entries) >= r.maxEntries {
++		var oldestKey albumPageCursorKey
++		var oldest time.Time
++		for candidate, entry := range r.entries {
++			if oldestKey == "" || entry.lastAccess.Before(oldest) {
++				oldestKey, oldest = candidate, entry.lastAccess
++			}
++		}
++		delete(r.entries, oldestKey)
++	}
++	version := r.nextLeaseVersion()
++	r.entries[key] = albumPageCursorEntry{page: metadataFirstPage, version: version, lastAccess: now}
++	return albumPageCursorLease{page: metadataFirstPage, version: version}
++}
++
++func (r *albumPageCursorRegistry) page(key albumPageCursorKey) int {
++	return r.position(key).page
++}
++
++// advance moves only after the current page's cached candidates are exhausted.
++// A terminal response wraps to the explicit first page, preserving eventual
++// coverage without unbounded pagination work in one foreground request.
++func (r *albumPageCursorRegistry) advanceIfCurrent(key albumPageCursorKey, expected albumPageCursorLease, hasNextPage bool) bool {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	entry, ok := r.entries[key]
++	if !ok || entry.page != expected.page || entry.offset != expected.offset || entry.version != expected.version {
++		return false
++	}
++	// A foreground request fetches exactly one page, so the former aggregate
++	// MaxPages limit is no longer a latency bound. Trust the server's nextPage
++	// signal to wrap; this is what lets older album pages eventually surface.
++	if !hasNextPage {
++		entry.page, entry.offset = metadataFirstPage, 0
++	} else {
++		entry.page, entry.offset = entry.page+1, 0
++	}
++	entry.version = r.nextLeaseVersion()
++	entry.lastAccess = r.now()
++	r.entries[key] = entry
++	return true
++}
++
++// advanceCandidate preserves the remainder of a deterministically sorted page
++// when response caching is disabled. It records only an index, never assets.
++func (r *albumPageCursorRegistry) advanceCandidateIfCurrent(key albumPageCursorKey, expected albumPageCursorLease, consumed, pageSize int, hasNextPage bool) bool {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	entry, ok := r.entries[key]
++	if !ok || entry.page != expected.page || entry.offset != expected.offset || entry.version != expected.version {
++		return false
++	}
++	if consumed < pageSize {
++		entry.offset = consumed
++	} else if !hasNextPage {
++		entry.page, entry.offset = metadataFirstPage, 0
++	} else {
++		entry.page, entry.offset = entry.page+1, 0
++	}
++	entry.version = r.nextLeaseVersion()
++	entry.lastAccess = r.now()
++	r.entries[key] = entry
++	return true
++}
++
++func (r *albumPageCursorRegistry) clear() {
++	r.mu.Lock()
++	r.entries = make(map[albumPageCursorKey]albumPageCursorEntry, r.maxEntries)
++	r.mu.Unlock()
++}
++
++func (r *albumPageCursorRegistry) size() int {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	return len(r.entries)
++}
+diff --git a/internal/immich/immich_helpers.go b/internal/immich/immich_helpers.go
+index 75005bc..0231713 100644
+--- a/internal/immich/immich_helpers.go
++++ b/internal/immich/immich_helpers.go
+@@ -42,6 +42,7 @@ type albumRestrictionCacheEntry struct {
+ 	restrictions   albumRestrictions
+ 	profiles       map[string]config.CurationProfile
+ 	excludedAlbums []string
++	hardGeneration string
+ 	expiresAt      time.Time
+ 	lastAccess     time.Time
+ }
+@@ -954,6 +955,9 @@ func (a *Asset) hasValidFilterExcludeFaces(requestID, deviceID string) bool {
+ //   - bool: true if asset is not in any excluded albums, false otherwise
+ func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
+ 	restrictions := selectedAlbumRestrictions(a.requestConfig)
++	if !restrictions.allowsAsset(a.ID) {
++		return false
++	}
+ 	if len(restrictions.excluded) == 0 && len(restrictions.penalties) == 0 {
+ 		return true
+ 	}
+@@ -966,11 +970,19 @@ func (a *Asset) hasValidAlbums(requestID, deviceID string) bool {
+ }
+ 
+ type albumRestrictions struct {
+-	excluded  map[string]struct{}
+-	penalties map[string]float64
++	excluded       map[string]struct{}
++	hardExclusions *config.HardExclusionPolicy
++	penalties      map[string]float64
++}
++
++func (r albumRestrictions) allowsAsset(assetID string) bool {
++	return !r.hardExclusions.Contains(assetID)
+ }
+ 
+ func (r albumRestrictions) allows(albums Albums, assetID, requestID string) bool {
++	if !r.allowsAsset(assetID) {
++		return false
++	}
+ 	for _, album := range albums {
+ 		if _, excluded := r.excluded[album.ID]; excluded {
+ 			return false
+@@ -1010,6 +1022,7 @@ func (r *albumRestrictionRegistry) get(requestConfig config.Config) albumRestric
+ 		restrictions:   restrictions,
+ 		profiles:       requestConfig.Curation.Profiles,
+ 		excludedAlbums: requestConfig.ExcludedAlbums,
++		hardGeneration: requestConfig.HardExclusions().Generation(),
+ 		expiresAt:      now.Add(r.ttl),
+ 		lastAccess:     now,
+ 	}
+@@ -1021,6 +1034,19 @@ func sameAlbumRestrictionInput(left, right config.Config) bool {
+ 	if strings.ToLower(strings.TrimSpace(left.CurationProfile)) != strings.ToLower(strings.TrimSpace(right.CurationProfile)) || len(left.ExcludedAlbums) != len(right.ExcludedAlbums) || len(left.Curation.Profiles) != len(right.Curation.Profiles) {
+ 		return false
+ 	}
++	if left.HasLoadedHardExclusions() && right.HasLoadedHardExclusions() {
++		if left.HardExclusions().Generation() != right.HardExclusions().Generation() {
++			return false
++		}
++	} else if len(left.ExcludedAssets) != len(right.ExcludedAssets) {
++		return false
++	} else {
++		for i, asset := range left.ExcludedAssets {
++			if asset != right.ExcludedAssets[i] {
++				return false
++			}
++		}
++	}
+ 	for i, album := range left.ExcludedAlbums {
+ 		if album != right.ExcludedAlbums[i] {
+ 			return false
+@@ -1085,13 +1111,16 @@ func albumRestrictionKey(requestConfig config.Config) albumRestrictionCacheKey {
+ 	// excluded album order is normalized because it has no semantic meaning.
+ 	excludedAlbums := append([]string(nil), requestConfig.ExcludedAlbums...)
+ 	slices.Sort(excludedAlbums)
++	hardGeneration := requestConfig.HardExclusions().Generation()
+ 	keyMaterial := struct {
+ 		Profiles       map[string]config.CurationProfile `json:"profiles"`
+ 		ExcludedAlbums []string                          `json:"excluded_albums"`
++		HardGeneration string                            `json:"hard_generation"`
+ 		Profile        string                            `json:"profile"`
+ 	}{
+ 		Profiles:       requestConfig.Curation.Profiles,
+ 		ExcludedAlbums: excludedAlbums,
++		HardGeneration: hardGeneration,
+ 		Profile:        strings.ToLower(strings.TrimSpace(requestConfig.CurationProfile)),
+ 	}
+ 	encoded, _ := json.Marshal(keyMaterial)
+@@ -1103,7 +1132,7 @@ func compileAlbumRestrictions(requestConfig config.Config) albumRestrictions {
+ 	for _, albumID := range requestConfig.ExcludedAlbums {
+ 		excluded[albumID] = struct{}{}
+ 	}
+-	return albumRestrictions{excluded: excluded, penalties: selectedAlbumPenaltyFactors(requestConfig)}
++	return albumRestrictions{excluded: excluded, hardExclusions: requestConfig.HardExclusions(), penalties: selectedAlbumPenaltyFactors(requestConfig)}
+ }
+ 
+ func selectedAlbumPenaltyFactors(requestConfig config.Config) map[string]float64 {
+@@ -1240,9 +1269,14 @@ func matchesTagPattern(value, pattern string) bool {
+ // Returns:
+ //   - bool: true if asset has no excluding tags (like "skip"), false if it should be excluded
+ func (a *Asset) hasValidTags(requestID, deviceID string) bool {
+-	if err := a.AssetInfo(requestID, deviceID); err != nil {
+-		log.Error("Failed to get additional asset data", "error", err)
+-		return false
++	// Metadata search responses carry tags when present. A strict AI-caption
++	// policy still requires asset detail: hasMetadata only says an Immich
++	// metadata record exists, not that this response carried its description.
++	if a.Tags == nil || a.requestConfig.Kiosk.RequireAICaption {
++		if err := a.AssetInfo(requestID, deviceID); err != nil {
++			log.Error("Failed to get additional asset data", "error", err)
++			return false
++		}
+ 	}
+ 
+ 	// AssetInfo overrides IsPortrait and IsLandscape so lets add them back
+@@ -1282,8 +1316,37 @@ func (a *Asset) hasValidLoadedTags() bool {
+ // PaginatedMetadataResponse
+ // Holds the response from a paginated (all pages combined) metadata request, including the assets and the URL of the request.
+ type PaginatedMetadataResponse struct {
+-	Assets []Asset `json:"assets"`
+-	URL    string  `json:"url"`
++	Assets      []Asset `json:"assets"`
++	URL         string  `json:"url"`
++	Total       int     `json:"total"`
++	HasNextPage bool    `json:"hasNextPage"`
++}
++
++// fetchMetadataPage performs exactly one explicit metadata-page request. Album
++// cursor selection uses this instead of accumulating a whole album before the
++// first candidate can be considered.
++func (a *Asset) fetchMetadataPage(u *url.URL, requestBody SearchRandomBody, requestID string, deviceID string) (PaginatedMetadataResponse, error) {
++	var response SearchMetadataResponse
++	queries, _ := query.Values(requestBody)
++	apiURL := url.URL{Scheme: u.Scheme, Host: u.Host, Path: MetadataEndpoint, RawQuery: queries.Encode()}
++	jsonBody, err := json.Marshal(requestBody)
++	if err != nil {
++		return PaginatedMetadataResponse{}, err
++	}
++	immichAPICall := withImmichAPICache(a.immichAPICall, requestID, deviceID, a.requestConfig, response)
++	body, _, _, err := immichAPICall(a.ctx, http.MethodPost, apiURL.String(), jsonBody)
++	if err != nil {
++		_, _, err = immichAPIFail(response, err, body, apiURL.String())
++		return PaginatedMetadataResponse{}, err
++	}
++	if err = json.Unmarshal(body, &response); err != nil {
++		_, _, err = immichAPIFail(response, err, body, apiURL.String())
++		return PaginatedMetadataResponse{}, err
++	}
++	return PaginatedMetadataResponse{
++		Assets: response.Assets.Items, URL: apiURL.String(), Total: response.Assets.Total,
++		HasNextPage: response.Assets.NextPage != "",
++	}, nil
+ }
+ 
+ func (a *Asset) fetchPaginatedMetadata(u *url.URL, requestBody SearchRandomBody, requestID string, deviceID string) (PaginatedMetadataResponse, error) {
+diff --git a/internal/routes/routes_asset.go b/internal/routes/routes_asset.go
+index ae548b3..07a244d 100644
+--- a/internal/routes/routes_asset.go
++++ b/internal/routes/routes_asset.go
+@@ -98,7 +98,7 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 		// get and use prefetch data (if found)
+ 		if requestConfig.Kiosk.PreFetch {
+ 			if cachedViewData, found := fromCache(requestCtx.URL.String(), deviceID, requestConfig.SelectedUser, requestConfig.Duration, requestConfig.CacheDuration); found {
+-				if frameViewDataVisible(deviceID, cachedViewData) {
++				if frameViewDataVisibleWithConfig(requestConfig, deviceID, cachedViewData) {
+ 					scheduleAssetPrefetch(com, requestData, requestCtx)
+ 					webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, cachedViewData)
+ 
+@@ -271,6 +271,9 @@ func ImageWithID(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 		if imageID == "" {
+ 			return echo.NewHTTPError(http.StatusBadRequest, "Image ID is required")
+ 		}
++		if requestConfig.IsHardExcludedAsset(imageID) {
++			return echo.NewHTTPError(http.StatusNotFound, "Image not found")
++		}
+ 
+ 		routeCtx, cancel := requestContextWithShutdown(c.Request().Context(), com.Context(), requestConfig.Kiosk.HTTPTimeout, routeHandlerTimeout)
+ 		defer cancel()
+diff --git a/internal/routes/routes_offline.go b/internal/routes/routes_offline.go
+index 1e20463..4610912 100644
+--- a/internal/routes/routes_offline.go
++++ b/internal/routes/routes_offline.go
+@@ -69,6 +69,7 @@ func offlineCacheScopeAtGeneration(requestConfig config.Config, deviceID string,
+ 		"user=" + requestConfig.SelectedUser,
+ 		"device=" + deviceID,
+ 		"profile=" + requestConfig.CurationProfile,
++		"hard_excluded_assets=" + requestConfig.ExcludedAssetsFingerprint(),
+ 		"config_sha256=" + hex.EncodeToString(configHash[:]),
+ 	}, "\x00")
+ 	scopeHash := sha256.Sum256([]byte(scope))
+@@ -240,7 +241,7 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ 				log.Error("OfflineMode: loadMsgpackZstd", "picked", picked, "err", loadMsgpackErr)
+ 				continue
+ 			}
+-			if !frameViewDataVisible(deviceID, viewData) {
++			if !frameViewDataVisibleWithConfig(requestConfig, deviceID, viewData) {
+ 				log.Debug(requestID, "deviceID", deviceID, "discarded hidden offline asset")
+ 				continue
+ 			}
+@@ -276,11 +277,26 @@ func OfflineMode(baseConfig *config.Config, com *common.Common) echo.HandlerFunc
+ //   - requestID: Unique ID for this request
+ //   - deviceID: ID of the requesting device
+ //
+-// Returns an error if:
+-//   - Another download is already in progress
+-//   - Max size parsing fails
+-//   - File operations fail
+-//   - Asset downloads fail
++// offlineWorkerLimit is a runtime backstop for configurations that bypass
++// validation. The offline batch already serializes rendering globally; one worker
++// prevents completed images from accumulating while compression and disk writes run.
++func offlineWorkerLimit(parallelDownloads, numberOfAssets int) int {
++	workers := parallelDownloads
++	if workers < 1 {
++		workers = 1
++	}
++	if workers > config.MaxOfflineParallelDownloads {
++		workers = config.MaxOfflineParallelDownloads
++	}
++	if numberOfAssets > 0 && workers > numberOfAssets {
++		workers = numberOfAssets
++	}
++	return workers
++}
++
++// downloadOfflineAssets populates the offline cache with the configured number
++// of assets. It returns errors for contention, invalid sizes, file operations,
++// and failed asset downloads.
+ func downloadOfflineAssets(parent context.Context, requestConfig config.Config, requestCtx common.ContextCopy, com *common.Common, requestID, deviceID string) error {
+ 	if !mu.TryLock() {
+ 		log.Debug("DownloadOfflineAssets is already running")
+@@ -309,7 +325,7 @@ func downloadOfflineAssets(parent context.Context, requestConfig config.Config,
+ 
+ 	// Wrap with errgroup context
+ 	eg, egCtx := errgroup.WithContext(ctx)
+-	eg.SetLimit(min(parallelDownloads, numberOfAssets))
++	eg.SetLimit(offlineWorkerLimit(parallelDownloads, numberOfAssets))
+ 
+ 	var offlineSize atomic.Int64
+ 	var createdFiles sync.Map
+diff --git a/internal/routes/routes_preferences.go b/internal/routes/routes_preferences.go
+index 9d398cd..5a68938 100644
+--- a/internal/routes/routes_preferences.go
++++ b/internal/routes/routes_preferences.go
+@@ -13,6 +13,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/damongolding/immich-kiosk/internal/common"
++	"github.com/damongolding/immich-kiosk/internal/config"
+ 	"github.com/damongolding/immich-kiosk/internal/immich"
+ 	"github.com/google/uuid"
+ )
+@@ -24,7 +25,7 @@ const (
+ 	maxPreferenceDevices     = 64
+ 	maxPreferencesPerDevice  = 5000
+ 	maxPreferenceFileBytes   = 2 << 20
+-	frameRecentAssetLimit    = 24
++	frameRecentAssetLimit    = 384
+ 	frameRecentDeviceLimit   = 64
+ 	finalSelectionAttempt    = maxProcessAssetRetries - 1
+ )
+@@ -175,8 +176,12 @@ func frameAssetVisible(deviceID, assetID string) bool {
+ }
+ 
+ func frameViewDataVisible(deviceID string, viewData common.ViewData) bool {
++	return frameViewDataVisibleWithConfig(viewData.Config, deviceID, viewData)
++}
++
++func frameViewDataVisibleWithConfig(requestConfig config.Config, deviceID string, viewData common.ViewData) bool {
+ 	for _, asset := range viewData.Assets {
+-		if !frameAssetVisible(deviceID, asset.ImmichAsset.ID) {
++		if !frameAssetVisible(deviceID, asset.ImmichAsset.ID) || requestConfig.IsHardExcludedAsset(asset.ImmichAsset.ID) {
+ 			return false
+ 		}
+ 	}
+@@ -188,12 +193,14 @@ func framePreferenceRandomInt(n int) int { return rand.IntN(n) }
+ type recentFrameAssets struct {
+ 	mu      sync.Mutex
+ 	devices map[string][]recentFrameAsset
+-	global  []string
++	global  []recentFrameAsset
+ }
+ 
+ type recentFrameAsset struct {
+-	id         string
+-	capturedAt time.Time
++	id          string
++	checksum    string
++	duplicateID string
++	capturedAt  time.Time
+ }
+ 
+ var frameRecentAssets = recentFrameAssets{devices: map[string][]recentFrameAsset{}}
+@@ -202,13 +209,13 @@ func (r *recentFrameAssets) suppresses(deviceID string, asset *immich.Asset, bur
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
+ 	for index, prior := range r.devices[deviceID] {
+-		if prior.id == asset.ID || (index == 0 && burst > 0 && !asset.LocalDateTime.IsZero() && !prior.capturedAt.IsZero() && asset.LocalDateTime.Sub(prior.capturedAt).Abs() < burst) {
++		if prior.matches(asset) || (index == 0 && burst > 0 && !asset.LocalDateTime.IsZero() && !prior.capturedAt.IsZero() && asset.LocalDateTime.Sub(prior.capturedAt).Abs() < burst) {
+ 			return true
+ 		}
+ 	}
+ 	if crossFrame {
+-		for _, id := range r.global {
+-			if id == asset.ID {
++		for _, prior := range r.global {
++			if prior.matches(asset) {
+ 				return true
+ 			}
+ 		}
+@@ -219,7 +226,7 @@ func (r *recentFrameAssets) suppresses(deviceID string, asset *immich.Asset, bur
+ func (r *recentFrameAssets) remember(deviceID string, asset *immich.Asset, crossFrame bool) {
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
+-	items := append([]recentFrameAsset{{id: asset.ID, capturedAt: asset.LocalDateTime}}, r.devices[deviceID]...)
++	items := append([]recentFrameAsset{recentFrameAssetFromAsset(asset)}, r.devices[deviceID]...)
+ 	if len(items) > frameRecentAssetLimit {
+ 		items = items[:frameRecentAssetLimit]
+ 	}
+@@ -233,13 +240,40 @@ func (r *recentFrameAssets) remember(deviceID string, asset *immich.Asset, cross
+ 	}
+ 	r.devices[deviceID] = items
+ 	if crossFrame {
+-		r.global = append([]string{asset.ID}, r.global...)
++		r.global = append([]recentFrameAsset{recentFrameAssetFromAsset(asset)}, r.global...)
+ 		if len(r.global) > frameRecentAssetLimit {
+ 			r.global = r.global[:frameRecentAssetLimit]
+ 		}
+ 	}
+ }
+ 
++func recentFrameAssetFromAsset(asset *immich.Asset) recentFrameAsset {
++	return recentFrameAsset{
++		id:          strings.TrimSpace(asset.ID),
++		checksum:    strings.TrimSpace(asset.Checksum),
++		duplicateID: duplicateIdentity(asset.DuplicateID),
++		capturedAt:  asset.LocalDateTime,
++	}
++}
++
++func duplicateIdentity(value any) string {
++	identity, ok := value.(string)
++	if !ok {
++		return ""
++	}
++	return strings.TrimSpace(identity)
++}
++
++func (prior recentFrameAsset) matches(asset *immich.Asset) bool {
++	if prior.id != "" && prior.id == strings.TrimSpace(asset.ID) {
++		return true
++	}
++	if prior.checksum != "" && prior.checksum == strings.TrimSpace(asset.Checksum) {
++		return true
++	}
++	return prior.duplicateID != "" && prior.duplicateID == duplicateIdentity(asset.DuplicateID)
++}
++
+ func frameSelectionAllowed(deviceID string, asset *immich.Asset, attempt int) bool {
+ 	burst := frameCaptureBurstWindow()
+ 	crossFrame := frameCrossFrameRepeatSuppression()
+diff --git a/internal/routes/routes_shared_playback.go b/internal/routes/routes_shared_playback.go
+index 5e27d5f..05123dd 100644
+--- a/internal/routes/routes_shared_playback.go
++++ b/internal/routes/routes_shared_playback.go
+@@ -39,7 +39,7 @@ func NewSharedPlayback(base *config.Config, com *common.Common) (*SharedPlayback
+ 	coordinator, err := playback.New(groups, func(ctx context.Context, request playback.LoadRequest) (playback.Asset, error) {
+ 		bounded, cancel := foregroundAssetContext(ctx, com.Context(), frozen.Kiosk.HTTPTimeout)
+ 		defer cancel()
+-		return loadSharedPhoto(bounded, frozen, request)
++		return loadSharedPhoto(bounded, sharedSelectionConfig(frozen, base), request)
+ 	}, playback.Options{MaxConfiguredGroups: 8})
+ 	if err != nil {
+ 		return nil, err
+@@ -47,6 +47,16 @@ func NewSharedPlayback(base *config.Config, com *common.Common) (*SharedPlayback
+ 	return &SharedPlayback{coordinator: coordinator, base: base, common: com}, nil
+ }
+ 
++// sharedSelectionConfig keeps group policy frozen until restart while taking a
++// fresh snapshot of the server-wide deny-lists for each selection.
++func sharedSelectionConfig(frozen config.Config, live *config.Config) config.Config {
++	selection := frozen.Snapshot()
++	livePolicy := live.Snapshot()
++	selection.ExcludedAlbums = append([]string(nil), livePolicy.ExcludedAlbums...)
++	selection.AdoptHardExclusionsFrom(livePolicy)
++	return selection
++}
++
+ func (s *SharedPlayback) Close() { s.coordinator.Close() }
+ 
+ func (s *SharedPlayback) Register(e *echo.Echo) {
+diff --git a/internal/routes/routes_shared_playback_assets.go b/internal/routes/routes_shared_playback_assets.go
+index d061899..5b89c0c 100644
+--- a/internal/routes/routes_shared_playback_assets.go
++++ b/internal/routes/routes_shared_playback_assets.go
+@@ -51,11 +51,29 @@ func loadSharedPhoto(ctx context.Context, base config.Config, request playback.L
+ 		if excluded[asset.ID] && attempt < finalSelectionAttempt {
+ 			continue
+ 		}
++		if !sharedRecentSelectionAllowed(identity, &asset, attempt) {
++			continue
++		}
++		// This is an admitted backend selection, including prefetch-like
++		// preparation, not a client display acknowledgement. It deliberately
++		// resets with the backend process and carries no image data.
++		frameRecentAssets.remember(identity, &asset, frameCrossFrameRepeatSuppression())
+ 		return playback.NewAsset(asset.ID, asset.SelectedUser()), nil
+ 	}
+ 	return playback.Asset{}, fmt.Errorf("shared photo selection exhausted its bounded candidate attempts")
+ }
+ 
++// sharedRecentSelectionAllowed applies the bounded identity ledger without
++// applying physical-device preferences. Shared playback remains group-owned:
++// its existing coordinator controls ID history, while this only catches copied
++// records with matching checksums or duplicate IDs.
++func sharedRecentSelectionAllowed(groupIdentity string, asset *immich.Asset, attempt int) bool {
++	if attempt >= finalSelectionAttempt {
++		return true
++	}
++	return !frameRecentAssets.suppresses(groupIdentity, asset, frameCaptureBurstWindow(), frameCrossFrameRepeatSuppression())
++}
++
+ // Render a known group slide at the requesting display's bounded dimensions.
+ // Revalidation prevents an asset newly excluded by classification from leaking
+ // back through prepared/history state. Rendering never selects another photo.
+diff --git a/internal/routes/routes_webhooks.go b/internal/routes/routes_webhooks.go
+index 0a4175f..9ce1f25 100644
+--- a/internal/routes/routes_webhooks.go
++++ b/internal/routes/routes_webhooks.go
+@@ -115,6 +115,9 @@ func Webhooks(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
+ 				}
+ 
+ 				currentAssetID := strings.Replace(imageID, kiosk.HistoryIndicator, "", 1)
++				if requestConfig.IsHardExcludedAsset(currentAssetID) {
++					return echo.NewHTTPError(http.StatusNotFound, "Image not found")
++				}
+ 
+ 				assetIndex := i
+ 				g.Go(func(currentAssetID string, assetIndex int) func() error {
+diff --git a/internal/webhooks/webhooks_dispatcher.go b/internal/webhooks/webhooks_dispatcher.go
+index 98c8d96..d3caf5d 100644
+--- a/internal/webhooks/webhooks_dispatcher.go
++++ b/internal/webhooks/webhooks_dispatcher.go
+@@ -45,48 +45,74 @@ func newDispatcher(capacity int, timeout time.Duration) *dispatcher {
+ 	}
+ }
+ 
+-func (d *dispatcher) scheduleWithContext(parent context.Context, key string, work func(context.Context)) bool {
+-	return d.scheduleWithContextAndTimeout(parent, key, d.timeout, work)
++type webhookReservation struct {
++	dispatcher *dispatcher
++	key        string
++	ctx        context.Context
++	cancel     context.CancelFunc
++	release    sync.Once
+ }
+ 
+-func (d *dispatcher) scheduleWithContextAndTimeout(parent context.Context, key string, timeout time.Duration, work func(context.Context)) bool {
++// reserveWithContextAndTimeout admits a single webhook job before its payload is
++// prepared. The reservation is counted immediately so drain waits for both
++// synchronous preparation and asynchronous delivery.
++func (d *dispatcher) reserveWithContextAndTimeout(parent context.Context, key string, timeout time.Duration) (*webhookReservation, bool) {
++	if timeout <= 0 {
++		timeout = d.timeout
++	}
++
+ 	d.admission.Lock()
+ 	defer d.admission.Unlock()
+ 
+ 	select {
+ 	case <-parent.Done():
+-		return false
++		return nil, false
+ 	default:
+ 	}
+ 	if d.draining {
+-		return false
++		return nil, false
+ 	}
+ 	if _, loaded := d.inFlight.LoadOrStore(key, struct{}{}); loaded {
+-		return false
++		return nil, false
+ 	}
+ 	select {
+ 	case d.sem <- struct{}{}:
+ 	default:
+ 		d.inFlight.Delete(key)
+-		return false
++		return nil, false
+ 	}
+ 
++	ctx, cancel := context.WithTimeout(parent, timeout)
+ 	d.workers.Add(1)
++	return &webhookReservation{dispatcher: d, key: key, ctx: ctx, cancel: cancel}, true
++}
++
++func (r *webhookReservation) releaseSlot() {
++	r.release.Do(func() {
++		r.cancel()
++		<-r.dispatcher.sem
++		r.dispatcher.inFlight.Delete(r.key)
++		r.dispatcher.workers.Done()
++	})
++}
++
++func (r *webhookReservation) start(work func(context.Context)) {
+ 	go func() {
+-		defer d.workers.Done()
+-		defer func() {
+-			<-d.sem
+-			d.inFlight.Delete(key)
+-		}()
+-
+-		if timeout <= 0 {
+-			timeout = d.timeout
+-		}
+-		ctx, cancel := context.WithTimeout(parent, timeout)
+-		defer cancel()
+-		work(ctx)
++		defer r.releaseSlot()
++		work(r.ctx)
+ 	}()
++}
+ 
++func (d *dispatcher) scheduleWithContext(parent context.Context, key string, work func(context.Context)) bool {
++	return d.scheduleWithContextAndTimeout(parent, key, d.timeout, work)
++}
++
++func (d *dispatcher) scheduleWithContextAndTimeout(parent context.Context, key string, timeout time.Duration, work func(context.Context)) bool {
++	reservation, admitted := d.reserveWithContextAndTimeout(parent, key, timeout)
++	if !admitted {
++		return false
++	}
++	reservation.start(work)
+ 	return true
+ }
+ 
+@@ -139,10 +165,62 @@ func DrainWebhookDispatch(ctx context.Context) bool {
+ 	return webhookDispatcher.drain(ctx)
+ }
+ 
++type webhookPayloadSnapshot struct {
++	assets        []immich.Asset
++	clientName    string
++	deviceID      string
++	event         WebhookEvent
++	eventID       string
++	kioskVersion  string
++	requestConfig config.Config
++	timestamp     string
++}
++
++type webhookPayloadPreparer func(*common.RouteRequestData, string, WebhookEvent, string, common.ViewData) ([]byte, error)
++
++func prepareWebhookPayload(requestData *common.RouteRequestData, kioskVersion string, event WebhookEvent, eventID string, viewData common.ViewData) ([]byte, error) {
++	assets := make([]immich.Asset, len(viewData.Assets))
++	for i, image := range viewData.Assets {
++		assets[i] = image.ImmichAsset
++	}
++
++	snapshot := webhookPayloadSnapshot{
++		assets:        assets,
++		clientName:    requestData.ClientName,
++		deviceID:      requestData.DeviceID,
++		event:         event,
++		eventID:       eventID,
++		kioskVersion:  kioskVersion,
++		requestConfig: requestData.RequestConfig,
++		timestamp:     time.Now().Format(time.RFC3339),
++	}
++	return json.Marshal(Payload{
++		Meta: Meta{
++			Source:  "immich-kiosk",
++			Version: snapshot.kioskVersion,
++		},
++		EventID:    snapshot.eventID,
++		Event:      string(snapshot.event),
++		Timestamp:  snapshot.timestamp,
++		DeviceID:   snapshot.deviceID,
++		ClientName: snapshot.clientName,
++		Assets:     snapshot.assets,
++		Config:     snapshot.requestConfig,
++		AssetCount: len(snapshot.assets),
++	})
++}
++
+ func enqueueWebhook(ctx context.Context, requestData *common.RouteRequestData, kioskVersion string, event WebhookEvent, viewData common.ViewData) {
++	enqueueWebhookWithDispatcher(ctx, requestData, kioskVersion, event, viewData, webhookDispatcher, prepareWebhookPayload)
++}
++
++// enqueueWebhookWithDispatcher reserves one global dispatcher slot before JSON
++// creation. Preparation is synchronous and produces immutable bytes before an
++// asynchronous worker begins delivery.
++func enqueueWebhookWithDispatcher(ctx context.Context, requestData *common.RouteRequestData, kioskVersion string, event WebhookEvent, viewData common.ViewData, dispatcher *dispatcher, preparePayload webhookPayloadPreparer) {
++	eventID := utils.GenerateUUID()
+ 	requestConfig := requestData.RequestConfig
+ 	timeout := webhookTimeoutSeconds(requestConfig.Kiosk.HTTPTimeout)
+-	eventID := utils.GenerateUUID()
+ 
+ 	for _, userWebhook := range requestConfig.Webhooks {
+ 		if userWebhook.Event != string(event) {
+@@ -155,48 +233,44 @@ func enqueueWebhook(ctx context.Context, requestData *common.RouteRequestData, k
+ 			continue
+ 		}
+ 
+-		images := make([]immich.Asset, len(viewData.Assets))
+-		for i, image := range viewData.Assets {
+-			images[i] = image.ImmichAsset
+-		}
+-
+-		payload := Payload{
+-			Meta: Meta{
+-				Source:  "immich-kiosk",
+-				Version: kioskVersion,
+-			},
+-			EventID:    eventID,
+-			Event:      string(event),
+-			Timestamp:  time.Now().Format(time.RFC3339),
+-			DeviceID:   requestData.DeviceID,
+-			ClientName: requestData.ClientName,
+-			Assets:     images,
+-			Config:     requestConfig,
+-			AssetCount: len(images),
+-		}
+-
+-		jsonPayload, err := json.Marshal(payload)
+-		if err != nil {
+-			log.Error("webhook marshal", "event", event, "eventID", eventID, "err", err)
+-			continue
+-		}
+-
+-		key := eventID + "|" + userWebhook.URL
++		webhook := userWebhook
++		key := eventID + "|" + webhook.URL
+ 		log.Debug("webhook dispatch admission",
+ 			"event", event,
+ 			"eventID", eventID,
+ 			"host", parsedURL.Host,
+ 			"timeout", timeout,
+ 		)
+-		if !webhookDispatcher.scheduleWithContextAndTimeout(ctx, key, timeout, func(workerCtx context.Context) {
+-			deliverWebhook(workerCtx, userWebhook, parsedURL, jsonPayload, event, eventID)
+-		}) {
++		reservation, admitted := dispatcher.reserveWithContextAndTimeout(ctx, key, timeout)
++		if !admitted {
+ 			log.Warn("webhook dispatch rejected",
+ 				"event", event,
+ 				"eventID", eventID,
+ 				"host", parsedURL.Host,
+ 			)
++			continue
+ 		}
++
++		if err := reservation.ctx.Err(); err != nil {
++			logDispatchOutcome("webhook preparation", err, "event", event, "eventID", eventID, "host", parsedURL.Host)
++			reservation.releaseSlot()
++			continue
++		}
++		jsonPayload, err := preparePayload(requestData, kioskVersion, event, eventID, viewData)
++		if err != nil {
++			log.Error("webhook marshal", "event", event, "eventID", eventID, "err", err)
++			reservation.releaseSlot()
++			continue
++		}
++		if err := reservation.ctx.Err(); err != nil {
++			logDispatchOutcome("webhook preparation", err, "event", event, "eventID", eventID, "host", parsedURL.Host)
++			reservation.releaseSlot()
++			continue
++		}
++
++		reservation.start(func(workerCtx context.Context) {
++			deliverWebhook(workerCtx, webhook, parsedURL, jsonPayload, event, eventID)
++		})
+ 	}
+ }
+ 

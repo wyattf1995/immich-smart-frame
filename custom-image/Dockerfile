@@ -92,6 +92,12 @@ COPY shared-playback-integration-tests.patch /tmp/shared-playback-integration-te
 COPY shared-playback-density.patch /tmp/shared-playback-density.patch
 COPY shared-playback-density-tests.patch /tmp/shared-playback-density-tests.patch
 COPY shared-playback-density-validation.patch /tmp/shared-playback-density-validation.patch
+# The live 10/13 C6/C7 backend (paid-work hard exclusions, album cursor, decode-frame, bounded offline and webhook
+# work) and the 10/17 slide timer were built outside this stack; these four patches bring it to the live source.
+COPY live-sync-20261013.patch /tmp/live-sync-20261013.patch
+COPY live-sync-20261013-tests.patch /tmp/live-sync-20261013-tests.patch
+COPY slide-timer.patch /tmp/slide-timer.patch
+COPY slide-timer-tests.patch /tmp/slide-timer-tests.patch
 RUN cd /src \
     && git apply --check /tmp/fully-kiosk-dpr.patch \
     && git apply /tmp/fully-kiosk-dpr.patch \
@@ -258,7 +264,15 @@ RUN cd /src \
 		&& git apply --check /tmp/shared-playback-density-tests.patch \
 		&& git apply /tmp/shared-playback-density-tests.patch \
 		&& git apply --check /tmp/shared-playback-density-validation.patch \
-		&& git apply /tmp/shared-playback-density-validation.patch
+		&& git apply /tmp/shared-playback-density-validation.patch \
+		&& git apply --check /tmp/live-sync-20261013.patch \
+		&& git apply /tmp/live-sync-20261013.patch \
+		&& git apply --check /tmp/live-sync-20261013-tests.patch \
+		&& git apply /tmp/live-sync-20261013-tests.patch \
+		&& git apply --check /tmp/slide-timer.patch \
+		&& git apply /tmp/slide-timer.patch \
+		&& git apply --check /tmp/slide-timer-tests.patch \
+		&& git apply /tmp/slide-timer-tests.patch
 
 FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend-build
 
@@ -278,13 +292,18 @@ RUN node_modules/.bin/esbuild tests/asset-request-recovery.test.ts \
       --alias:htmx.org=./tests/htmx.mock.ts \
       --outfile=/tmp/polling-recovery.test.mjs \
     && node --test /tmp/polling-recovery.test.mjs \
+    && node_modules/.bin/esbuild tests/polling-timer.test.ts \
+      --bundle --platform=node --format=esm \
+      --alias:htmx.org=./tests/htmx.mock.ts \
+      --outfile=/tmp/polling-timer.test.mjs \
+    && node --test /tmp/polling-timer.test.mjs \
     && node_modules/.bin/esbuild tests/paused-retry.test.ts \
       --bundle --platform=node --format=esm \
       --alias:htmx.org=./tests/htmx.mock.ts \
       --outfile=/tmp/paused-retry.test.mjs \
     && node --test /tmp/paused-retry.test.mjs \
     && node --test tests/browser-cache-contract.test.mjs tests/offline-cache-contract.test.mjs \
-    && node_modules/.bin/esbuild tests/shared-playback.test.ts --bundle --platform=node --format=esm --outfile=/tmp/shared-playback.test.mjs \
+    && node_modules/.bin/esbuild tests/shared-playback.test.ts --bundle --platform=node --format=esm --alias:htmx.org=./tests/htmx.mock.ts --outfile=/tmp/shared-playback.test.mjs \
     && node --test /tmp/shared-playback.test.mjs
 RUN task frontend
 

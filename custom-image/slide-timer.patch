@@ -1,0 +1,192 @@
+diff --git a/frontend/src/ts/polling.ts b/frontend/src/ts/polling.ts
+index dcda76b..f194206 100644
+--- a/frontend/src/ts/polling.ts
++++ b/frontend/src/ts/polling.ts
+@@ -27,6 +27,12 @@ class PollingController {
+     private currentProgressSource: ProgressSource | null = null;
+     private video: HTMLVideoElement | null = null;
+     private playTimeout!: number | null;
++    // Photo slides run on one timer each (FrameOS Touch, 10/17): a per-frame loop rewrote the progress bar on
++    // every animation frame, so the frames redrew an unchanged photo ~24 times a second. Video keeps the loop.
++    private slideTimer: ReturnType<typeof setTimeout> | null = null;
++    private slideDueAt: number | null = null;
++    private pausedRemaining: number | null = null;
++    private dueWhileHidden = false;
+ 
+     private constructor() {
+         // Private constructor to enforce singleton pattern
+@@ -110,9 +116,62 @@ class PollingController {
+     triggerNewAsset = () => {
+         this.stopPolling();
+         this.lastPollTime = performance.now();
++        this.slideDueAt = null;
++        this.dueWhileHidden = false;
+         htmx.trigger(this.kioskElement as HTMLElement, "kiosk-new-asset");
+     };
+ 
++    /** Arms the one timer for the current photo slide and animates the bar to its end. */
++    private armSlide = (remaining: number) => {
++        this.clearSlideTimer();
++        const delay = Math.max(0, remaining);
++        this.slideDueAt = performance.now() + delay;
++        this.slideTimer = setTimeout(this.slideDue, delay);
++        this.animateProgress(delay);
++    };
++
++    /** Like the frame loop, a hidden page never advances: the slide waits for the page to be visible again. */
++    private slideDue = () => {
++        this.slideTimer = null;
++        if (document.visibilityState !== "visible") {
++            this.dueWhileHidden = true;
++            return;
++        }
++        this.triggerNewAsset();
++    };
++
++    private clearSlideTimer = () => {
++        if (this.slideTimer !== null) {
++            clearTimeout(this.slideTimer);
++            this.slideTimer = null;
++        }
++    };
++
++    /** One compositor transition per slide instead of a style write per frame. */
++    private animateProgress = (remaining: number) => {
++        const bar = this.progressBarElement;
++        if (!bar || !this.pollInterval) return;
++        const start = Math.min(1, Math.max(0, 1 - remaining / this.pollInterval));
++        bar.style.transition = "none";
++        bar.style.transform = `scaleX(${start}) translateZ(0)`;
++        void bar.offsetWidth;
++        bar.style.transition = `transform ${Math.round(remaining)}ms linear`;
++        bar.style.transform = "scaleX(1) translateZ(0)";
++    };
++
++    private freezeProgress = (remaining: number) => {
++        const bar = this.progressBarElement;
++        if (!bar || !this.pollInterval) return;
++        const shown = Math.min(1, Math.max(0, 1 - remaining / this.pollInterval));
++        bar.style.transition = "none";
++        bar.style.transform = `scaleX(${shown}) translateZ(0)`;
++    };
++
++    private remainingForSlide = () => {
++        const due = this.slideDueAt ?? (this.lastPollTime ?? performance.now()) + this.pollInterval;
++        return due - performance.now();
++    };
++
+     /** Schedules an automatic retry without overriding a later user or request pause. */
+     scheduleAutoRetry = () => {
+         setTimeout(() => {
+@@ -133,8 +192,8 @@ class PollingController {
+      */
+     startPolling = () => {
+         // HTMX lifecycle events can overlap (for example afterRequest followed
+-        // by sendError). Keep exactly one progress loop alive.
+-        if (this.animationFrameId !== null) return;
++        // by sendError). Keep exactly one schedule alive.
++        if (this.animationFrameId !== null || this.slideTimer !== null) return;
+ 
+         this.progressBarElement?.classList.remove("progress--bar-paused");
+         this.menuElement?.classList.add("navigation-hidden");
+@@ -147,7 +206,9 @@ class PollingController {
+             duration: this.pollInterval,
+         };
+ 
+-        this.animationFrameId = requestAnimationFrame(this.updateProgress);
++        this.dueWhileHidden = false;
++        this.pausedRemaining = null;
++        this.armSlide(this.pollInterval);
+         document.body.classList.remove("polling-paused");
+         hideAssetOverlay();
+         this.isPaused = false;
+@@ -166,6 +227,15 @@ class PollingController {
+             return;
+         }
+ 
++        if (this.currentProgressSource.type === "image") {
++            if (this.dueWhileHidden || this.remainingForSlide() <= 0) {
++                this.triggerNewAsset();
++            } else if (this.slideTimer === null) {
++                this.armSlide(this.remainingForSlide());
++            }
++            return;
++        }
++
+         if (this.animationFrameId !== null) {
+             cancelAnimationFrame(this.animationFrameId);
+         }
+@@ -177,13 +247,19 @@ class PollingController {
+      * @param showMenu - Whether to show the menu when pausing
+      */
+     pausePolling = (showMenu: boolean = true) => {
+-        if (this.isPaused && this.animationFrameId === null) return;
++        if (this.isPaused && this.animationFrameId === null && this.slideTimer === null) return;
+ 
+         if (this.animationFrameId !== null) {
+             cancelAnimationFrame(this.animationFrameId);
+             this.animationFrameId = null;
+         }
+ 
++        if (this.currentProgressSource?.type === "image") {
++            this.pausedRemaining = this.dueWhileHidden ? 0 : this.remainingForSlide();
++            this.clearSlideTimer();
++            this.freezeProgress(this.pausedRemaining);
++        }
++
+         this.pausedTime = performance.now();
+ 
+         if (this.currentProgressSource?.type === "video" && this.video) {
+@@ -205,22 +281,25 @@ class PollingController {
+      * @param hideOverlay - Whether to hide the overlay when resuming
+      */
+     resumePolling = (hideOverlay: boolean = false) => {
+-        if (!this.isPaused || this.animationFrameId !== null) return;
++        if (!this.isPaused || this.animationFrameId !== null || this.slideTimer !== null) return;
+ 
+         if (this.currentProgressSource?.type === "video" && this.video) {
+             this.video.play().catch((error) => {
+                 console.error("Video playback error on resume:", error);
+                 this.handleVideoError(error);
+             });
++            this.animationFrameId = requestAnimationFrame(this.updateProgress);
+         } else {
+             this.currentProgressSource = {
+                 type: "image",
+                 startTime: performance.now(),
+                 duration: this.pollInterval,
+             };
++            this.dueWhileHidden = false;
++            this.armSlide(this.pausedRemaining ?? this.pollInterval);
++            this.pausedRemaining = null;
+         }
+ 
+-        this.animationFrameId = requestAnimationFrame(this.updateProgress);
+         this.progressBarElement?.classList.remove("progress--bar-paused");
+         this.menuElement?.classList.add("navigation-hidden");
+         document.body.classList.remove("polling-paused");
+@@ -305,6 +384,9 @@ class PollingController {
+         this.menuElement?.classList.add("navigation-hidden");
+         this.lastPollTime = performance.now();
+         this.pausedTime = null;
++        this.clearSlideTimer();
++        this.slideDueAt = null;
++        this.dueWhileHidden = false;
+ 
+         this.currentProgressSource = {
+             type: "video",
+@@ -369,12 +451,13 @@ class PollingController {
+      * Stops the polling process
+      */
+     stopPolling = () => {
+-        if (this.isPaused && this.animationFrameId === null) return;
++        if (this.isPaused && this.animationFrameId === null && this.slideTimer === null) return;
+ 
+         if (this.animationFrameId !== null) {
+             cancelAnimationFrame(this.animationFrameId);
+             this.animationFrameId = null;
+         }
++        this.clearSlideTimer();
+ 
+         this.progressBarElement?.classList.add("progress--bar-paused");
+     };
