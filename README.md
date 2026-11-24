@@ -16,6 +16,15 @@ documented [optional tagging pipeline](tagging/RUNBOOK.md) is write-capable:
 tag and description changes require an explicit `--apply` operation and its own
 credential and rollout checks. It is not required for the starter slideshow.
 
+![Synthetic privacy-safe demo of the frame UI](docs/images/demo-frame.webp)
+
+_Synthetic, privacy-safe demo image. It does not contain a real family photo or
+live deployment metadata._
+
+For the hardware setup, the image-quality fix, and the Home Assistant and
+gesture integrations behind this project, read the
+[Lenovo Smart Frame build story](https://wyatt-fleming.com/posts/lenovo-smart-frame-home-assistant-immich-gestures).
+
 > [!IMPORTANT]
 > This is an experimental community project, not a Lenovo, Immich, or Immich
 > Kiosk product. The browser starter is tested on one Lenovo CD-3L501F running stock Android 10.
@@ -53,11 +62,6 @@ are separate: see [hardware access and recovery](docs/hardware-recovery.md).
 The apps have separate identities, configuration and release notes. Shared code
 does not imply shared login state or device acceptance. See the
 [component release policy](docs/releasing.md).
-
-![Synthetic privacy-safe demo of the frame UI](docs/images/demo-frame.webp)
-
-_Synthetic, privacy-safe demo image. It does not contain a real family photo or
-live deployment metadata._
 
 ## Why this exists
 
