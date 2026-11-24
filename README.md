@@ -7,6 +7,15 @@ Immich photo-selection algorithm you control. This repository contains a browser
 slideshow, the existing FrameOS app for Lenovo and selected legacy frames, and
 a separate experimental FrameOS Touch app.
 
+I fixed a blurry 1080p picture by changing the image size the frame requested,
+then used its buttons and gestures to switch between photos and Home Assistant.
+[Read the Lenovo Smart Frame build story](https://wyatt-fleming.com/posts/lenovo-smart-frame-home-assistant-immich-gestures).
+
+![Synthetic privacy-safe demo of the frame UI](docs/images/demo-frame.webp)
+
+_Synthetic, privacy-safe demo image. It does not contain a real family photo or
+live deployment metadata._
+
 The browser starter path keeps the frame deliberately simple: an Android kiosk
 browser ([Fully Kiosk Browser](https://www.fully-kiosk.com/)) renders the slideshow
 while a Docker host runs a pinned, lightly patched build of
@@ -15,15 +24,6 @@ do not modify Immich originals, ratings, albums, tags, or sidecars. The separate
 documented [optional tagging pipeline](tagging/RUNBOOK.md) is write-capable:
 tag and description changes require an explicit `--apply` operation and its own
 credential and rollout checks. It is not required for the starter slideshow.
-
-![Synthetic privacy-safe demo of the frame UI](docs/images/demo-frame.webp)
-
-_Synthetic, privacy-safe demo image. It does not contain a real family photo or
-live deployment metadata._
-
-For the hardware setup, the image-quality fix, and the Home Assistant and
-gesture integrations behind this project, read the
-[Lenovo Smart Frame build story](https://wyatt-fleming.com/posts/lenovo-smart-frame-home-assistant-immich-gestures).
 
 > [!IMPORTANT]
 > This is an experimental community project, not a Lenovo, Immich, or Immich
